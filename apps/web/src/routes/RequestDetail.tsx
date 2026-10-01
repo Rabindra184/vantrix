@@ -88,7 +88,7 @@ export default function RequestDetail() {
   // reason a reader keeps two of these open at once.
   useDocumentTitle(name ?? null);
 
-  // Called under the SAME key `RunOverviewTab` and `RunChartsTab` use
+  // Called under the SAME key `RunOverviewTab` and `RunReport` use
   // (`RunDetail.tsx`), so this page's first render finds a warm cache entry
   // rather than issuing a second request for a payload the run page already
   // fetched — `statsQuery`'s `staleTime: Infinity` (`api/metrics.ts`) is what

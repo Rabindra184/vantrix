@@ -27,6 +27,10 @@ export const NEW_PROJECT_ROUTE = '/projects/_new';
 export function runPath(runId: string): string {
   return `/runs/${encodeURIComponent(runId)}`;
 }
+/** GE's Report — the time window and the run's charts, in collapsible sections. */
+export function runReportPath(runId: string): string {
+  return `${runPath(runId)}/report`;
+}
 export function runChartsPath(runId: string): string {
   return `${runPath(runId)}/charts`;
 }

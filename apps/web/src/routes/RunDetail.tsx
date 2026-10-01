@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import { describeSlaOutcome, formatSlaValue } from '@perfportal/contracts';
@@ -19,25 +19,17 @@ import { ROW, TABLE, TD, TD_NUM, TH, THEAD } from '../components/tableStyles';
 import { ProblemError } from '../api/fetch';
 import { useLiveRun } from '../api/live';
 import {
-  distributionQuery,
   errorSeriesQuery,
   errorsQuery,
   seriesQuery,
   statsQuery,
   trendsQuery,
-  usersQuery,
 } from '../api/metrics';
 import { POLL_CAP_MS, pollIntervalFor } from '../api/run';
 import { formatActual, toolAssertionParts } from './toolAssertion';
-import DistributionChart from '../charts/DistributionChart';
-import { RUN_TIME_GROUP } from '../charts/crosshair';
 import ErrorsChart from '../charts/ErrorsChart';
-import PercentileDistributionChart from '../charts/PercentileDistributionChart';
-import IndicatorsChart from '../charts/IndicatorsChart';
 import PercentilesChart from '../charts/PercentilesChart';
-import RequestCountChart from '../charts/RequestCountChart';
-import { RequestRateChart, ResponseRateChart } from '../charts/RatesChart';
-import { ConcurrentUsersChart, UserStartRateChart } from '../charts/UsersChart';
+import { RequestRateChart } from '../charts/RatesChart';
 import ErrorsTable from '../tables/ErrorsTable';
 import { STATISTICS_SKELETON_COLUMNS } from '../tables/StatisticsTable';
 import { ERRORS_TABLE_COLUMNS } from '../tables/ErrorsTable';
@@ -49,7 +41,7 @@ import { baselineRun, cohortRun } from './runBaseline';
 import { formatDuration } from './format';
 import { ASSERTION_OUTCOME, Marked } from './marks';
 import { DEFAULT_ROUTE, projectRulesPath } from './paths';
-import { Payload, TableSection, type Slot } from './payload';
+import { Payload, TableSection } from './payload';
 import {
   useLiveFromShell,
   useRunTerminal,
@@ -70,9 +62,9 @@ import WaitingPanel from './WaitingPanel';
  * renders neither a header nor the SLA rules itself any more. Those moved out
  * when the run page grew tabs: the header is `RunHeader`, rendered by
  * `RunShell`, and the assertions live on `RunOverviewTab`. What is left here
- * is four route components sharing one run — `RunDetail` itself, `RunOverviewTab`,
- * `RunChartsTab` and `RunErrorsTab` (`RunShell`'s tab children) — plus the
- * pieces they share: `Assertions`, the Charts tab's chart-slot constants, and
+ * is three route components sharing one run — `RunDetail` itself,
+ * `RunOverviewTab` and `RunErrorsTab` (`RunShell`'s tab children; the charts
+ * live in `RunReport`) — plus the pieces they share: `Assertions` and
  * `describeRule`.
  *
  * The last screen of the parity shell, and the end of the definition of done
@@ -85,7 +77,7 @@ import WaitingPanel from './WaitingPanel';
  * non-error run — `ready` OR `processing` — now renders the SAME `RunShell`,
  * on the SAME code path, differing only in what `identity`/`status`/`verdict`/
  * `windowable`/`live` it is handed. `RunShell` is a layout route: mounting it
- * for a processing run is what makes `/runs/:id/charts` and the other four tab
+ * for a processing run is what makes `/runs/:id/report` and the other tab
  * URLs resolve to anything at all while a run is live, which they could not
  * do when a processing run rendered a standalone `Processing`/`Live` screen
  * with no `<Outlet/>` in it. `verdict`/`windowable` are `undefined` for a
@@ -444,8 +436,8 @@ function livePercentileValue(summary: LiveDelta['summary'], key: string): string
  *
  * Assertions, then the stat tiles, then the statistics table: the numbers a
  * reader came to read and the SLA verdict beside them, all on the tab that
- * opens first. `RunChartsTab` and `RunErrorsTab` hold the eight figures and
- * the errors table respectively — moved out to their own tabs rather than
+ * opens first. `RunReport` holds the charts and `RunErrorsTab` the errors
+ * table — moved out to their own pages rather than
  * left on this one, which is what keeps the landing tab to the reading order
  * `RunDetail.tsx` already argued for: "scrolling past eight figures to reach
  * the p99 of one request is the reading order nobody wants."
@@ -486,7 +478,7 @@ function livePercentileValue(summary: LiveDelta['summary'], key: string): string
  * `runId !== undefined` — `apiFetch` has no 202 branch, so before this fix
  * round `statsQuery`/`seriesQuery` fired against a processing run's rows,
  * which do not exist yet, and the reader got error panels instead of
- * `WaitingPanel`. `RunChartsTab` and `RunErrorsTab` carry the identical gate
+ * `WaitingPanel`. `RunReport` and `RunErrorsTab` carry the identical gate
  * for the identical reason.
  *
  * `WaitingPanel` IS NOT THE ONLY NON-TERMINAL BRANCH ANY MORE (Task 8). Once
@@ -508,8 +500,8 @@ export function RunOverviewTab() {
   // `terminal`, not merely `runId !== undefined` (fix round 1, Critical 1's
   // fix applied here too) — `apiFetch` has no 202 branch, so firing `/stats`
   // (and, when compact, `/series`) against a processing run's rows, which do
-  // not exist yet, is the same defect the brief flagged on `RunChartsTab` and
-  // `RunErrorsTab`. This tab was simply unreachable for a processing run
+  // not exist yet, is the same defect the brief flagged on the Charts tab (now
+  // `RunReport`) and `RunErrorsTab`. This tab was simply unreachable for a processing run
   // before Task 7, which is why the bug had no chance to surface here first.
   const stats = useQuery({ ...statsQuery(runId ?? '', window), enabled: terminal });
   // THE COHORT, FOR ONE NEIGHBOUR — and deliberately NOT on this file's
@@ -703,7 +695,7 @@ const OVERVIEW_TRENDS_STALE_MS = 5 * 60_000;
  * data table, collapsed, so nothing is lost to a reader who cannot see them.
  *
  * Fetched only when compact (see the query's `enabled`), because on a desktop
- * these two charts are already on the Charts tab at full size.
+ * these two charts are already in the Report at full size.
  */
 function Sparklines({ series }: { readonly series: UseQueryResult<SeriesResponse> }) {
   if (series.data === undefined) return null;
@@ -913,361 +905,6 @@ export function RunErrorsTab() {
         )}
       </TableSection>
     </div>
-  );
-}
-
-/* ------------------------------------------------------------------ *
- * The Charts tab, §13.2 ③④⑦⑦ᵇ⑧⑨⑩⑪ — design §6
- * ------------------------------------------------------------------ */
-
-const INDICATORS: Slot = { id: 'indicators', title: 'Response time ranges' };
-const REQUEST_COUNTS: Slot = { id: 'request-counts', title: 'Number of requests' };
-const CONCURRENT_USERS: Slot = { id: 'concurrent-users', title: 'Concurrent users over time' };
-const USER_START_RATE: Slot = { id: 'user-start-rate', title: 'Users started per second' };
-const DISTRIBUTION: Slot = { id: 'distribution', title: 'Response time distribution' };
-/**
- * The tail's shape, beside the histogram that shows where the mass is. Both
- * are folds of the SAME `/distribution` payload — one fetch, two figures, no
- * second cache key — so they always describe the same run.
- */
-const PERCENTILE_DISTRIBUTION: Slot = {
-  id: 'percentile-distribution',
-  title: 'Response time percentiles distribution',
-};
-const PERCENTILES: Slot = { id: 'percentiles', title: 'Response time percentiles over time' };
-const REQUESTS_PER_SECOND: Slot = {
-  id: 'requests-per-second',
-  title: 'Requests per second over time',
-};
-const RESPONSES_PER_SECOND: Slot = {
-  id: 'responses-per-second',
-  title: 'Responses per second over time',
-};
-
-/**
- * `/runs/:runId/charts`, a child under `RunShell` (design §3, §6).
- *
- * Four fetches, eight charts (design §2) — and the charts do the fetching
- * nowhere: this is the only component on the page that calls a query factory,
- * and every chart below receives an already-validated payload as a prop.
- *
- * `/stats` feeds ③ and ④, `/users` feeds ⑦ and ⑦ᵇ, `/distribution` feeds ⑧, and
- * `/series` feeds ⑨, ⑩ and ⑪. That grouping is why §13.2's order can be
- * rendered as four blocks rather than eight: each payload's charts happen to be
- * adjacent in it, so no chart is displaced to keep a fetch tidy. If a future
- * chart broke that adjacency, the ORDER wins and this component grows a fifth
- * block — never the other way round.
- *
- * NAMED BY AN `<h2>`, VISUALLY HIDDEN — not `aria-label="Charts"`, which this
- * used to carry instead. That was reasoned as: a tab named Charts directly
- * above a heading that also said Charts (or, before the tab strip existed,
- * "Overview") would say it twice. True for a SIGHTED user, and irrelevant to
- * one — the tab strip is not in view once a reader has scrolled into the
- * chart stack. It was also incomplete: the eight charts below each render an
- * `<h3>` (`Chart.tsx`), and `aria-label` on this section is not a heading at
- * all, so a screen-reader user navigating by heading level jumped straight
- * from the page's one `<h1>` (`RunHeader`) to eight `<h3>`s with no `<h2>`
- * between them — a level skipped, and this section unreachable by that
- * navigation mode no matter what its `aria-label` said. An `sr-only` `<h2>`
- * both names the region (via `aria-labelledby`, so nothing is claimed twice
- * out loud for a sighted reader) and repairs the ladder, at the one cost that
- * argument was avoiding: a screen-reader user who tabs through headings
- * hears "Charts" once from `RunTabs`' link and, later, again on arrival —
- * the same trade `RunHeader`'s badges and countless real sites make
- * routinely, and a smaller cost than a heading level a screen reader cannot
- * jump to at all.
- *
- * REACHABLE FOR A PROCESSING RUN NOW (Task 7), and gated the same way
- * `RunOverviewTab` and `RunErrorsTab` are (fix round 1, CRITICAL 1): `on`
- * below requires `terminal` in addition to `runId`/`wanted`, because
- * `apiFetch` has no 202 branch — before this fix, opening this tab on a
- * pending run fired all four queries against rows that do not exist yet and
- * the reader got four error panels instead of `WaitingPanel`.
- *
- * DRAWS FIVE LIVE FIGURES NOW TOO (Task 9), once a delta has arrived for a
- * non-terminal run. `users`/`series` below stay `enabled: on` — never
- * fetched while live — and are READ anyway: `useLiveRun`'s `applyDelta`
- * writes these SAME `usersQuery`/`seriesQuery` cache keys directly while the
- * run streams (`window` is always `null` for a live view, which is exactly
- * what makes the keys agree), and a `useQuery` still subscribes to its cache
- * entry regardless of `enabled`. Two of the eight terminal charts have no
- * live source on any path — the response-time distribution and its
- * percentile companion both fold the same `/distribution` payload, which
- * needs per-request or full-sketch data no delta carries — and get a stated
- * `LiveNotice` instead. Errors per second is the same shape of gap but
- * belongs on the Errors tab, where its real chart is (Task 10); the old
- * standalone page stacked all three withheld notices together only because
- * it had no tabs to distribute them across.
- */
-/**
- * One investigation group on the Charts tab (review 09-13 M17).
- *
- * A `<section>` with a REAL heading, not a styled `<div>` and a bold line: the
- * point of grouping is that a screen-reader user can jump between the four
- * questions the same way a sighted reader's eye does, and only a heading in the
- * outline does that. `aria-labelledby` rather than `aria-label` so the name and
- * the visible text cannot drift apart.
- *
- * `SectionHeading`, so `<h2>` — and these REPLACE the `sr-only` <h2>Charts</h2>
- * this tab used to carry. That heading existed for one reason, stated in
- * `run-charts.spec.ts`: `aria-label` alone never let a screen-reader user
- * navigating by heading reach this section. Four named groups do that job
- * better than one invisible word, so keeping both would leave a heading whose
- * only purpose had been taken over, and the section keeps `aria-label` for its
- * own name.
- *
- * `<h3>` WAS TRIED FIRST AND THE PAGE SAID NO. `Chart` renders each figure's
- * title as an `<h3>` at 15px — so a group heading at that level is a SIBLING of
- * the charts it contains, and at that size does not read as their parent
- * either. The failure named all nine titles, which is how the collision was
- * found. `SectionHeading`'s 16px `<h2>` is the rung above, which is what these
- * are.
- *
- * THE GRID LIVES INSIDE, one per group. Two columns above 1536px was measured
- * on the ungrouped page and the reasoning is unchanged: a chart holds a 288px
- * plot plus a legend under a header row, and two of those in a 1280px window
- * leaves each ~600px — narrow enough that a 60-bucket time axis starts dropping
- * every other tick label. Above 1536px there is room for both, and halving the
- * scroll depth is worth real time to a reader comparing two figures.
- *
- * Per group rather than one grid for the whole tab because a group is the unit
- * a reader compares within; a figure pairing across a heading boundary would be
- * the layout contradicting the structure.
- */
-function ChartGroup({
-  id,
-  heading,
-  children,
-}: {
-  readonly id: string;
-  readonly heading: string;
-  readonly children: ReactNode;
-}) {
-  return (
-    <section aria-labelledby={id}>
-      <div className="mb-3">
-        <SectionHeading id={id}>{heading}</SectionHeading>
-      </div>
-      <div className="grid grid-cols-1 gap-6 2xl:grid-cols-2">{children}</div>
-    </section>
-  );
-}
-
-export function RunChartsTab() {
-  const { runId } = useParams<{ runId: string }>();
-  const live = useLiveFromShell();
-  const { detail: run, terminal } = useRunTerminal(runId);
-  // ONE WINDOW FOR THE WHOLE PAGE, from the shell — so every figure below
-  // describes the same stretch of the run, and so the shell's own fetches
-  // share their cache keys with these rather than quietly duplicating them.
-  const window = useWindowFromShell();
-  // ONE TIME AXIS, for the same reason there is one window: the six figures
-  // below share a crosshair, and a pointer means one instant only if they all
-  // draw the same span. See `useTimeDomainFromShell`.
-  const domainMs = useTimeDomainFromShell();
-  // AC-STAT-4 — beside the domain, because it is a fact about that axis.
-  const warmupMs = useWarmupFromShell();
-  // §22.6. `enabled` carries it as well as the render below, because the point
-  // is not to DRAW less on a phone — it is not to fetch four payloads and
-  // build ten ECharts instances for a screen that cannot usefully show them.
-  // A reader who takes the override gets all four; nobody else pays.
-  const compact = useIsCompact();
-  const [shown, setShown] = useState(false);
-  const wanted = !compact || shown;
-  const on = runId !== undefined && wanted && terminal;
-  const stats = useQuery({ ...statsQuery(runId ?? '', window), enabled: on });
-  const users = useQuery({ ...usersQuery(runId ?? '', window), enabled: on });
-  const distribution = useQuery({
-    ...distributionQuery(runId ?? '', 'run', '', 'response_time', window),
-    enabled: on,
-  });
-  const series = useQuery({
-    ...seriesQuery(runId ?? '', 'run', '', 'response_time', window),
-    enabled: on,
-  });
-
-  // Same guard `RunOverviewTab` and `RunErrorsTab` carry, for the same
-  // reason: not reachable through the router with `run.data` still
-  // `undefined` past first paint.
-  if (runId === undefined || run.data === undefined) return null;
-
-  if (run.data.state === 'processing') {
-    const delta = live?.lastDelta ?? null;
-    if (delta === null) return <WaitingPanel status={run.data.run.status} />;
-
-    // §22.6 applies here exactly as it does to the terminal 8-chart grid
-    // below: five real figures plus two withheld notices is still "deep
-    // analysis", and a phone that has not asked to see it should not pay to
-    // build five ECharts instances for a screen too narrow to read them.
-    if (compact && !shown) {
-      return (
-        <DesktopOnly
-          compact
-          what="Five charts of this run"
-          action="Open the charts"
-          onShow={() => setShown(true)}
-        >
-          {() => null}
-        </DesktopOnly>
-      );
-    }
-
-    return (
-      <section
-        aria-labelledby="live-charts-heading"
-        className="grid grid-cols-1 gap-6 2xl:grid-cols-2"
-      >
-        <h2 id="live-charts-heading" className="sr-only">
-          Charts
-        </h2>
-        {users.data !== undefined && (
-          <>
-            {/* Its OWN chart, sharing the crosshair — never an overlay on
-                requests/s. See `RUN_TIME_GROUP`. */}
-            <ConcurrentUsersChart users={users.data} group={RUN_TIME_GROUP} domainMs={domainMs} warmupMs={warmupMs ?? undefined} />
-            <UserStartRateChart users={users.data} group={RUN_TIME_GROUP} domainMs={domainMs} warmupMs={warmupMs ?? undefined} />
-          </>
-        )}
-        {series.data !== undefined && (
-          <>
-            <PercentilesChart series={series.data} domainMs={domainMs} warmupMs={warmupMs ?? undefined} />
-            <RequestRateChart series={series.data} domainMs={domainMs} warmupMs={warmupMs ?? undefined} />
-            <ResponseRateChart series={series.data} domainMs={domainMs} warmupMs={warmupMs ?? undefined} />
-          </>
-        )}
-        {/* THE TWO CHART SLOTS WITH NO LIVE SOURCE ON ANY PATH — see this
-            function's own docstring. */}
-        <LiveNotice kind="withheld" subject="Response time distribution" />
-        <LiveNotice kind="withheld" subject="Response time percentiles distribution" />
-      </section>
-    );
-  }
-
-  if (compact && !shown) {
-    return (
-      <DesktopOnly
-        compact
-        what="Eight charts of this run"
-        action="Open the charts"
-        onShow={() => setShown(true)}
-      >
-        {() => null}
-      </DesktopOnly>
-    );
-  }
-
-  return (
-    // TWO COLUMNS FROM `2xl`, ONE BELOW IT — and the order the charts are
-    // declared in is preserved either way, because CSS grid fills row-major.
-    // §13.2's numbering is information (a missing ⑧ silently renumbers
-    // everything after it, which is why `payload.tsx` renders undrawn charts
-    // rather than nothing), so the pairing must never reorder them; it only
-    // decides how many sit side by side.
-    //
-    // The break is at `2xl` (1536px) rather than `xl`, because each figure
-    // holds a 288px-tall plot plus a legend beneath a header row, and two
-    // of those in a 1280px window leaves each chart ~600px — narrow enough
-    // that a 60-bucket time axis starts dropping every other tick label.
-    // Above 1536px there is room for both, and halving the scroll depth of an
-    // eight-figure page is worth real time to a reader comparing two of them.
-    <section aria-label="Charts" className="flex flex-col gap-8">
-      {/* ═══ FOUR QUESTIONS, NOT NINE FIGURES (review 09-13 M17, second half) ═══
-       *
-       * M17's first half moved each chart's exports behind one menu. Its second
-       * half is this: "organize charts into investigation groups such as Load,
-       * Latency, and Errors, with clear scope and outcome labels." Nine figures
-       * in one undifferentiated grid is a page a reader scrolls rather than
-       * reads — the headings are how they find the answer they came for.
-       *
-       * THE GROUPS WERE ALREADY IN THE ORDER, WHICH IS WHY THIS IS CHEAP. The
-       * comment this replaces described the sequence as WHAT WAS APPLIED, WHAT
-       * GOT THROUGH, WHAT IT COST. Those are the first three headings; the
-       * reading order it established is unchanged, and the headings only name
-       * what was already true.
-       *
-       * AND THE NAMES ARE THE CHARTS' OWN. All four response-time figures
-       * literally begin "Response time" — percentiles over time, ranges,
-       * distribution, percentiles distribution — so the heading is a fact about
-       * them rather than a category imposed on them.
-       *
-       * ONE FIGURE MOVED: `request-counts` was seventh, between `indicators`
-       * and `distribution`, which left the response-time run non-contiguous.
-       * It is last now. `CHART_IDS` in `run-charts.spec.ts` asserts the whole
-       * list precisely so a reorder cannot pass silently — it is updated with
-       * this change, which is that guard working rather than being worked
-       * around.
-       *
-       * THE TWO PROPERTIES THE PREVIOUS ORDER DEFENDED BOTH SURVIVE, and they
-       * are the reason `request-counts` moved rather than `percentiles`:
-       *   - the five charts sharing `RUN_TIME_GROUP`'s crosshair and domain stay
-       *     adjacent (positions 1-5), so one horizontal read still crosses all
-       *     of them;
-       *   - `distribution` and `percentile-distribution` stay adjacent, for the
-       *     reason `run-charts.spec.ts` argues at length.
-       *
-       * OUTCOMES HOLDS ONE FIGURE AND STILL EARNS A HEADING. It is the only
-       * whole-run success/failure answer on this tab, and a reader looking for
-       * "how many failed" should not have to know it is drawn as a donut at the
-       * bottom. `indicators` is NOT here despite carrying a `failed` band: its
-       * title is "Response time ranges" and three of its four bands are
-       * latency, so filing it under Outcomes would put a heading at odds with
-       * the chart under it. */}
-      <ChartGroup id="charts-offered-load" heading="Offered load">
-        <Payload query={users} slots={[CONCURRENT_USERS, USER_START_RATE]}>
-          {(data) => (
-            <>
-              {/* Its OWN chart, sharing the crosshair — never an overlay on
-                  requests/s. See `RUN_TIME_GROUP`. */}
-              <ConcurrentUsersChart users={data} group={RUN_TIME_GROUP} domainMs={domainMs} warmupMs={warmupMs ?? undefined} />
-              <UserStartRateChart users={data} group={RUN_TIME_GROUP} domainMs={domainMs} warmupMs={warmupMs ?? undefined} />
-            </>
-          )}
-        </Payload>
-      </ChartGroup>
-
-      {/* Throughput before latency: "how much got through" is the question a
-          reader asks of a load number, and "what did it cost" is the question
-          they ask of the throughput. */}
-      <ChartGroup id="charts-throughput" heading="Throughput">
-        <Payload query={series} slots={[REQUESTS_PER_SECOND, RESPONSES_PER_SECOND]}>
-          {(data) => (
-            <>
-              <RequestRateChart series={data} domainMs={domainMs} warmupMs={warmupMs ?? undefined} />
-              <ResponseRateChart series={data} domainMs={domainMs} warmupMs={warmupMs ?? undefined} />
-            </>
-          )}
-        </Payload>
-      </ChartGroup>
-
-      {/* THREE PAYLOADS, THREE QUERIES, ONE GROUP. A group is a question, and
-          the answers come from different endpoints — `Payload` is a pure render
-          prop over a query result and fetches nothing, so naming the same query
-          in two groups costs one extra render and no extra request. The
-          alternative, grouping by endpoint, is the "ordered by which query
-          produced them" mistake this tab already had once. */}
-      <ChartGroup id="charts-response-time" heading="Response time">
-        <Payload query={series} slots={[PERCENTILES]}>
-          {(data) => <PercentilesChart series={data} domainMs={domainMs} warmupMs={warmupMs ?? undefined} />}
-        </Payload>
-        <Payload query={stats} slots={[INDICATORS]}>
-          {(data) => <IndicatorsChart stats={data} />}
-        </Payload>
-        <Payload query={distribution} slots={[DISTRIBUTION, PERCENTILE_DISTRIBUTION]}>
-          {(data) => (
-            <>
-              <DistributionChart distribution={data} />
-              <PercentileDistributionChart distribution={data} />
-            </>
-          )}
-        </Payload>
-      </ChartGroup>
-
-      <ChartGroup id="charts-outcomes" heading="Outcomes">
-        <Payload query={stats} slots={[REQUEST_COUNTS]}>
-          {(data) => <RequestCountChart stats={data} />}
-        </Payload>
-      </ChartGroup>
-    </section>
   );
 }
 

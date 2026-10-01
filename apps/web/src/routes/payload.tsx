@@ -65,7 +65,7 @@ export function Payload<T>({
  * literal "chart" it used to be because the tables use this too, and a table
  * that apologised for a chart would be describing the wrong hole in the page.
  */
-function explain(error: unknown, what: string): string {
+export function explain(error: unknown, what: string): string {
   if (error instanceof ProblemError) return `${error.detail} ${error.remediation}`;
   return error instanceof Error
     ? `This ${what}’s data could not be loaded: ${error.message}`
@@ -125,11 +125,17 @@ export function Undrawn({ slot, reason }: { slot: Slot; reason: string }) {
  */
 export function TableSection<T>({
   title,
+  headingLevel = 2,
   query,
   columns,
   children,
 }: {
   title: string;
+  /**
+   * `3` when the table sits inside a section that has its own `<h2>` — the
+   * Report's Statistics under Requests — so the outline says it belongs there.
+   */
+  headingLevel?: 2 | 3;
   query: UseQueryResult<T>;
   /**
    * How many columns the table this stands in for will have.
@@ -155,7 +161,7 @@ export function TableSection<T>({
 
   return (
     <section className="flex flex-col gap-3">
-      <SectionHeading>{title}</SectionHeading>
+      <SectionHeading level={headingLevel}>{title}</SectionHeading>
       {query.isPending ? (
         <LoadingState label="Loading…">
           <SkeletonTable columns={columns} rows={5} />

@@ -520,6 +520,7 @@ export default function StatisticsTable({
   stats,
   runId,
   runStatus,
+  headingLevel = 2,
 }: {
   stats: StatsResponse;
   runId: string;
@@ -534,6 +535,11 @@ export default function StatisticsTable({
    * Optional, so every other caller keeps the unconditional wording.
    */
   runStatus?: RunResponse['status'];
+  /**
+   * `3` when this sits under a section's own `<h2>` — the Report's Requests —
+   * so the outline says the table belongs to it. The size follows the level.
+   */
+  readonly headingLevel?: 2 | 3;
 }) {
   const headingId = useId();
   const filterId = useId();
@@ -799,7 +805,7 @@ export default function StatisticsTable({
   if (total === null && tree.length === 0) {
     return (
       <section aria-labelledby={headingId} className="flex flex-col gap-3">
-        <SectionHeading id={headingId} overline="Run telemetry">Statistics</SectionHeading>
+        <SectionHeading id={headingId} level={headingLevel} overline="Run telemetry">Statistics</SectionHeading>
         {/* No table at all, rather than headings over nothing: an empty table
             reads as a run that was measured and found to have done nothing. */}
         {/* ═══ "RECORDED" IS FALSE FOR A RUN WHOSE STREAM STOPPED ═══
@@ -873,7 +879,7 @@ export default function StatisticsTable({
           32px root that input alone is 448px. Wrapping is what makes the
           answer independent of the reader's font size. */}
       <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-        <SectionHeading id={headingId} overline="Run telemetry">Statistics</SectionHeading>
+        <SectionHeading id={headingId} level={headingLevel} overline="Run telemetry">Statistics</SectionHeading>
 
         {/* G-14, THE FILTER BOX. A real `<label htmlFor>` rather than a
             placeholder: a placeholder disappears the moment the reader types,

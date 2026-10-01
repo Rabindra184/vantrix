@@ -41,7 +41,7 @@ import {
  * has no 202 branch to hand it. MINOR 4: this used to claim "charts mount
  * only under the run detail page's existing `state === 'ready'` branch, so
  * the processing case cannot arise" — no longer true since Task 7/9:
- * `RunChartsTab` (and every other tab) now mounts for a `state ===
+ * `RunReport` (and every other tab) now mounts for a `state ===
  * 'processing'` run too (design §6), and draws its own live figures there.
  * What actually prevents the processing case from reaching these queries is
  * each tab's own `enabled: terminal` gate (`useRunTerminal`,
@@ -64,7 +64,7 @@ import {
  * hypothetical — it is what this page actually does. `RunShell` fetches
  * `usersQuery` and `errorsQuery` for the header and the tab strip; `stats`,
  * `users`, `distribution` and `series` are each asked for again, under the
- * identical key, by whichever of `RunOverviewTab` / `RunChartsTab` /
+ * identical key, by whichever of `RunOverviewTab` / `RunReport` /
  * `RunErrorsTab` the reader opens — and because those are ROUTES that mount at
  * DIFFERENT times, not components sharing one render, a shared key alone only
  * dedupes observers that happen to mount while a fetch is still in flight. The
@@ -102,7 +102,7 @@ export const statsQueryKey = (id: string, window: Window | null) =>
  * KEY alone. This docstring used to say `RunDetail` "mounts the statistics
  * table and the chart stack as separate components", which was true before
  * this key had a route split to survive: today `RunOverviewTab` (the
- * statistics table, and the six stat tiles) and `RunChartsTab` (the indicator
+ * statistics table, and the six stat tiles) and `RunReport` (the indicator
  * bands and the request-count donut) are different ROUTES under `RunShell`,
  * mounted at whatever moment the reader clicks a tab — not two components
  * rendered together in one commit. A shared key on its own only dedupes

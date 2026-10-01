@@ -151,6 +151,27 @@ describe('static routes cannot shadow a project slug', () => {
     expect(runBlock).toContain('RunSectionNotFound');
   });
 
+  /**
+   * THE OLD TAB URLS STILL RESOLVE, TO THEIR NEW PLACE. `/charts` and
+   * `/load-generators` are in bookmarks and ticket links; with the routes gone
+   * they would fall into the run's not-found section, and with them pointing
+   * anywhere but the Report they would land on the wrong content. Read out of
+   * `App.tsx` for the reason the case above is: the failure is somebody
+   * deleting or re-pointing a route later, which a component test cannot see.
+   * `RunSectionRedirect.test.tsx` owns what the redirect DOES to the URL.
+   */
+  it('sends the old Charts and Load generators URLs to the Report', () => {
+    const runBlock = APP.slice(
+      APP.indexOf('<Route path="/runs/:runId"'),
+      APP.indexOf('<Route path="/runs/:runId/requests/'),
+    );
+    expect(runBlock).toMatch(/path="report"\s+element=\{<RunReport\s*\/>\}/);
+    expect(runBlock).toMatch(/path="charts"\s+element=\{<RunSectionRedirect\s+to="report"\s*\/>\}/);
+    expect(runBlock).toMatch(
+      /path="load-generators"\s+element=\{<RunSectionRedirect\s+to="report"\s+hash="load-generators"\s*\/>\}/,
+    );
+  });
+
   it('declares at least one project route, so the scan below is not vacuous', () => {
     expect(APP).toMatch(/path=(?:"|\{)[^\n]*projects/);
   });

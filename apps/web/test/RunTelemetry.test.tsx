@@ -6,12 +6,24 @@ import { MemoryRouter, Outlet, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { RunProcessing, RunResponse, TelemetryResponse } from '@perfportal/contracts';
 import { runQueryKey } from '../src/api/run';
+import type { TelemetryChartId } from '../src/charts/TelemetryCharts';
 import RunTelemetry from '../src/routes/RunTelemetry';
 import type { RunWindowContext } from '../src/routes/useRunWindow';
 import useIsCompact from '../src/useIsCompact';
 
 vi.mock('../src/useIsCompact.js', () => ({ default: vi.fn(() => false) }));
 const useIsCompactMock = vi.mocked(useIsCompact);
+
+/** Every chart — what the page drew when it was one tab. The Report splits
+ *  them across two sections; `only` is each section's share. */
+const ALL = [
+  'telemetry-cpu',
+  'telemetry-memory',
+  'telemetry-bandwidth',
+  'telemetry-connection-events',
+  'telemetry-segment-events',
+  'telemetry-tcp-states',
+] as const satisfies readonly TelemetryChartId[];
 
 const COMPLETE_RUN: RunResponse = {
   id: 'a66548b7-2962-43ff-8b93-7149a6f2a1b8',
@@ -43,7 +55,10 @@ const COMPLETE_RUN: RunResponse = {
  */
 function renderRunTelemetry(
   response: TelemetryResponse,
-  options: { readonly status?: RunProcessing['status'] | 'complete' } = {},
+  options: {
+    readonly status?: RunProcessing['status'] | 'complete';
+    readonly only?: readonly TelemetryChartId[];
+  } = {},
 ) {
   const status = options.status ?? 'complete';
   const detail =
@@ -80,7 +95,7 @@ function renderRunTelemetry(
               />
             }
           >
-            <Route path="load-generators" element={<RunTelemetry />} />
+            <Route path="load-generators" element={<RunTelemetry only={options.only ?? ALL} />} />
           </Route>
         </Routes>
       </MemoryRouter>
@@ -249,6 +264,34 @@ describe('RunTelemetry', () => {
     expect(cpuTable).not.toHaveTextContent('11');
   });
 
+  /**
+   * `only` is how the Report splits these across Connections and Load
+   * generators, so a chart is drawn in exactly one. Asserted by figure id in
+   * BOTH states, because `Payload`'s loading branch draws the slots too: a
+   * count that is right while loading and wrong once the data arrives (or the
+   * reverse) is the shape a filter applied in one place and not the other has.
+   * The two hosts make `findByRole('combobox')` wait for the RESOLVED state —
+   * it exists nowhere else.
+   */
+  it('draws exactly the charts it is asked for, loading and loaded', async () => {
+    renderRunTelemetry(
+      {
+        runId: RUN,
+        available: true,
+        bucketWidthMs: 1000,
+        window: null,
+        hosts: [host('gen-1', 0, 11), host('gen-2', 0, 99)],
+      },
+      { only: ['telemetry-bandwidth', 'telemetry-tcp-states'] },
+    );
+    const figureIds = () => screen.getAllByRole('figure').map((f) => f.getAttribute('data-testid'));
+    const expected = ['chart-telemetry-bandwidth', 'chart-telemetry-tcp-states'];
+
+    expect(figureIds()).toEqual(expected);
+    await screen.findByRole('combobox', { name: /load generator/i });
+    expect(figureIds()).toEqual(expected);
+  });
+
   it('hides the host select when there is exactly one load generator', async () => {
     renderRunTelemetry({
       runId: RUN,
@@ -387,7 +430,7 @@ describe('RunTelemetry', () => {
                 />
               }
             >
-              <Route path="load-generators" element={<RunTelemetry />} />
+              <Route path="load-generators" element={<RunTelemetry only={ALL} />} />
             </Route>
           </Routes>
         </MemoryRouter>
@@ -468,7 +511,7 @@ describe('RunTelemetry', () => {
                 />
               }
             >
-              <Route path="load-generators" element={<RunTelemetry />} />
+              <Route path="load-generators" element={<RunTelemetry only={ALL} />} />
             </Route>
           </Routes>
         </MemoryRouter>
@@ -542,6 +585,18 @@ describe('RunTelemetry — a window with no samples in it', () => {
     );
     expect(notes).toHaveLength(6);
     expect(screen.getAllByRole('figure')).toHaveLength(6);
+  });
+
+  it('explains the empty window only for the charts it owns', async () => {
+    renderRunTelemetry(WINDOWED, { only: ['telemetry-cpu', 'telemetry-memory'] });
+    const notes = await screen.findAllByText(
+      /no telemetry samples fall within the selected time window/i,
+    );
+    expect(notes).toHaveLength(2);
+    expect(screen.getAllByRole('figure').map((f) => f.getAttribute('data-testid'))).toEqual([
+      'chart-telemetry-cpu',
+      'chart-telemetry-memory',
+    ]);
   });
 
   it('does not say the agent never reported, and offers no setup step', async () => {

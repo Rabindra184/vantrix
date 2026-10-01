@@ -21,8 +21,8 @@ import { DEFAULT_ROUTE, NEW_PROJECT_ROUTE, NO_ORG_ROUTE } from './routes/paths';
  * nothing and cost a round trip before anything at all appears.
  *
  * A named export needs the `.then` dance because `lazy` resolves a module
- * whose `default` is the component; the three run tabs share `RunDetail`'s
- * module, so they resolve to ONE chunk rather than three.
+ * whose `default` is the component; the two run tabs that live in `RunDetail`'s
+ * module share it, so they resolve to ONE chunk rather than two.
  */
 const GroupDetail = lazy(() => import('./routes/GroupDetail'));
 const NewProject = lazy(() => import('./routes/NewProject'));
@@ -36,17 +36,15 @@ const TestRuns = lazy(() => import('./routes/TestRuns'));
 const NewRunnerRun = lazy(() => import('./routes/NewRunnerRun'));
 const RequestDetail = lazy(() => import('./routes/RequestDetail'));
 const RunCompare = lazy(() => import('./routes/RunCompare'));
-const RunTelemetry = lazy(() => import('./routes/RunTelemetry'));
 const RunLogs = lazy(() => import('./routes/RunLogs'));
+const RunReport = lazy(() => import('./routes/RunReport'));
+const RunSectionRedirect = lazy(() => import('./routes/RunSectionRedirect'));
 const RunTrends = lazy(() => import('./routes/RunTrends'));
 const RunSectionNotFound = lazy(() => import('./routes/RunSectionNotFound'));
 const RunList = lazy(() => import('./routes/RunList'));
 const RunDetail = lazy(() => import('./routes/RunDetail'));
 const RunOverviewTab = lazy(() =>
   import('./routes/RunDetail').then((m) => ({ default: m.RunOverviewTab })),
-);
-const RunChartsTab = lazy(() =>
-  import('./routes/RunDetail').then((m) => ({ default: m.RunChartsTab })),
 );
 const RunErrorsTab = lazy(() =>
   import('./routes/RunDetail').then((m) => ({ default: m.RunErrorsTab })),
@@ -98,8 +96,12 @@ export default function App() {
             <Route path="/projects/:slug" element={<ProjectTests />} />
             <Route path="/runs/:runId" element={<RunDetail />}>
               <Route index element={<RunOverviewTab />} />
-              <Route path="charts" element={<RunChartsTab />} />
-              <Route path="load-generators" element={<RunTelemetry />} />
+              {/* The Report holds what the Charts and Load generators tabs did.
+                  Their old URLs redirect, every query parameter kept — see
+                  `RunSectionRedirect`. */}
+              <Route path="report" element={<RunReport />} />
+              <Route path="charts" element={<RunSectionRedirect to="report" />} />
+              <Route path="load-generators" element={<RunSectionRedirect to="report" hash="load-generators" />} />
               <Route path="errors" element={<RunErrorsTab />} />
               <Route path="logs" element={<RunLogs />} />
               <Route path="trends" element={<RunTrends />} />

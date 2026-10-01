@@ -1,10 +1,10 @@
 import { Link, useParams } from 'react-router-dom';
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type { TelemetryResponse } from '@perfportal/contracts';
 import { EmptyState } from '../components/States';
 import { telemetryQuery } from '../api/metrics';
-import TelemetryCharts from '../charts/TelemetryCharts';
+import TelemetryCharts, { type TelemetryChartId } from '../charts/TelemetryCharts';
 import { CLOCK_SKEW_WARN_MS } from './clockSkew';
 import { formatDuration } from './format';
 import { Payload, Undrawn, type Slot } from './payload';
@@ -14,8 +14,11 @@ import { projectAccessPath } from './paths';
 import useIsCompact from '../useIsCompact';
 
 /**
- * `/runs/:runId/load-generators`, a child under `RunShell` (design §3, §6) —
- * spec §7's six host-telemetry charts, one load generator at a time.
+ * A Report section's BODY, not a route — spec §7's six host-telemetry charts,
+ * one load generator at a time. Connections and Load generators each mount one
+ * with their own charts (`only`), so a chart is drawn in exactly one section,
+ * and each one runs its own three states below. `telemetryQuery` is one cache
+ * key, so mounting two costs one request.
  *
  * ═══ NO ICON, NO DECORATIVE SVG IN ANY CHART FIGURE ═══
  * `Chart` renders its data table INSIDE the `<figure>`, and the e2e suite
@@ -25,13 +28,13 @@ import useIsCompact from '../useIsCompact';
  * the six charts rather than nesting inside one, and renders a `div`, never a
  * `figure`.
  *
- * ═══ NO `uppercase` ON THE SECTION HEADING OR THE SELECT LABEL ═══
+ * ═══ NO `uppercase` ON THE SELECT LABEL ═══
  * Playwright applies `text-transform` when computing an accessible name;
- * jsdom does not. A heading or label queried by name must not carry it.
+ * jsdom does not. A label queried by name must not carry it.
  *
  * ═══ THE `run-time` GROUP IS THE WHOLE POINT ═══
- * Hovering any one of the six telemetry charts moves the pointer on the
- * other five at the same instant — the reason this tab exists rather than a
+ * Hovering any one of the telemetry charts moves the pointer on the others
+ * at the same instant — the reason this is a page of charts rather than a
  * link out to Grafana. It works only because the endpoint returns the run's
  * own offsets at the run's own bucket width — see `TelemetryCharts.tsx`,
  * which actually assigns the group.
@@ -66,7 +69,7 @@ import useIsCompact from '../useIsCompact';
  * nothing re-fetched it (`invalidateLiveWrites` never touches this key — it
  * is not one of the three the socket writes). The `!terminal` branch below
  * now returns the "wait" `EmptyState` directly, and `enabled` carries
- * `terminal` too, so a live run's tab never asks `/telemetry` at all — there
+ * `terminal` too, so a live run's section never asks `/telemetry` at all — there
  * is nothing for a later terminal transition to have left stale.
  */
 
@@ -83,8 +86,11 @@ const NO_SAMPLES_IN_WINDOW =
   'No telemetry samples fall within the selected time window for any load generator. Widen ' +
   "the range to see this run's host metrics.";
 
-export default function RunTelemetry() {
+export default function RunTelemetry({ only }: { readonly only: readonly TelemetryChartId[] }) {
   const { runId } = useParams<{ runId: string }>();
+  // The slots this section owns. The `as` is the one place a plain string id
+  // meets the union `only` is typed in; `TelemetryCharts` takes the same list.
+  const slots = TELEMETRY_SLOTS.filter((s) => only.includes(s.id as TelemetryChartId));
   // Gates BOTH the query's `enabled` and the early return below (CRITICAL 1):
   // telemetry is never fetched while live, and the live wording never comes
   // from a fetch at all — `available` would always read `false` for a
@@ -111,6 +117,10 @@ export default function RunTelemetry() {
   // selected name (a narrower window, a different run) — no effect needed to
   // notice the mismatch and no stale selection ever rendered.
   const [selectedHost, setSelectedHost] = useState<string | undefined>(undefined);
+  // Per instance, because the Report mounts this twice (Connections and Load
+  // generators) and a fixed id would repeat in one document — the second
+  // label would then name the FIRST section's select.
+  const hostSelectId = useId();
 
   // EVERY HOOK ABOVE THIS LINE RUNS ON EVERY RENDER, UNCONDITIONALLY.
   // `useQuery` used to sit AFTER the `compact && !shown` early return below,
@@ -174,7 +184,7 @@ export default function RunTelemetry() {
   }
 
   return (
-    <Payload query={telemetry} slots={TELEMETRY_SLOTS}>
+    <Payload query={telemetry} slots={slots}>
       {(data) => {
         if (!data.available) {
           // Not an empty chart — that would read as an idle machine. This
@@ -248,17 +258,13 @@ export default function RunTelemetry() {
 
         if (hosts.length === 0) {
           return (
-            <section
-              aria-labelledby="load-generators-heading"
-              className="grid grid-cols-1 gap-6 2xl:grid-cols-2"
-            >
-              <h2 id="load-generators-heading" className="sr-only">
-                Load generators
-              </h2>
-              {TELEMETRY_SLOTS.map((slot) => (
+            // A plain grid, not a `<section>` with its own heading: the Report's
+            // section heading already names these charts.
+            <div className="grid grid-cols-1 gap-6 2xl:grid-cols-2">
+              {slots.map((slot) => (
                 <Undrawn key={slot.id} slot={slot} reason={NO_SAMPLES_IN_WINDOW} />
               ))}
-            </section>
+            </div>
           );
         }
 
@@ -271,11 +277,11 @@ export default function RunTelemetry() {
                 that does nothing. */}
             {hosts.length > 1 && (
               <div className="flex items-center gap-2">
-                <label htmlFor="load-generator-host" className="shrink-0 text-[0.75rem] text-muted">
+                <label htmlFor={hostSelectId} className="shrink-0 text-[0.75rem] text-muted">
                   Load generator
                 </label>
                 <select
-                  id="load-generator-host"
+                  id={hostSelectId}
                   value={host.host}
                   onChange={(event) => setSelectedHost(event.target.value)}
                   className="rounded border border-default bg-surface px-2 py-1 text-sm text-primary"
@@ -302,7 +308,7 @@ export default function RunTelemetry() {
               </p>
             )}
 
-            <TelemetryCharts host={host} domainMs={domainMs} />
+            <TelemetryCharts host={host} domainMs={domainMs} only={only} />
           </div>
         );
       }}

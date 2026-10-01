@@ -1933,3 +1933,31 @@ describe('StatisticsTable — a shared link carries the question', () => {
     expect(junk, 'an unknown column must render the default view').toBe(firstBodyPath());
   });
 });
+
+describe('StatisticsTable — its heading level', () => {
+  /**
+   * The Report puts this table inside its Requests section, which has an
+   * `<h2>`; the table's own heading is the `<h3>` under it. There are TWO
+   * places the table draws that heading (a run with rows, and one with none),
+   * so both are asserted — passing the level to one and forgetting the other
+   * leaves an outline that is right until a run records nothing.
+   */
+  it.each([
+    ['with rows', stats],
+    ['with none', { ...stats, stats: [] } as StatsResponse],
+  ])('is a section heading by default and one level down when told to (%s)', (_state, payload) => {
+    render(
+      <MemoryRouter>
+        <StatisticsTable stats={payload} runId={RUN_ID} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole('heading', { level: 2, name: 'Statistics' })).toBeDefined();
+    cleanup();
+    render(
+      <MemoryRouter>
+        <StatisticsTable stats={payload} runId={RUN_ID} headingLevel={3} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole('heading', { level: 3, name: 'Statistics' })).toBeDefined();
+  });
+});

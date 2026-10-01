@@ -18,7 +18,7 @@ import { errorsQueryKey, seriesQueryKey, usersQueryKey } from './metrics';
  * reconnects with backoff on any RETRYABLE close — never on `CLOSE_UNAUTHORIZED`
  * (4401), which `LiveRunState.unauthorized` surfaces instead of silently
  * retrying forever. The charts are never told any of this happened:
- * `RunChartsTab`/`RunOverviewTab`/`RunErrorsTab` and everything they render
+ * `RunReport`/`RunOverviewTab`/`RunErrorsTab` and everything they render
  * are unmodified by this file, and read whatever is in the cache regardless
  * of whether it arrived over REST or over this socket (design part 1 §4,
  * part 2b §4.1).
@@ -270,7 +270,7 @@ function errorsResponseFrom(runId: string, envelope: LiveDelta['errors']): Error
  * `seriesQueryKey` (`./metrics.ts`) does NOT fold a window into itself the
  * way `usersQueryKey`/`errorsQueryKey` do — `seriesQuery` appends
  * `window?.fromMs ?? null, window?.toMs ?? null` EXTERNALLY, so the key a
- * mounted chart actually subscribes to (`RunChartsTab`, `RunOverviewTab`'s
+ * mounted chart actually subscribes to (`RunReport`, `RunOverviewTab`'s
  * sparkline) is eight elements, not six. A live view is never windowed — the
  * domain grows with the run instead of being narrowed — so the two trailing
  * nulls below are exactly what `seriesQuery(id, 'run', '', 'response_time',
@@ -296,7 +296,7 @@ function applyDelta(queryClient: QueryClient, runId: string, delta: LiveDelta): 
  *
  * The three keys `applyDelta` writes are BYTE-IDENTICAL to the ones the
  * FINISHED run page subscribes to: `RunShell` mounts `usersQuery(run.id)` and
- * `errorsQuery(run.id)`, and `RunChartsTab` the same eight-element series key
+ * `errorsQuery(run.id)`, and `RunReport` the same eight-element series key
  * `liveSeriesKey` builds. Every one of those factories carries `staleTime:
  * Infinity` (`api/metrics.ts`) — correct for a completed run, whose metrics
  * never change, and fatal for one this socket has been writing into: nothing
@@ -310,7 +310,7 @@ function applyDelta(queryClient: QueryClient, runId: string, delta: LiveDelta): 
  * INVALIDATE, NEVER REMOVE. `invalidateQueries` marks the entry stale and
  * refetches only ACTIVE observers; the three queries named above are each
  * gated so none of them fetch while the run is non-terminal — `RunShell`'s
- * `users`/`errors` read `enabled: terminal` directly, and `RunChartsTab`'s
+ * `users`/`errors` read `enabled: terminal` directly, and `RunReport`'s
  * `series` folds the identical `terminal` check into its own `enabled: on`
  * (`useRunTerminal`, `useRunWindow.ts`, is where that flag comes from) — so
  * the frozen dashboard (§4.4) keeps drawing the last delta while the run

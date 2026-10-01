@@ -421,11 +421,11 @@ describe('RunDetail — one shell, for every state', () => {
  * notice's absence). The remaining claim — exactly four withheld-chart
  * notices appear once a delta has arrived — RESOLVED across the three tabs
  * that now split it: `RunOverviewTab.live.test.tsx`'s "states that the
- * statistics table is withheld" (1), `RunChartsTab.live.test.tsx`'s "draws
- * the five live figures and states the two that are withheld" (2), and
+ * statistics table is withheld" (1), `RunReport.live.test.tsx`'s "draws
+ * the live figures and states the five that are withheld" (five now: the
+ * Charts tab's two, Errors per second's, and the two charts it used to omit), and
  * `RunErrorsTab.live.test.tsx`'s "keeps the errors table live and states
- * that the chart is not" (1) — four, matching the original count, on three
- * different URLs instead of one.
+ * that the chart is not" (1) — on different URLs instead of one.
  *
  * Old: "keeps the ordinary Processing screen while running with no delta
  * yet" / "...for a run never live this session". RESOLVED in fix round 1:
@@ -452,8 +452,8 @@ describe('RunDetail — one shell, for every state', () => {
  * Old: "draws the live charts from whatever the socket already wrote to the
  * cache" / "gates the charts and the three withheld notices behind
  * DesktopOnly on a narrow viewport". RESOLVED in Task 9:
- * `RunChartsTab.live.test.tsx`'s "draws the five live figures and states the
- * two that are withheld" (seeds the cache directly, at the SAME keys
+ * `RunReport.live.test.tsx`'s "draws the live figures and states the five that
+ * are withheld" (seeds the cache directly, at the SAME keys
  * `applyDelta` writes, rather than mocking a fetch) and "gates the live
  * charts behind DesktopOnly on a narrow viewport".
  *

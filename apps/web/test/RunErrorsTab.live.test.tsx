@@ -14,7 +14,7 @@ import type { RunWindowContext } from '../src/routes/useRunWindow';
  * `RunErrorsTab`'s live branch (Task 10).
  *
  * Mounted the same way `RunOverviewTab.live.test.tsx` and
- * `RunChartsTab.live.test.tsx` mount their own tabs — a stand-in
+ * `RunReport.live.test.tsx` mount their own tabs — a stand-in
  * `<Outlet context={{...}} />` for `RunShell`, plus a pre-seeded `run` query
  * cache so the assertions below need no `await`.
  *
