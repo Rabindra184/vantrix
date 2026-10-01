@@ -184,7 +184,9 @@ export class Sweeper {
 
       // Past the commit the rows are no longer locked and the claim is
       // durable: each of these is at `parsing` with `stream_abandoned_at`
-      // set, which no other sweep will select and no producer can revive.
+      // set, which no producer can revive and no other sweep selects until
+      // `parsing_started_at` is stale — the recovery `#assembleAbandoned`
+      // leaves a stored log to when its re-enqueue fails.
       for (const run of toAssemble) await this.#assembleAbandoned(run.id, run.bundleKey);
       return rows.length;
     } catch (err) {
@@ -289,13 +291,19 @@ export class Sweeper {
    *
    * ═══ FAILURE LEAVES TODAY'S OUTCOME, NEVER A WORSE ONE ═══
    *
-   * If any of this throws — the bucket is unreachable, the chunks are gone,
-   * the log is so short it holds no whole record — the run is finalized
-   * `incomplete` with no statistics, which is precisely what it got before
-   * this method existed. So the change is an improvement in the good case and
-   * a no-op in the bad one, and it can never strand a run at `parsing`.
+   * If any of this throws BEFORE the whole-record log is stored and its sha
+   * recorded — the bucket is unreachable, the chunks are gone, the log is so
+   * short it holds no whole record — the run is finalized `incomplete` with
+   * no statistics, which is precisely what it got before this method existed.
+   * AFTER that point, a failure to enqueue leaves the run at `parsing` with
+   * its valid log, for this sweep's `parsing` arm to re-enqueue once it is
+   * stale: left for a known recovery, never stranded.
    */
   async #assembleAbandoned(runId: string, bundleKey: string): Promise<void> {
+    // Whether the whole-record log is stored AND its sha recorded. Past that
+    // point the run is a valid `parsing` row carrying `stream_abandoned_at`,
+    // and a failure to enqueue it must not throw that away — see the catch.
+    let stored = false;
     try {
       await this.chunks.finalize(runId, bundleKey);
       const assembled = await this.blobs.get(bundleKey);
@@ -325,8 +333,23 @@ export class Sweeper {
         `UPDATE run SET bundle_sha256 = $2, bundle_bytes = $3 WHERE id = $1`,
         [runId, sha256, bytes],
       );
+      stored = true;
       await this.#reenqueue(runId);
     } catch (err) {
+      // ═══ A STORED LOG IS LEFT FOR THE NEXT SWEEP, NOT THROWN AWAY ═══
+      //
+      // This catch used to finalize the run `incomplete` on ANY failure, so a
+      // queue that refused the job AFTER the log was stored and hashed cost
+      // the reader statistics the product had already kept. Past that point
+      // the row is at `parsing` with `stream_abandoned_at` set and a valid
+      // bundle, which is exactly what this sweep's own `parsing` arm
+      // re-enqueues once `parsing_started_at` is stale — the same recovery
+      // `close()` relies on past the same point, and what the on-prem
+      // runner's `closeAbandoned` already does.
+      if (stored) {
+        console.error(`sweeper: abandoned run ${runId} is stored but could not be queued; a later sweep will re-enqueue it:`, err);
+        return;
+      }
       // NOT swallowed silently. The tick must not die because one abandoned
       // run's bucket misbehaved — the run still reaches a correct terminal
       // state on the line below — but a failure here means a reader lost
