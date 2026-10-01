@@ -95,7 +95,7 @@ test('the filters are folded away until something is filtering', async ({ page }
   await expect(page.getByTestId('compact-filters')).toHaveAttribute('open', /.*/);
 });
 
-test('a run’s Summary leads with its decision and mounts no drag control', async ({ page }) => {
+test('a run’s Summary leads with its decision, and its numbers start on the first screen', async ({ page }) => {
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
@@ -117,7 +117,9 @@ test('a run’s Summary leads with its decision and mounts no drag control', asy
      below, where a window really can arrive. `toHaveCount(0)`, not "not
      visible": the point is that no ECharts instance is built at all, which is
      what `DesktopOnly`'s function-children contract exists to guarantee
-     elsewhere. */
+     elsewhere. Kept as a regression guard on the shell's `onReport` gate
+     rather than as this case's subject, which is why the case is no longer
+     named for it. */
   await expect(page.getByTestId('time-brush')).toHaveCount(0);
 
   /* ═══ THE NUMBERS' TOP, AND THE BOUND IS THE VIEWPORT NOW ═══
@@ -140,7 +142,7 @@ test('a run’s Summary leads with its decision and mounts no drag control', asy
    * thing M02 is about rather than a waypoint towards it — which is why a
    * measurement past it is a regression and the bound does not move.
    *
-   * THE SUMMARY/SPLIT'S MEASUREMENT, AT 375x812 ON THIS RUN (backlog #7):
+   * THE SUMMARY/REPORT SPLIT'S MEASUREMENT, AT 375x812 ON THIS RUN (backlog #7):
    * the `<h1>` 152.5-180.5, the tab strip 298-339, the lifecycle line
    * 363.4-379.4, the decision band 387.4-737.4, the run-totals section from
    * 761.4, and its first tile at 804.4 — 7.6px inside the bound (the M02
@@ -159,8 +161,10 @@ test('a run’s Summary leads with its decision and mounts no drag control', asy
   /* ANCHORED ON THE FIRST TILE, ASKED OF THE DOM RATHER THAN NAMED.
    *
    * This measured `[data-testid="stat-total-requests"]`, which was the first
-   * tile when the bound was written and is the FOURTH since the 09-13
-   * review's target layout put p95 first. The claim above is about where the
+   * tile when the bound was written, the FOURTH once the 09-13 review's target
+   * layout put p95 first, and is the second of the Summary's four now (Error
+   * rate, Requests, Peak users, p95 — so the first is `stat-error-rate`). The
+   * claim above is about where the
    * numbers START; naming one tile quietly made it a claim about the Requests
    * tile's position, so a reorder that moved nothing a reader cares about —
    * the section's top and its first row are unchanged — dropped Requests to

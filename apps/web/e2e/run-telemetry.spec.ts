@@ -82,6 +82,12 @@ test.describe('Load generators', () => {
     await page.goto(runReportPath(runId));
     await openBothSections(page);
 
+    // Awaited BEFORE the containment reads below: `evaluateAll` is an
+    // immediate read with no auto-waiting, and `openSection` waits only for
+    // the heading button's `aria-expanded`, not for the figures under it.
+    const chartFigures = figures(page);
+    await expect(chartFigures).toHaveCount(6);
+
     // WHICH SECTION HOLDS WHICH FIGURE, in GE's split: Bandwidth and TCP
     // connections by state under Connections; the rest under Load generators.
     // Containment, not presence — six figures drawn under one section would
@@ -99,9 +105,6 @@ test.describe('Load generators', () => {
         .evaluateAll((nodes) => nodes.map((n) => n.getAttribute('data-testid')));
       expect(inside, `${section} holds the wrong figures`).toEqual(ids.map((id) => `chart-${id}`));
     }
-
-    const chartFigures = figures(page);
-    await expect(chartFigures).toHaveCount(6);
 
     // ONE SVG PER PLOT. A chart that failed to draw renders its axes and
     // nothing else, and only a mark count catches that. Scoped to the canvas

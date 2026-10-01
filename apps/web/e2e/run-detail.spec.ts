@@ -555,11 +555,11 @@ test('the errors table counts distinct messages, not failed requests', async ({ 
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
 
-  const stats = await apiJson<{ stats: { scope: string; koCount: number }[] }>(
+  const stats = await apiJson<{ stats: { scope: string; family: string; koCount: number }[] }>(
     page,
     `/v1/runs/${runId}/stats`,
   );
-  const ko = stats.stats.find((row) => row.scope === 'run')!.koCount;
+  const ko = stats.stats.find((row) => row.scope === 'run' && row.family === 'response_time')!.koCount;
 
   await page.goto(runPath(runId));
   // `.count()` reads the DOM as it stands, with none of `expect(locator)`'s
@@ -649,9 +649,9 @@ test('each tab of a LIVE run is its own URL, reachable directly', async ({ page 
  * A STALE LINK TO A RENAMED SECTION KEEPS THE RUN.
  *
  * The Load generators tab lived at `/telemetry` before it was
- * `/load-generators` — and that is a Report section now — and any such URL used
- * to match nothing under
- * `/runs/:runId` and fall through to `App.tsx`'s global `<Route path="*">`,
+ * `/load-generators` (a Report section now, reached by a redirect). Before the
+ * not-found route existed, any such URL matched nothing under `/runs/:runId`
+ * and fell through to `App.tsx`'s global `<Route path="*">`,
  * which redirects to `/runs`. The reader was silently moved from the run they
  * had open to the top of the run list.
  *
