@@ -169,6 +169,32 @@ describe('CollapsibleSection', () => {
     expect(within(section).getByText('1 failed, 2 passed')).toBeVisible();
     expect(heading).not.toContainElement(within(section).getByRole('button', { name: 'Export CSV' }));
   });
+
+  /** The summary sits BESIDE the heading, so it is not announced with the button
+   *  unless something ties them: a screen-reader user reached "Platform gates"
+   *  and heard nothing of "1 failed, 2 passed" — the one fact a shut bar exists
+   *  to give before it is opened. A description, not part of the name, which
+   *  stays exactly the title. Asserted as a pair with the section that has no
+   *  summary, which must carry no `aria-describedby` at all rather than one
+   *  pointing at nothing. */
+  it('ties its summary to the button as a description, and only when there is one', () => {
+    renderAt(
+      '/r',
+      <>
+        <CollapsibleSection id="platform-gates" title="Platform gates" summary="1 failed, 2 passed">
+          {() => null}
+        </CollapsibleSection>
+        <CollapsibleSection id="groups" title="Groups">
+          {() => null}
+        </CollapsibleSection>
+      </>,
+    );
+    const gates = screen.getByRole('button', { name: 'Platform gates' });
+    expect(gates).toHaveAccessibleDescription('1 failed, 2 passed');
+    const groups = screen.getByRole('button', { name: 'Groups' });
+    expect(groups).not.toHaveAttribute('aria-describedby');
+    expect(groups).toHaveAccessibleDescription('');
+  });
 });
 
 describe('SectionHeading', () => {

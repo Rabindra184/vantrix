@@ -34,6 +34,14 @@ import SectionHeading from './SectionHeading';
  * text is exactly `title`, which e2e specs compare verbatim. The button's
  * `::after` covers the whole row so the row is the click target, and the
  * actions sit above that layer.
+ *
+ * AND THE SUMMARY IS THE BUTTON'S DESCRIPTION. It is beside the heading so the
+ * button's NAME stays exactly `title`, but a sibling is not announced with the
+ * control: a screen-reader user landing on "Simulation assertions" heard
+ * nothing of "1 failed, 2 passed", which is the one thing a collapsed bar
+ * exists to say before it is opened. `aria-describedby` ties them without
+ * touching the name — and only when a summary is rendered, so the attribute
+ * never points at nothing.
  */
 export default function CollapsibleSection({
   id,
@@ -59,6 +67,9 @@ export default function CollapsibleSection({
     if (named) setOpen(true);
   }, [named]);
   const regionId = useId();
+  // Always allocated (a hook cannot be conditional); only USED when there is a
+  // summary to point at.
+  const summaryId = useId();
   const headingId = `${id}-heading`;
 
   return (
@@ -75,6 +86,7 @@ export default function CollapsibleSection({
             type="button"
             aria-expanded={open}
             aria-controls={regionId}
+            aria-describedby={summary !== undefined ? summaryId : undefined}
             onClick={() => setOpen((was) => !was)}
             className="flex items-center gap-2 text-left after:absolute after:inset-0 after:content-['']"
           >
@@ -84,7 +96,11 @@ export default function CollapsibleSection({
             />
           </button>
         </SectionHeading>
-        {summary !== undefined && <div className="text-[0.8125rem] text-muted">{summary}</div>}
+        {summary !== undefined && (
+          <div id={summaryId} className="text-[0.8125rem] text-muted">
+            {summary}
+          </div>
+        )}
         {actions !== undefined && (
           <div className="relative z-10 ml-auto flex items-center gap-2">{actions}</div>
         )}
