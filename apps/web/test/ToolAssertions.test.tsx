@@ -540,8 +540,9 @@ describe('ToolAssertions — the target leads somewhere', () => {
    * ═══ A BREACH THAT LOOKED LIKE HEADROOM ═══
    *
    * `error_rate` is stored as a fraction (`koCount / count`) and shown as a
-   * percentage on every other surface. The limit already went through
-   * `formatSlaValue`; the ACTUAL did not, so a failed rule read
+   * percentage on every other surface. The limit already went through the
+   * unit formatter (`formatSlaBound` now, and the actual `formatSlaMeasured`);
+   * the ACTUAL did not, so a failed rule read
    *
    *     error_rate of the run (response_time) ≤ 1%
    *     Actual 0.02

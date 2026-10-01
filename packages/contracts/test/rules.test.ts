@@ -15,7 +15,8 @@ import {
   SLA_METRIC_UNITS,
   describeSlaMeasurement,
   describeSlaOutcome,
-  formatSlaValue,
+  formatSlaBound,
+  formatSlaMeasured,
   fractionToPercent,
   percentToFraction,
 } from '../src/rules.js';
@@ -365,42 +366,43 @@ describe('slaThresholdWarning', () => {
  */
 describe('SLA threshold units', () => {
   it('renders a fraction metric as the percentage every other surface shows', () => {
-    expect(formatSlaValue('error_rate', 0.0268)).toBe('2.68%');
-    expect(formatSlaValue('error_rate', 0.01)).toBe('1%');
+    expect(formatSlaBound('error_rate', 0.0268)).toBe('2.68%');
+    expect(formatSlaBound('error_rate', 0.01)).toBe('1%');
   });
 
   it('names milliseconds for a latency metric', () => {
-    expect(formatSlaValue('p95', 800)).toBe('800 ms');
-    expect(formatSlaValue('mean', 250)).toBe('250 ms');
+    expect(formatSlaBound('p95', 800)).toBe('800 ms');
+    expect(formatSlaBound('mean', 250)).toBe('250 ms');
   });
 
   it('names the rate and count units too', () => {
-    expect(formatSlaValue('throughput_rps', 12)).toBe('12/s');
-    expect(formatSlaValue('count', 900)).toBe('900');
+    expect(formatSlaBound('throughput_rps', 12)).toBe('12/s');
+    expect(formatSlaBound('count', 900)).toBe('900');
   });
 
   /** IEEE 754 makes the naive form ugly AND wrong-looking: `0.07 * 100` is
    *  7.000000000000001, and extra digits in a gate invite a reader to wonder
    *  what they mean. */
   it('does not leak floating-point noise into a gate', () => {
-    expect(formatSlaValue('error_rate', 0.07)).toBe('7%');
+    expect(formatSlaBound('error_rate', 0.07)).toBe('7%');
 
-    /* ═══ THE ACTUAL GOES THROUGH THE SAME FUNCTION AS THE LIMIT ═══
+    /* ═══ THE ACTUAL IS IN THE SAME UNIT AS THE LIMIT ═══
      *
-     * The rename is the fix: a rule's bound and the measurement judged against
-     * it are one quantity in one unit, and only the bound used to come through
-     * here. A failed error-rate rule read `Actual 0.02` under `≤ 1%` — the
-     * value that BREACHED the gate looking like half of it.
+     * A rule's bound and the measurement judged against it are one quantity in
+     * one unit, and only the bound used to be converted. A failed error-rate
+     * rule read `Actual 0.02` under `≤ 1%` — the value that BREACHED the gate
+     * looking like half of it. The two roles are two functions now
+     * (`formatSlaBound`, `formatSlaMeasured`) and share one unit decision.
      *
      * Asserted as the PAIR rather than as one string, because that is the
      * property: whatever the rendering becomes, the two sides of a comparison
      * must not be in different units. The raw actual is included so the
      * floating-point noise the evidence table used to print is visibly gone. */
     const stored = 0.0223463687150838;
-    expect(formatSlaValue('error_rate', stored)).toBe('2.2346%');
-    expect(formatSlaValue('error_rate', stored)).not.toBe(String(stored));
+    expect(formatSlaMeasured('error_rate', stored, 0.01)).toBe('2.2346%');
+    expect(formatSlaMeasured('error_rate', stored, 0.01)).not.toBe(String(stored));
     // Both sides of the one comparison a reader has to make, in one unit.
-    expect(formatSlaValue('error_rate', 0.01)).toBe('1%');
+    expect(formatSlaBound('error_rate', 0.01)).toBe('1%');
     expect(fractionToPercent(0.07)).toBe(7);
     expect(fractionToPercent(0.001)).toBe(0.1);
   });
@@ -426,37 +428,69 @@ describe('SLA threshold units', () => {
 });
 
 /**
- * ═══ A MEASURED MILLISECOND IS NOT THIRTEEN DECIMAL PLACES ═══
+ * ═══ A LIMIT READS BACK AS TYPED; A MEASUREMENT IS ROUNDED FOR READING ═══
  *
- * The `ms` and `req/s` arms printed the raw number, so a real run's p95 gate
- * read "Actual: 645.5906777012351 ms" — and its sentence repeated it — while
- * the p95 tile above said 646 ms and the simulation-assertions bar beside it
- * printed "1686.14 ms". Two decimals, trailing zeros dropped, is that bar's
- * own precision (`toolAssertion.ts`' `formatActual`): two kinds of check side
- * by side now read their actuals the same way.
+ * One function used to render both, at two decimals, and that was wrong twice.
+ * It rounded away what a person TYPED -- a bound of `0.004` req/s read "at
+ * least 0/s" and `100.004` ms read "at most 100 ms" -- and it rounded a
+ * MEASUREMENT into equality with its own limit, so a breach read "100 ms
+ * exceeds the 100 ms limit". Two roles, two functions, one unit decision.
  *
- * Fine enough for a BOUND an author typed — `99.5` stays `99.5` — which is
- * the half that rules out whole milliseconds: this function renders the
- * threshold too, and rounding a typed limit would misstate the rule.
+ * The cases below are written as exclusive pairs: what a bound keeps is
+ * asserted beside what a measurement drops, because either alone passes
+ * against the function that does both.
  */
-describe('formatSlaValue — milliseconds and rates, rounded for reading', () => {
+describe('formatSlaBound — a limit exactly as its author typed it', () => {
+  it('reads a time limit back as typed, with no trailing zeros', () => {
+    expect(formatSlaBound('p95', 99.5)).toBe('99.5 ms');
+    expect(formatSlaBound('p95', 100.004)).toBe('100.004 ms');
+    expect(formatSlaBound('p95', 800)).toBe('800 ms');
+  });
+
+  /** The authoring form accepts any decimals, and a rate is the case that
+   *  reaches here in practice: the throughput tile prints two decimals and an
+   *  author copies them. `0.004` was "at least 0/s". */
+  it('reads a rate limit back as typed', () => {
+    expect(formatSlaBound('throughput_rps', 0.004)).toBe('0.004/s');
+    expect(formatSlaBound('throughput_rps', 14.17)).toBe('14.17/s');
+    expect(formatSlaBound('throughput_rps', 50)).toBe('50/s');
+  });
+
+  /** Floating-point noise is the ONE thing taken off a bound, and it is taken
+   *  off at fifteen significant digits -- the most a double carries faithfully
+   *  -- so nothing a person could have typed is touched. */
+  it('strips floating-point noise from a limit and nothing else', () => {
+    expect(formatSlaBound('p95', 0.1 + 0.2)).toBe('0.3 ms');
+    expect(formatSlaBound('p95', 123456.789012345)).toBe('123456.789012345 ms');
+  });
+});
+
+describe('formatSlaMeasured — a measurement, rounded for reading', () => {
   it('rounds a measured time to two decimals', () => {
-    expect(formatSlaValue('p95', 645.5906777012351)).toBe('645.59 ms');
-    expect(formatSlaValue('mean', 2515.4601126102525)).toBe('2515.46 ms');
+    expect(formatSlaMeasured('p95', 645.5906777012351, 2000)).toBe('645.59 ms');
+    expect(formatSlaMeasured('mean', 2515.4601126102525, 3000)).toBe('2515.46 ms');
   });
 
-  it('rounds a measured rate to two decimals', () => {
-    expect(formatSlaValue('throughput_rps', 14.40123456)).toBe('14.4/s');
+  it('rounds a measured rate to two decimals, dropping trailing zeros', () => {
+    expect(formatSlaMeasured('throughput_rps', 14.40123456, 10)).toBe('14.4/s');
+    expect(formatSlaMeasured('throughput_rps', 92, 80)).toBe('92/s');
   });
 
-  it('keeps a bound the author typed exactly as typed, and adds no trailing zeros', () => {
-    expect(formatSlaValue('p95', 99.5)).toBe('99.5 ms');
-    expect(formatSlaValue('p95', 800)).toBe('800 ms');
-    expect(formatSlaValue('throughput_rps', 50)).toBe('50/s');
+  /** THE CONVERSE OF THE FLIP GUARD (see `describeSlaOutcome`). Widening is for
+   *  a measurement that rounding would make equal to its bound, and for no
+   *  other: a measurement that is not ambiguous keeps its two decimals, so the
+   *  guard cannot degrade into "always show more digits". */
+  it('keeps two decimals when rounding creates no ambiguity', () => {
+    expect(formatSlaMeasured('mean', 100.004, 800)).toBe('100 ms');
+    expect(formatSlaMeasured('p95', 645.5906777012351, 645)).toBe('645.59 ms');
   });
 
-  it('passes a non-finite value through rather than inventing one', () => {
-    expect(formatSlaValue('p95', Number.NaN)).toBe('NaN ms');
+  /** AND THE MIRROR OF IT. A measurement exactly equal to its limit has to
+   *  read as that limit, or "100.004 ms is within the 100.004 ms limit" prints
+   *  its left side as `100`. */
+  it('shows a measurement equal to its limit as that limit', () => {
+    expect(formatSlaMeasured('mean', 100.004, 100.004)).toBe('100.004 ms');
+    expect(formatSlaMeasured('throughput_rps', 14.1698, 14.1698)).toBe('14.1698/s');
   });
 });
 
@@ -548,6 +582,24 @@ describe('describeSlaRule', () => {
         threshold: 0.01,
       }),
     ).toBe('The whole run: error rate must be at most 1%.');
+  });
+
+  /**
+   * THE PREVIEW IS THE ONE PLACE A BOUND IS READ BACK TO THE PERSON WHO JUST
+   * TYPED IT, so it is where rounding one is most visibly wrong: a minimum of
+   * `0.004` req/s read "must be at least 0/s". The authoring form accepts any
+   * decimals.
+   */
+  it('reads a typed bound back as typed, however small', () => {
+    expect(
+      describeSlaRule({
+        scope: 'run',
+        targetName: null,
+        metric: 'throughput_rps',
+        comparator: 'gte',
+        threshold: 0.004,
+      }),
+    ).toBe('The whole run: throughput must be at least 0.004/s.');
   });
 
   /** A scoped rule with no target yet judges every one of them — which is what
@@ -662,14 +714,11 @@ describe('describeSlaOutcome', () => {
     );
   });
 
-  /** The claim that actually matters, and the one a verbatim assertion above
-   *  would not survive a rewording of: none of the stored schema reaches the
-   *  reader. `(response_time)` is the half review.md 3 calls not merely
-   *  unreadable but FALSE, and the raw fraction is the half review.md 1 calls
-   *  a correctness defect. */
   /** The same rounding reaches the sentence, which is where the thirteen
    *  digits were most conspicuous: the decision band and every gate card
-   *  print it. */
+   *  print it. It is also the CONVERSE of the three flip cases below: a
+   *  measurement that is not ambiguous against its limit keeps its two
+   *  decimals, so the guard cannot become "always show more digits". */
   it('states a measured time at the precision the cards beside it use', () => {
     const sentence = describeSlaOutcome({
       outcome: 'passed',
@@ -683,6 +732,65 @@ describe('describeSlaOutcome', () => {
     expect(sentence).not.toMatch(/645\.5906/);
   });
 
+  /**
+   * ═══ A BREACH MAY NOT READ AS EQUAL TO ITS OWN LIMIT ═══
+   *
+   * Rounding a measurement to two decimals made "100.004 ms exceeds the 100 ms
+   * limit" read "100 ms exceeds the 100 ms limit" -- the decision band, the
+   * largest sentence on the run page, contradicting itself -- and the gates
+   * table's Actual cell beside its Limit cell said the same. The first version
+   * of the rounding change introduced it.
+   *
+   * Each case asserts the property (the rendered actual differs from the
+   * rendered bound) AND the sentence, because the property alone passes
+   * against a guard that widens by the wrong amount, and the sentence alone
+   * does not say why it is the sentence.
+   */
+  const wholeRun = (metric: string, comparator: 'lte' | 'gte', threshold: number) => ({
+    scope: 'run' as const,
+    targetName: null,
+    family: 'response_time',
+    metric,
+    comparator,
+    threshold,
+  });
+
+  it('does not let a time breach read as equal to its limit', () => {
+    const rule = wholeRun('mean', 'lte', 100);
+    expect(formatSlaMeasured('mean', 100.004, 100)).not.toBe(formatSlaBound('mean', 100));
+    expect(describeSlaOutcome({ outcome: 'failed', actualValue: 100.004, rule })).toBe(
+      'Whole-run mean response time 100.004 ms exceeds the 100 ms limit.',
+    );
+  });
+
+  /** The reachable one: the throughput tile prints two decimals, so an author
+   *  copies `14.17` into a minimum and a run at 14.1698 rounds straight onto it. */
+  it('does not let a rate shortfall read as equal to its minimum', () => {
+    const rule = wholeRun('throughput_rps', 'gte', 14.17);
+    expect(formatSlaMeasured('throughput_rps', 14.1698, 14.17)).not.toBe(
+      formatSlaBound('throughput_rps', 14.17),
+    );
+    expect(describeSlaOutcome({ outcome: 'failed', actualValue: 14.1698, rule })).toBe(
+      'Whole-run throughput 14.1698/s is below the 14.17/s minimum.',
+    );
+  });
+
+  /** The percentage arm has the same class at four decimals. */
+  it('does not let an error-rate breach read as equal to its limit', () => {
+    const rule = wholeRun('error_rate', 'lte', 0.01);
+    expect(formatSlaMeasured('error_rate', 0.0100004, 0.01)).not.toBe(
+      formatSlaBound('error_rate', 0.01),
+    );
+    expect(describeSlaOutcome({ outcome: 'failed', actualValue: 0.0100004, rule })).toBe(
+      'Whole-run error rate 1.00004% exceeds the 1% limit.',
+    );
+  });
+
+  /** The claim that actually matters, and the one a verbatim assertion above
+   *  would not survive a rewording of: none of the stored schema reaches the
+   *  reader. `(response_time)` is the half review.md 3 calls not merely
+   *  unreadable but FALSE, and the raw fraction is the half review.md 1 calls
+   *  a correctness defect. */
   it('lets no part of the stored expression through', () => {
     const sentence = describeSlaOutcome(errorRate('failed', 0.0223463687150838))!;
     expect(sentence).not.toMatch(/\(response_time\)/);

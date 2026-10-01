@@ -398,7 +398,7 @@ describe('ProjectRules — the table', () => {
     // WITH ITS UNIT SINCE M17. A bare "≤ 800" left the reader to know that a
     // percentile is milliseconds while `error_rate` is a fraction — and the
     // fraction is the one that produced a permanently-passing gate.
-    // `formatSlaValue` is the single place that decision lives, so this string
+    // `formatSlaBound` is the single place that decision lives, so this string
     // and the run page's evidence panel cannot drift.
     //
     // AND THE MEASUREMENT IS IN WORDS SINCE the second review's finding 3.
@@ -428,6 +428,20 @@ describe('ProjectRules — the table', () => {
     expect(await screen.findByText('Whole-run error rate')).toBeInTheDocument();
     // The percentage, in its own column since finding 15.
     expect(screen.getByText('≤ 1%')).toBeInTheDocument();
+  });
+
+  /**
+   * THE LIMIT CELL IS THE RULE, SO IT IS NEVER ROUNDED. The authoring form
+   * accepts any decimals, and a minimum of `0.004` req/s used to render "≥ 0/s"
+   * -- a different rule from the one the author wrote, shown to them in the
+   * table that is supposed to confirm it.
+   */
+  it('shows a limit exactly as it was typed, however small', async () => {
+    fetchProjectRules.mockResolvedValue({
+      rules: [rule({ metric: 'throughput_rps', comparator: 'gte', threshold: 0.004 })],
+    });
+    renderRules();
+    expect(await screen.findByText('≥ 0.004/s')).toBeInTheDocument();
   });
 
   /**

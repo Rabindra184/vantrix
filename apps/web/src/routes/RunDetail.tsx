@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useState, type ReactNode } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
-import { describeSlaOutcome, formatSlaValue } from '@perfportal/contracts';
+import { describeSlaOutcome, formatSlaMeasured } from '@perfportal/contracts';
 import type {
   Assertion, LiveDelta, SeriesResponse, StatRow, ToolAssertion,
 } from '@perfportal/contracts';
@@ -1492,7 +1492,7 @@ function Assertions({
                       reading `1%` — floating-point serialisation in a column
                       whose whole job is to be compared with the one before it. */}
                   <td className={TD_NUM}>
-                    {formatAssertionValue(assertion.rule.metric, assertion.actualValue)}
+                    {formatAssertionValue(assertion.rule.metric, assertion.actualValue, assertion.rule.threshold)}
                   </td>
                   {/* THE LAST COLUMN WAS THE ONE STILL SPEAKING SCHEMA. The
                       three cells before it have rendered from the structured
@@ -1530,8 +1530,15 @@ function Assertions({
   );
 }
 
-function formatAssertionValue(metric: string, value: number | null): string {
-  return value === null ? '—' : formatSlaValue(metric, value);
+/**
+ * The gates table's Actual cell: a MEASUREMENT, so it is rounded for reading
+ * and widened where rounding would make it read as equal to the limit in the
+ * cell beside it. It takes that limit for exactly that reason — `Actual
+ * 100 ms` over `Limit ≤ 100 ms` for a gate that FAILED is the contradiction
+ * the guard exists to prevent.
+ */
+function formatAssertionValue(metric: string, value: number | null, threshold: number): string {
+  return value === null ? '—' : formatSlaMeasured(metric, value, threshold);
 }
 
 /**

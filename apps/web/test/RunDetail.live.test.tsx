@@ -389,6 +389,53 @@ describe('RunDetail — one shell, for every state', () => {
     expect(screen.getAllByTestId('assertion-outcome')).toHaveLength(1);
     expect(screen.getByTestId('platform-gates-toggle')).toHaveTextContent('Other gates (2)');
   });
+
+  /**
+   * ═══ THE ACTUAL CELL IS READ BESIDE THE LIMIT CELL, AND THEY MAY NOT TIE ═══
+   *
+   * The gates table rounds a measured time for reading, and a mean of 100.004 ms
+   * against a limit of 100 ms rounded to "100 ms" -- so a FAILED gate showed
+   * `Actual 100 ms` directly beside `Limit ≤ 100 ms`. `formatAssertionValue`
+   * takes the rule's threshold for exactly that reason, and a call site that
+   * dropped it would still compile against a two-argument formatter.
+   *
+   * The limit is asserted as typed in the same row: the guard widens the
+   * MEASUREMENT, never the bound.
+   */
+  it('does not let a failed gate show an actual equal to its limit', () => {
+    vi.stubGlobal(
+      'fetch',
+      () => Promise.resolve(new Response(JSON.stringify({ runId: RUN_ID, errors: [] }), { status: 200 })),
+    );
+    mountRun({
+      state: 'ready',
+      run: {
+        ...COMPLETE_RUN,
+        verdict: 'failed',
+        assertions: [
+          {
+            ruleId: '55555555-5555-4555-8555-555555555555',
+            outcome: 'failed',
+            actualValue: 100.004,
+            message: 'mean breached its threshold.',
+            rule: {
+              scope: 'run',
+              targetName: null,
+              family: 'response_time',
+              metric: 'mean',
+              comparator: 'lte',
+              threshold: 100,
+            },
+          },
+        ],
+      },
+    });
+
+    const cells = within(screen.getAllByTestId('assertion-row')[0]!).getAllByRole('cell');
+    expect(cells[1]).toHaveTextContent('Whole-run mean response time \u2264 100 ms');
+    expect(cells[2]).toHaveTextContent('100.004 ms');
+    expect(cells[3]).toHaveTextContent('100.004 ms exceeds the 100 ms limit.');
+  });
 });
 
 /* ======================================================================== *

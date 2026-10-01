@@ -296,55 +296,166 @@ export type SlaRuleListResponse = z.infer<typeof SlaRuleListResponseSchema>;
  * computed from exactly the value it always was.
  */
 /**
- * A rule's value, in the unit the rest of the product shows it in.
+ * A rule's value, in the unit the rest of the product shows it in -- written
+ * for one of two ROLES, which is the whole reason there are two functions.
  *
- * ═══ ONE FUNCTION FOR THE LIMIT AND THE ACTUAL, BECAUSE THEY ARE ONE
- *     QUANTITY ═══
+ * ═══ THE UNIT IS ONE DECISION, THE NUMBER IS TWO ═══
  *
  * This was `formatSlaThreshold`, and the name was the defect. An assertion
  * displays a bound AND the measurement that met or missed it -- the same
- * metric, the same unit, necessarily the same rendering -- but only the bound
+ * metric, the same unit, necessarily the same suffix -- but only the bound
  * went through here. The actual was printed raw, so a failed error-rate rule
  * read `Actual 0.02` beside `Limit ≤ 1%`: a fraction next to a percentage, and
- * the number that BREACHED the gate looked like half of it.
+ * the number that BREACHED the gate looked like half of it. The evidence TABLE
+ * was worse, printing `assertion.actualValue` with no formatting at all --
+ * `0.0223463687150838`, floating-point serialisation in a column a reader is
+ * asked to compare against `1%`.
  *
- * The evidence TABLE was worse, printing `assertion.actualValue` with no
- * formatting at all -- `0.0223463687150838`, floating-point serialisation in a
- * column a reader is asked to compare against `1%`.
+ * It then became ONE function for both, on the argument that a unit decision
+ * has to live in one place. That argument stands, and is why `withUnit` below
+ * is the only code anywhere that decides what `error_rate`, `p95` or
+ * `throughput_rps` look like, and both exported functions end in it.
  *
- * So the name says `Value`, and the two callers that must never disagree call
- * the same function. A separate `formatSlaActual` would be the drift this
- * repo has already paid for between a form and the row it creates.
+ * What one function could NOT do is give the two roles the precision each
+ * needs, and the first version of the rounding change paid for pretending it
+ * could:
+ *
+ *   a BOUND is something a person typed         it must read back as typed
+ *   a MEASUREMENT is something a run produced   it is read, so it is rounded
+ *
+ * Rounding both to two decimals turned a bound of `0.004` req/s into "at least
+ * 0/s" and a bound of `100.004` ms into "at most 100 ms" -- the rule misstated
+ * to the person who wrote it -- and rounded a measurement of `100.004` against
+ * that same bound into "100 ms exceeds the 100 ms limit", the decision band's
+ * own sentence contradicting itself.
  */
-export function formatSlaValue(metric: string, value: number): string {
-  const unit = slaMetricUnit(metric);
-  if (unit === 'fraction') return `${fractionToPercent(value)}%`;
-  if (unit === 'ms') return `${toReadingPrecision(value)} ms`;
-  if (unit === 'req/s') return `${toReadingPrecision(value)}/s`;
-  if (unit === 'requests') return `${value}`;
-  return `${value}`;
+
+/** What follows the number. The ONLY place a unit's spelling is written. */
+function withUnit(unit: SlaMetricUnit | null, shown: number): string {
+  if (unit === 'fraction') return `${shown}%`;
+  if (unit === 'ms') return `${shown} ms`;
+  if (unit === 'req/s') return `${shown}/s`;
+  return `${shown}`;
 }
 
 /**
- * ═══ TWO DECIMALS, BECAUSE THE CHECKS BESIDE THESE PRINT TWO ═══
+ * The number an author's bound shows: what they typed, with the
+ * floating-point tail removed and nothing else.
  *
- * The `ms` and `req/s` arms printed the raw number, so a real run's p95 gate
- * read "Actual: 645.5906777012351 ms", and its sentence repeated it, beside a
- * simulation-assertions bar printing "1686.14 ms". Two decimals with trailing
- * zeros dropped is that bar's own precision (`formatActual` in the web app's
- * `toolAssertion.ts`), so the two kinds of check now read alike.
- *
- * NOT WHOLE MILLISECONDS, though the tiles show whole ones: this function
- * renders the author's THRESHOLD as well as the measurement, and a typed
- * `99.5` must not read back as "≤ 100 ms". Two decimals keeps every bound a
- * person types and still rounds away the floating-point tail.
- *
- * The CSV export's Actual column does not come through here, and stays the
- * exact value the evaluator compared.
+ * `toPrecision(15)` is DBL_DIG -- any decimal of fifteen significant digits or
+ * fewer survives the trip into a double and back unchanged, so every bound a
+ * person can plausibly type reads back verbatim (`0.004`, `99.5`, `100.004`,
+ * `14.17`), while `0.1 + 0.2` still reads `0.3` and not
+ * `0.30000000000000004`. A `fraction` keeps `fractionToPercent`, which is four
+ * decimals of a percent -- finer than any run resolves -- and `requests` is a
+ * whole count, shown as it is.
  */
-function toReadingPrecision(value: number): number {
-  if (!Number.isFinite(value)) return value;
-  return Number(value.toFixed(2));
+function boundNumber(unit: SlaMetricUnit | null, threshold: number): number {
+  if (unit === 'fraction') return fractionToPercent(threshold);
+  if (unit === 'ms' || unit === 'req/s') return Number(threshold.toPrecision(15));
+  return threshold;
+}
+
+/**
+ * A limit exactly as its author typed it, with its unit.
+ *
+ * Used wherever the thing on screen is the RULE: the rules table's Limit cell,
+ * the authoring preview, the gates table's Limit cell, the CSV's Rule column,
+ * and the right-hand side of every outcome sentence. It never rounds, because
+ * "at least 0/s" for a typed `0.004` is the rule misread by the person who
+ * wrote it.
+ */
+export function formatSlaBound(metric: string, threshold: number): string {
+  const unit = slaMetricUnit(metric);
+  return withUnit(unit, boundNumber(unit, threshold));
+}
+
+/** Decimals a measured time or rate is read to. */
+const READING_DECIMALS = 2;
+/** A percentage is read to four decimals, which is `fractionToPercent`'s own. */
+const PERCENT_DECIMALS = 4;
+/** How many decimals past those the flip guard will add before it stops. */
+const WIDEN_BY_AT_MOST = 10;
+
+function roundTo(value: number, decimals: number): number {
+  return Number(value.toFixed(decimals));
+}
+
+/**
+ * Two decimals, trailing zeros dropped: how a measured time or rate is READ.
+ *
+ * ═══ ONE DEFINITION, EXPORTED, BECAUSE THERE ARE TWO KINDS OF CHECK ═══
+ *
+ * A real run's p95 gate read "Actual: 645.5906777012351 ms", and its sentence
+ * repeated it, beside a simulation-assertions bar printing "1686.14 ms". Two
+ * decimals is that bar's own precision, and the web app's `formatActual` calls
+ * THIS rather than keeping a `toFixed(2)` of its own -- so the two kinds of
+ * check on one page cannot drift apart about what a measurement looks like.
+ * (`NaN` and `Infinity` come back from `toFixed` as their own names and
+ * through `Number` unchanged, so there is nothing to guard.)
+ *
+ * NOT WHOLE MILLISECONDS, though the tiles show whole ones: two decimals is
+ * what the neighbouring bar already prints, and a gate row is where somebody
+ * checks whether 645.59 against 700 is close.
+ */
+export function roundForReading(value: number): number {
+  return roundTo(value, READING_DECIMALS);
+}
+
+/**
+ * The number a measurement shows, judged against the bound it will be set
+ * beside.
+ *
+ * ═══ THE FLIP GUARD: ROUNDING MAY NOT MAKE A BREACH READ AS EQUAL ═══
+ *
+ * A mean of 100.004 ms against a limit of 100 rounds to "100 ms", and the
+ * decision band -- the largest sentence on the run page -- then said "100 ms
+ * exceeds the 100 ms limit". Throughput 14.1698 against a minimum of 14.17
+ * said "14.17/s is below the 14.17/s minimum". Both are true and both read as
+ * the page contradicting itself, and the second is reachable in practice
+ * because the throughput tile prints two decimals and authors copy them as
+ * bounds.
+ *
+ * So when the rounded measurement would print as the same number as the bound
+ * while the two values are NOT the same, it is widened one decimal at a time
+ * until it differs: "100.004 ms exceeds the 100 ms limit". The percentage arm
+ * has the same class at four decimals (`0.0100004` against `0.01`) and the
+ * same guard. A measurement that is not ambiguous keeps its two decimals.
+ *
+ * AND THE MIRROR: a measurement exactly equal to its bound shows the bound's
+ * own digits, so "100.004 ms is within the 100.004 ms limit" cannot print its
+ * left side as `100`.
+ */
+function measuredNumber(unit: SlaMetricUnit | null, actual: number, threshold: number): number {
+  if (unit !== 'fraction' && unit !== 'ms' && unit !== 'req/s') return actual;
+
+  const bound = boundNumber(unit, threshold);
+  if (actual === threshold) return bound;
+
+  const first = unit === 'fraction' ? fractionToPercent(actual) : roundForReading(actual);
+  if (first !== bound) return first;
+
+  const scaled = unit === 'fraction' ? actual * 100 : actual;
+  const from = (unit === 'fraction' ? PERCENT_DECIMALS : READING_DECIMALS) + 1;
+  for (let decimals = from; decimals < from + WIDEN_BY_AT_MOST; decimals += 1) {
+    const shown = roundTo(scaled, decimals);
+    if (shown !== bound) return shown;
+  }
+  // Still the same number to ten more places than anyone reads: show it whole.
+  return scaled;
+}
+
+/**
+ * A measured value for a reader, with its unit, set against the bound it is
+ * being compared with.
+ *
+ * `threshold` is REQUIRED and has no default: it is what the flip guard
+ * measures the rendering against, and a caller that passed nothing would get
+ * the contradiction back with no type error to say so.
+ */
+export function formatSlaMeasured(metric: string, actual: number, threshold: number): string {
+  const unit = slaMetricUnit(metric);
+  return withUnit(unit, measuredNumber(unit, actual, threshold));
 }
 
 /**
@@ -523,7 +634,7 @@ export interface SlaRuleSubject {
  *
  * ═══ IT TAKES THE STORED THRESHOLD, NOT THE TYPED ONE ═══
  *
- * `formatSlaValue` converts a fraction back to the percentage every other
+ * `formatSlaBound` converts a fraction back to the percentage every other
  * surface shows, so the caller must pass what would be SENT — the same value
  * the rules table renders. A preview built from the raw input would agree with
  * the form and disagree with the row it is about to create, which is the one
@@ -544,7 +655,7 @@ export function describeSlaRule(rule: {
         : `${rule.scope === 'request' ? 'Request' : rule.scope === 'group' ? 'Group' : 'Scenario'} “${rule.targetName.trim()}”`;
 
   const bound = rule.comparator === 'lte' ? 'at most' : 'at least';
-  return `${subject}: ${slaMetricLabel(rule.metric)} must be ${bound} ${formatSlaValue(rule.metric, rule.threshold)}.`;
+  return `${subject}: ${slaMetricLabel(rule.metric)} must be ${bound} ${formatSlaBound(rule.metric, rule.threshold)}.`;
 }
 
 /**
@@ -563,7 +674,7 @@ export function describeSlaRule(rule: {
  * about the quantity it qualifies.
  *
  * The rules table and the gates table were both corrected to render from the
- * structured fields (`describeSlaMeasurement`, `formatSlaValue`). The two
+ * structured fields (`describeSlaMeasurement`, `formatSlaBound`). The two
  * surfaces that still printed the raw message were the run page's decision
  * band -- the largest sentence on the page, the one a reader uses to decide
  * whether a release is safe -- and the gates table's own trailing column,
@@ -629,8 +740,15 @@ export function describeSlaOutcome(assertion: {
   }
 
   const measurement = describeSlaMeasurement(assertion.rule);
-  const actual = formatSlaValue(assertion.rule.metric, assertion.actualValue);
-  const bound = formatSlaValue(assertion.rule.metric, assertion.rule.threshold);
+  // The bound is the rule as typed; the actual is a measurement, rounded for
+  // reading and widened where rounding would make a breach read as equal to
+  // its own limit (`formatSlaMeasured`'s flip guard).
+  const actual = formatSlaMeasured(
+    assertion.rule.metric,
+    assertion.actualValue,
+    assertion.rule.threshold,
+  );
+  const bound = formatSlaBound(assertion.rule.metric, assertion.rule.threshold);
 
   // The comparator decides the NOUN as well as the verb: a breached `lte` is
   // over a limit, a breached `gte` is under a minimum, and calling both a

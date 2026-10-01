@@ -32,6 +32,26 @@ describe('assertionsCsv', () => {
     );
   });
 
+  /** The SCREEN rounds a measured time for reading; the FILE is the
+   *  artifact somebody diffs or recomputes from, so its Actual column keeps
+   *  the value the evaluator compared, digit for digit. */
+  it('keeps the measured actual exact, whatever the screen rounds it to', () => {
+    const csv = assertionsCsv([{ ...ASSERTION, actualValue: 645.5906777012351 }]);
+    expect(csv).toContain('"645.5906777012351"');
+  });
+
+  /** AND ITS RULE COLUMN KEEPS THE LIMIT EXACTLY AS TYPED. The Actual column
+   *  above is exact because nothing rounds it; this one is exact because the
+   *  bound is written by `formatSlaBound`, which never does. A `100.004 ms`
+   *  limit that the file wrote as `100 ms` would be a different rule to
+   *  whoever recomputes from it. */
+  it('writes the limit exactly as typed, whatever the screen would round', () => {
+    const csv = assertionsCsv([
+      { ...ASSERTION, rule: { ...ASSERTION.rule, threshold: 100.004 } },
+    ]);
+    expect(csv).toContain('\u2264 100.004 ms');
+  });
+
   /**
    * The FILE and the SCREEN spell the rule the same way, because they call
    * the same function. It briefly did not: `describeRule` rendered `\u2264`
@@ -43,14 +63,6 @@ describe('assertionsCsv', () => {
    * non-ASCII comparator safe in the file, so there is no reason for the two
    * to differ and no second spelling to keep in step.
    */
-  /** The SCREEN rounds a measured time for reading; the FILE is the
-   *  artifact somebody diffs or recomputes from, so its Actual column keeps
-   *  the value the evaluator compared, digit for digit. */
-  it('keeps the measured actual exact, whatever the screen rounds it to', () => {
-    const csv = assertionsCsv([{ ...ASSERTION, actualValue: 645.5906777012351 }]);
-    expect(csv).toContain('"645.5906777012351"');
-  });
-
   it('writes the rule exactly as the assertions table renders it', () => {
     expect(assertionsCsv([ASSERTION])).toContain(describeAssertionRule(ASSERTION.rule));
     expect(describeAssertionRule(ASSERTION.rule)).toContain('\u2264');
