@@ -29,7 +29,7 @@ export default function WholeRunNotice({ what }: { readonly what: string }) {
       className="rounded-lg border border-default bg-sunken px-3 py-2 text-[0.8125rem] text-muted"
     >
       The time window you selected does not narrow {what} — these endpoints report the whole run.
-      The run page’s own figures still honour it.
+      The run’s Report still honours it.
     </p>
   );
 }

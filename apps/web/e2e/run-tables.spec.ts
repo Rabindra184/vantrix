@@ -1005,6 +1005,12 @@ test('a windowed drill-down says its figures are the whole run’s', async ({ pa
   await expect(notice).toBeVisible();
   await expect(notice).toContainText(/does not narrow/i);
   await expect(notice).toContainText(/whole run/i);
+  /* AND IT POINTS AT THE PAGE THAT DOES HONOUR THE WINDOW. The sentence used
+     to say "the run page's own figures", which was true of the old Overview
+     and is false of the Summary this page's "Back to this run" now lands on:
+     the Summary ignores a window. Only the Report applies one. */
+  await expect(notice).toContainText(/the run.s Report still honours it/i);
+  await expect(notice).not.toContainText(/run page/i);
 
   /* AND THE ERRORS TABLE SAYS IT FOR ITS OWN TOTALS, which is the half that
      was missing from this call site alone. Both, because the page-level notice
