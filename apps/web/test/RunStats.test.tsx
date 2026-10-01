@@ -6,7 +6,7 @@ import { cleanup, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Assertion, StatsResponse, TrendRun } from '@perfportal/contracts';
-import { SLA_METRIC_SCALARS, isResolvableSlaMetric, slaMetricUnit } from '@perfportal/contracts';
+import { isResolvableSlaMetric } from '@perfportal/contracts';
 import reference from './fixtures/reference-run.json';
 import RunStats from '../src/routes/RunStats';
 
@@ -16,7 +16,7 @@ const runRow = stats.stats.find((r) => r.scope === 'run')!;
 // No global setup runs `afterEach(cleanup)` for us (see StatisticsTable.test.tsx).
 // Card.test.tsx/Badge.test.tsx get away without this by keeping each test's
 // visible TEXT distinct, but that convention only helps `getByText` — every
-// test here renders the same six tiles under the same fixed `data-testid`s
+// test here renders the same four tiles under the same fixed `data-testid`s
 // (`stat-total-requests` etc.), so a leftover mount from an earlier test
 // collides on `screen.getByTestId` regardless of what the hint text says.
 afterEach(cleanup);
@@ -70,7 +70,7 @@ function trendRun(over: Partial<TrendRun> = {}): TrendRun {
 
 describe('RunStats', () => {
   it('shows the run row’s own totals', () => {
-    renderStats(<RunStats stats={stats} />);
+    renderStats(<RunStats stats={stats} peakUsers={12} runStatus="complete" />);
     // Plain digits — `String(runRow.count)`, not `.toLocaleString()`. The
     // fixture's run has 895 requests, where the two happen to produce the
     // same string; the test below (four digits or more) is what actually
@@ -103,7 +103,7 @@ describe('RunStats', () => {
         row.scope === 'run' ? { ...row, count: bigCount, okCount: bigOk, koCount: bigKo } : row,
       ),
     };
-    renderStats(<RunStats stats={bigRun} />);
+    renderStats(<RunStats stats={bigRun} peakUsers={12} runStatus="complete" />);
 
     const tile = screen.getByTestId('stat-total-requests');
     expect(tile).toHaveTextContent(String(bigCount));
@@ -138,7 +138,7 @@ describe('RunStats', () => {
    * from the first, free to disagree the day the server's rounding changes.
    */
   it('reads error rate from the same field the table does', () => {
-    renderStats(<RunStats stats={stats} />);
+    renderStats(<RunStats stats={stats} peakUsers={12} runStatus="complete" />);
     const expected = (runRow.errorRate * 100).toFixed(2);
     expect(screen.getByTestId('stat-error-rate')).toHaveTextContent(expected);
   });
@@ -147,6 +147,8 @@ describe('RunStats', () => {
     renderStats(
       <RunStats
         stats={stats}
+        peakUsers={12}
+        runStatus="complete"
         baseline={{
           id: '11111111-1111-4111-8111-111111111111',
           startedAt: '2026-08-07T05:30:02.171Z',
@@ -205,6 +207,8 @@ describe('RunStats', () => {
     renderStats(
       <RunStats
         stats={stats}
+        peakUsers={12}
+        runStatus="complete"
         current={trendRun({ environment: 'staging', branch: 'feature/cart-rewrite', commitSha: 'abcdef1234' })}
         baseline={trendRun({ environment: 'production', branch: 'main', commitSha: 'beefcafe99' })}
       />,
@@ -231,6 +235,8 @@ describe('RunStats', () => {
     renderStats(
       <RunStats
         stats={stats}
+        peakUsers={12}
+        runStatus="complete"
         current={trendRun({ runNumber: 12 })}
         baseline={trendRun({ id: '22222222-2222-4222-8222-222222222222', runNumber: 11 })}
       />,
@@ -248,6 +254,8 @@ describe('RunStats', () => {
     renderStats(
       <RunStats
         stats={stats}
+        peakUsers={12}
+        runStatus="complete"
         current={trendRun(shared)}
         baseline={trendRun({ ...shared, id: '22222222-2222-4222-8222-222222222222' })}
       />,
@@ -265,6 +273,8 @@ describe('RunStats', () => {
     renderStats(
       <RunStats
         stats={stats}
+        peakUsers={12}
+        runStatus="complete"
         baseline={{
           id: '11111111-1111-4111-8111-111111111111',
           startedAt: '2026-08-07T05:30:02.171Z',
@@ -336,9 +346,9 @@ describe('RunStats', () => {
   /**
    * ═══ REVIEW 09-13 N02 — THE METHODOLOGY ONCE, NOT ONCE PER TILE ═══
    *
-   * Both percentile tiles carried "an estimate, accurate to within 1%": the
+   * The percentile tiles carried "an estimate, accurate to within 1%": the
    * same sentence twice, in a row where every other hint is a fact about its
-   * own tile.
+   * own tile. (One percentile tile is left, and the claim is unchanged.)
    *
    * BOTH HALVES MATTER AND THE TEST SAYS SO. Deleting the caveat would also
    * satisfy "stop repeating it" and would be wrong — a reader would then take
@@ -347,13 +357,11 @@ describe('RunStats', () => {
    * rather than a disclaimer: the tool's own percentiles are histogram
    * estimates and drift further.
    */
-  it('marks each percentile as an estimate without repeating the methodology', () => {
-    renderStats(<RunStats stats={stats} />);
+  it('marks the percentile as an estimate without repeating the methodology', () => {
+    renderStats(<RunStats stats={stats} peakUsers={12} runStatus="complete" />);
 
-    for (const id of ['stat-p95', 'stat-p99']) {
-      const tile = screen.getByTestId(id);
-      expect(tile.parentElement?.textContent ?? '').toMatch(/estimate/i);
-    }
+    const tile = screen.getByTestId('stat-p95');
+    expect(tile.parentElement?.textContent ?? '').toMatch(/estimate/i);
     // The sentence appears nowhere on the row any more...
     expect(document.body.textContent ?? '').not.toMatch(/an estimate, accurate to within/i);
     // ...and the 1% claim is still reachable, exactly once.
@@ -366,7 +374,7 @@ describe('RunStats', () => {
    *  outline verbatim, and a disclosure that contributed one would break it on
    *  every tab — the shell-must-not-add-an-h2 rule, one component over. */
   it('adds the disclosure without contributing a heading', () => {
-    renderStats(<RunStats stats={stats} />);
+    renderStats(<RunStats stats={stats} peakUsers={12} runStatus="complete" />);
     expect(screen.getByTestId('percentile-method').tagName).toBe('DETAILS');
     expect(screen.queryAllByRole('heading')).toHaveLength(0);
   });
@@ -375,85 +383,53 @@ describe('RunStats', () => {
     renderStats(
       <RunStats
         stats={stats}
+        peakUsers={12}
+        runStatus="complete"
         assertions={[
           assertion({ outcome: 'failed', actualValue: 659, rule: rule({ metric: 'p95' }) }),
         ]}
       />,
     );
     expect(colourOf('stat-p95')).toContain('--color-status-failed');
-    // p99 carries no rule at all, so it must stay untinted — the negative
-    // half, without which "everything is red" would also pass.
-    expect(colourOf('stat-p99')).toBe('');
-  });
-
-  /**
-   * ═══ AND NOT UNDER A WINDOW, BECAUSE THE GATE JUDGED THE WHOLE RUN ═══
-   * (the 09-13 review's acceptance list: selected-window versus whole-run)
-   *
-   * An SLA assertion is evaluated once, at finalize, against the run — nothing
-   * re-evaluates it per window and nothing could, since the threshold is a
-   * statement about the run. So with a window applied the VALUE in this tile is
-   * that stretch's and the tint would be the whole run's: a p95 showing a
-   * perfectly healthy ten seconds, coloured as a breach, because a DIFFERENT
-   * ten seconds broke the gate.
-   *
-   * Withheld rather than recomputed — recomputing would invent a verdict
-   * nobody configured, which is the line this product already draws between a
-   * platform gate and a simulation's own checks.
-   *
-   * Paired with the case above on purpose: that one proves the tint appears,
-   * this one proves what silences it. Either alone passes against a component
-   * that never tints, or against one that always does.
-   */
-  it('withholds the tint while a window is applied', () => {
-    renderStats(
-      <RunStats
-        stats={stats}
-        windowed
-        assertions={[
-          assertion({ outcome: 'failed', actualValue: 659, rule: rule({ metric: 'p95' }) }),
-        ]}
-      />,
-    );
-    expect(colourOf('stat-p95')).toBe('');
+    // The error rate carries no rule at all, so it must stay untinted — the
+    // negative half, without which "everything is red" would also pass.
+    expect(colourOf('stat-error-rate')).toBe('');
   });
 
   it('warns amber while a gate is passing but close, and stays clear when it is not', () => {
-    // 950 against an `lte 1000` gate is inside the 10% margin; 500 is not.
+    // 950 against an `lte 1000` gate is inside the 10% margin; an error rate
+    // of 0.1% against a 5% limit is nowhere near it.
     renderStats(
       <RunStats
         stats={stats}
+        peakUsers={12}
+        runStatus="complete"
         assertions={[
           assertion({ actualValue: 950, rule: rule({ metric: 'p95', threshold: 1000 }) }),
           assertion({
             ruleId: '22222222-2222-4222-8222-222222222222',
-            actualValue: 500,
-            rule: rule({ metric: 'p99', threshold: 1000 }),
+            actualValue: 0.001,
+            rule: rule({ metric: 'error_rate', threshold: 0.05 }),
           }),
         ]}
       />,
     );
     expect(colourOf('stat-p95')).toContain('--color-status-pending');
-    expect(colourOf('stat-p99')).toBe('');
+    expect(colourOf('stat-error-rate')).toBe('');
   });
 
-  it('judges error rate and throughput, which need no new rule family', () => {
+  it('judges error rate, which needs no new rule family', () => {
     renderStats(
       <RunStats
         stats={stats}
+        peakUsers={12}
+        runStatus="complete"
         assertions={[
           assertion({ outcome: 'failed', actualValue: 0.05, rule: rule({ metric: 'error_rate' }) }),
-          assertion({
-            ruleId: '33333333-3333-4333-8333-333333333333',
-            outcome: 'failed',
-            actualValue: 14,
-            rule: rule({ metric: 'throughput_rps', comparator: 'gte', threshold: 40 }),
-          }),
         ]}
       />,
     );
     expect(colourOf('stat-error-rate')).toContain('--color-status-failed');
-    expect(colourOf('stat-throughput')).toContain('--color-status-failed');
   });
 
   /**
@@ -467,6 +443,8 @@ describe('RunStats', () => {
     renderStats(
       <RunStats
         stats={stats}
+        peakUsers={12}
+        runStatus="complete"
         assertions={[
           assertion({
             outcome: 'failed',
@@ -479,9 +457,28 @@ describe('RunStats', () => {
     expect(colourOf('stat-p95')).toBe('');
   });
 
-  it('renders nothing when the payload has no run-scope row', () => {
-    const { container } = renderStats(<RunStats stats={{ ...stats, stats: [] }} />);
-    expect(container).toBeEmptyDOMElement();
+  /**
+   * THE SUMMARY HAS NO STATISTICS TABLE BESIDE IT ANY MORE, so a missing
+   * run-scope row cannot return nothing and leave "the table's own message" to
+   * say so: the table is in the Report. This is the only place an empty run is
+   * said, and it says it in the table's own words (`StatisticsEmpty`) so the two
+   * can never describe one empty run two ways. A run whose stream stopped kept
+   * nothing — "recorded" would tell a reader who watched 440 requests go by
+   * that none existed.
+   */
+  it('renders the table’s own empty sentence when the run kept nothing', () => {
+    renderStats(<RunStats stats={{ ...stats, stats: [] }} peakUsers={null} runStatus="incomplete" />);
+    expect(screen.getByText('No statistics were retained for this run')).toBeVisible();
+    expect(screen.queryByTestId('stat-p95')).toBeNull();
+  });
+
+  // The other half: a finished run that simply measured nothing says
+  // "recorded", and a component that ignored `runStatus` would say "retained"
+  // here (or "recorded" above) and pass whichever case it was written against.
+  it('says a finished run recorded nothing, rather than that it kept nothing', () => {
+    renderStats(<RunStats stats={{ ...stats, stats: [] }} peakUsers={null} runStatus="complete" />);
+    expect(screen.getByText('No statistics were recorded for this run')).toBeVisible();
+    expect(screen.queryByText('No statistics were retained for this run')).toBeNull();
   });
 
   /* ====================================================================== *
@@ -496,42 +493,25 @@ describe('RunStats', () => {
    *
    * These cases pin the JOIN rather than the strings. A tile label asserted
    * verbatim would pass while the table below it drifted, which is the defect
-   * itself; asserted against `SLA_METRIC_SCALARS` and the percentile
-   * suggestions, it cannot. That set is the vocabulary a reader authors a gate
-   * in (`ProjectRules`' `METRIC_SUGGESTIONS`), so matching it means the word
-   * on the tile is the word they type into the rule that judges it.
+   * itself; asserted against the contract's own metric check
+   * (`isResolvableSlaMetric`), it cannot. That is the vocabulary a reader
+   * authors a gate in (`ProjectRules`' `METRIC_SUGGESTIONS`), so matching it
+   * means the word on the tile is the word they type into the rule that judges
+   * it. (The throughput tile this once also pinned is gone — see the Summary's
+   * four.)
    */
-  it('names each response-time tile after the metric a gate is authored against', () => {
-    renderStats(<RunStats stats={stats} />);
+  it('names the response-time tile after the metric a gate is authored against', () => {
+    renderStats(<RunStats stats={stats} peakUsers={12} runStatus="complete" />);
     const labels = [...document.querySelectorAll('section[aria-label="Run totals"] dt')].map(
       (dt) => (dt.textContent ?? '').trim(),
     );
 
-    // `mean` is a scalar in the contract; p95/p99 are resolvable percentiles.
-    expect(SLA_METRIC_SCALARS).toContain('mean');
-    for (const metric of ['mean', 'p95', 'p99']) {
-      expect(isResolvableSlaMetric(metric)).toBe(true);
-      // Case-insensitive: the tile capitalises "Mean" as a label; the metric
-      // is lower-case. The claim is that they are the same WORD.
-      expect(labels.map((l) => l.toLowerCase())).toContain(metric);
-    }
-  });
-
-  /**
-   * `throughput_rps`'s unit in the contract is `req/s`, and the tile used to
-   * say "Mean Throughput" with `req/s` as a separate unit — naming one
-   * quantity twice and agreeing with neither the table nor the axis. It reads
-   * `Requests/s` now, and the unit is gone because the label carries it.
-   */
-  it('gives throughput one name, not a label and a unit that disagree', () => {
-    renderStats(<RunStats stats={stats} />);
-    const section = document.querySelector('section[aria-label="Run totals"]')!;
-    const labels = [...section.querySelectorAll('dt')].map((dt) => (dt.textContent ?? '').trim());
-
-    expect(labels).toContain('Requests/s');
-    expect(slaMetricUnit('throughput_rps')).toBe('req/s');
-    // Not repeated beside the value: "Requests/s 14.40 req/s" says it twice.
-    expect(screen.getByTestId('stat-throughput').textContent ?? '').not.toMatch(/req\/s/);
+    // p95 is a resolvable percentile metric. (Mean and p99 had tiles that made
+    // the same claim until the Summary was cut to GE's four numbers; the
+    // Report's table still carries both, under the same words.)
+    expect(isResolvableSlaMetric('p95')).toBe(true);
+    // Case-insensitive: the claim is that they are the same WORD.
+    expect(labels.map((l) => l.toLowerCase())).toContain('p95');
   });
 
   /**
@@ -550,7 +530,7 @@ describe('RunStats', () => {
    * tile is not that surface, so it speaks the product's own language.
    */
   it('states successes and failures in the product’s words, not the tool’s', () => {
-    renderStats(<RunStats stats={stats} />);
+    renderStats(<RunStats stats={stats} peakUsers={12} runStatus="complete" />);
     const section = document.querySelector('section[aria-label="Run totals"]')!;
     const text = section.textContent ?? '';
 
@@ -560,147 +540,98 @@ describe('RunStats', () => {
     expect(text).not.toMatch(/\bOK\b/);
     expect(text).not.toMatch(/\bKO\b/);
   });
-
-  /**
-   * ═══ A BRIDGE NAMES THE OTHER END, SO IT BREAKS WHEN THAT END MOVES ═══
-   *
-   * `StatisticsTable`'s `Cnt/s` column keeps Gatling's spelling and carries a
-   * hint pointing at this row — "the same measurement the run totals call X" —
-   * so a reader does not have to guess that two labels are one number. This
-   * branch renamed X and the hint went on naming the old word, which is a
-   * cross-reference to a surface by a spelling that surface no longer uses:
-   * the same defect as "Mint one under Access", one file over, reintroduced
-   * within the hour of fixing it.
-   *
-   * READS BOTH SOURCES, which is the only way to see it — the two files share
-   * no symbol, so nothing in the type system or in either file's own suite
-   * connects them. `paths.test.ts` reads `App.tsx` and `tokens.test.ts` reads
-   * the emitted CSS for the same reason: some agreements exist only between
-   * files, and the alternative is prose that is wrong for a release.
-   */
-  it('keeps the statistics table’s bridge pointing at a label this row renders', () => {
-    /* NOT `new URL(..., import.meta.url)`, which is what `paths.test.ts` uses
-       one project over: that file runs under the NODE environment, where
-       `import.meta.url` is a `file:` URL. This suite is jsdom, where it is an
-       `http:` one, and `readFileSync` rejects it with "The URL must be of
-       scheme file". Resolved from the repo root instead, found by walking up
-       from the working directory so the suite does not care where it is
-       invoked from. */
-    const here = readFileSync(fromRepo('apps/web/src/routes/RunStats.tsx'), 'utf8');
-    const table = readFileSync(fromRepo('apps/web/src/tables/StatisticsTable.tsx'), 'utf8');
-
-    /* ANCHORED TO THE `hint:` PROPERTY, not to the phrase. The first version
-       matched the phrase anywhere and found it inside the COMMENT that
-       explains this very defect — which quotes the old spelling on purpose —
-       so the guard read the documentation instead of the product and failed
-       against a string nobody ships. */
-    const bridge = /hint:\s*'[^']*the run totals call ([^']+)'/.exec(table);
-    expect(bridge, 'StatisticsTable no longer bridges to the run totals').not.toBeNull();
-
-    /* `?.[1] ?? ''`, not `bridge![1]`. The non-null assertion silences the
-       compiler about `bridge` and leaves the INDEX unchecked — under
-       `noUncheckedIndexedAccess` a capture group is `string | undefined`, so
-       `.trim()` on it is TS2532. Widening the guard to cover both is also
-       better at runtime: a bridge sentence that matched but captured nothing
-       fails on the next line with its own message instead of throwing. */
-    const named = (bridge?.[1] ?? '').trim();
-    expect(named, 'the bridge names no label at all').not.toBe('');
-    // The word the hint promises must be a label this file actually renders.
-    expect(here).toContain(`label="${named}"`);
-
-    // And it must be on screen, not merely in the source.
-    renderStats(<RunStats stats={stats} />);
-    const labels = [
-      ...document.querySelectorAll('section[aria-label="Run totals"] dt'),
-    ].map((dt) => (dt.textContent ?? '').trim());
-    expect(labels).toContain(named);
-  });
 });
 
 /**
- * THE 09-13 REVIEW'S TARGET LAYOUT, ITEM 3.
+ * THE SUMMARY SHOWS GE'S FOUR NUMBERS, IN GE'S ORDER.
  *
- * "p95 response time, error rate, throughput, total requests; p99 and mean can
- * follow at lower emphasis."
+ * This row held six tiles in the 09-13 review's target order (p95, error rate,
+ * throughput, requests, p99, mean) until the Summary was cut to what GE's shows:
+ * error ratio, total requests, max concurrent users, p95. A reader moving
+ * between the two products finds each number in the same place, and throughput,
+ * p99 and mean are in the Report's table.
  *
- * NOTHING PINNED THE ORDER, which is how this row came to read Requests, Error
- * rate, Requests/s, Mean, p95, p99 — the triage number fourth, behind a count
- * and a mean — against a section of the review nobody had audited. Every other
- * assertion in this file and in the e2e suite reaches these tiles by
- * `data-testid`, and `run-tables.spec.ts`'s M01 bound checks that three of them
- * sit inside the first 900px: a claim about POSITION, satisfied by any
- * sequence.
+ * NOTHING PINNED THE ORDER BEFORE EITHER, which is how the six-tile row came to
+ * put the triage number fourth against a section of the review nobody had
+ * audited. Every other assertion in this file and in the e2e suite reaches
+ * these tiles by `data-testid`, and `run-tables.spec.ts`'s M01 bound checks that
+ * three of them sit inside the first 900px: a claim about POSITION, satisfied by
+ * any sequence.
  */
 describe('RunStats — the tile reading order', () => {
   const stats = reference.stats as StatsResponse;
 
-  /* Asserted as the WHOLE list with `toEqual`, not as "p95 comes first". A
-     containment or pairwise check passes against several other orderings, and
+  /* Asserted as the WHOLE list with `toEqual`, not as "error rate comes first".
+     A containment or pairwise check passes against several other orderings, and
      the property worth keeping is the reading order itself — the argument
      `run-charts.spec.ts` already makes for asserting `CHART_IDS` as a list so
      a reorder cannot pass silently. */
-  it('leads with p95, error rate, throughput and requests', () => {
-    renderStats(<RunStats stats={stats} />);
+  it('leads with GE’s four, in GE’s order', () => {
+    renderStats(<RunStats stats={stats} peakUsers={12} runStatus="complete" />);
+    const ids = [
+      ...document.querySelectorAll('section[aria-label="Run totals"] dd[data-testid^="stat-"]'),
+    ].map((dd) => dd.getAttribute('data-testid'));
+    expect(ids).toEqual(['stat-error-rate', 'stat-total-requests', 'stat-peak-users', 'stat-p95']);
     const labels = [
       ...document.querySelectorAll('section[aria-label="Run totals"] dt'),
     ].map((dt) => (dt.textContent ?? '').trim());
-    expect(labels).toEqual(['p95', 'Error rate', 'Requests/s', 'Requests', 'p99', 'Mean']);
+    expect(labels).toEqual(['Error rate', 'Requests', 'Peak users', 'p95']);
+  });
+
+  it('shows the peak users it is handed, and a dash while it has none', () => {
+    const { unmount } = renderStats(<RunStats stats={stats} peakUsers={12} runStatus="complete" />);
+    expect(screen.getByTestId('stat-peak-users')).toHaveTextContent('12');
+    unmount();
+    renderStats(<RunStats stats={stats} peakUsers={null} runStatus="complete" />);
+    // A dash, never `0`: zero is a measurement, and the users series has either
+    // not arrived or recorded no bucket.
+    expect(screen.getByTestId('stat-peak-users')).toHaveTextContent('—');
+    expect(screen.getByTestId('stat-peak-users')).not.toHaveTextContent('0');
   });
 
   /**
-   * ═══ AND THE LIVE ROW IS THE SAME SECTION, SO IT KEEPS THE SAME PLACES ═══
+   * ═══ AND THE LIVE ROW IS THE SAME SECTION, SO IT HAS THE SAME FOUR ═══
    *
-   * `RunDetail` draws its own six tiles for a run that is still streaming, into
-   * `aria-label="Run totals so far"` — which BECOMES the `"Run totals"` above
-   * the moment the run goes terminal. So a reader watching a run finish watches
-   * one `<dl>` turn into the other, and the branch that reordered this row left
-   * that one alone: p95 sat FIFTH there and first here, so the triage number
-   * jumped 5 -> 1 at the transition and Error rate was the only tile that held
-   * its place.
-   *
-   * The four quantities both rows carry hold positions 1, 2, 4 and 5 in each.
-   * Positions 3 and 6 are the two that cannot exist in the other state — peak
-   * users against throughput, duration against mean — so finishing a run
-   * SUBSTITUTES two tiles rather than reshuffling six.
+   * `RunSummary` draws its own four tiles for a run that is still streaming,
+   * into `aria-label="Run totals so far"` — which BECOMES the `"Run totals"`
+   * above the moment the run goes terminal. So a reader watching a run finish
+   * watches one `<dl>` turn into the other. The two used to share four
+   * quantities out of six and substitute two (peak users for throughput,
+   * duration for mean); the branch that promoted p95 to first on the finished
+   * row left it fifth on the live one, so the triage number jumped 5 -> 1 at the
+   * transition. Both rows are GE's four now, so the transition substitutes
+   * NOTHING, and the claim is exact agreement.
    *
    * ASSERTED AS AGREEMENT, NOT AS A SECOND LITERAL LIST. Pinning the live order
-   * verbatim here would pass the day somebody reorders this row and updates
-   * only the list above it, which is the drift being fixed. Positions compared
-   * against each other fail whichever side moves.
+   * verbatim here would pass the day somebody reorders the finished row and
+   * updates only the list beside it, which is the drift being fixed. The two
+   * lists compared against each other fail whichever side moves.
    *
-   * Read from the source rather than rendered: the live row lives inside
-   * `RunDetail`, which needs a router, a run, a delta and a live socket to
-   * mount, and the claim is about the markup order of two files. Comments are
-   * stripped — MEASURED, and NOT load-bearing today, because neither file
-   * spells a `data-testid` inside one. It is one line, it forecloses the trap
-   * this file records twice, and saying it is defensive beats adding prose to
-   * make the claim true.
+   * Read from the source rather than rendered: the live row needs a router, a
+   * run, a delta and a live socket to mount, and the claim is about the markup
+   * order of two files. Comments are stripped — MEASURED, and NOT load-bearing
+   * today, because neither file spells a `data-testid` inside one. It is one
+   * line, it forecloses the trap this file records twice, and saying it is
+   * defensive beats adding prose to make the claim true.
    */
-  it('keeps the four shared tiles in the places the live row uses', () => {
+  it('keeps the live row exactly the finished row’s four, in the same places', () => {
     const idsIn = (rel: string, prefix: string): string[] => {
       const src = readFileSync(fromRepo(rel), 'utf8')
         .replace(/\/\*[\s\S]*?\*\//g, '')
         .replace(/\/\/[^\n]*/g, '');
-      const pattern = new RegExp(`data-testid="${prefix}([a-z0-9-]+)"`, 'g');
+      const pattern = new RegExp(`data-testid="(${prefix}[a-z0-9-]+)"`, 'g');
       return [...src.matchAll(pattern)].map((m) => m[1] ?? '');
     };
 
     const terminal = idsIn('apps/web/src/routes/RunStats.tsx', 'stat-');
-    const live = idsIn('apps/web/src/routes/RunDetail.tsx', 'live-stat-');
+    const live = idsIn('apps/web/src/routes/RunSummary.tsx', 'live-stat-');
 
     /* VACUITY, COUNTING THE CONSTRUCT. A regex that stopped matching leaves two
-       EMPTY lists, and every position assertion below then agrees perfectly. */
-    expect(terminal, 'collected no terminal tiles -- the scan has rotted').toHaveLength(6);
-    expect(live, 'collected no live tiles -- the scan has rotted').toHaveLength(6);
+       EMPTY lists, and an equality between them then agrees perfectly. */
+    expect(terminal, 'collected no terminal tiles -- the scan has rotted').toHaveLength(4);
+    expect(live, 'collected no live tiles -- the scan has rotted').toHaveLength(4);
 
-    for (const id of ['p95', 'error-rate', 'total-requests', 'p99']) {
-      expect(live.indexOf(id), `live position of ${id}`).toBe(terminal.indexOf(id));
-    }
-
-    /* And the tiles that do NOT agree are exactly the state-specific pair, so
-       "they agree" cannot be satisfied by a row that quietly dropped one. */
-    expect(live.filter((id) => !terminal.includes(id))).toEqual(['peak-users', 'duration']);
-    expect(terminal.filter((id) => !live.includes(id))).toEqual(['throughput', 'mean-response']);
+    expect(live.map((id) => id.replace('live-', ''))).toEqual(terminal);
   });
 
   /* The DOM order is the READING order only because these are grid items in

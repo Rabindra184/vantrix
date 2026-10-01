@@ -23,6 +23,7 @@ import LiveNotice from './LiveNotice';
 import { Payload, TableSection, explain, type Slot } from './payload';
 import RunGlossary from './RunGlossary';
 import RunTelemetry from './RunTelemetry';
+import { PERCENTILES, REQUESTS_AND_RESPONSES } from './runSlots';
 import {
   useLiveFromShell,
   useRunTerminal,
@@ -36,9 +37,9 @@ import WaitingPanel from './WaitingPanel';
    Second, Response Time Percentiles, Response Time Distribution, Response
    Time Percentiles Distribution, Errors per Second), then this product's two
    (Gatling's own open-source report has both). GE's "Responses per Second by
-   Status" is not drawn: a `simulation.log` carries no HTTP status code. */
-const REQUESTS_AND_RESPONSES: Slot = { id: 'requests-and-responses', title: 'Requests and responses per second over time' };
-const PERCENTILES: Slot = { id: 'percentiles', title: 'Response time percentiles over time' };
+   Status" is not drawn: a `simulation.log` carries no HTTP status code. The
+   first two slots are imported from `runSlots.ts`: the Summary draws those same
+   two charts and the two pages share one spelling of their titles. */
 const DISTRIBUTION: Slot = { id: 'distribution', title: 'Response time distribution' };
 const PERCENTILE_DISTRIBUTION: Slot = { id: 'percentile-distribution', title: 'Response time percentiles distribution' };
 const ERRORS_PER_SECOND: Slot = { id: 'errors-over-time', title: 'Errors per second' };

@@ -146,29 +146,36 @@ describe('static routes cannot shadow a project slug', () => {
     );
     // Guard: the slice really found the run route block, so the assertion
     // below is about its contents rather than about an empty string.
-    expect(runBlock).toContain('RunOverviewTab');
+    expect(runBlock).toContain('RunSummary');
     expect(runBlock).toContain('path="*"');
     expect(runBlock).toContain('RunSectionNotFound');
   });
 
   /**
-   * THE OLD TAB URLS STILL RESOLVE, TO THEIR NEW PLACE. `/charts` and
-   * `/load-generators` are in bookmarks and ticket links; with the routes gone
-   * they would fall into the run's not-found section, and with them pointing
-   * anywhere but the Report they would land on the wrong content. Read out of
-   * `App.tsx` for the reason the case above is: the failure is somebody
-   * deleting or re-pointing a route later, which a component test cannot see.
-   * `RunSectionRedirect.test.tsx` owns what the redirect DOES to the URL.
+   * THE OLD TAB URLS STILL RESOLVE, TO THEIR NEW PLACE. `/charts`,
+   * `/load-generators` and `/errors` are in bookmarks and ticket links; with the
+   * routes gone they would fall into the run's not-found section, and with them
+   * pointing anywhere but where their content went they would land on the wrong
+   * content. The first two go to the Report; `/errors` goes to the Summary's
+   * errors table, because that table moved there when the Errors tab folded in.
+   * Read out of `App.tsx` for the reason the case above is: the failure is
+   * somebody deleting or re-pointing a route later, which a component test
+   * cannot see. `RunSectionRedirect.test.tsx` owns what the redirect DOES to the
+   * URL.
    */
-  it('sends the old Charts and Load generators URLs to the Report', () => {
+  it('sends the old Charts, Load generators and Errors URLs to where their content lives', () => {
     const runBlock = APP.slice(
       APP.indexOf('<Route path="/runs/:runId"'),
       APP.indexOf('<Route path="/runs/:runId/requests/'),
     );
+    expect(runBlock).toMatch(/<Route\s+index\s+element=\{<RunSummary\s*\/>\}/);
     expect(runBlock).toMatch(/path="report"\s+element=\{<RunReport\s*\/>\}/);
     expect(runBlock).toMatch(/path="charts"\s+element=\{<RunSectionRedirect\s+to="report"\s*\/>\}/);
     expect(runBlock).toMatch(
       /path="load-generators"\s+element=\{<RunSectionRedirect\s+to="report"\s+hash="load-generators"\s*\/>\}/,
+    );
+    expect(runBlock).toMatch(
+      /path="errors"\s+element=\{<RunSectionRedirect\s+to="summary"\s+hash="errors"\s*\/>\}/,
     );
   });
 

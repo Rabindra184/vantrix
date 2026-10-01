@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import type { StatRow, StatsResponse } from '@perfportal/contracts';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
@@ -1959,5 +1961,62 @@ describe('StatisticsTable — its heading level', () => {
       </MemoryRouter>,
     );
     expect(screen.getByRole('heading', { level: 3, name: 'Statistics' })).toBeDefined();
+  });
+});
+
+/** A repo-root-relative path, wherever the runner was invoked from. */
+function fromRepo(rel: string): string {
+  let dir = process.cwd();
+  for (let i = 0; i < 6; i += 1) {
+    if (existsSync(resolve(dir, rel))) return resolve(dir, rel);
+    dir = resolve(dir, '..');
+  }
+  throw new Error(`could not find ${rel} from ${process.cwd()}`);
+}
+
+describe('StatisticsTable — the Count/s bridge', () => {
+  /**
+   * ═══ A BRIDGE NAMES THE OTHER END, SO IT BREAKS WHEN THAT END MOVES ═══
+   *
+   * The `Cnt/s` column keeps Gatling's spelling and carries a hint pointing at
+   * the Summary's combined chart — "the same measurement the requests-and-
+   * responses chart plots as X" — so a reader does not have to guess that two
+   * labels are one number. It used to point at a totals tile, and that tile was
+   * renamed and then deleted while the hint went on naming the old word: a
+   * cross-reference to a surface by a spelling that surface no longer uses, the
+   * same defect as "Mint one under Access", one file over, reintroduced within
+   * the hour of fixing it.
+   *
+   * READS BOTH SOURCES, which is the only way to see it — the two files share
+   * no symbol, so nothing in the type system or in either file's own suite
+   * connects them. `paths.test.ts` reads `App.tsx` and `tokens.test.ts` reads
+   * the emitted CSS for the same reason: some agreements exist only between
+   * files, and the alternative is prose that is wrong for a release.
+   */
+  it('keeps its Count/s bridge pointing at an axis the combined chart draws', () => {
+    /* NOT `new URL(..., import.meta.url)`, which `paths.test.ts` uses one
+       project over: that file runs under the NODE environment, where
+       `import.meta.url` is a `file:` URL. This suite is jsdom, where it is an
+       `http:` one, and `readFileSync` rejects it. Resolved from the repo root
+       instead, found by walking up from the working directory so the suite does
+       not care where it is invoked from. */
+    const table = readFileSync(fromRepo('apps/web/src/tables/StatisticsTable.tsx'), 'utf8');
+
+    /* ANCHORED TO THE `hint:` PROPERTY, not to the phrase. The first version of
+       this guard matched the phrase anywhere and found it inside the COMMENT
+       that explains this very defect — which quotes the old spelling on purpose
+       — so it read the documentation instead of the product and failed against
+       a string nobody ships. */
+    const bridge = /hint:\s*'[^']*plots as ([^']+)'/.exec(table);
+    expect(bridge, 'StatisticsTable no longer bridges to the combined chart').not.toBeNull();
+
+    /* `?.[1] ?? ''`, not `bridge![1]`: under `noUncheckedIndexedAccess` a
+       capture group is `string | undefined`, and widening the guard to cover
+       both means a bridge that matched but captured nothing fails on the next
+       line with its own message instead of throwing. */
+    const named = (bridge?.[1] ?? '').trim();
+    expect(named, 'the bridge names no axis at all').not.toBe('');
+    // The word the hint promises must be an axis the chart actually names.
+    expect(readFileSync(fromRepo('apps/web/src/charts/RatesChart.tsx'), 'utf8')).toContain(`name: '${named}'`);
   });
 });

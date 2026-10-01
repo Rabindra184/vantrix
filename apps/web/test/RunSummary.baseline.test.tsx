@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { RunResponse, StatsResponse, TrendsResponse } from '@perfportal/contracts';
 import reference from './fixtures/reference-run.json';
 import { runQueryKey } from '../src/api/run';
-import { RunOverviewTab } from '../src/routes/RunDetail';
+import RunSummary from '../src/routes/RunSummary';
 import type { RunWindowContext } from '../src/routes/useRunWindow';
 import useIsCompact from '../src/useIsCompact';
 
@@ -14,24 +14,37 @@ import useIsCompact from '../src/useIsCompact';
  * THE STAT TILES' "vs previous" DELTAS, AND THE ONE STATE THEY MUST NOT
  * APPEAR IN.
  *
- * `/stats` is WINDOW-SCOPED and `/trends` is not. There is no windowed
- * cohort endpoint, so under a time brush the two answer different questions
- * — a tenth of this run against the whole of the previous one — and the
- * tiles read as a catastrophic regression produced entirely by dragging the
- * brush. All six move together, which is what makes it convincing.
+ * `/stats` can be WINDOW-SCOPED and `/trends` never is. There is no windowed
+ * cohort endpoint, so a view that narrowed the first and compared it with the
+ * second measured a tenth of this run against the whole of the previous one —
+ * and the tiles read as a catastrophic regression produced entirely by dragging
+ * the brush. All of them moved together, which is what made it convincing.
  *
- * Both directions are asserted. "No deltas under a brush" alone is satisfied
- * by a page that never renders deltas at all, so the unbrushed case pins
- * that they DO appear, off the same fixture, with the same mount.
+ * THE OLD ANSWER WAS TO WITHHOLD THE DELTAS UNDER A WINDOW. The Summary's answer
+ * is that it never has one: GE's Summary stays the whole run with a window in
+ * its URL (measured), so every query here passes `null` and the comparison is
+ * always whole-run against whole-run. The last case asserts that, from the other
+ * side — a window in the shell's context changes nothing about what is asked or
+ * shown.
  *
- * `RunOverviewTab` under a stand-in for `RunShell`'s `<Outlet context/>`,
- * the same harness `RunTelemetry.test.tsx` and `RunOverviewTab.live.test.tsx`
- * use and for the same reason: this tab reads its window and live state from
- * the shell, and the shell's own brush cannot be driven in jsdom.
+ * Both directions are asserted. "No deltas" alone would be satisfied by a page
+ * that never renders deltas at all, so the first cases pin that they DO appear,
+ * off the same fixture, with the same mount.
+ *
+ * `RunSummary` under a stand-in for `RunShell`'s `<Outlet context/>`, the same
+ * harness `RunTelemetry.test.tsx` and `RunSummary.live.test.tsx` use and for the
+ * same reason: this page reads its window and live state from the shell, and the
+ * shell's own brush cannot be driven in jsdom.
  */
 
 vi.mock('../src/useIsCompact.js', () => ({ default: vi.fn(() => false) }));
 vi.mocked(useIsCompact).mockReturnValue(false);
+
+// The page draws real charts, and ECharts measures text through a 2D canvas
+// context that jsdom does not implement — it answers null and prints "Not
+// implemented" on every call. Answering null ourselves is what jsdom does
+// anyway, without the noise.
+vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
 
 afterEach(cleanup);
 
@@ -55,9 +68,10 @@ const READY_RUN: RunResponse = {
 };
 
 /**
- * A cohort of two: this run, and one strictly older whose mean is exactly
- * half of it. The expectation below is computed from that relationship
- * rather than written down.
+ * A cohort of two: this run, and one strictly older whose error rate is exactly
+ * half of it. The expectation below is computed from that relationship rather
+ * than written down. (The error rate, because it is one of the four tiles the
+ * Summary has: the mean this used to halve has no tile any more.)
  */
 const TRENDS: TrendsResponse = {
   runId: RUN_ID,
@@ -90,23 +104,34 @@ const TRENDS: TrendsResponse = {
       count: RUN_ROW.count,
       okCount: RUN_ROW.okCount,
       koCount: RUN_ROW.koCount,
-      errorRate: RUN_ROW.errorRate,
+      // Half this run's error rate, so the tile must read +100.0%.
+      errorRate: RUN_ROW.errorRate / 2,
       minMs: RUN_ROW.minMs,
       maxMs: RUN_ROW.maxMs,
-      // Half this run's mean, so the tile must read +100.0%.
-      meanMs: RUN_ROW.meanMs / 2,
+      meanMs: RUN_ROW.meanMs,
       throughputRps: RUN_ROW.throughputRps,
       percentiles: RUN_ROW.percentiles,
     },
   ],
 };
 
-function renderOverview(window: RunWindowContext['window']) {
+function renderSummary(window: RunWindowContext['window']) {
   const urls: string[] = [];
   vi.stubGlobal('fetch', (input: RequestInfo | URL) => {
     const url = String(input);
     urls.push(url);
-    const body = url.includes('/trends') ? TRENDS : STATS;
+    const path = new URL(url, 'http://x').pathname;
+    // Every endpoint the Summary reads answers with ITS OWN body, so the page
+    // renders whole rather than falling back to an error panel per section.
+    const body = path.endsWith('/trends')
+      ? TRENDS
+      : path.endsWith('/users')
+        ? reference.users
+        : path.endsWith('/series')
+          ? reference.series
+          : path.endsWith('/errors')
+            ? reference.errors
+            : STATS;
     return Promise.resolve(
       new Response(JSON.stringify(body), {
         status: 200,
@@ -137,7 +162,7 @@ function renderOverview(window: RunWindowContext['window']) {
               />
             }
           >
-            <Route index element={<RunOverviewTab />} />
+            <Route index element={<RunSummary />} />
           </Route>
         </Routes>
       </MemoryRouter>
@@ -146,12 +171,12 @@ function renderOverview(window: RunWindowContext['window']) {
   return { urls };
 }
 
-describe('RunOverviewTab — the baseline the stat tiles compare against', () => {
-  it('compares against the previous cohort run when the whole run is on screen', async () => {
-    renderOverview(null);
-    // Derived from the fixture: the baseline's mean is half this run's, so
-    // the only honest delta is +100.0%.
-    const tile = await screen.findByTestId('stat-mean-response');
+describe('RunSummary — the baseline the stat tiles compare against', () => {
+  it('compares against the previous cohort run', async () => {
+    renderSummary(null);
+    // Derived from the fixture: the baseline's error rate is half this run's,
+    // so the only honest delta is +100.0%.
+    const tile = await screen.findByTestId('stat-error-rate');
     await waitFor(() => expect(tile.parentElement).toHaveTextContent('+100.0% vs previous'));
   });
 
@@ -159,7 +184,7 @@ describe('RunOverviewTab — the baseline the stat tiles compare against', () =>
    * ═══ THE SEAM: THE NOTE MUST NAME THE RUN THE DELTAS WERE COMPUTED FROM ═══
    *
    * `RunStats` is handed `baseline` and `current` by two separate calls in
-   * `RunDetail`, so a unit fixture that supplies both proves only that the note
+   * `RunSummary`, so a unit fixture that supplies both proves only that the note
    * renders what it is given. What it cannot prove is that the run the note
    * NAMES is the run the tiles were computed AGAINST — and a note pointing at
    * the wrong member of the cohort would be worse than no note, because it
@@ -169,11 +194,11 @@ describe('RunOverviewTab — the baseline the stat tiles compare against', () =>
    * run rather than its baseline renders identically and says something false.
    */
   it('names the run the deltas are measured against, and links to it', async () => {
-    renderOverview(null);
+    renderSummary(null);
 
     // The delta first, so the link below is being checked against a comparison
     // that demonstrably happened.
-    const tile = await screen.findByTestId('stat-mean-response');
+    const tile = await screen.findByTestId('stat-error-rate');
     await waitFor(() => expect(tile.parentElement).toHaveTextContent('+100.0% vs previous'));
 
     const link = within(screen.getByTestId('baseline-note')).getByRole('link');
@@ -181,18 +206,27 @@ describe('RunOverviewTab — the baseline the stat tiles compare against', () =>
     expect(link).not.toHaveAttribute('href', `/runs/${RUN_ID}`);
   });
 
-  it('withholds every delta under a time brush, rather than comparing a window to a whole run', async () => {
-    const { urls } = renderOverview({ fromMs: 0, toMs: 6_000, bucketWidthMs: 1_000 });
+  /**
+   * THE OLD CLAIM, FROM THE OTHER SIDE. This case used to assert that a time
+   * brush WITHHELD every delta — "rather than comparing a window to a whole
+   * run" — and that `/trends` was not fetched at all. The Summary has no window
+   * to withhold them under: whatever the shell carries, it asks for the whole
+   * run, so the comparison is whole run against whole run and is as honest under
+   * a brush as without one. What must not happen is the window leaking into the
+   * page — a narrowed `/stats` set against the un-narrowed `/trends` is exactly
+   * the "-84% regression produced by dragging the brush" this file was written
+   * to prevent.
+   */
+  it('still compares the whole run when the shell carries a window, because it never asks for a narrowed one', async () => {
+    const { urls } = renderSummary({ fromMs: 0, toMs: 6_000, bucketWidthMs: 1_000 });
 
-    // The tiles still render — they are never withheld (§22.6) — so waiting
-    // on one is what makes the absence below a real observation rather than
-    // an assertion against an empty document.
-    await screen.findByTestId('stat-mean-response');
-    await waitFor(() => expect(urls.some((url) => url.includes('/stats'))).toBe(true));
+    const tile = await screen.findByTestId('stat-error-rate');
+    await waitFor(() => expect(tile.parentElement).toHaveTextContent('+100.0% vs previous'));
 
-    expect(screen.queryByText(/vs previous/)).toBeNull();
-    // And the cohort payload is not fetched at all: a reader who cannot be
-    // shown the comparison should not pay for it either.
-    expect(urls.some((url) => url.includes('/trends'))).toBe(false);
+    // The comparison happened, and neither side of it was narrowed.
+    expect(urls.some((url) => url.includes('/trends'))).toBe(true);
+    const stats = urls.filter((url) => new URL(url, 'http://x').pathname.endsWith('/stats'));
+    expect(stats.length).toBeGreaterThan(0);
+    for (const url of stats) expect(url).not.toMatch(/[?&](from|to)=/);
   });
 });

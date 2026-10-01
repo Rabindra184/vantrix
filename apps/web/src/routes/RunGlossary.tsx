@@ -18,11 +18,11 @@
  *
  * ═══ A `<details>`, FOR THE REASON N02's DISCLOSURE IS ONE ═══
  *
- * A `<summary>` contributes an ARIA group and NOT a heading, so the Overview
- * tab's heading outline — which `run-tables.spec.ts` asserts as the exact list
- * `['Platform gates', 'Simulation assertions', 'Statistics']` — is untouched.
- * An `<h2>` here would break that spec on every run; an `<h3>` would put a gap
- * in the outline a screen-reader user navigating by heading cannot explain.
+ * A `<summary>` contributes an ARIA group and NOT a heading, so the heading
+ * outline of the page it sits on — the Report's, where it travels with the
+ * statistics table it defines — is untouched. An `<h2>` here would add a
+ * section the Report does not have; an `<h3>` would put a gap in the outline a
+ * screen-reader user navigating by heading cannot explain.
  *
  * THE REJECTED PLACEMENTS, because each is the obvious one:
  *
@@ -53,8 +53,11 @@
  * sketch, accurate to within 1%, against a tool whose own p99 reads 9.47% low
  * on this fixture. This one is WHICH WORD names which quantity. Folding a
  * methodology paragraph behind a vocabulary summary buries it, and absorbing
- * it would move it into `RunStats`, the one Overview component that mounts on
- * a phone. The last entry cross-references it instead.
+ * it would move it into `RunStats`, the one Summary component that mounts on
+ * a phone. The last entry cross-references it instead. (They no longer sit on
+ * one page: that disclosure is under the Summary's tiles and this is in the
+ * Report beside the table whose words it defines, so the cross-reference names
+ * the Summary rather than saying "beside".)
  */
 export default function RunGlossary() {
   return (
@@ -98,17 +101,17 @@ export const ENTRIES: readonly { term: string; meaning: string }[] = [
   {
     term: '% KO, Error rate',
     meaning:
-      'One number: failed requests as a percentage of all requests. “% KO” is the statistics table’s column, “Error rate” is the run totals tile.',
+      'One number: failed requests as a percentage of all requests. “% KO” is the statistics table’s column, “Error rate” is the Summary’s first totals tile.',
   },
   {
     term: 'Cnt/s, Requests/s',
     meaning:
-      'One measurement: completed events per second. Gatling counts an entry into a group as an event too, which is why its column says Cnt rather than Requests — on a group row this is groups per second, not requests.',
+      'One measurement: completed events per second. Gatling counts an entry into a group as an event too, which is why its column says Cnt rather than Requests — on a group row this is groups per second, not requests. Requests/s is the axis of the request-rate charts on the request and group pages; the Summary’s combined chart plots the same per-second count as Count/s.',
   },
   {
     term: 'Requests',
     meaning:
-      'Two things on this tab. The totals tile is how many requests the run made; the statistics table’s first column is which request each row is about. The table’s Total column is the same number as the tile.',
+      'Two things. The Summary’s totals tile is how many requests the run made; the statistics table’s first column, in the Report, is which request each row is about. The table’s Total column is the same number as the tile.',
   },
   {
     term: 'Executions',
@@ -123,7 +126,7 @@ export const ENTRIES: readonly { term: string; meaning: string }[] = [
   {
     term: 'Errors, recorded errors',
     meaning:
-      'Three numbers here, none of them meant to match. The Errors tab counts distinct messages. The line under its heading counts recorded errors — every occurrence of those messages — so it is usually the larger, because one message can fail many requests. KO, in the run totals and the statistics table, counts requests that failed. Recorded errors can exceed KO as well: Gatling records a session or expression failure as an error in its own right, belonging to no request, so it is counted here and in nothing’s KO.',
+      'Three numbers here, none of them meant to match. The Summary’s Errors table counts distinct messages. The line under its heading counts recorded errors — every occurrence of those messages — so it is usually the larger, because one message can fail many requests. KO, in the run totals and the statistics table, counts requests that failed. Recorded errors can exceed KO as well: Gatling records a session or expression failure as an error in its own right, belonging to no request, so it is counted here and in nothing’s KO.',
   },
   {
     term: 'Platform gates, Simulation assertions',
@@ -138,6 +141,6 @@ export const ENTRIES: readonly { term: string; meaning: string }[] = [
   {
     term: 'estimate',
     meaning:
-      'The p95 and p99 tiles say estimate because percentiles are read from a sketch rather than counted. “How percentiles are measured”, up beside the tiles, says how close. They are also taken at the nearest rank, so a percentile here can differ from the same column in Gatling’s own report by a whole measurement — on a small sample that gap can be wide, and both numbers are right. Total, OK, KO, Min, Max and Mean are exact, and are what to diff the two reports on.',
+      'The p95 tile says estimate because percentiles are read from a sketch rather than counted, and so do the table’s percentile columns. “How percentiles are measured”, under the Summary’s tiles, says how close. They are also taken at the nearest rank, so a percentile here can differ from the same column in Gatling’s own report by a whole measurement — on a small sample that gap can be wide, and both numbers are right. Total, OK, KO, Min, Max and Mean are exact, and are what to diff the two reports on.',
   },
 ];

@@ -88,8 +88,8 @@ export default function RequestDetail() {
   // reason a reader keeps two of these open at once.
   useDocumentTitle(name ?? null);
 
-  // Called under the SAME key `RunOverviewTab` and `RunReport` use
-  // (`RunDetail.tsx`), so this page's first render finds a warm cache entry
+  // Called under the SAME key `RunSummary` and `RunReport` use, so this
+  // page's first render finds a warm cache entry
   // rather than issuing a second request for a payload the run page already
   // fetched — `statsQuery`'s `staleTime: Infinity` (`api/metrics.ts`) is what
   // keeps that entry warm across all three routes; the key alone would not.
@@ -186,8 +186,9 @@ export default function RequestDetail() {
         <h1 className="text-xl font-semibold tracking-tight break-all sm:text-2xl">{name}</h1>
       </header>
       {/* §13.3 ① and ⑪, ABOVE THE CHART STACK — same placement as the run
-          page's own statistics table (RunDetail.tsx's `RunOverviewTab`,
-          above the Charts tab it no longer shares a page with), and a
+          page's own statistics table had when it sat on the Overview tab,
+          above the Charts tab it did not share a page with (the Report has
+          since folded both into its Requests section), and a
           stronger case for it: there, the argument was that scrolling past
           eight figures to reach one request's p99 is the reading order
           nobody wants. Here, the entire numeric payload IS a single row —

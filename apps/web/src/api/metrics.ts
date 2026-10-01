@@ -64,8 +64,8 @@ import {
  * hypothetical — it is what this page actually does. `RunShell` fetches
  * `usersQuery` and `errorsQuery` for the header and the tab strip; `stats`,
  * `users`, `distribution` and `series` are each asked for again, under the
- * identical key, by whichever of `RunOverviewTab` / `RunReport` /
- * `RunErrorsTab` the reader opens — and because those are ROUTES that mount at
+ * identical key, by whichever of `RunSummary` / `RunReport`
+ * the reader opens — and because those are ROUTES that mount at
  * DIFFERENT times, not components sharing one render, a shared key alone only
  * dedupes observers that happen to mount while a fetch is still in flight. The
  * `staleTime` is what stops the later, separate mount from firing a second
@@ -101,9 +101,9 @@ export const statsQueryKey = (id: string, window: Window | null) =>
  * TWO ROUTES, ONE FETCH — but only because of `staleTime`, not because of the
  * KEY alone. This docstring used to say `RunDetail` "mounts the statistics
  * table and the chart stack as separate components", which was true before
- * this key had a route split to survive: today `RunOverviewTab` (the
- * statistics table, and the six stat tiles) and `RunReport` (the indicator
- * bands and the request-count donut) are different ROUTES under `RunShell`,
+ * this key had a route split to survive: today `RunSummary` (the four stat
+ * tiles) and `RunReport` (the statistics table, the indicator bands and the
+ * request-count donut) are different ROUTES under `RunShell`,
  * mounted at whatever moment the reader clicks a tab — not two components
  * rendered together in one commit. A shared key on its own only dedupes
  * observers that mount while a fetch is still in flight; it says nothing

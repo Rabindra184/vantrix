@@ -21,7 +21,7 @@ import useIsCompact from '../src/useIsCompact';
  * `RunReport`'s live branch — what the Charts tab's live branch (Task 9) became
  * when its charts moved into the Report's sections.
  *
- * Mounted the same way `RunOverviewTab.live.test.tsx` mounts its own tab —
+ * Mounted the same way `RunSummary.live.test.tsx` mounts its own page —
  * a stand-in `<Outlet context={{...}} />` for `RunShell`, plus a pre-seeded
  * `run` query cache so the assertions below need no `await` beyond a click.
  *

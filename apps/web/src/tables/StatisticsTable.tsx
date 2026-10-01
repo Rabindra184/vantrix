@@ -161,17 +161,20 @@ const EXECUTION_COLUMNS: readonly Column[] = [
      * "when explicitly needed for Gatling parity" — which this is: the
      * statistics table IS the parity surface, and `formatRate`'s own docstring
      * cites `Cnt/s` (14.21) as the tool's spelling. So the column keeps it and
-     * the `<abbr>` carries the bridge, because the run totals directly above
-     * call the same number something else and a reader should not have to
+     * the `<abbr>` carries the bridge, because the Summary's combined chart
+     * draws the same number under another name and a reader should not have to
      * guess that two labels are one measurement.
      *
-     * THE BRIDGE NAMES THE OTHER END, SO IT MOVES WHEN THAT END DOES. This
-     * said "the run totals call req/s" while the same change renamed that tile
-     * to `Requests/s` and deleted its separate unit — a cross-reference naming
-     * a surface by a word that surface no longer uses, which is precisely the
-     * defect the "Mint one under Access" fix had just corrected one file over.
+     * THE BRIDGE NAMES THE OTHER END, SO IT MOVES WHEN THAT END DOES. It said
+     * "the run totals call req/s", then `Requests/s` — and the run totals no
+     * longer carry a rate tile at all (GE's Summary shows four numbers, and
+     * throughput is not one), so it points at the chart that plots the same
+     * quantity, as `Count/s`. That is a cross-reference naming a surface by a
+     * word that surface may stop using, which is precisely the defect the "Mint
+     * one under Access" fix had corrected one file over; this table's own test
+     * reads the chart's source for the word the hint promises.
      * Whenever a label changes, grep for prose that names it from elsewhere. */
-    hint: 'Count of events per second — the same measurement the run totals call Requests/s',
+    hint: 'Count of events per second — the same measurement the requests-and-responses chart plots as Count/s',
     value: (r) => r.throughputRps,
     format: formatRate,
   },
@@ -516,6 +519,37 @@ export function statisticsCsv(
   ]);
 }
 
+/**
+ * The table's empty branch, shared with the Summary's headline numbers so the
+ * two can never describe one empty run two ways.
+ *
+ * ═══ "RECORDED" IS FALSE FOR A RUN WHOSE STREAM STOPPED ═══
+ *
+ * Measured end to end: a live run given 18,884 bytes of a real
+ * simulation log published a delta reading count 440 / ok 428 /
+ * ko 12 — numbers a reader WATCHED on the live page — and the
+ * sweeper then finalized it `incomplete` with zero stat rows, no
+ * simulation and no duration. The bytes are still in the object
+ * store; nothing assembles them, because `finalizeLive` only runs
+ * under `close()` and the sweeper must not re-enqueue.
+ *
+ * So those statistics were recorded and are not RETAINED, and the
+ * unconditional sentence told a reader who had just seen 440
+ * requests that none existed. Whether an abandoned run should keep
+ * its partial data is a product decision and is not made here; what
+ * is fixed is the product describing it wrongly.
+ */
+export function StatisticsEmpty({ runStatus }: { readonly runStatus: RunResponse['status'] | undefined }) {
+  return runStatus === 'incomplete' ? (
+    <EmptyState
+      title="No statistics were retained for this run"
+      body="This run's stream stopped before it finished, and figures measured while it was live are not kept. Re-run the test for a complete set."
+    />
+  ) : (
+    <EmptyState title="No statistics were recorded for this run" />
+  );
+}
+
 export default function StatisticsTable({
   stats,
   runId,
@@ -808,29 +842,7 @@ export default function StatisticsTable({
         <SectionHeading id={headingId} level={headingLevel} overline="Run telemetry">Statistics</SectionHeading>
         {/* No table at all, rather than headings over nothing: an empty table
             reads as a run that was measured and found to have done nothing. */}
-        {/* ═══ "RECORDED" IS FALSE FOR A RUN WHOSE STREAM STOPPED ═══
-         *
-         * Measured end to end: a live run given 18,884 bytes of a real
-         * simulation log published a delta reading count 440 / ok 428 /
-         * ko 12 — numbers a reader WATCHED on the live page — and the
-         * sweeper then finalized it `incomplete` with zero stat rows, no
-         * simulation and no duration. The bytes are still in the object
-         * store; nothing assembles them, because `finalizeLive` only runs
-         * under `close()` and the sweeper must not re-enqueue.
-         *
-         * So those statistics were recorded and are not RETAINED, and the
-         * unconditional sentence told a reader who had just seen 440
-         * requests that none existed. Whether an abandoned run should keep
-         * its partial data is a product decision and is not made here; what
-         * is fixed is the product describing it wrongly. */}
-        {runStatus === 'incomplete' ? (
-          <EmptyState
-            title="No statistics were retained for this run"
-            body="This run's stream stopped before it finished, and figures measured while it was live are not kept. Re-run the test for a complete set."
-          />
-        ) : (
-          <EmptyState title="No statistics were recorded for this run" />
-        )}
+        <StatisticsEmpty runStatus={runStatus} />
       </section>
     );
   }

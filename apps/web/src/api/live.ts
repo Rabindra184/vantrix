@@ -18,7 +18,7 @@ import { errorsQueryKey, seriesQueryKey, usersQueryKey } from './metrics';
  * reconnects with backoff on any RETRYABLE close — never on `CLOSE_UNAUTHORIZED`
  * (4401), which `LiveRunState.unauthorized` surfaces instead of silently
  * retrying forever. The charts are never told any of this happened:
- * `RunReport`/`RunOverviewTab`/`RunErrorsTab` and everything they render
+ * `RunReport`/`RunSummary` and everything they render
  * are unmodified by this file, and read whatever is in the cache regardless
  * of whether it arrived over REST or over this socket (design part 1 §4,
  * part 2b §4.1).
@@ -270,8 +270,8 @@ function errorsResponseFrom(runId: string, envelope: LiveDelta['errors']): Error
  * `seriesQueryKey` (`./metrics.ts`) does NOT fold a window into itself the
  * way `usersQueryKey`/`errorsQueryKey` do — `seriesQuery` appends
  * `window?.fromMs ?? null, window?.toMs ?? null` EXTERNALLY, so the key a
- * mounted chart actually subscribes to (`RunReport`, `RunOverviewTab`'s
- * sparkline) is eight elements, not six. A live view is never windowed — the
+ * mounted chart actually subscribes to (`RunReport`, `RunSummary`'s
+ * charts and sparklines) is eight elements, not six. A live view is never windowed — the
  * domain grows with the run instead of being narrowed — so the two trailing
  * nulls below are exactly what `seriesQuery(id, 'run', '', 'response_time',
  * null).queryKey` would produce, written out directly rather than importing

@@ -298,9 +298,8 @@ export function SimulationAssertionsBar({
  * Summary is whole-run by design and never carries one, so a drill-down from it
  * introduces none.
  *
- * (Temporarily DUPLICATED in `RunDetail.tsx`, which still renders the table
- * that owns the original. The task that deletes that table deletes the copy
- * with its last caller.)
+ * (This was a copy while `RunDetail.tsx` still rendered the table that owned the
+ * original; that table went with the Overview tab, and this is the only one.)
  */
 function AssertionTarget({
   assertion,

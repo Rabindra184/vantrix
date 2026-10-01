@@ -512,3 +512,45 @@ describe('SimulationAssertionsBar', () => {
     );
   });
 });
+
+/**
+ * ═══ REVIEW N01 — TWO SYSTEMS, TWO NOUNS ═══
+ *
+ * Carried from `ToolAssertions.test.tsx`, which went with the table it tested.
+ * The finding asks the product to stop "mixing assertions, checks, gates, and
+ * verdicts without scope", and the worst case was the page's own headings: the
+ * organisation's SLA rules and the assertions a simulation declares for ITSELF
+ * were both headed "Assertions", one section apart, on the page where a reader
+ * decides whether a release is safe.
+ *
+ * ONLY THE PLATFORM'S MOVED. "Simulation assertions" is correct and stays — the
+ * PRD gives "Assertions table" to G-05, which is the TOOL's own feature, so
+ * Gatling's assertions really are assertions. It was the platform's that had
+ * borrowed the word, and the replacement is not invented: the decision band has
+ * called this system "Platform gates" since C02.
+ *
+ * ASSERTED AS EXCLUSIVITY, not as two strings. `RunSummary.test.tsx` pins the
+ * page's exact outline; what this adds is the property that survives the next
+ * rename — that no single word names both systems — and it is pinned HERE
+ * because these two components are what write the headings. A future title
+ * reintroducing "assertions" for the platform fails with the reason attached,
+ * rather than as a list mismatch one level up.
+ */
+describe('the two bars name two systems with two nouns', () => {
+  it('gives the platform’s gates and the simulation’s assertions different words', () => {
+    at(
+      '/r',
+      <>
+        <PlatformGatesBar runId={RUN_ID} assertions={[PLATFORM_GATE]} ran />
+        <SimulationAssertionsBar runId={RUN_ID} assertions={[details(['Search'], 'failed')]} stats={null} />
+      </>,
+    );
+    const h2s = screen.getAllByRole('heading', { level: 2 }).map((h) => (h.textContent ?? '').trim());
+
+    expect(h2s).toContain('Platform gates');
+    expect(h2s).toContain('Simulation assertions');
+    // The exclusivity, in both directions.
+    expect(h2s.filter((h) => /assertion/i.test(h))).toEqual(['Simulation assertions']);
+    expect(h2s.filter((h) => /gate/i.test(h))).toEqual(['Platform gates']);
+  });
+});

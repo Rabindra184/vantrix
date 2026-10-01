@@ -62,7 +62,7 @@ const RENDERED_IN: Readonly<Record<string, string>> = {
   '% KO': 'apps/web/src/tables/StatisticsTable.tsx',
   'Error rate': 'apps/web/src/routes/RunStats.tsx',
   'Cnt/s': 'apps/web/src/tables/StatisticsTable.tsx',
-  'Requests/s': 'apps/web/src/routes/RunStats.tsx',
+  'Requests/s': 'apps/web/src/charts/RatesChart.tsx',
   Requests: 'apps/web/src/tables/StatisticsTable.tsx',
   Executions: 'apps/web/src/tables/StatisticsTable.tsx',
   p95: 'apps/web/src/routes/RunStats.tsx',
@@ -70,8 +70,8 @@ const RENDERED_IN: Readonly<Record<string, string>> = {
   '95%': 'apps/web/src/charts/transforms/percentiles.ts',
   Errors: 'apps/web/src/tables/ErrorsTable.tsx',
   'recorded errors': 'apps/web/src/tables/ErrorsTable.tsx',
-  'Platform gates': 'apps/web/src/routes/RunDetail.tsx',
-  'Simulation assertions': 'apps/web/src/routes/RunDetail.tsx',
+  'Platform gates': 'apps/web/src/routes/AssertionBars.tsx',
+  'Simulation assertions': 'apps/web/src/routes/AssertionBars.tsx',
   Verdict: 'apps/web/src/routes/RunList.tsx',
   estimate: 'apps/web/src/routes/RunStats.tsx',
 };
@@ -134,12 +134,13 @@ describe('RunGlossary — every word it defines is a word the product says', () 
 
 describe('RunGlossary — what it must not do to the page', () => {
   /**
-   * NO HEADING, AT ANY LEVEL. `run-tables.spec.ts` asserts the Overview tab's
-   * `<h2>` outline as the exact list ['Platform gates', 'Simulation
-   * assertions', 'Statistics']; an `<h2>` here breaks that on every run, and
-   * an `<h3>` puts a gap in the outline a screen-reader user navigating by
-   * heading cannot explain. A `<summary>` contributes an ARIA group instead,
-   * which is the mechanism N02's percentile disclosure already uses.
+   * NO HEADING, AT ANY LEVEL. The glossary now travels with the statistics table
+   * into the Report, whose outline is its five sections with the table's
+   * heading one level below them; an `<h2>` here adds a section the Report does
+   * not have, and an `<h3>` puts a gap in the outline a screen-reader user
+   * navigating by heading cannot explain. A `<summary>` contributes an ARIA
+   * group instead, which is the mechanism N02's percentile disclosure already
+   * uses.
    */
   it('contributes no heading', () => {
     render(<RunGlossary />);

@@ -102,14 +102,13 @@ export function Undrawn({ slot, reason }: { slot: Slot; reason: string }) {
  * What its caller renders once the payload arrives, or — until then — a
  * heading and the reason it is not there.
  *
- * USUALLY ONE TABLE (`ErrorsTable`), but not always: the Statistics slot's
- * `children` renders `RunStats`'s six tiles ahead of `StatisticsTable`, both
- * from this same payload, because a failed or still-pending `/stats` should
- * explain itself once rather than leaving the tile row to render six dashes
- * above an error the reader has to notice separately (`RunDetail.tsx`'s
- * `RunOverviewTab`). This component owns only the loading and error states;
- * how many things `children` draws from the resolved payload is its callers'
- * choice.
+ * USUALLY ONE TABLE (`ErrorsTable`, or `StatisticsTable` in the Report), but
+ * a caller may draw more than one thing from the resolved payload — the
+ * Statistics slot once rendered a row of tiles ahead of its table, so that a
+ * failed or still-pending `/stats` explained itself once rather than leaving
+ * the tiles to render dashes above an error the reader has to notice
+ * separately. This component owns only the loading and error states; how many
+ * things `children` draws from the resolved payload is its callers' choice.
  *
  * A TABLE WHOSE FETCH FAILED MUST NOT SIMPLY VANISH, for the same reason
  * `Payload` renders undrawn charts rather than nothing: the statistics table IS

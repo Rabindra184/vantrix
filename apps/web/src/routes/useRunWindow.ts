@@ -226,6 +226,18 @@ export function useTimeDomainFromShell(): readonly [number, number] | undefined 
 }
 
 /**
+ * The run's own span, IGNORING any window — the Summary's axis. GE's Summary
+ * stayed the whole run with a 30-second window in its URL (measured), and so
+ * does this one; `useTimeDomainFromShell` narrows to the window, which is
+ * right for the Report and wrong here.
+ */
+export function useWholeRunDomainFromShell(): readonly [number, number] | undefined {
+  const { durationMs, liveDurationMs } = useOutletContext<RunWindowContext>();
+  const span = durationMs ?? liveDurationMs;
+  return span === null ? undefined : growingDomainMs(span);
+}
+
+/**
  * The selected window as a query-string suffix, for links that must carry it.
  *
  * ═══ WHY LINKS HAVE TO DO THIS AT ALL ═══
