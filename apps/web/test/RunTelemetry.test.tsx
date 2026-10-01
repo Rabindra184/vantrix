@@ -95,7 +95,10 @@ function renderRunTelemetry(
               />
             }
           >
-            <Route path="load-generators" element={<RunTelemetry only={options.only ?? ALL} />} />
+            <Route
+              path="load-generators"
+              element={<RunTelemetry only={options.only ?? ALL} action="Open telemetry charts" />}
+            />
           </Route>
         </Routes>
       </MemoryRouter>
@@ -430,7 +433,10 @@ describe('RunTelemetry', () => {
                 />
               }
             >
-              <Route path="load-generators" element={<RunTelemetry only={ALL} />} />
+              <Route
+                path="load-generators"
+                element={<RunTelemetry only={ALL} action="Open telemetry charts" />}
+              />
             </Route>
           </Routes>
         </MemoryRouter>
@@ -511,7 +517,10 @@ describe('RunTelemetry', () => {
                 />
               }
             >
-              <Route path="load-generators" element={<RunTelemetry only={ALL} />} />
+              <Route
+                path="load-generators"
+                element={<RunTelemetry only={ALL} action="Open telemetry charts" />}
+              />
             </Route>
           </Routes>
         </MemoryRouter>

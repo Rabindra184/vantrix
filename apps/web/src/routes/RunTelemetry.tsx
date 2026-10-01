@@ -86,7 +86,21 @@ const NO_SAMPLES_IN_WINDOW =
   'No telemetry samples fall within the selected time window for any load generator. Widen ' +
   "the range to see this run's host metrics.";
 
-export default function RunTelemetry({ only }: { readonly only: readonly TelemetryChartId[] }) {
+export default function RunTelemetry({
+  only,
+  action,
+}: {
+  readonly only: readonly TelemetryChartId[];
+  /**
+   * What the phone's withheld notice offers to open, REQUIRED and with no
+   * default. The Report mounts this twice and every other section on that
+   * page has a button of its own, so a shared "Open telemetry charts" left two
+   * buttons with one name — and a screen-reader user moving through a phone's
+   * controls cannot tell which section's charts either one would draw. Each
+   * caller names its own ("Open the connection charts").
+   */
+  readonly action: string;
+}) {
   const { runId } = useParams<{ runId: string }>();
   // The slots this section owns. The `as` is the one place a plain string id
   // meets the union `only` is typed in; `TelemetryCharts` takes the same list.
@@ -176,7 +190,7 @@ export default function RunTelemetry({ only }: { readonly only: readonly Telemet
       <DesktopOnly
         compact
         what="Load-generator telemetry"
-        action="Open telemetry charts"
+        action={action}
         onShow={() => setShown(true)}
       >
         {() => null}

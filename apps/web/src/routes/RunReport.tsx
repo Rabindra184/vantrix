@@ -105,10 +105,10 @@ export default function RunReport() {
         {() => <VirtualUsersSection runId={runId} />}
       </CollapsibleSection>
       <CollapsibleSection id="connections" title="Connections">
-        {() => <RunTelemetry only={CONNECTION_CHARTS} />}
+        {() => <RunTelemetry only={CONNECTION_CHARTS} action="Open the connection charts" />}
       </CollapsibleSection>
       <CollapsibleSection id="load-generators" title="Load generators">
-        {() => <RunTelemetry only={LOAD_GENERATOR_CHARTS} />}
+        {() => <RunTelemetry only={LOAD_GENERATOR_CHARTS} action="Open the load-generator charts" />}
       </CollapsibleSection>
     </div>
   );
@@ -164,7 +164,12 @@ function RequestsCharts({ runId }: { readonly runId: string }) {
 
   if (compact && !shown) {
     return (
-      <DesktopOnly compact what="Seven charts of this run" action="Open the charts" onShow={() => setShown(true)}>
+      <DesktopOnly
+        compact
+        what="Seven charts of this run"
+        action="Open the request charts"
+        onShow={() => setShown(true)}
+      >
         {() => null}
       </DesktopOnly>
     );
@@ -279,7 +284,12 @@ function VirtualUsersSection({ runId }: { readonly runId: string }) {
 
   if (compact && !shown) {
     return (
-      <DesktopOnly compact what="Three charts of this run" action="Open the charts" onShow={() => setShown(true)}>
+      <DesktopOnly
+        compact
+        what="Three charts of this run"
+        action="Open the virtual-user charts"
+        onShow={() => setShown(true)}
+      >
         {() => null}
       </DesktopOnly>
     );

@@ -332,8 +332,24 @@ describe('RunReport — GE’s sections', () => {
     const seen = renderReport();
     const section = screen.getByTestId('section-requests');
     expect(within(section).queryByTestId('chart-requests-and-responses')).toBeNull();
-    expect(within(section).getByRole('button', { name: /open the charts/i })).toBeVisible();
+    expect(within(section).getByRole('button', { name: 'Open the request charts' })).toBeVisible();
     expect(seen.some((u) => u.includes('/series'))).toBe(false);
+  });
+
+  /** FOUR WITHHELD NOTICES, FOUR DIFFERENT BUTTONS. Two sections shared "Open
+   *  the charts" and the two telemetry ones shared "Open telemetry charts", so a
+   *  screen-reader user stepping through a phone's controls met pairs they could
+   *  not tell apart. Asserted on the SET, not on four strings: any caller that
+   *  reuses another's name collapses the set, whatever the words are. */
+  it('gives every withheld chart section a button with its own name', async () => {
+    vi.mocked(useIsCompact).mockReturnValue(true);
+    renderReport();
+    for (const title of ['Virtual users', 'Connections', 'Load generators']) {
+      await userEvent.click(screen.getByRole('button', { name: title }));
+    }
+    const names = screen.getAllByTestId('desktop-only-show').map((b) => b.textContent);
+    expect(names, 'the page has four withheld chart sections').toHaveLength(4);
+    expect(new Set(names).size).toBe(names.length);
   });
 
   // Review focus 3: EVERY chart section has its own gate, not just the one that
