@@ -71,6 +71,58 @@ const PASSED_GATE: Assertion = {
   actualValue: 400,
 };
 
+/**
+ * Three gates, one of each outcome — `RunDetail.live.test.tsx`'s fixture, which
+ * is where these cards' two lines were pinned until the table they sat in went.
+ * The failed one is deliberately NOT first, so "failed sorts first" cannot be
+ * what puts it at index 0. The passed one is a `gte` rule, so the comparator's
+ * noun is not the only one in play.
+ */
+const THREE_GATES: readonly Assertion[] = [
+  {
+    ruleId: '22222222-2222-4222-8222-222222222222',
+    outcome: 'failed',
+    actualValue: 1830,
+    message: 'p99 breached its threshold.',
+    rule: {
+      scope: 'run',
+      targetName: null,
+      family: 'response_time',
+      metric: 'p99',
+      comparator: 'lte',
+      threshold: 750,
+    },
+  },
+  {
+    ruleId: '33333333-3333-4333-8333-333333333333',
+    outcome: 'passed',
+    actualValue: 92,
+    message: 'Throughput stayed above target.',
+    rule: {
+      scope: 'run',
+      targetName: null,
+      family: 'response_time',
+      metric: 'throughput_rps',
+      comparator: 'gte',
+      threshold: 80,
+    },
+  },
+  {
+    ruleId: '44444444-4444-4444-8444-444444444444',
+    outcome: 'not_applicable',
+    actualValue: null,
+    message: 'No matching request was measured.',
+    rule: {
+      scope: 'request',
+      targetName: 'POST /checkout',
+      family: 'response_time',
+      metric: 'p95',
+      comparator: 'lte',
+      threshold: 500,
+    },
+  },
+];
+
 const GLOBAL_ASSERTION: ToolAssertion = {
   expression: 'Global: max of response time is less than 30000.0',
   assertion: {
@@ -139,6 +191,52 @@ describe('PlatformGatesBar', () => {
   ] as const)('says why it has nothing to show (%#)', (assertions, ran, words) => {
     at('/r', <PlatformGatesBar runId={RUN_ID} projectSlug="checkout" assertions={assertions} ran={ran} />);
     expect(within(screen.getByTestId('section-platform-gates')).getByText(words)).toBeVisible();
+  });
+
+  /**
+   * THE CARD'S OUTCOME LINE, WHOLE. The title line above it already says
+   * `Whole-run p99 response time ≤ 750 ms`, so a fragment such as "p99" or
+   * "750 ms" is satisfied by the title and pins nothing here. The full
+   * sentence is the evaluator's structured fields in the reader's vocabulary
+   * (review.md 3); the STORED message is `p99 breached its threshold.`, which
+   * is how a card quietly printing the schema's own words is told from one
+   * that does not — so its absence is asserted beside the sentence's presence.
+   */
+  it('words a failed gate’s outcome from its structured fields, not its stored message', () => {
+    at('/r', <PlatformGatesBar runId={RUN_ID} assertions={THREE_GATES} ran />);
+    const failed = screen.getAllByTestId('gate-card')[0]!;
+    expect(
+      within(failed).getByText('Whole-run p99 response time 1830 ms exceeds the 750 ms limit.'),
+    ).toBeVisible();
+    expect(failed).not.toHaveTextContent('p99 breached its threshold.');
+  });
+
+  /**
+   * NOT APPLICABLE HAS NOTHING TO SAY IN STRUCTURE, so the stored message is
+   * the one place the evaluator's own words survive ("No matching request was
+   * measured" explains WHY, which no field can). And nothing was measured, so
+   * the actual is a dash — a `0` there is a measurement nobody took, and reads
+   * as a request that responded instantly.
+   */
+  it('shows a not-applicable gate’s stored message and a dash, never a zero, for its actual', () => {
+    at('/r', <PlatformGatesBar runId={RUN_ID} assertions={THREE_GATES} ran />);
+    // Failed first, then the rest in recorded order: [failed, passed, n/a].
+    const notApplicable = screen.getAllByTestId('gate-card')[2]!;
+    expect(within(notApplicable).getByTestId('gate-outcome')).toHaveTextContent(/not applicable/i);
+    expect(notApplicable).toHaveTextContent('Actual: —');
+    expect(within(notApplicable).getByText('No matching request was measured.')).toBeVisible();
+  });
+
+  it.each([
+    [undefined, true, 'Platform gates are judged once the run finishes.'],
+    [[], false, 'The run stopped before anything could be processed, so no SLA rule ran.'],
+  ] as const)('says what is behind “nothing to show” once opened (%#)', async (assertions, ran, body) => {
+    // The summary line names WHICH fact it is; the body says what it means.
+    // Swapping the two bodies turns "judged once the run finishes" onto a run
+    // that is finished and stopped early, which is false in both directions.
+    at('/r', <PlatformGatesBar runId={RUN_ID} assertions={assertions} ran={ran} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Platform gates' }));
+    expect(within(screen.getByTestId('section-platform-gates')).getByText(body)).toBeVisible();
   });
 
   it('opens itself when a run finishes with a failed gate it was shut over while live', () => {
@@ -294,6 +392,32 @@ describe('SimulationAssertionsBar', () => {
       `/runs/${RUN_ID}/groups/Catalog`,
     );
     expect(screen.queryByRole('link', { name: 'Ghost' })).toBeNull();
+    // The null check above is also true of a card that never rendered, so the
+    // name is asserted PRESENT as plain text beside it — the honest answer for
+    // a check on something this run has no row for, not a card that vanished.
+    const ghost = screen
+      .getAllByTestId('simulation-card')
+      .find((card) => card.textContent?.includes('Ghost'));
+    expect(ghost).toBeDefined();
+    expect(ghost).toHaveTextContent('Target: Ghost');
+    expect(within(ghost!).queryByRole('link')).toBeNull();
+  });
+
+  it('puts a failed check first, whatever order the run recorded them in', () => {
+    // Every other multi-card case is already failed-first in its input, which
+    // is how replacing `failedFirst(assertions)` with `assertions` passed them.
+    at(
+      '/r',
+      <SimulationAssertionsBar
+        runId={RUN_ID}
+        assertions={[GLOBAL_ASSERTION, details(['Search'], 'failed')]}
+        stats={STATS.stats}
+      />,
+    );
+    const [first, second] = screen.getAllByTestId('simulation-card');
+    expect(within(first!).getByTestId('simulation-outcome')).toHaveTextContent(/failed/i);
+    expect(first).toHaveTextContent('Search: 95th percentile of response time is less than 100.0');
+    expect(second).toHaveTextContent('Global: max of response time is less than 30000.0');
   });
 
   it('addresses a nested request by its unspaced path, not its spaced label', () => {
