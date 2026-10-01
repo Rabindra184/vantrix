@@ -58,13 +58,27 @@ const CAPTION = 'Every group this run recorded, with the p95 of its summed time 
 export default function GroupsList({
   runId,
   stats,
+  windowSelected,
 }: {
   readonly runId: string;
   readonly stats: StatsResponse;
+  /** Whether the reader has narrowed the analysis window. REQUIRED, no default:
+   *  `/stats` is windowed, so under a window this list is only the groups with
+   *  buckets in it, and the wrong answer is a sentence about the whole run that
+   *  reads as evidence. */
+  readonly windowSelected: boolean;
 }) {
   const rows = groupRows(stats);
   if (rows.length === 0) {
-    return <p className="text-[0.8125rem] text-muted">This run has no groups.</p>;
+    // A SCOPED EMPTY RESULT IS NOT A WHOLE-RUN CONCLUSION — the rule
+    // `ErrorsTable` and `RunStats` already follow. A window that selects no
+    // group buckets leaves `rows` empty for a run whose groups all ran
+    // elsewhere, and "This run has no groups." would be false of it.
+    return (
+      <p className="text-[0.8125rem] text-muted">
+        {windowSelected ? 'No groups ran in the selected window.' : 'This run has no groups.'}
+      </p>
+    );
   }
   const ms = (value: number | null) => (value === null ? '—' : `${formatMs(value)} ms`);
   return (

@@ -46,9 +46,44 @@ function readyRun(): RunResponse {
   };
 }
 
+/** What `/telemetry` answers unless a case says otherwise: no agent reported. */
+const NO_TELEMETRY = { runId: RUN_ID, available: false, bucketWidthMs: 1000, window: null, hosts: [] };
+
+/** Two load generators that both reported — the state that draws a host
+ *  picker, which a section shows only when there is more than one to pick. */
+const TWO_HOSTS = {
+  runId: RUN_ID,
+  available: true,
+  bucketWidthMs: 1000,
+  window: null,
+  hosts: ['gen-01', 'gen-02'].map((host) => ({
+    host,
+    clockSkewMs: 0,
+    points: [
+      {
+        startOffsetMs: 0,
+        cpuTotalPct: 10,
+        cpuUserPct: 6,
+        cpuSystemPct: 4,
+        memUsedBytes: 1024 * 1024,
+        memTotalBytes: 4 * 1024 * 1024,
+        rxBytesPerSec: 100,
+        txBytesPerSec: 200,
+        inSegsPerSec: 5,
+        outSegsPerSec: 6,
+        retransSegsPerSec: 0,
+        inErrsPerSec: 0,
+        activeOpensPerSec: 1,
+        passiveOpensPerSec: 0,
+        tcpStates: { ESTABLISHED: 3 },
+      },
+    ],
+  })),
+};
+
 /** Answers each endpoint from the captured fixture; anything else is a 404,
  *  which `Payload` renders as an undrawn slot — still a figure with its id. */
-function stubFetch(statsBody: unknown = reference.stats): string[] {
+function stubFetch(statsBody: unknown = reference.stats, telemetryBody: unknown = NO_TELEMETRY): string[] {
   const seen: string[] = [];
   vi.stubGlobal('fetch', (input: RequestInfo | URL) => {
     const url = String(input);
@@ -63,7 +98,7 @@ function stubFetch(statsBody: unknown = reference.stats): string[] {
           : path.endsWith('/stats')
             ? statsBody
             : path.endsWith('/telemetry')
-              ? { runId: RUN_ID, available: false, bucketWidthMs: 1000, window: null, hosts: [] }
+              ? telemetryBody
               : null;
     return Promise.resolve(
       body === null
@@ -81,13 +116,16 @@ function renderReport({
   url = `/runs/${RUN_ID}/report`,
   window = null,
   stats,
+  telemetry,
 }: {
   url?: string;
   window?: RunWindowContext['window'];
   /** What `/stats` answers; `null` for a 404. Defaults to the reference run's. */
   stats?: unknown;
+  /** What `/telemetry` answers; defaults to no agent having reported. */
+  telemetry?: unknown;
 } = {}) {
-  const seen = stubFetch(stats);
+  const seen = stubFetch(stats, telemetry);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   client.setQueryData(runQueryKey(RUN_ID), { state: 'ready', run: readyRun() });
   render(
@@ -209,6 +247,23 @@ describe('RunReport — GE’s sections', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Groups' }));
     const section = screen.getByTestId('section-groups');
     expect(await within(section).findByText('This run has no groups.')).toBeVisible();
+    expect(within(section).queryByText('No groups ran in the selected window.')).toBeNull();
+    expect(within(section).queryByRole('table')).toBeNull();
+  });
+
+  // `/stats` is windowed, so a window that selects no group buckets leaves the
+  // list empty for a run that HAS groups. "This run has no groups." would then
+  // be a whole-run claim read off a scoped result — the rule ErrorsTable and
+  // RunStats already follow.
+  it('does not call a run groupless because the selected window held none of its groups', async () => {
+    renderReport({
+      window: { fromMs: 10_000, toMs: 20_000, bucketWidthMs: 1_000 },
+      stats: { ...reference.stats, stats: reference.stats.stats.filter((s) => s.scope !== 'group') },
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'Groups' }));
+    const section = screen.getByTestId('section-groups');
+    expect(await within(section).findByText('No groups ran in the selected window.')).toBeVisible();
+    expect(within(section).queryByText('This run has no groups.')).toBeNull();
     expect(within(section).queryByRole('table')).toBeNull();
   });
 
@@ -218,6 +273,34 @@ describe('RunReport — GE’s sections', () => {
     const section = screen.getByTestId('section-groups');
     expect(await within(section).findByRole('alert')).toHaveTextContent('This run’s groups could not be loaded');
     expect(within(section).queryByText('This run has no groups.')).toBeNull();
+  });
+
+  // Connections and Load generators are two mounts of ONE component on one
+  // page, so anything it hard-codes into the document is hard-coded twice. The
+  // host picker's `<label htmlFor>` and `<select id>` were exactly that: with a
+  // literal id the second label pointed at the FIRST section's select, and a
+  // click on it moved the wrong picker. Asserted on the pairing, not on a
+  // particular id string.
+  it('gives each telemetry section its own host picker, labelled by its own id', async () => {
+    renderReport({ telemetry: TWO_HOSTS });
+    await userEvent.click(screen.getByRole('button', { name: 'Connections' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Load generators' }));
+    const pickers = await Promise.all(
+      ['connections', 'load-generators'].map(async (id) => {
+        const section = screen.getByTestId(`section-${id}`);
+        const select = await within(section).findByLabelText('Load generator');
+        const label = within(section).getByText('Load generator', { selector: 'label' });
+        return { select: select as HTMLSelectElement, label: label as HTMLLabelElement };
+      }),
+    );
+    const [connections, loadGenerators] = pickers;
+    expect(connections!.select).not.toBe(loadGenerators!.select);
+    expect(connections!.select.id).not.toBe('');
+    expect(connections!.select.id).not.toBe(loadGenerators!.select.id);
+    for (const { select, label } of pickers) {
+      expect(label.htmlFor).toBe(select.id);
+      expect(label.control).toBe(select);
+    }
   });
 
   it('opens the section a URL fragment names', () => {

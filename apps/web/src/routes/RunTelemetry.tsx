@@ -42,15 +42,15 @@ import useIsCompact from '../useIsCompact';
  * ═══ THREE DIFFERENT "NOTHING TO SHOW", NOT ONE ═══
  * `available: false` means there is no telemetry to place on this run's own
  * elapsed axis — `toolStartedAt` is null, or nothing overlapped it — and gets
- * the one `EmptyState` below, with **no figure on the page**: six empty
- * charts would read as "measured and found idle", which is the one claim
+ * the one `EmptyState` below, with **no figure on the page**: empty charts
+ * would read as "measured and found idle", which is the one claim
  * `available` exists to rule out (see `TelemetryResponseSchema`'s own doc
  * comment). `hosts.length === 0` while `available` is true is a NARROWER
  * window over an otherwise-recorded run — `MetricsController.telemetry`
  * computes `available` from the whole series before filtering `hosts` to the
- * requested range — and gets six `Undrawn` charts explaining themselves
- * individually, the same pattern `GroupDetail` uses for a series a run
- * predates. A host with points gets the real six `<Chart>`s via
+ * requested range — and gets an `Undrawn` chart per slot this section owns,
+ * each explaining itself individually, the same pattern `GroupDetail` uses
+ * for a series a run predates. A host with points gets the real `<Chart>`s for those slots via
  * `TelemetryCharts`.
  *
  * ═══ `available: false` HAS TWO HONEST READINGS, AND ONLY ONE OF THEM IS
@@ -103,8 +103,9 @@ export default function RunTelemetry({ only }: { readonly only: readonly Telemet
      the link is withheld rather than pointed at an empty slug. */
   const projectSlug = detail.data?.state === 'ready' ? detail.data.run.project.slug : undefined;
   const window = useWindowFromShell();
-  // The same time domain the run's other tabs draw on (§22.5) — these six
-  // charts share `run-time` with the shell's own brush.
+  // The same time domain the run's other pages draw on (§22.5) — the charts
+  // this section draws (`only` names two or four of the six) share `run-time`
+  // with the shell's own brush.
   const domainMs = useTimeDomainFromShell();
   // §22.6: deep analysis is a desktop task. Gated on the QUERY as well as the
   // render, so a phone does not fetch a payload it has been told not to draw.
@@ -145,8 +146,8 @@ export default function RunTelemetry({ only }: { readonly only: readonly Telemet
   // NOT TERMINAL (CRITICAL 1 fix): the live wording, returned BEFORE the
   // query above is ever consulted — the same shape `RunTrends.tsx` uses for
   // its own `!terminal` return, and AHEAD OF THE COMPACT GATE BELOW for the
-  // same reason that file states: this is a few sentences, not six ECharts
-  // instances, so a phone reader is told the same thing a desktop is rather
+  // same reason that file states: this is a few sentences, not a section of
+  // ECharts instances, so a phone reader is told the same thing a desktop is rather
   // than a SECOND withheld notice for content that was
   // never coming this session regardless of viewport.
   if (!terminal) {
@@ -201,7 +202,7 @@ export default function RunTelemetry({ only }: { readonly only: readonly Telemet
              *
              * This said the same thing twice — "No telemetry was recorded" and
              * "No load generator reported" are one fact in two sentences — and
-             * then left the reader on a tab with nothing to do about it.
+             * then left the reader in a section with nothing to do about it.
              * Telemetry is opt-in: it arrives only when an agent runs beside
              * the load generator, so the absence is far more often "nobody set
              * it up" than "it broke", and saying which is the whole value.

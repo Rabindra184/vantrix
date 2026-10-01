@@ -63,8 +63,8 @@ export default function TelemetryCharts({
 }) {
   // One `useMemo` per transform, not a loop over a table of them: `Chart`'s
   // option effect depends on `data` by identity, and this repo's other
-  // multi-chart components (`UsersChart.tsx`, `RunDetail.tsx`'s chart tab)
-  // all write the six-or-fewer calls out rather than reaching for a
+  // multi-chart components (`UsersChart.tsx`, `RunReport.tsx`'s chart
+  // sections) all write the six-or-fewer calls out rather than reaching for a
   // dynamically-sized `.map`, which would call `useMemo` a variable number of
   // times if it were ever driven by anything other than a fixed literal.
   const cpu = useMemo(() => toCpuChart(host), [host]);

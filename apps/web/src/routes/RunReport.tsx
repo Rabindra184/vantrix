@@ -65,9 +65,11 @@ const LOAD_GENERATOR_CHARTS: readonly TelemetryChartId[] = [
 const GRID = 'grid grid-cols-1 gap-6 2xl:grid-cols-2';
 
 /**
- * `/runs/:runId/report` — GE's Report (backlog #7): the time window, which
- * the shell draws above this page and nowhere else, then GE's sections in
- * GE's order. DNS is left out: nothing this product collects could fill it,
+ * `/runs/:runId/report` — GE's Report (backlog #7): GE's sections in GE's
+ * order, under the time window. This page draws no window control of its own;
+ * `RunShell` draws the one brush above it, as it does above every run page
+ * that honours a window (all but Trends, Compare and Logs), and this page
+ * reads the window it sets. DNS is left out: nothing this product collects could fill it,
  * and a section that can only be empty is a false claim about the run.
  *
  * EACH SECTION BODY IS ITS OWN COMPONENT, because `CollapsibleSection` builds
@@ -250,7 +252,7 @@ function GroupsSection({ runId }: { readonly runId: string }) {
   const window = useWindowFromShell();
   const stats = useQuery({ ...statsQuery(runId, window), enabled: terminal });
   if (!terminal) return <LiveNotice kind="withheld" subject="Groups" />;
-  if (stats.data !== undefined) return <GroupsList runId={runId} stats={stats.data} />;
+  if (stats.data !== undefined) return <GroupsList runId={runId} stats={stats.data} windowSelected={window !== null} />;
   if (stats.isPending) return <LoadingState label="Loading this run’s groups…" />;
   return <ErrorState title="This run’s groups could not be loaded" detail={explain(stats.error, 'table')} />;
 }
