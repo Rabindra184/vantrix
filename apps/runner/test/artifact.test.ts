@@ -1,6 +1,8 @@
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { RunnerArtifactRecord, RunnerJobRecord } from '@perfportal/persistence';
 import { prepareGatlingRun } from '../src/artifact.js';
@@ -116,6 +118,20 @@ function classpathOf(args: readonly string[]): string {
   return args[at + 1] ?? '';
 }
 
+/**
+ * ═══ `--no-reports`, ON BOTH ARTIFACT KINDS ═══
+ *
+ * Gatling re-parses the whole log and writes its HTML reports AFTER the
+ * simulation ends, and an exception there exits 1 over a complete log. The
+ * runner deletes the work directory those reports land in, so the work was
+ * never read. The flag has to be a Gatling argument — after the main class —
+ * because before it the JVM would read it as its own and refuse to start.
+ */
+function expectNoReportsAfterMainClass(args: readonly string[]): void {
+  expect(args.filter((arg) => arg === '--no-reports')).toHaveLength(1);
+  expect(args.indexOf('--no-reports')).toBeGreaterThan(args.indexOf('io.gatling.app.Gatling'));
+}
+
 describe('prepareGatlingRun, jar artifacts', () => {
   it('lends a Gatling runtime to a jar that carries none', async () => {
     const home = await fakeRuntime('distribution');
@@ -209,11 +225,42 @@ describe('prepareGatlingRun, jar artifacts', () => {
     );
   });
 
+  it('never asks Gatling to generate reports, and puts the flag after the main class', async () => {
+    const home = await fakeRuntime('distribution');
+    const jar = await thinJar();
+
+    const prepared = await prepare(config({ gatlingHome: home }), jar);
+
+    expectNoReportsAfterMainClass(prepared.command.args);
+  });
+
   it('refuses an artifact that is not a jar at all', async () => {
     const file = path.join(root, 'renamed.jar');
     await writeFile(file, 'a text file somebody renamed');
 
     await expect(prepare(config({ gatlingHome: await fakeRuntime('distribution') }), file))
       .rejects.toMatchObject({ code: 'ARTIFACT_NOT_A_JAR' });
+  });
+});
+
+describe('prepareGatlingRun, bundle artifacts', () => {
+  it('never asks Gatling to generate reports, and puts the flag after the main class', async () => {
+    // A bundle is a Gatling distribution: all the runner reads out of it is
+    // where `bin/gatling.sh` sits, so an empty script is enough to find home.
+    const dist = path.join(root, 'dist');
+    await mkdir(path.join(dist, 'gatling', 'bin'), { recursive: true });
+    await writeFile(path.join(dist, 'gatling', 'bin', 'gatling.sh'), '#!/bin/sh\n');
+    const archive = path.join(root, 'bundle.tgz');
+    await promisify(execFile)('tar', ['-czf', archive, '-C', dist, 'gatling']);
+
+    const prepared = await prepareGatlingRun(
+      config(),
+      job(),
+      { kind: 'gatling_bundle', storagePath: archive, simulationClass: 'example.ParitySimulation' } as unknown as RunnerArtifactRecord,
+      async () => false,
+    );
+
+    expectNoReportsAfterMainClass(prepared.command.args);
+    expect(prepared.command.args).toContain('example.ParitySimulation');
   });
 });

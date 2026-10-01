@@ -13,6 +13,21 @@ import { RunnerExecutionError } from './errors.js';
 import type { RunnerIngestQueue } from './ingest-queue.js';
 import type { RunnerLiveNotifier } from './live-notifier.js';
 
+/**
+ * What `closeAbandoned` did with a run whose Gatling died, which is what the
+ * job's message and the run's Logs tab have to say about it.
+ *
+ *   kept         the log was cut to whole records, stored and finalized, and
+ *                either enqueued for parsing or left at `parsing` for the
+ *                sweeper — either way the run will end `incomplete` WITH its
+ *                statistics
+ *   empty        the run was finalized `incomplete` with NO statistics: a
+ *                storage error, not one whole record, or no bytes at all
+ *   not_claimed  the claim did not land, so another process had already
+ *                closed the run and this decided nothing about it
+ */
+export type AbandonedOutcome = 'kept' | 'empty' | 'not_claimed';
+
 export class RunnerLiveSink {
   readonly #config: RunnerConfig;
   readonly #projects: ProjectRepository;
@@ -218,8 +233,8 @@ export class RunnerLiveSink {
    * killed 25 s in: `needed 4 bytes at 8190, have 0`.
    *
    * A producer that stopped before its simulation finished is an ABANDONED
-   * stream, and the sweeper already knows what to do with one. This does
-   * the same, step for step (`Sweeper#claimForAssembly` and
+   * stream, and the sweeper already knows what to do with one. This does the
+   * same, in the same order (`Sweeper#claimForAssembly` and
    * `#assembleAbandoned`): claim the run with `stream_abandoned_at` in the
    * same statement, assemble, cut to the last whole record with the decoder
    * that owns record framing, store that, and hand it to the pipeline — which
@@ -232,14 +247,24 @@ export class RunnerLiveSink {
    * carrying `stream_abandoned_at`, so a queue that refuses the job leaves
    * it there: the sweeper's `parsing` arm re-enqueues it, exactly as it
    * recovers `close()` past the same point, and the data survives.
+   *
+   * IT DELIBERATELY DOES NOT MIRROR THE SWEEPER ON THAT LAST POINT. The
+   * sweeper's `#assembleAbandoned` has one `catch` around everything, so a
+   * `#reenqueue` that fails AFTER its sha UPDATE marks the run `incomplete`
+   * and discards a log it had already stored whole. This keeps the two apart
+   * at `finalizeLive`. The sweeper's own path still has that defect.
+   *
+   * IT SAYS WHICH OF THE THREE THINGS HAPPENED (`AbandonedOutcome`), because
+   * the caller's job message and the run's Logs ending must not claim the run
+   * kept what it measured when it did not.
    */
-  async closeAbandoned(): Promise<void> {
-    if (this.#closed) return;
+  async closeAbandoned(): Promise<AbandonedOutcome> {
+    if (this.#closed) return 'not_claimed';
     const runId = this.#requireRunId();
     const claimed = await this.#runs.claimForClose(runId, { abandoned: true });
     if (!claimed) {
       this.#closed = true;
-      return;
+      return 'not_claimed';
     }
     this.#notifier.closed(runId);
     let finalized = false;
@@ -248,7 +273,7 @@ export class RunnerLiveSink {
       const bundleKey = this.#bundleKey;
       if ((state?.streamOffset ?? this.#offset) === 0 || !bundleKey) {
         await this.#runs.markIncomplete(runId);
-        return;
+        return 'empty';
       }
       await this.#chunks.finalize(runId, bundleKey);
       const whole = truncateToWholeRecords(await this.#blobs.get(bundleKey));
@@ -256,7 +281,7 @@ export class RunnerLiveSink {
       // a parse failure, a WORSE answer than the truth.
       if (whole.length === 0) {
         await this.#runs.markIncomplete(runId);
-        return;
+        return 'empty';
       }
       // `putStream` hashes and meters in one pass, as the sweeper's does; the
       // ceiling is the live run's own, which the streamed bytes already met.
@@ -271,15 +296,17 @@ export class RunnerLiveSink {
     } catch (err) {
       if (finalized) {
         console.error(`runner: run ${runId} is stored but could not be queued; the sweeper will re-enqueue it:`, err);
-        return;
+      } else {
+        console.error(`runner: could not keep the data of run ${runId}, whose Gatling ended early:`, err);
+        await this.#runs.markIncomplete(runId).catch((markErr: unknown) => {
+          console.error(`runner: failed to mark run ${runId} incomplete`, markErr);
+        });
       }
-      console.error(`runner: could not keep the data of run ${runId}, whose Gatling ended early:`, err);
-      await this.#runs.markIncomplete(runId).catch((markErr: unknown) => {
-        console.error(`runner: failed to mark run ${runId} incomplete`, markErr);
-      });
     } finally {
       this.#closed = true;
     }
+    // Stored and finalized is kept, whether or not the queue took it.
+    return finalized ? 'kept' : 'empty';
   }
 
   #requireRunId(): string {

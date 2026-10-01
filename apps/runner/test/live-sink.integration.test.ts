@@ -64,7 +64,7 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
-async function setup() {
+async function setup(sinkBlobs: BlobStore = blobs) {
   const org = await prisma.org.create({ data: { slug: 'acme', name: 'Acme' } });
   const project = await prisma.project.create({
     data: { orgId: org.id, slug: 'checkout', name: 'Checkout', settings: {} },
@@ -75,7 +75,7 @@ async function setup() {
     config: { maxLogBytes: 100_000_000 } as RunnerConfig,
     projects: new ProjectRepository(prisma),
     runs: new RunRepository(prisma),
-    blobs,
+    blobs: sinkBlobs,
     chunks,
     queue: queue as unknown as RunnerIngestQueue,
     notifier: notifier as unknown as RunnerLiveNotifier,
@@ -129,8 +129,10 @@ describe('RunnerLiveSink.closeAbandoned', () => {
     const { sink, queue, notifier, runId } = await setup();
     await sink.appendAt(0, half());
 
-    await sink.closeAbandoned();
+    const outcome = await sink.closeAbandoned();
 
+    // Stored, finalized and handed to the pipeline: the run keeps its data.
+    expect(outcome).toBe('kept');
     const r = await row(runId);
     // Claimed for work, not finalized: the pipeline still has a log to parse.
     expect(r.status).toBe('parsing');
@@ -141,6 +143,11 @@ describe('RunnerLiveSink.closeAbandoned', () => {
     expect(stored.length).toBeGreaterThan(0);
     expect(stored.length).toBeLessThan(half().length);
     expect(() => [...parseSimulationLog(stored)]).not.toThrow();
+    // A PREFIX of what was streamed, cut at the LAST whole record rather than
+    // an earlier one: "shorter and decodable" is also true of a log that threw
+    // most of the run away, so the slack is pinned to under one record's worth.
+    expect(stored.equals(half().subarray(0, stored.length))).toBe(true);
+    expect(half().length - stored.length).toBeLessThan(1024);
     // The recorded hash and size describe the bytes actually stored.
     expect(Number(r.bundle_bytes)).toBe(stored.length);
     expect(r.bundle_sha256).toBe(createHash('sha256').update(stored).digest('hex'));
@@ -154,11 +161,80 @@ describe('RunnerLiveSink.closeAbandoned', () => {
     const { sink, queue, runId } = await setup();
     await sink.appendAt(0, log.subarray(0, 3));
 
-    await sink.closeAbandoned();
+    const outcome = await sink.closeAbandoned();
 
+    expect(outcome).toBe('empty');
     expect((await row(runId)).status).toBe('incomplete');
     expect(queue.add).not.toHaveBeenCalled();
     expect(sink.closed).toBe(true);
+  });
+
+  /**
+   * ═══ A STORED, WHOLE LOG IS NEVER THROWN AWAY FOR A REFUSING QUEUE ═══
+   *
+   * Past `finalizeLive` the row is at `parsing`, carrying `stream_abandoned_at`
+   * and the hash of a log that decodes. A queue that refuses the job (Redis
+   * down) leaves it there for the sweeper's `parsing` arm to re-enqueue; the
+   * first draft marked it `incomplete` there too, which discarded a valid log.
+   * `#enqueueForParsing` retries three times, one and two seconds apart.
+   */
+  it('leaves a stored log at parsing for the sweeper when the queue refuses it', async () => {
+    const { sink, queue, runId } = await setup();
+    queue.add.mockRejectedValue(new Error('redis is down'));
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    await sink.appendAt(0, half());
+
+    try {
+      const outcome = await sink.closeAbandoned();
+
+      // Kept: stored and finalized, whoever enqueues it.
+      expect(outcome).toBe('kept');
+      expect(queue.add).toHaveBeenCalledTimes(3);
+      const r = await row(runId);
+      expect(r.status).toBe('parsing');
+      expect(r.stream_abandoned_at).not.toBeNull();
+      const stored = await blobs.get(r.bundle_key);
+      expect(r.bundle_sha256).not.toBe('');
+      expect(r.bundle_sha256).toBe(createHash('sha256').update(stored).digest('hex'));
+      expect(() => [...parseSimulationLog(stored)]).not.toThrow();
+      expect(sink.closed).toBe(true);
+      expect(errors).toHaveBeenCalledWith(expect.stringContaining('could not be queued'), expect.anything());
+    } finally {
+      errors.mockRestore();
+    }
+  }, 30_000);
+
+  /**
+   * BEFORE `finalizeLive`, nothing whole is stored, so the most the run can
+   * say is `incomplete` with no statistics — and the job and the Logs tab are
+   * told so (`empty`), not that it kept what it measured.
+   */
+  it('finalizes the run incomplete, and says nothing was kept, when the bucket refuses the write', async () => {
+    const failing = new Proxy(blobs, {
+      get(target, prop) {
+        if (prop === 'putStream') {
+          return async () => {
+            throw new Error('the bucket refused the write');
+          };
+        }
+        const value = Reflect.get(target, prop, target) as unknown;
+        return typeof value === 'function' ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+      },
+    });
+    const { sink, queue, runId } = await setup(failing);
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    await sink.appendAt(0, half());
+
+    try {
+      const outcome = await sink.closeAbandoned();
+
+      expect(outcome).toBe('empty');
+      expect((await row(runId)).status).toBe('incomplete');
+      expect(queue.add).not.toHaveBeenCalled();
+      expect(sink.closed).toBe(true);
+    } finally {
+      errors.mockRestore();
+    }
   });
 
   /** The pair: a healthy close of a whole log is NOT marked abandoned, so

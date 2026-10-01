@@ -16,14 +16,28 @@ import { SimulationLogTailer } from './log-tailer.js';
 import type { RunnerLiveNotifier } from './live-notifier.js';
 import { RunnerLiveSink } from './live-sink.js';
 import { spawnAndWait } from './process.js';
-import { endedEarly, failureEventMessage, injectionEndReason } from './run-events.js';
+import {
+  endedEarly,
+  endedEarlyEvent,
+  endedEarlyMessage,
+  endedEarlyRemediation,
+  failureEventMessage,
+  injectionEndReason,
+  wasTerminated,
+} from './run-events.js';
 
 /**
  * How far a job got, which is what decides how a cancelled job's log ends: a
  * run that never opened, one that opened but never started Gatling, one whose
  * process was running.
+ *
+ * `ending` is past all of those: the injection has ENDED and the log says so,
+ * so what is left is deciding the run's outcome — and a cancel landing in
+ * there changes nothing about it. It is not a stage a cancelled job's log can
+ * end from (its cancelled ending would write the injection and Ending lines a
+ * second time), so `#recordCancelledEnding` does not take it.
  */
-type RunStage = 'claimed' | 'opened' | 'spawned';
+type RunStage = 'claimed' | 'opened' | 'spawned' | 'ending';
 
 export class RunnerExecutor {
   readonly #config: RunnerConfig;
@@ -70,6 +84,10 @@ export class RunnerExecutor {
     let tailer: SimulationLogTailer | null = null;
     let workDir: string | null = null;
     let stage: RunStage = 'claimed';
+    // How the log ends when Gatling ended early. Set just before the throw
+    // that fails the job, and read by the catch, which is the ONE place a
+    // failed job's log gets its last line.
+    let endedEarlyLine: string | null = null;
     // The records made when the process starts. Hoisted so the catch can wait
     // for them: an ending must never land before the start lines.
     let started: Promise<void> = Promise.resolve();
@@ -173,14 +191,19 @@ export class RunnerExecutor {
       await record({ message: `Run injection ended with reason '${injectionEndReason(result)}'` });
       await record({ phase: 'Ending' });
       await this.#runner.markClosing(jobId);
+      stage = 'ending';
       if (sink.bytesWritten === 0) {
         await sink.abortIncomplete();
+        // A signal OR an exit code above 128: a JVM that handles SIGTERM
+        // itself exits 143 with no signal at all, and that is not a simulation
+        // class that could not be found.
+        const terminated = wasTerminated(result);
         throw new RunnerExecutionError(
-          result.signal ? 'GATLING_SIGNALLED' : 'SIMULATION_LOG_NOT_FOUND',
-          result.signal
-            ? `Gatling was terminated by ${result.signal} before simulation.log was produced.`
+          terminated ? 'GATLING_SIGNALLED' : 'SIMULATION_LOG_NOT_FOUND',
+          terminated
+            ? `${injectionEndReason(result)} before simulation.log was produced.`
             : 'Gatling finished without producing a simulation.log file.',
-          result.signal
+          terminated
             ? 'Check host resource limits and runner logs, then queue a new run.'
             : 'Confirm the simulation class is correct and the uploaded artifact can run on this node.',
         );
@@ -195,18 +218,28 @@ export class RunnerExecutor {
       // measured on an `incomplete` run, and the job fails naming how Gatling
       // ended — the same pattern as the no-simulation.log branch above: settle
       // the run, then throw so the catch fails the job and ends its log.
+      //
+      // WHAT IS CLAIMED IS THE EVIDENCE, NOT THE SIMULATION. An exit that is
+      // neither 0 nor 2 can still follow a simulation that ran to its end — an
+      // `after {}` hook throwing, or the assertion re-read running out of
+      // memory — so the message says how the process ended and that it is not
+      // a finished simulation's code, and never "before the simulation
+      // finished". And it says what became of the DATA from what
+      // `closeAbandoned` reports, because a run that fell back to no
+      // statistics must not be described as having kept them.
       if (endedEarly(result)) {
-        const reason = injectionEndReason(result);
-        logger.warn(`${reason} before the simulation finished; keeping what it measured as an incomplete run.`);
-        await sink.closeAbandoned();
+        logger.warn(`${injectionEndReason(result)} rather than a finished simulation's exit code; closing the run as abandoned.`);
+        const outcome = await sink.closeAbandoned();
+        logger.info(`run ${sink.runId} closed as abandoned: ${outcome}`);
+        endedEarlyLine = endedEarlyEvent(result, outcome);
         throw new RunnerExecutionError(
           'GATLING_ENDED_EARLY',
-          `${reason} before the simulation finished.`,
-          'The run keeps what it measured up to that point and is marked incomplete. Check this job’s log and the host’s resource limits, then queue a new run.',
+          endedEarlyMessage(result),
+          endedEarlyRemediation(outcome),
         );
       }
       if (result.code === 2) {
-        logger.warn('Gatling exited with code 2: a Gatling assertion failed, and the run is complete.');
+        logger.warn('Gatling exited with code 2: a Gatling assertion failed, and the simulation ran to its end.');
       }
       await sink.close();
       await this.#runner.markComplete(jobId);
@@ -231,8 +264,18 @@ export class RunnerExecutor {
       // cancel during extraction or launch fails the step, `markFailed` leaves
       // a cancelled job cancelled, and a log saying "failed" would contradict
       // it. Whatever the ending, the start lines land first.
+      //
+      // BUT NOT ONCE THE INJECTION HAS ENDED. From `ending` on, the log
+      // already holds the injection-ended line and the Ending phase, and the
+      // outcome is decided — a cancel racing the close (or the runner's own
+      // shutdown, which cancels the job and then awaits this very run) must
+      // not write them again under a "Run ended without results" over a run
+      // that kept its results. A run Gatling ended early ends on that fact; any
+      // other failure from there ends on the failure.
       await started;
-      if (await this.#isCancelled(jobId).catch(() => false)) {
+      if (endedEarlyLine !== null) {
+        await record({ message: endedEarlyLine });
+      } else if (stage !== 'ending' && (await this.#isCancelled(jobId).catch(() => false))) {
         await this.#recordCancelledEnding(record, stage);
       } else {
         await record({ message: failureEventMessage(jobError, job.artifact.storagePath) });
@@ -250,7 +293,7 @@ export class RunnerExecutor {
    */
   async #recordCancelledEnding(
     record: (event: RunnerJobEventInput) => Promise<void>,
-    stage: RunStage,
+    stage: Exclude<RunStage, 'ending'>,
   ): Promise<void> {
     if (stage === 'claimed') {
       await record({ message: 'Cancelled before the run opened' });
