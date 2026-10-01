@@ -14,6 +14,29 @@ import useIsCompact from '../src/useIsCompact';
 
 vi.mock('../src/useIsCompact.js', () => ({ default: vi.fn(() => false) }));
 
+/* The REAL ECharts, wrapped so every option a chart hands `setOption` is kept.
+   Charts still draw as they always did in this file; what the wrapper adds is a
+   way to read the one thing jsdom's layout cannot — the x-axis bounds a chart
+   was told to draw on — without replacing the renderer for every other case. */
+const { setOptionCalls } = vi.hoisted(() => ({ setOptionCalls: [] as Record<string, unknown>[] }));
+vi.mock('../src/charts/echarts.js', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../src/charts/echarts')>();
+  return {
+    echarts: {
+      ...real.echarts,
+      init: (...args: Parameters<typeof real.echarts.init>) => {
+        const instance = real.echarts.init(...args);
+        const setOption = instance.setOption.bind(instance);
+        instance.setOption = ((option: Record<string, unknown>, ...rest: unknown[]) => {
+          setOptionCalls.push(option);
+          return (setOption as (...a: unknown[]) => unknown)(option, ...rest);
+        }) as typeof instance.setOption;
+        return instance;
+      },
+    },
+  };
+});
+
 // Real charts draw here, and ECharts measures text through a 2D canvas context
 // that jsdom does not implement — it answers null and prints "Not implemented"
 // on every call. Answering null ourselves is what jsdom does anyway, without
@@ -236,6 +259,29 @@ describe('RunSummary — always the whole run', () => {
     const seen = renderSummary({ url: `/runs/${RUN_ID}?request=Search` });
     await screen.findByRole('heading', { level: 2, name: 'Errors' });
     expect(seen.some((u) => u.includes('/errors?scope=request&name=Search'))).toBe(true);
+  });
+
+  /** THE PAGE'S OWN CHARTS, not a hook in isolation: the case below reads the
+   *  domain hook directly, so switching `RunSummary` itself to the Report's
+   *  `useTimeDomainFromShell` left every unit case green. This renders the page
+   *  under a window and reads the x-axis bounds each of its two charts handed
+   *  ECharts — the run's whole span, not the window the URL carries. The
+   *  collection is required to hold BOTH charts first, or "every axis is whole"
+   *  is true of an empty list. */
+  it('hands its two charts the run’s whole span as their x axis, under a window', async () => {
+    setOptionCalls.length = 0;
+    renderSummary({
+      url: `/runs/${RUN_ID}?from=10000&to=20000`,
+      window: { fromMs: 10_000, toMs: 20_000, bucketWidthMs: 1_000 },
+    });
+    const over = await screen.findByRole('region', { name: 'Over time' });
+    await waitFor(() => expect(within(over).queryByText('Loading…')).toBeNull());
+    const axes = () =>
+      setOptionCalls
+        .map((option) => option['xAxis'] as { min?: number; max?: number } | undefined)
+        .filter((axis): axis is { min?: number; max?: number } => axis !== undefined && axis.max !== undefined);
+    await waitFor(() => expect(axes().length).toBeGreaterThanOrEqual(2));
+    for (const axis of axes()) expect(axis).toMatchObject({ min: 0, max: 63161 });
   });
 
   // jsdom lays nothing out, so no chart case can see the axis. This reads the
