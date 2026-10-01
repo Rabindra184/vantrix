@@ -30,10 +30,10 @@ import {
  * runner run. Trends and Compare stay at the end because both leave the run:
  * first the cohort story, then the selected overlay built from that cohort.
  *
- * WHAT USED TO BE FOUR TABS IS TWO. The Overview, Errors and Load generators
- * tabs folded into the Summary and the Report, and the Charts tab became the
- * Report itself. Their old URLs still resolve, as redirects (`App.tsx`), so a
- * link pasted into a ticket lands on the content it named.
+ * WHAT USED TO BE FOUR TABS IS TWO. The Overview and Errors tabs folded into
+ * the Summary; the Charts and Load generators tabs folded into the Report.
+ * Their old URLs still resolve, as redirects (`App.tsx`), so a link pasted into
+ * a ticket lands on the content it named.
  *
  * STILL LINKS IN A `<nav>`, NOT AN ARIA TAB PATTERN, and the design pass did
  * not change that. `role="tablist"`/`role="tab"` is what this LOOKS like and
