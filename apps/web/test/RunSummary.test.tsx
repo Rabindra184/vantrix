@@ -180,8 +180,13 @@ describe('RunSummary — always the whole run', () => {
 
   it('draws GE’s two charts, side by side', async () => {
     renderSummary();
-    await screen.findByTestId('chart-requests-and-responses');
-    const charts = [...document.querySelectorAll('figure[data-testid^="chart-"]')].map((f) => f.getAttribute('data-testid'));
+    const over = await screen.findByRole('region', { name: 'Over time' });
+    // `Payload` draws BOTH figures as "Loading…" placeholders until `/series`
+    // arrives, so reading the ids straight away passes for a pair whose second
+    // chart is never drawn — measured: dropping the percentiles chart from the
+    // pair left this case green. Wait for the real figures.
+    await waitFor(() => expect(within(over).queryByText('Loading…')).toBeNull());
+    const charts = [...over.querySelectorAll('figure[data-testid^="chart-"]')].map((f) => f.getAttribute('data-testid'));
     expect(charts).toEqual(['chart-requests-and-responses', 'chart-percentiles']);
   });
 

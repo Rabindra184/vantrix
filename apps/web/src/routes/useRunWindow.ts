@@ -134,8 +134,8 @@ export const useLiveFromShell = (): LiveRunState | null =>
  * instead.
  *
  * NOT ALSO A `status` FIELD, deliberately. A caller that needs the run's own
- * `RunProcessing['status']` (`WaitingPanel`'s prop, or `LiveSummary`'s
- * `frozen`) reads it off `detail.data.run.status` after its own
+ * `RunProcessing['status']` (`WaitingPanel`'s prop) reads it off
+ * `detail.data.run.status` after its own
  * `detail.data.state === 'processing'` check — the same discriminated-union
  * narrowing every one of those callers already needs for its OWN fields
  * (`run.assertions`, `run.toolAssertions`, …), so a second, separately

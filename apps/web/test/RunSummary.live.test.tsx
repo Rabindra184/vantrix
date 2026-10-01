@@ -92,14 +92,18 @@ function liveWith(overrides: Partial<LiveDelta['summary']> = {}, errors: LiveErr
 function renderSummary({
   live,
   status = 'running',
+  seedErrors = true,
 }: {
   readonly live: LiveRunState | null;
   readonly status?: RunProcessing['status'];
+  /** `false` leaves the errors cache empty, so a fetch the page should not make
+   *  is a request that goes out — seeded, a fresh entry would answer it. */
+  readonly seedErrors?: boolean;
 }) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const run: RunProcessing = { id: RUN_ID, status, statusUrl: `/v1/runs/${RUN_ID}` };
   client.setQueryData(runQueryKey(RUN_ID), { state: 'processing', run });
-  if (live?.lastDelta) {
+  if (seedErrors && live?.lastDelta) {
     client.setQueryData(errorsQuery(RUN_ID).queryKey, { runId: RUN_ID, errors: live.lastDelta.errors.rows });
   }
   const fetchSpy = vi.fn<(input: RequestInfo | URL) => Promise<Response>>(() =>
@@ -221,11 +225,15 @@ describe('RunSummary — live', () => {
    * This is the Summary's own, and it covers both pages that folded into it:
    * every metric query is gated on `enabled: terminal` — `stats`, `users`,
    * `series` and `trends` for the tiles and the charts, `errors` for the table
-   * (which stays live off the seeded cache alone) — so none of them should reach
+   * (which stays live off the cache alone) — so none of them should reach
    * `fetch` while this page renders its live branch.
+   *
+   * THE ERRORS CACHE IS LEFT EMPTY HERE, deliberately: it has `staleTime:
+   * Infinity`, so a SEEDED entry answers an ungated query without a request and
+   * the case could not tell a gated `errors` from an ungated one.
    */
   it('does not fetch any metric while the run is not terminal', () => {
-    const { fetchSpy } = renderSummary({ live: liveWith({ count: 1 }, [{ message: 'timeout', count: 3 }]) });
+    const { fetchSpy } = renderSummary({ live: liveWith({ count: 1 }), seedErrors: false });
 
     const urls = fetchSpy.mock.calls.map((c) => String(c[0]));
     for (const path of ['/stats', '/series', '/users', '/trends', '/errors']) {
