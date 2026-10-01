@@ -128,7 +128,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **181 files / 2319 tests**, it
+`nvm use` first, and if a run reports fewer than **181 files / 2331 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -146,12 +146,16 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
-The sla-values-rounded branch added no unit FILE and 6 cases — 5 to
-`packages/contracts/test/rules.test.ts` and 1 to
-`apps/web/test/assertionExport.test.ts` — from **181 / 2313 to 181 / 2319**.
-Both are `.ts` files integration runs too, so integration moves from
-**170 / 2086 to 170 / 2092**, and **e2e stays 168**. It is a defect seen on
-the summary-report branch's real-run check, taken as its own branch.
+The sla-values-rounded branch added no unit FILE and 18 cases — 12 to
+`packages/contracts/test/rules.test.ts`, 2 each to
+`apps/web/test/assertionExport.test.ts` and
+`apps/web/test/toolAssertion.test.ts`, and 1 each to
+`apps/web/test/RunDetail.live.test.tsx` and `apps/web/test/ProjectRules.test.tsx`
+— from **181 / 2313 to 181 / 2331**. The three `.ts` files are ones
+integration runs too, so integration moves from **170 / 2086 to 170 / 2102**,
+and **e2e stays 168**. It is a defect seen on the summary-report branch's
+real-run check, taken as its own branch — and its first version needed a
+review round, which is most of what follows.
 
 **A PLATFORM GATE PRINTED THIRTEEN DECIMAL PLACES.** A real run's p95 gate
 read `Actual: 645.5906777012351 ms`, and its sentence repeated it — "Whole-run
@@ -162,48 +166,170 @@ arm (`fractionToPercent`, whose docstring argues exactly this) and printed the
 `ms` and `req/s` arms raw. The error-rate gate looked right, which is why the
 time gate's tail went unnoticed.
 
-**TWO DECIMALS, TRAILING ZEROS DROPPED, AND THE REASON IS THE NEIGHBOUR.**
-That is `toolAssertion.ts`' `formatActual` — the simulation assertions' own
-Actual column — so the two kinds of check on one page now read their
-actuals the same way.
+**THE FIRST FIX ROUNDED BOTH ROLES THE SAME WAY, AND THAT WAS THE SECOND
+DEFECT.** `formatSlaValue` rendered an author's BOUND and a run's measured
+ACTUAL, and the first version gave both two decimals with trailing zeros
+dropped, on the argument that the unit decision should live in one function.
+The unit decision should. The PRECISION could not: a bound is something a
+person typed and must read back as typed, a measurement is something a run
+produced and is read, so it rounds. The review that followed found three
+things, none of which any case written for the first version could see:
 
-**NOT WHOLE MILLISECONDS, THOUGH THE TILES SHOW WHOLE ONES.** This function
-renders the author's THRESHOLD too, and a typed `99.5` must not read back as
-"≤ 100 ms" — rounding a bound misstates the rule. Two decimals keeps every
-bound a person types and still drops the floating-point tail. The paired
-case pins both halves: a measured time rounds, a typed bound survives, and
-no trailing zeros appear (`800 ms`, never `800.00 ms`).
+  - **THE FLIP WAS A REGRESSION THE FIRST VERSION INTRODUCED.** Reproduced
+    against `dist`: a mean of 100.004 against an `lte` of 100 read "Whole-run
+    mean response time 100 ms exceeds the 100 ms limit", and throughput 14.1698
+    against a `gte` of 14.17 read "Whole-run throughput 14.17/s is below the
+    14.17/s minimum". Before the first version the raw numbers were printed, so
+    the two sides of a breach could not tie. This is the decision band's
+    sentence — the largest text on the run page — contradicting itself, and the
+    gates table's Actual cell beside its Limit cell. The second is reachable
+    in practice, not a contrivance: the throughput tile prints two decimals, so
+    an author copies `14.17` into a minimum and a run at 14.1698 rounds
+    straight onto it.
+  - **"TWO DECIMALS KEEPS EVERY BOUND A PERSON TYPES" WAS FALSE.** That was the
+    first version's own argument for not rounding to whole milliseconds, and it
+    holds for `99.5`. The authoring form accepts any decimals: a rate bound of
+    `0.004` read "at least 0/s" and a `100.004` ms bound read "at most 100 ms",
+    in the preview, the rules table, the gates table and the CSV — the rule
+    misstated to the person who wrote it.
+  - **THE NON-FINITE GUARD WAS DEAD, AND COPIED.** `toReadingPrecision` opened
+    with `if (!Number.isFinite(value)) return value`, lifted from
+    `fractionToPercent`, and its case asserted `NaN` comes back as `NaN`. But
+    `(NaN).toFixed(2)` is `"NaN"` and `Number("NaN")` is `NaN`, so the guard
+    changed nothing and the case passed against the code with no guard at all.
+    A test that cannot fail is not a keeper, and a guard copied from a
+    neighbour carries the neighbour's reasons only if somebody checks them.
+    `fractionToPercent` and `percentToFraction` still carry the identical dead
+    shape and are left: their case would pass either way, they predate this
+    branch, and removing them is a different change.
 
-**THE EXPORT STAYS EXACT, AND A CASE NOW SAYS SO.** The CSV's Actual column
-writes `String(actualValue)` and never came through this function; the file
-is what somebody diffs or recomputes from, so it keeps the value the
-evaluator compared, digit for digit. That was true by accident of where the
-code lived, and nothing pinned it until now.
-
-**RED-VERIFIED, EVERY MUTATION ON ITS OWN CASE**, from a checkpoint commit
-with each replacement count asserted, `contracts` rebuilt around each:
+**SO THERE ARE TWO FUNCTIONS, AND ONE UNIT RULE.** `formatSlaValue` is gone,
+so `tsc` named every caller and each had to choose a role:
 
 ```
-  the ms arm raw again           the time case + the sentence case
-  the req/s arm raw again        the rate case alone
-  whole milliseconds             the typed-bound case, among the rounding cases
-  toFixed(2) kept as a string    the no-trailing-zeros case, and every rule
-                                 sentence that prints "800 ms" or "≥ 50/s"
-  the CSV routed through it      the exact-export case + the export's own case
+  formatSlaBound(metric, threshold)            what the AUTHOR typed
+      describeSlaRule · describeSlaOutcome's limit · the rules table's Limit
+      cell · the gates table's rule cell · describeAssertionRule (the CSV's
+      Rule column)
+  formatSlaMeasured(metric, actual, threshold)  what a RUN produced
+      describeSlaOutcome's actual · the gates table's Actual cell
+  roundForReading(n)                           two decimals, exported
 ```
 
-**THE REAL RUN.** The developer database's own `ParitySimulation` run from
-the summary-report branch's check — a real Gatling execution through the
-on-prem runner — opened with this branch's API: the p95 gate's Actual cell
-read **645.59 ms** and its sentence "Whole-run p95 response time 645.59 ms is
-within the 2000 ms limit.", where it had printed `645.5906777012351` twice.
+Both end in one private `withUnit`, which is the only place `%`, ` ms` and `/s`
+are spelled — the unit decision is still made once, which was the whole of the
+old docstring's argument and is kept. `threshold` is a REQUIRED parameter of
+`formatSlaMeasured` with no default, this file's rule for a parameter whose
+wrong value is silent: it is what the flip guard measures the rendering
+against, and a caller that left it out would get the contradiction back with
+no type error.
+
+**A BOUND IS "AS TYPED", AND THE PRECISION IS FIFTEEN SIGNIFICANT DIGITS.**
+`Number(threshold.toPrecision(15))` removes floating-point noise and nothing
+else: fifteen digits is `DBL_DIG`, the most that survives a trip into a double
+and back, so `0.004`, `99.5`, `100.004`, `14.17` and `800` read back verbatim
+while `0.1 + 0.2` reads `0.3`. Twelve is the tempting number; a case pins
+why it is not — a typed `123456.789012345` has fifteen digits and twelve alters it.
+An `error_rate` bound keeps `fractionToPercent` (four decimals of a percent),
+and a count is shown as it is.
+
+**A MEASUREMENT IS ROUNDED, AND WIDENED ONLY WHERE ROUNDING WOULD LIE.** It
+goes through `roundForReading` first. If that prints as the same number as the
+bound while the two values are NOT the same, it widens one decimal at a time
+until it differs — "100.004 ms exceeds the 100 ms limit", "14.1698/s is below
+the 14.17/s minimum" — which is as few extra digits as honesty needs, rather
+than switching to the raw `100.00400000000001`. The percentage arm has the
+same class at four decimals (`0.0100004` against `0.01`) and the same guard.
+It stops at ten extra places and shows the value whole. **AND THE MIRROR IS
+GUARDED TOO:** a measurement exactly equal to its bound shows the bound's own
+digits, so "100.004 ms is within the 100.004 ms limit" cannot print its left
+side as `100`.
+
+**TWO KINDS OF CHECK, ONE DEFINITION OF TWO DECIMALS.** `formatActual` — the
+simulation assertions' Actual column — calls the exported `roundForReading`
+instead of keeping a `Number(x.toFixed(2))` of its own, so the two tables one
+`<h2>` apart cannot drift into rounding differently. **A SHARED FUNCTION AND A
+PRIVATE COPY OF IT BEHAVE IDENTICALLY**, so no assertion on a value can tell
+them apart; the agreement case is behavioural and a second case is a source
+guard (comments stripped, the construct counted so a rewrite that stopped
+calling the function cannot pass by having nothing left to object to).
+
+**THE EXPORT IS EXACT IN BOTH COLUMNS, AND CASES NOW SAY SO.** The CSV's
+Actual column writes `String(actualValue)` and never came through the
+formatter — the file is what somebody diffs or recomputes from, so it keeps the
+value the evaluator compared. Its Rule column goes through `formatSlaBound`, so
+a `100.004 ms` limit is written `100.004 ms`; a Rule column that rounded the
+bound would hand a different rule to whoever recomputes from it. The first
+version's claim that the export is exact "digit for digit" was true of one
+column only.
+
+**RED-VERIFIED, EVERY MUTATION ON ITS OWN CASE**, from the commit holding the
+finished shape (never from uncommitted work), each replacement count asserted
+before the run:
+
+```
+  the flip guard removed          the three describeSlaOutcome flip cases and the
+                                  gates table's Actual-cell case; nothing that
+                                  asserts two decimals
+  the bound rounded to 2dp        the bound cases, the preview, the rules table's
+                                  Limit cell and the equal-reads-equal case — and
+                                  none of the flip cases
+  the measured value unrounded    the measured cases and the 645.59 sentence
+  formatActual with its own       the source guard ALONE
+    toFixed
+  the CSV Rule column rounding    the CSV's exact-limit case ALONE
+  the guard widening always       every case that expects two (or four)
+                                  decimals, the converse among them — and none of the flip cases
+  equal-reads-equal removed       its case ALONE
+  the percentage arm unguarded    the error-rate flip case ALONE
+  the gates Actual cell dropping  the gates table's case ALONE
+    its limit
+  the rules table's Limit cell    its case ALONE
+    rounding
+  the preview rounding            its case ALONE
+  noise stripped at 12 digits     the noise case ALONE (a 15-digit bound)
+  no noise stripped at all        the noise case ALONE
+  the sentence's actual printed   the 645.59 case and the error-rate flip case
+    as a bound
+```
+
+The first two rows are the exclusive pair the change is about: removing the
+flip guard fails every case that asserts a breach does not read as equal and
+none that asserts two decimals, and widening always fails the opposite set.
+Where a mutation fails more than one case, each asserts a claim the others do
+not (rounding the bound also breaks equal-reads-equal, because that arm returns
+the bound).
+
+**THE REAL RUN WAS ON THE FIRST VERSION, AND ITS CASE STILL HOLDS.** The
+developer database's own `ParitySimulation` run from the summary-report
+branch's check — a real Gatling execution through the on-prem runner — opened
+with the first version's API: the p95 gate's Actual cell read **645.59 ms** and
+its sentence "Whole-run p95 response time 645.59 ms is within the 2000 ms
+limit.", where it had printed `645.5906777012351` twice. That is a measurement
+far from its limit, which this round leaves alone (the converse case pins it);
+this round's changes concern the near-limit and typed-decimal cases, which that
+run did not contain, and it was not repeated.
+
+**KNOWN AND LEFT.**
+
+  - The open summary-report branch also calls `formatSlaValue` (its
+    `AssertionBars.tsx`). Whichever of the two merges second must re-point
+    those calls to `formatSlaBound` or `formatSlaMeasured`; `tsc` will say so.
+  - A bound with more than fifteen significant digits is not read back whole.
+    No form a person types into produces one.
 
 **WHAT WAS RUN.** `typecheck` and `lint` exit 0 by their own exit codes;
-`test:unit` **181 / 2319**, zero `Errors` lines; `test:integration`
-**170 / 2092, exit 0, zero failures**; `pnpm test:e2e` **168 passed, exit 0** —
-every total the one counted from the source before any suite ran, against a
-SCRATCH DATABASE (`perfportal_slaround`), a scratch Redis INDEX (db 15) and
-e2e port 4000.
+`test:unit` **181 / 2331**, zero `Errors` lines; `test:integration`
+**170 / 2102, exit 0, zero failures**; `pnpm test:e2e` **168 passed, exit 0**
+(`run-live.spec.ts`'s "Whole-run p95 response time 470 ms exceeds the 100 ms
+limit." among them) — every total the one counted from the source before any
+suite ran, against a SCRATCH DATABASE (`perfportal_slaround`), a scratch Redis
+INDEX (db 15) and e2e port 4000, on the finished commit (the red-verify
+checkpoint, `3a7dce9`), with no source touched while they ran. The machine
+was not quiet — another worktree's integration suite ran beside this one on
+its own stores, free pages stood at 3,669 to 4,131 and the 1-minute load at
+6.8 to 7.6 at each start — and every suite passed, which this file counts as a
+pass: pressure manufactures failures, never a clean result.
 
 The run-logs branch added SEVEN unit files —
 `packages/contracts/test/run-events.test.ts` (10),
