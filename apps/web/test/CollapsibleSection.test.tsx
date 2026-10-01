@@ -2,7 +2,8 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { renderToString } from 'react-dom/server';
+import { MemoryRouter, StaticRouter, useNavigate } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import CollapsibleSection from '../src/components/CollapsibleSection';
 import SectionHeading from '../src/components/SectionHeading';
@@ -80,6 +81,51 @@ describe('CollapsibleSection', () => {
     );
     expect(screen.getByRole('button', { name: 'Requests' })).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByRole('button', { name: 'Groups' })).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  // THE NEXT TWO EXIST BECAUSE THE FRAGMENT RULE HAS TWO HALVES AND EACH ONE,
+  // DELETED ALONE, LEFT THE CASE ABOVE GREEN: `useState(defaultOpen || named)`
+  // and the effect both answer "is this section open?", and `render` flushes
+  // effects before it returns, so a case that reads the DOM afterwards cannot
+  // tell which of them did the work. Each needs a witness that takes the other
+  // away. Measured by deleting each in turn: 8 of 8 passed both times.
+  it('is already open on its first render when the fragment names it, not opened a frame later', () => {
+    // A server render never runs effects, so this sees only what the initial
+    // state decided. An effect-only version paints one frame shut and then
+    // opens — a flash, and a closed section for the browser's own fragment
+    // scroll to land against.
+    const html = renderToString(
+      <StaticRouter location="/r#load-generators">
+        <CollapsibleSection id="load-generators" title="Load generators">{() => <p>body</p>}</CollapsibleSection>
+      </StaticRouter>,
+    );
+    expect(html).toContain('aria-expanded="true"');
+    expect(html).toContain('body');
+  });
+
+  it('opens when a navigation to its fragment arrives after it has mounted', async () => {
+    // The decision band's "See the failed simulation check" is a <Link> to
+    // `#simulation-assertions` on a page that is already mounted, so initial
+    // state alone would leave that section shut under a link that names it.
+    function Jump({ to }: { readonly to: string }) {
+      const navigate = useNavigate();
+      return (
+        <button type="button" onClick={() => navigate(to)}>
+          jump
+        </button>
+      );
+    }
+    renderAt(
+      '/r',
+      <>
+        <Jump to="#groups" />
+        <CollapsibleSection id="groups" title="Groups">{() => <p>body</p>}</CollapsibleSection>
+      </>,
+    );
+    expect(screen.getByRole('button', { name: 'Groups' })).toHaveAttribute('aria-expanded', 'false');
+    await userEvent.click(screen.getByRole('button', { name: 'jump' }));
+    expect(screen.getByRole('button', { name: 'Groups' })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('body')).toBeVisible();
   });
 
   it('keeps its heading exactly its title, with the summary and actions beside it', () => {
