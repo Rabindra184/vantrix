@@ -187,7 +187,7 @@ Then the sections, in GE's order, each a heading holding a button:
 |---|---|---|
 | **Requests** | open | **Charts / Table.** Charts (the default): Requests and responses per second over time (new) · Response time percentiles over time · Response time distribution · Response time percentiles distribution · Errors per second · then this product's two: Response time ranges · Number of requests. Table: the statistics table as it is today — column picker, sort, filter, CSV — with the glossary beneath it, since every word it defines is in that table. A URL carrying the table's sort or filter opens Table |
 | **Groups** | closed | one row per group — name, count, OK, KO, and the p95 of its cumulated and of its wall-clock duration — each linking to its group page. "This run has no groups." when it has none. This product's own design: GE's populated section could not be measured |
-| **Virtual users** | closed | Users started per second · Concurrent users over time · **Users ended per second** (new, below) |
+| **Virtual users** | closed | Users started per second · **Users ended per second** (new, below) · Concurrent users over time — GE's measured order (Arrival, Termination, Concurrent) |
 | **Connections** | closed | Bandwidth · Connections by state — the two GE places here that the load-generator agent collects. GE's other seven are omitted: nothing collects them |
 | **Load generators** | closed | CPU usage · Memory usage · TCP connection events · TCP segment events. When no agent reported, the tab's own empty state ("No generator telemetry recorded"), unchanged |
 
