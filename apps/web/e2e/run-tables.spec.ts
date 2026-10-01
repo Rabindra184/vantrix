@@ -871,6 +871,9 @@ test('the run totals come before the assertions, and near the top', async ({ pag
    *      656  after the Summary/Report split (backlog #7) took the time window off
    *           this page altogether — measured again at 1440x900 on the Summary,
    *           the lifecycle strip and the verdict band still above it
+   *      644  after `RunShell` grouped that strip with the band (12px between
+   *           them, not the shell's 24px) — 643.8 measured; the tiles' bottoms
+   *           are 718.8 (error rate, requests, peak users) and 722.8 (p95)
    *
    * It was 1100 for three branches — deliberately the MEASUREMENT rather than
    * the goal, because a threshold set to an unmet bar is a failing test

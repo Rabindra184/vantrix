@@ -127,7 +127,10 @@ test('a run’s Summary leads with its decision and mounts no drag control', asy
    *      928  after C01 shortened the decision band
    *      876  after M02 withheld the band's prose restatement on a phone
    *      802  after M02 folded the header's secondary metadata away
-   *      820  after the Summary/Report split (backlog #7): OVER THE BOUND by 8px
+   *      820  after the Summary/Report split (backlog #7): OVER THE BOUND by 8px —
+   *           the lifecycle line sat in the shell's 24px above the band
+   *      804  once the line and the band were grouped (8px on a phone), fixing the
+   *           product rather than the bound
    *      812  the viewport
    *
    * Every earlier bound in this file was the MEASUREMENT rather than the goal,
@@ -138,12 +141,13 @@ test('a run’s Summary leads with its decision and mounts no drag control', asy
    * measurement past it is a regression and the bound does not move.
    *
    * THE SUMMARY/SPLIT'S MEASUREMENT, AT 375x812 ON THIS RUN (backlog #7):
-   * the `<h1>` 153-181, the tab strip 298-339, the lifecycle line 363-379, the
-   * decision band 403-753, the run-totals section from 777, and its first tile
-   * at 820. The lifecycle line now sits under the tab strip in the shell's own
-   * 24px gap rather than grouped 8px under the header, which is where the extra
-   * pixels are expected to come from; that is a reading of the layout, not a
-   * measurement of the difference.
+   * the `<h1>` 152.5-180.5, the tab strip 298-339, the lifecycle line
+   * 363.4-379.4, the decision band 387.4-737.4, the run-totals section from
+   * 761.4, and its first tile at 804.4 — 7.6px inside the bound (the M02
+   * measurement, 802, had ten). It read 820 before `RunShell` grouped the line
+   * with its band: as two siblings the shell's 24px sat above the band, 16px
+   * more than the grouping, and the band's top went from 403 to 387.4 with the
+   * first tile from 820 to 804.4. The fix is in the product, not in the bound.
    *
    * WHAT THE OLD TEN PIXELS OF HEADROOM DID NOT COVER, still true. `seedRunWithData`
    * ingests `{ tool: 'gatling', waitMs: 0 }` and no provenance, so this run

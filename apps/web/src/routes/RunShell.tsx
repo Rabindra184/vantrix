@@ -306,9 +306,25 @@ export default function RunShell({
           A reader on the Report, Trends, Compare or Logs asked a different
           question — what the load looked like, how it compares, what the
           runner did — and a release verdict above each of them answered one
-          they had not asked. */}
+          they had not asked.
+
+          ONE WRAPPER, NOT TWO SIBLINGS IN THE SHELL'S gap-6, AND THE PHONE IS
+          WHY. The strip is the journey TO the verdict under it, so the pair is
+          grouped: a phone's one bare line sits 8px over its band (`gap-2`, the
+          lifecycle-strip design's "one bare line grouped 8px") and a desktop's
+          card 12px over it (`gap-3`, which the header's own wrapper used to
+          give it). As two siblings the strip took the shell's 24px above the
+          band — 16px more on a phone, 12px more on a desktop than the grouping
+          — and that is what pushed `mobile.spec.ts`'s run-totals bound over the
+          812px viewport, which IS the bound and does not move.
+          MEASURED at 375x812 on the reference run, the first tile's top:
+          820 as two siblings, 804.4 grouped. At 1440x900 the totals section
+          went from 656 to 643.8. The strip still sits in the shell's 24px
+          UNDER the tab strip, because it is still below it. Both widths read
+          `compact` from the one `useIsCompact` call this shell already makes,
+          the same decision the strip's own markup keys on. */}
       {onSummary && (
-        <>
+        <div className={compact ? 'flex flex-col gap-2' : 'flex flex-col gap-3'}>
           <RunLifecycle
             steps={lifecycleSteps({ identity, status, verdict, assertions, liveSpanMs: liveSpanOf(live) })}
             compact={compact}
@@ -320,7 +336,7 @@ export default function RunShell({
             assertions={assertions}
             toolAssertions={toolAssertions}
           />
-        </>
+        </div>
       )}
 
       {/* THE TIME WINDOW, ON THE REPORT ONLY (`onReport`, above), and in the
