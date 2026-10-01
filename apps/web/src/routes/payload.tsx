@@ -30,6 +30,11 @@ export interface Slot {
  * let their transforms explain themselves. So on the same page, seven charts
  * say "no response times were recorded" and the eighth has an error to relay.
  * Both are the reader being told what happened; only the wording differs.
+ *
+ * ONE 404 IS NOT RELAYED: a WINDOWED read that selects no buckets. That is a
+ * quiet window, not a run without a histogram, so `distributionQuery` turns it
+ * into the empty payload and the transforms name the window like their
+ * siblings do (see its own comment).
  */
 export function Payload<T>({
   query,

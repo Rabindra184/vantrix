@@ -1,5 +1,6 @@
 import type { SeriesResponse } from '@perfportal/contracts';
 import { describe, expect, it } from 'vitest';
+import { expectAboutTheRun, expectAboutTheWindow } from './support/emptySentence';
 import { toRequestRate, toRequestsAndResponses, toResponseRate } from '../src/charts/transforms/rates';
 import type { ChartData } from '../src/charts/types';
 import fixture from './fixtures/reference-run.json';
@@ -435,7 +436,7 @@ describe('toRequestsAndResponses — GE’s "Requests and Responses per Second"'
   const perSecond = series.bucketWidthMs / 1000;
 
   it('draws GE’s four lines, in GE’s order', () => {
-    expect(toRequestsAndResponses(series).series.map((s) => s.name)).toEqual([
+    expect(toRequestsAndResponses(series, { windowSelected: false }).series.map((s) => s.name)).toEqual([
       'Requests',
       'Total',
       'Responses OK',
@@ -444,7 +445,7 @@ describe('toRequestsAndResponses — GE’s "Requests and Responses per Second"'
   });
 
   it('reads each line off its own counter, per second, at the bucket’s offset', () => {
-    const data = toRequestsAndResponses(series);
+    const data = toRequestsAndResponses(series, { windowSelected: false });
     const counters = ['startedCount', 'endedCount', 'okCount', 'koCount'] as const;
     counters.forEach((counter, s) => {
       expect(data.series[s]!.data).toEqual(
@@ -461,7 +462,7 @@ describe('toRequestsAndResponses — GE’s "Requests and Responses per Second"'
       bucketWidthMs: 1000,
       buckets: [{ ...series.buckets[0]!, startOffsetMs: 0, startedCount: 4, startedOkCount: 4, startedKoCount: 0, endedCount: 3, okCount: 1, koCount: 2 }],
     };
-    const [, total, ok, ko] = toRequestsAndResponses(disagreeing).series;
+    const [, total, ok, ko] = toRequestsAndResponses(disagreeing, { windowSelected: false }).series;
     expect(total!.data).toEqual([[0, 3]]);
     expect(ok!.data).toEqual([[0, 1]]);
     expect(ko!.data).toEqual([[0, 2]]);
@@ -473,14 +474,14 @@ describe('toRequestsAndResponses — GE’s "Requests and Responses per Second"'
       bucketWidthMs: 2000,
       buckets: [{ ...series.buckets[0]!, startOffsetMs: 0, startedCount: 8, endedCount: 6, okCount: 6, koCount: 0 }],
     };
-    expect(toRequestsAndResponses(wide).series[0]!.data).toEqual([[0, 4]]);
+    expect(toRequestsAndResponses(wide, { windowSelected: false }).series[0]!.data).toEqual([[0, 4]]);
   });
 
   // The data table is the parity surface: what a reader quotes, and what a
   // screen-reader user gets instead of the lines. It is built from the same
   // numbers as the drawing, but through its own `columns` and `rows`.
   it('heads the data table with the time column, then the four lines', () => {
-    expect(toRequestsAndResponses(series).columns).toEqual([
+    expect(toRequestsAndResponses(series, { windowSelected: false }).columns).toEqual([
       'Elapsed (s)',
       'Requests',
       'Total',
@@ -490,7 +491,7 @@ describe('toRequestsAndResponses — GE’s "Requests and Responses per Second"'
   });
 
   it('gives each table row the bucket’s elapsed seconds and its four per-second values', () => {
-    expect(toRequestsAndResponses(series).rows).toEqual(
+    expect(toRequestsAndResponses(series, { windowSelected: false }).rows).toEqual(
       series.buckets.map((b) => ({
         label: String(b.startOffsetMs / 1000),
         values: [b.startedCount, b.endedCount, b.okCount, b.koCount].map((count) => count / perSecond),
@@ -499,14 +500,38 @@ describe('toRequestsAndResponses — GE’s "Requests and Responses per Second"'
   });
 
   it('states the resolution beside the chart when the bucket is not a second wide', () => {
-    expect(toRequestsAndResponses(series).limitation).toBeUndefined();
+    expect(toRequestsAndResponses(series, { windowSelected: false }).limitation).toBeUndefined();
     const wide: SeriesResponse = { ...series, bucketWidthMs: 2000 };
-    expect(toRequestsAndResponses(wide).limitation).toMatch(/2000 ms/);
+    expect(toRequestsAndResponses(wide, { windowSelected: false }).limitation).toMatch(/2000 ms/);
   });
 
   it('says there is nothing to draw rather than drawing flat lines', () => {
-    const data = toRequestsAndResponses({ ...series, buckets: [] });
+    const data = toRequestsAndResponses({ ...series, buckets: [] }, { windowSelected: false });
     expect(data.series).toEqual([]);
     expect(data.empty).toMatch(/no requests were recorded/i);
+  });
+});
+
+/**
+ * A WINDOW THAT SELECTS NO REQUESTS IS NOT A RUN THAT RECORDED NONE: an
+ * exclusive pair, for the reason `support/emptySentence.ts` gives. (The two
+ * single-edge charts, `toRequestRate` and `toResponseRate`, are drawn by the
+ * time brush and the drill-downs, which are never windowed, and take no flag.)
+ */
+describe('toRequestsAndResponses — a window that selects no requests', () => {
+  const none = { ...series, buckets: [] };
+
+  it('names the window, not the run, and keeps the tail', () => {
+    expectAboutTheWindow(
+      toRequestsAndResponses(none, { windowSelected: true }).empty,
+      /no request or response rates to show/i,
+    );
+  });
+
+  it('still names the run when no window is selected', () => {
+    expectAboutTheRun(
+      toRequestsAndResponses(none, { windowSelected: false }).empty,
+      /no request or response rates to show/i,
+    );
   });
 });

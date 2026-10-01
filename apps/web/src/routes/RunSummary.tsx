@@ -202,8 +202,11 @@ function OverTimeSection({ children }: { readonly children: ReactNode }) {
 function OverTimeCharts({ series, domainMs, warmupMs }: { readonly series: SeriesResponse; readonly domainMs?: readonly [number, number]; readonly warmupMs?: number }) {
   return (
     <>
-      <RequestsAndResponsesChart series={series} domainMs={domainMs} warmupMs={warmupMs} />
-      <PercentilesChart series={series} domainMs={domainMs} warmupMs={warmupMs} />
+      {/* `windowSelected={false}` on both: the Summary is always the whole run
+          (it asks for no window and ignores the URL's), so a chart that comes
+          back empty is empty for the RUN and says so. */}
+      <RequestsAndResponsesChart series={series} domainMs={domainMs} warmupMs={warmupMs} windowSelected={false} />
+      <PercentilesChart series={series} domainMs={domainMs} warmupMs={warmupMs} windowSelected={false} />
     </>
   );
 }
@@ -333,7 +336,7 @@ function Sparklines({ series }: { readonly series: UseQueryResult<SeriesResponse
   return (
     <div className="grid grid-cols-1 gap-3">
       <RequestRateChart series={series.data} title="Requests per second" compact />
-      <PercentilesChart series={series.data} title="Response time" compact />
+      <PercentilesChart series={series.data} title="Response time" compact windowSelected={false} />
     </div>
   );
 }

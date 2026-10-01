@@ -1,5 +1,6 @@
 import type { StatsResponse } from '@perfportal/contracts';
 import { describe, expect, it } from 'vitest';
+import { expectAboutTheRun, expectAboutTheWindow } from './support/emptySentence';
 import {
   BAND_ROLES,
   OUTCOME_ROLES,
@@ -43,7 +44,7 @@ const MODES: readonly ChartMode[] = ['light', 'dark'];
 
 describe('toIndicators — the four bands ③ (G-06…G-09)', () => {
   it('labels the bands with the bounds that produced them', () => {
-    const d = toIndicators(stats);
+    const d = toIndicators(stats, { windowSelected: false });
     expect(d.columns).toEqual(['Band', 'Count', 'Percent']);
     expect(d.rows.map((r) => r.label)).toEqual([
       't < 800 ms',
@@ -84,7 +85,7 @@ describe('toIndicators — the four bands ③ (G-06…G-09)', () => {
   ];
 
   it.each(CASES)('reads the thresholds off the payload — bounds $bounds', ({ bounds, labels }) => {
-    const d = toIndicators(withBounds(bounds[0], bounds[1]));
+    const d = toIndicators(withBounds(bounds[0], bounds[1]), { windowSelected: false });
     expect(d.rows.map((r) => r.label)).toEqual(labels);
   });
 
@@ -104,7 +105,7 @@ describe('toIndicators — the four bands ③ (G-06…G-09)', () => {
   });
 
   it('plots the counts the payload reports, and percentages of their total', () => {
-    const d = toIndicators(stats);
+    const d = toIndicators(stats, { windowSelected: false });
     // 848 / 0 / 23 / 24 out of 895. The middle band is EMPTY in this run, and
     // it is still a row — a band nobody landed in is a fact about the run.
     expect(d.rows.map((r) => r.values[0])).toEqual([848, 0, 23, 24]);
@@ -120,14 +121,14 @@ describe('toIndicators — the four bands ③ (G-06…G-09)', () => {
    * "series 3 is grey, and band 3 is probably series 3".
    */
   it('keeps the series in the same order as the rows, which is what aligns the colours', () => {
-    const d = toIndicators(stats);
+    const d = toIndicators(stats, { windowSelected: false });
     expect(d.series.map((s) => s.name)).toEqual(d.rows.map((r) => r.label));
     expect(d.series).toHaveLength(BAND_ROLES.length);
   });
 });
 
 describe('toIndicators — a run whose bands are not configurable', () => {
-  const frozen = toIndicators({ ...stats, configurable: false });
+  const frozen = toIndicators({ ...stats, configurable: false }, { windowSelected: false });
 
   it('says so when the bands are not configurable, instead of offering a control that would do nothing', () => {
     expect(frozen.empty ?? frozen.rows[0]!.label).toBeDefined();
@@ -141,8 +142,8 @@ describe('toIndicators — a run whose bands are not configurable', () => {
    * absent when it does not.
    */
   it('and says nothing of the sort when they are configurable', () => {
-    expect(toIndicators(stats).limitation).toBeUndefined();
-    expect(JSON.stringify(toIndicators(stats))).not.toMatch(/fixed|not configurable/i);
+    expect(toIndicators(stats, { windowSelected: false }).limitation).toBeUndefined();
+    expect(JSON.stringify(toIndicators(stats, { windowSelected: false }))).not.toMatch(/fixed|not configurable/i);
   });
 
   it('states it as a limitation beside the chart, naming the bounds they were frozen at', () => {
@@ -213,7 +214,7 @@ describe('toIndicators — a run with no requests', () => {
   const nothing = toIndicators({
     ...stats,
     indicators: { under: 0, between: 0, over: 0, failed: 0 },
-  });
+  }, { windowSelected: false });
 
   /**
    * Four zero-height segments and a percentage of nothing is the shape this
@@ -232,7 +233,7 @@ describe('toIndicators — a run with no requests', () => {
 });
 
 describe('toRequestCounts — the OK/KO donut ④ (G-10)', () => {
-  const d = toRequestCounts(stats);
+  const d = toRequestCounts(stats, { windowSelected: false });
 
   /**
    * The RUN-scope row, and this is the assertion that discriminates. The
@@ -282,14 +283,14 @@ describe('toRequestCounts — the OK/KO donut ④ (G-10)', () => {
    * reader would have no way to tell which.
    */
   it('agrees with the indicator bands about how many requests failed', () => {
-    const bands = toIndicators(stats);
+    const bands = toIndicators(stats, { windowSelected: false });
     const failedBand = bands.rows.at(-1)!;
     expect(failedBand.label).toBe('failed');
     expect(failedBand.values[0]).toBe(d.rows[1]!.values[0]);
   });
 
   it('explains itself when the run has no request statistics at all', () => {
-    const none = toRequestCounts({ ...stats, stats: [] });
+    const none = toRequestCounts({ ...stats, stats: [] }, { windowSelected: false });
     expect(none.empty).toBeDefined();
     expect(none.rows).toEqual([]);
     expect(none.columns).toEqual(['Outcome', 'Count', 'Percent']);
@@ -301,7 +302,7 @@ describe('toRequestCounts — the OK/KO donut ④ (G-10)', () => {
     const none = toRequestCounts({
       ...stats,
       stats: [{ ...run, count: 0, okCount: 0, koCount: 0 }],
-    });
+    }, { windowSelected: false });
     expect(none.empty).toBeDefined();
     expect(none.rows).toEqual([]);
   });
@@ -379,5 +380,50 @@ describe('toRowIndicators', () => {
     const row = stats.stats.find((r) => r.scope === 'group' && r.name === 'Cart')!;
     const data = toRowIndicators(stats, row, 'Cart', 'group');
     expect(data.rows[0]?.label).toContain(String(stats.bounds.lowerMs));
+  });
+});
+
+/**
+ * A WINDOW THAT SELECTS NO REQUESTS IS NOT A RUN THAT RECORDED NONE: the bands
+ * and the donut read the same empty payload either way, and only the flag says
+ * which question was asked. Exclusive pairs, for the reason
+ * `support/emptySentence.ts` gives. The request- and group-scoped sentences
+ * (`toRequestIndicators`, `toRowIndicators`) belong to the drill-down pages,
+ * which are never windowed, and take no flag.
+ */
+describe('toIndicators / toRequestCounts — a window that selects no requests', () => {
+  const emptyBands = { ...stats, indicators: { under: 0, between: 0, over: 0, failed: 0 } };
+  const run = stats.stats.find((r) => r.scope === 'run')!;
+
+  it('names the window on the bands, not the run, and keeps the tail', () => {
+    expectAboutTheWindow(toIndicators(emptyBands, { windowSelected: true }).empty, /no response-time bands to show/i);
+  });
+
+  it('still names the run on the bands when no window is selected', () => {
+    expectAboutTheRun(toIndicators(emptyBands, { windowSelected: false }).empty, /no response-time bands to show/i);
+  });
+
+  /** The fixed-bands caveat is about how the run's histogram was STORED, so it
+   *  survives a window — and is not lost because the chart is empty. */
+  it('keeps the fixed-bands limitation, which a window cannot change', () => {
+    const frozen = toIndicators({ ...emptyBands, configurable: false }, { windowSelected: true });
+    expect(frozen.limitation).toMatch(/fixed at/i);
+    expect(frozen.limitation).not.toMatch(/window/i);
+  });
+
+  // The donut has TWO empty states — no run row at all (what a windowed read of
+  // an empty window returns) and a row that counts zero — and both are
+  // "nothing in this run" claims, so both switch.
+  const donutStates: [string, StatsResponse][] = [
+    ['no run-scope row', { ...stats, stats: [] }],
+    ['a run row counting zero', { ...stats, stats: [{ ...run, count: 0, okCount: 0, koCount: 0 }] }],
+  ];
+
+  it.each(donutStates)('names the window on the donut, not the run (%s)', (_state, payload) => {
+    expectAboutTheWindow(toRequestCounts(payload, { windowSelected: true }).empty, /nothing to count/i);
+  });
+
+  it.each(donutStates)('still names the run on the donut when no window is selected (%s)', (_state, payload) => {
+    expectAboutTheRun(toRequestCounts(payload, { windowSelected: false }).empty);
   });
 });

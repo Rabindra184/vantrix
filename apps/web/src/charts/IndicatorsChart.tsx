@@ -25,6 +25,7 @@ export default function IndicatorsChart({
   row,
   label,
   noun,
+  windowSelected,
 }: {
   readonly stats: StatsResponse;
   /** A specific row's bands. Absent on the run's own overview, which folds the
@@ -34,13 +35,26 @@ export default function IndicatorsChart({
   readonly label?: string;
   /** What the subject is called when there is nothing to fold. */
   readonly noun?: string;
+  /**
+   * Did the reader narrow the Report to a time window? REQUIRED, no default: a
+   * window that selects nothing and a run that recorded nothing draw the same
+   * empty payload, and the sentence under the figure must not claim a fact about
+   * the RUN when the reader asked about a WINDOW. The Report passes
+   * `window !== null`; the Summary and the drill-downs pass `false`.
+   *
+   * ONLY THE RUN-LEVEL FOLD READS IT. The request and group pages pass `row`
+   * and `label`, and their sentences name one request or group; those pages are
+   * never windowed (their endpoints take no `from`/`to`), so they pass `false`
+   * and `toRowIndicators` takes no such argument.
+   */
+  readonly windowSelected: boolean;
 }) {
   const data = useMemo(
     () =>
       label === undefined
-        ? toIndicators(stats)
+        ? toIndicators(stats, { windowSelected })
         : toRowIndicators(stats, row, label, noun ?? 'request'),
-    [stats, row, label, noun],
+    [stats, row, label, noun, windowSelected],
   );
 
   return (

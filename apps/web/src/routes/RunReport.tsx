@@ -149,6 +149,13 @@ function RequestsSection({ runId, runStatus }: { readonly runId: string; readonl
 function RequestsCharts({ runId }: { readonly runId: string }) {
   const { terminal } = useRunTerminal(runId);
   const window = useWindowFromShell();
+  /* WHAT EVERY CHART BELOW IS TOLD, because a window that selects nothing and a
+     run that recorded nothing draw the same empty payload. Each chart's "nothing
+     was recorded" sentence names the WINDOW when this is true and the RUN when it
+     is not — it must not claim a fact about the run when the reader asked about a
+     slice of it. Required on every chart (no default), so a chart added here
+     without it does not compile. */
+  const windowSelected = window !== null;
   const domainMs = useTimeDomainFromShell();
   const warmupMs = useWarmupFromShell() ?? undefined;
   const compact = useIsCompact();
@@ -182,8 +189,8 @@ function RequestsCharts({ runId }: { readonly runId: string }) {
       <div className={GRID}>
         {series.data !== undefined && (
           <>
-            <RequestsAndResponsesChart series={series.data} domainMs={domainMs} warmupMs={warmupMs} />
-            <PercentilesChart series={series.data} domainMs={domainMs} warmupMs={warmupMs} />
+            <RequestsAndResponsesChart series={series.data} domainMs={domainMs} warmupMs={warmupMs} windowSelected={windowSelected} />
+            <PercentilesChart series={series.data} domainMs={domainMs} warmupMs={warmupMs} windowSelected={windowSelected} />
           </>
         )}
         <LiveNotice kind="withheld" subject="Response time distribution" />
@@ -200,27 +207,27 @@ function RequestsCharts({ runId }: { readonly runId: string }) {
       <Payload query={series} slots={[REQUESTS_AND_RESPONSES, PERCENTILES]}>
         {(data) => (
           <>
-            <RequestsAndResponsesChart series={data} domainMs={domainMs} warmupMs={warmupMs} />
-            <PercentilesChart series={data} domainMs={domainMs} warmupMs={warmupMs} />
+            <RequestsAndResponsesChart series={data} domainMs={domainMs} warmupMs={warmupMs} windowSelected={windowSelected} />
+            <PercentilesChart series={data} domainMs={domainMs} warmupMs={warmupMs} windowSelected={windowSelected} />
           </>
         )}
       </Payload>
       <Payload query={distribution} slots={[DISTRIBUTION, PERCENTILE_DISTRIBUTION]}>
         {(data) => (
           <>
-            <DistributionChart distribution={data} />
-            <PercentileDistributionChart distribution={data} />
+            <DistributionChart distribution={data} windowSelected={windowSelected} />
+            <PercentileDistributionChart distribution={data} windowSelected={windowSelected} />
           </>
         )}
       </Payload>
       <Payload query={errorSeries} slots={[ERRORS_PER_SECOND]}>
-        {(data) => <ErrorsChart data={data} domainMs={domainMs} warmupMs={warmupMs} />}
+        {(data) => <ErrorsChart data={data} domainMs={domainMs} warmupMs={warmupMs} windowSelected={windowSelected} />}
       </Payload>
       <Payload query={stats} slots={[INDICATORS, REQUEST_COUNTS]}>
         {(data) => (
           <>
-            <IndicatorsChart stats={data} />
-            <RequestCountChart stats={data} />
+            <IndicatorsChart stats={data} windowSelected={windowSelected} />
+            <RequestCountChart stats={data} windowSelected={windowSelected} />
           </>
         )}
       </Payload>
@@ -274,6 +281,9 @@ function GroupsSection({ runId }: { readonly runId: string }) {
 function VirtualUsersSection({ runId }: { readonly runId: string }) {
   const { terminal } = useRunTerminal(runId);
   const window = useWindowFromShell();
+  // The same flag `RequestsCharts` hands its charts, for the same reason: an
+  // empty window must not say the run had no user activity.
+  const windowSelected = window !== null;
   const domainMs = useTimeDomainFromShell();
   const warmupMs = useWarmupFromShell() ?? undefined;
   const compact = useIsCompact();
@@ -297,9 +307,9 @@ function VirtualUsersSection({ runId }: { readonly runId: string }) {
   const draw = (data: NonNullable<typeof users.data>) => (
     <>
       {/* GE's measured order: Arrival Rate, Termination Rate, Concurrent Users. */}
-      <UserStartRateChart users={data} group={RUN_TIME_GROUP} domainMs={domainMs} warmupMs={warmupMs} />
-      <UserEndRateChart users={data} group={RUN_TIME_GROUP} domainMs={domainMs} warmupMs={warmupMs} />
-      <ConcurrentUsersChart users={data} group={RUN_TIME_GROUP} domainMs={domainMs} warmupMs={warmupMs} />
+      <UserStartRateChart users={data} group={RUN_TIME_GROUP} domainMs={domainMs} warmupMs={warmupMs} windowSelected={windowSelected} />
+      <UserEndRateChart users={data} group={RUN_TIME_GROUP} domainMs={domainMs} warmupMs={warmupMs} windowSelected={windowSelected} />
+      <ConcurrentUsersChart users={data} group={RUN_TIME_GROUP} domainMs={domainMs} warmupMs={warmupMs} windowSelected={windowSelected} />
     </>
   );
   if (!terminal) return <div className={GRID}>{users.data !== undefined && draw(users.data)}</div>;

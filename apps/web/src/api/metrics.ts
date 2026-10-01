@@ -10,7 +10,7 @@ import {
   UsersResponseSchema,
 } from '@perfportal/contracts';
 import type { Window } from '@perfportal/contracts';
-import { apiFetch } from './fetch';
+import { ProblemError, apiFetch } from './fetch';
 import {
   distributionPath,
   errorSeriesPath,
@@ -180,6 +180,26 @@ export const distributionQueryKey = (
  * one, and hard-coding it into the URL while leaving it out of the key would
  * be the shape that silently serves one family's data under another's key.
  */
+/**
+ * ═══ A WINDOW THAT SELECTS NO BUCKETS IS AN EMPTY DISTRIBUTION, NOT A MISSING ONE ═══
+ *
+ * `/distribution` answers **404** when the buckets a windowed read selects are
+ * none — "No response_time histogram for run "" in run <id>. … which lists every
+ * row this run recorded." — because the handler cannot tell a name that never
+ * existed from a window that happened to hold nothing (`parity.controller.ts`
+ * keeps "absent, not empty" for both). `Payload` relays a failed query's own
+ * text, so a reader who brushed a quiet second saw that developer sentence in
+ * both distribution charts, naming "this run" and a run id, while every sibling
+ * chart (which gets a 200 with an empty payload) said which window was empty.
+ *
+ * So on a WINDOWED read the 404 is read as what it means here and turned into
+ * the empty payload the transforms already explain ("No response times fall in
+ * the selected window"). Nothing else changes: an UNWINDOWED 404 is a run with
+ * no histogram at all and is still relayed (a window is never offered for one),
+ * the drill-downs never pass a window, and any other failure still throws.
+ * Changing the endpoint to answer 200 was the alternative, and is an API
+ * contract change this sub-project does not make.
+ */
 export const distributionQuery = (
   id: string,
   scope = 'run',
@@ -188,8 +208,29 @@ export const distributionQuery = (
   window: Window | null = null,
 ) => ({
   queryKey: [...distributionQueryKey(id, scope, name, family), window?.fromMs ?? null, window?.toMs ?? null] as const,
-  queryFn: () =>
-    apiFetch(DistributionResponseSchema, distributionPath(id, scope, name, family, window)),
+  queryFn: async () => {
+    try {
+      return await apiFetch(DistributionResponseSchema, distributionPath(id, scope, name, family, window));
+    } catch (error) {
+      if (window === null || !(error instanceof ProblemError) || error.status !== 404) throw error;
+      // Parsed rather than cast, so a `scope` or `family` the contract does not
+      // know is a loud failure and not an invented payload.
+      return DistributionResponseSchema.parse({
+        runId: id,
+        window: null,
+        scope,
+        name,
+        family,
+        labels: [],
+        okCount: [],
+        koCount: [],
+        okPercent: [],
+        koPercent: [],
+        exactValues: false,
+        overflowCount: 0,
+      });
+    }
+  },
   staleTime: Infinity,
 });
 

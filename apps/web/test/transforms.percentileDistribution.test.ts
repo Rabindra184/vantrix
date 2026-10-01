@@ -1,5 +1,6 @@
 import type { DistributionResponse } from '@perfportal/contracts';
 import { describe, expect, it } from 'vitest';
+import { expectAboutTheRun, expectAboutTheWindow } from './support/emptySentence';
 import { toPercentileDistribution } from '../src/charts/transforms/percentileDistribution';
 import fixture from './fixtures/reference-run.json';
 
@@ -7,7 +8,7 @@ const distribution = fixture.distribution as unknown as DistributionResponse;
 
 /** The `[percentile, responseTimeMs]` pairs of the one drawn series. */
 function points(d: DistributionResponse, outcome: 'ok' | 'ko' | 'all') {
-  const data = toPercentileDistribution(d, outcome).series[0]?.data;
+  const data = toPercentileDistribution(d, outcome, { windowSelected: false }).series[0]?.data;
   return (data ?? []) as readonly (readonly [number, number])[];
 }
 
@@ -70,9 +71,9 @@ describe('toPercentileDistribution', () => {
     });
 
     it('says the single-outcome curves understate, rather than leaving it implied', () => {
-      expect(toPercentileDistribution(overflowed, 'ok').limitation).toContain('understate');
+      expect(toPercentileDistribution(overflowed, 'ok', { windowSelected: false }).limitation).toContain('understate');
       // `all` needs no such caveat: its arithmetic is exact.
-      expect(toPercentileDistribution(overflowed, 'all').limitation).not.toContain('understate');
+      expect(toPercentileDistribution(overflowed, 'all', { windowSelected: false }).limitation).not.toContain('understate');
     });
 
     it('is empty when EVERY observation overflowed, not a pair of bare axes', () => {
@@ -81,15 +82,12 @@ describe('toPercentileDistribution', () => {
       // this falls through to the drawing branch and returns a series with an
       // empty `data` — which renders as a grid with no marks, the "measured,
       // and found to be nothing" reading the empty branch exists to prevent.
-      const all = toPercentileDistribution(
-        {
+      const all = toPercentileDistribution({
           ...distribution,
           okCount: distribution.okCount.map(() => 0),
           koCount: distribution.koCount.map(() => 0),
           overflowCount: 40,
-        },
-        'all',
-      );
+        }, 'all', { windowSelected: false });
       expect(all.series).toHaveLength(0);
       expect(all.empty).toBeTruthy();
       expect(all.limitation).toContain('40');
@@ -115,12 +113,12 @@ describe('toPercentileDistribution', () => {
   it('counts every binned observation of the selected outcome', () => {
     // Derived from the payload: the last cumulative figure in the table is the
     // outcome's own total, so nothing was dropped on the way through.
-    const rows = toPercentileDistribution(distribution, 'ok').rows;
+    const rows = toPercentileDistribution(distribution, 'ok', { windowSelected: false }).rows;
     expect(Number(rows.at(-1)!.values[1])).toBe(sum(distribution.okCount));
   });
 
   it('combines both outcomes when all is selected', () => {
-    const rows = toPercentileDistribution(distribution, 'all').rows;
+    const rows = toPercentileDistribution(distribution, 'all', { windowSelected: false }).rows;
     expect(Number(rows.at(-1)!.values[1])).toBe(
       sum(distribution.okCount) + sum(distribution.koCount),
     );
@@ -135,43 +133,85 @@ describe('toPercentileDistribution', () => {
 
   it('says so when observations overflowed the histogram', () => {
     const d = { ...distribution, overflowCount: 7 };
-    expect(toPercentileDistribution(d, 'ok').limitation).toContain('7');
+    expect(toPercentileDistribution(d, 'ok', { windowSelected: false }).limitation).toContain('7');
   });
 
   it('states no limitation when nothing overflowed', () => {
     const d = { ...distribution, overflowCount: 0 };
-    expect(toPercentileDistribution(d, 'ok').limitation).toBeUndefined();
+    expect(toPercentileDistribution(d, 'ok', { windowSelected: false }).limitation).toBeUndefined();
   });
 
   it('is empty, with a reason, for an outcome that recorded nothing', () => {
     const d = { ...distribution, koCount: distribution.koCount.map(() => 0) };
-    const data = toPercentileDistribution(d, 'ko');
+    const data = toPercentileDistribution(d, 'ko', { windowSelected: false });
     expect(data.series).toHaveLength(0);
     expect(data.empty).toBeTruthy();
   });
 
   it('tells a run with no data apart from an outcome with none', () => {
     // A reader acts on these differently, so they must not read the same.
-    const noData = toPercentileDistribution(
-      { ...distribution, labels: [], okCount: [], koCount: [] },
-      'ok',
-    );
-    const noKo = toPercentileDistribution(
-      { ...distribution, koCount: distribution.koCount.map(() => 0) },
-      'ko',
-    );
+    const noData = toPercentileDistribution({ ...distribution, labels: [], okCount: [], koCount: [] }, 'ok', { windowSelected: false });
+    const noKo = toPercentileDistribution({ ...distribution, koCount: distribution.koCount.map(() => 0) }, 'ko', { windowSelected: false });
     expect(noData.empty).not.toBe(noKo.empty);
   });
 
   it('names the label kind, so a midpoint is not read as an observation', () => {
-    const exact = toPercentileDistribution({ ...distribution, exactValues: true }, 'ok');
-    const binned = toPercentileDistribution({ ...distribution, exactValues: false }, 'ok');
+    const exact = toPercentileDistribution({ ...distribution, exactValues: true }, 'ok', { windowSelected: false });
+    const binned = toPercentileDistribution({ ...distribution, exactValues: false }, 'ok', { windowSelected: false });
     expect(exact.columns[1]).toContain('exact');
     expect(binned.columns[1]).toContain('midpoint');
   });
 
   it('carries a row per drawn point, so the table and the drawing agree', () => {
-    const data = toPercentileDistribution(distribution, 'ok');
+    const data = toPercentileDistribution(distribution, 'ok', { windowSelected: false });
     expect(data.rows).toHaveLength(points(distribution, 'ok').length);
+  });
+});
+
+/**
+ * A WINDOW THAT SELECTS NO RESPONSES IS NOT A RUN THAT RECORDED NONE, and the
+ * per-outcome sentence ("This run recorded no successful responses") is the
+ * same claim made about one outcome. Both empty branches switch; the outcome
+ * wording is shared so the two sentences differ only in what they are about.
+ */
+describe('toPercentileDistribution — a window that selects no responses', () => {
+  const zeroed = (n: number) => new Array<number>(n).fill(0);
+  const noLabels = { ...distribution, labels: [], okCount: [], koCount: [] };
+  const noKo = { ...distribution, koCount: zeroed(distribution.koCount.length) };
+  const nothingBinned = {
+    ...distribution,
+    okCount: zeroed(distribution.okCount.length),
+    koCount: zeroed(distribution.koCount.length),
+  };
+
+  it('names the window, not the run, when there are no bins at all', () => {
+    expectAboutTheWindow(
+      toPercentileDistribution(noLabels, 'ok', { windowSelected: true }).empty,
+      /no curve to draw/i,
+    );
+  });
+
+  it('still names the run when no window is selected', () => {
+    expectAboutTheRun(toPercentileDistribution(noLabels, 'ok', { windowSelected: false }).empty);
+  });
+
+  it.each([
+    ['ok', nothingBinned, /successful responses/i],
+    ['ko', noKo, /failed responses/i],
+    ['all', nothingBinned, /no responses/i],
+  ] as const)('names the window and the outcome, not the run (%s)', (outcome, payload, noun) => {
+    expectAboutTheWindow(
+      toPercentileDistribution(payload, outcome, { windowSelected: true }).empty,
+      /no curve to draw/i,
+    );
+    expect(toPercentileDistribution(payload, outcome, { windowSelected: true }).empty).toMatch(noun);
+  });
+
+  it.each([
+    ['ok', nothingBinned],
+    ['ko', noKo],
+    ['all', nothingBinned],
+  ] as const)('still names the run when no window is selected (%s)', (outcome, payload) => {
+    expectAboutTheRun(toPercentileDistribution(payload, outcome, { windowSelected: false }).empty, /no curve to draw/i);
   });
 });

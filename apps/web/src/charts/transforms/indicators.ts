@@ -168,12 +168,29 @@ function bandChart(
   };
 }
 
-export function toIndicators(stats: StatsResponse): ChartData {
+/**
+ * `windowSelected` is REQUIRED and has no default: the same empty payload means
+ * "this run recorded nothing" on the whole run and "nothing ran in that
+ * window" under a brush, and the first is false of the second. The Report
+ * passes `window !== null`; the Summary and the drill-downs pass `false`.
+ *
+ * ONLY THE RUN-LEVEL FOLD TAKES IT. `toRowIndicators` and
+ * `toRequestIndicators` below build their sentences for ONE request or group
+ * ("This run recorded no request named X"), which exist only on the
+ * drill-down pages, and those are never windowed — their endpoints take no
+ * `from`/`to`, and `WholeRunNotice` says so on the page. Leave them alone.
+ */
+export function toIndicators(
+  stats: StatsResponse,
+  opts: { readonly windowSelected: boolean },
+): ChartData {
   return bandChart(
     stats.indicators,
     stats,
     ALL_REQUESTS,
-    'No requests were recorded for this run, so there are no response-time bands to show.',
+    opts.windowSelected
+      ? 'No requests ran in the selected window, so there are no response-time bands to show.'
+      : 'No requests were recorded for this run, so there are no response-time bands to show.',
   );
 }
 
@@ -253,7 +270,11 @@ const OUTCOME_COLUMNS = ['Outcome', 'Count', 'Percent'] as const;
  * construction, but the two slices are what the percentages describe, so
  * dividing by their own sum is what makes them sum to 100.
  */
-export function toRequestCounts(stats: StatsResponse): ChartData {
+export function toRequestCounts(
+  stats: StatsResponse,
+  /** REQUIRED, no default — see `toIndicators`. */
+  opts: { readonly windowSelected: boolean },
+): ChartData {
   const run = stats.stats.find((row) => row.scope === 'run' && row.family === 'response_time');
   const total = run === undefined ? 0 : run.okCount + run.koCount;
 
@@ -263,8 +284,13 @@ export function toRequestCounts(stats: StatsResponse): ChartData {
       axisLabels: [],
       columns: [...OUTCOME_COLUMNS],
       rows: [],
-      empty:
-        run === undefined
+      // BOTH branches are "nothing in this run" claims, so BOTH switch under a
+      // window: a windowed read with no run-scope row at all (the window
+      // selected nothing) and one whose row counts zero are the same fact to a
+      // reader who asked about a window, and neither may be said of the run.
+      empty: opts.windowSelected
+        ? 'No requests ran in the selected window, so there is nothing to count.'
+        : run === undefined
           ? 'This run has no request statistics, so there is nothing to count.'
           : 'This run recorded no requests.',
     };

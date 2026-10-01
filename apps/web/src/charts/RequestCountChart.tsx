@@ -14,8 +14,21 @@ import { OUTCOME_ROLES, toRequestCounts } from './transforms/indicators';
  * total G-10 asks for, which has no slice of its own. `toRequestCounts`
  * documents that.
  */
-export default function RequestCountChart({ stats }: { stats: StatsResponse }) {
-  const data = useMemo(() => toRequestCounts(stats), [stats]);
+export default function RequestCountChart({
+  stats,
+  windowSelected,
+}: {
+  readonly stats: StatsResponse;
+  /**
+   * Did the reader narrow the Report to a time window? REQUIRED, no default: a
+   * window that selects nothing and a run that recorded nothing draw the same
+   * empty payload, and the sentence under the figure must not claim a fact about
+   * the RUN when the reader asked about a WINDOW. The Report passes
+   * `window !== null`; the Summary and the drill-downs pass `false`.
+   */
+  readonly windowSelected: boolean;
+}) {
+  const data = useMemo(() => toRequestCounts(stats, { windowSelected }), [stats, windowSelected]);
 
   return (
     <Chart

@@ -64,6 +64,7 @@ export default function PercentilesChart({
   domainMs,
   warmupMs,
   compact,
+  windowSelected,
 }: {
   readonly series: SeriesResponse;
   readonly id?: string;
@@ -76,14 +77,22 @@ export default function PercentilesChart({
   readonly warmupMs?: number;
   /** §22.6's sparkline — see `ChartProps.compact`. */
   readonly compact?: boolean;
+  /**
+   * Did the reader narrow the Report to a time window? REQUIRED, no default: a
+   * window that selects nothing and a run that recorded nothing draw the same
+   * empty payload, and the sentence under the figure must not claim a fact about
+   * the RUN when the reader asked about a WINDOW. The Report passes
+   * `window !== null`; the Summary and the drill-downs pass `false`.
+   */
+  readonly windowSelected: boolean;
 }) {
   const [scale, setScale] = useState<'log' | 'value'>('log');
   const [bands, setBands] = useState<readonly Band[]>(DEFAULT_BANDS);
   const [outcome, setOutcome] = useState<Outcome>('ok');
 
   const data = useMemo(
-    () => toPercentiles(series, bands, outcome, { x: 'ms' }),
-    [series, bands, outcome],
+    () => toPercentiles(series, { bands, outcome, x: 'ms', windowSelected }),
+    [series, bands, outcome, windowSelected],
   );
 
   // The transform always emits series in BANDS order, so the roles must be the

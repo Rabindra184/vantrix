@@ -1,5 +1,6 @@
 import type { ErrorSeriesResponse } from '@perfportal/contracts';
 import { describe, expect, it } from 'vitest';
+import { expectAboutTheRun, expectAboutTheWindow } from './support/emptySentence';
 import { OTHER_LABEL, toErrorSeries } from '../src/charts/transforms/errorSeries';
 import { MAX_CATEGORICAL_SERIES } from '../src/charts/theme';
 import { ERROR_SERIES_KEEP } from './support/errorSeriesKeep';
@@ -25,7 +26,7 @@ describe('toErrorSeries', () => {
     // three evenly-spaced points and misplace all of them in time.
     const d = toErrorSeries(response({
       series: [{ message: 'boom', total: 2, points: [{ startOffsetMs: 5000, count: 2 }] }],
-    }));
+    }), { windowSelected: false });
     expect(points(d.series[0]!.data)).toEqual([[5000, 2]]);
     expect(d.axisLabels).toEqual([]);
   });
@@ -35,8 +36,8 @@ describe('toErrorSeries', () => {
     // argument transforms/rates.ts makes, and the reason bucketWidthMs is in
     // the payload at all.
     const pts = [{ startOffsetMs: 0, count: 4 }];
-    const fine = toErrorSeries(response({ bucketWidthMs: 1000, series: [{ message: 'b', total: 4, points: pts }] }));
-    const coarse = toErrorSeries(response({ bucketWidthMs: 2000, series: [{ message: 'b', total: 4, points: pts }] }));
+    const fine = toErrorSeries(response({ bucketWidthMs: 1000, series: [{ message: 'b', total: 4, points: pts }] }), { windowSelected: false });
+    const coarse = toErrorSeries(response({ bucketWidthMs: 2000, series: [{ message: 'b', total: 4, points: pts }] }), { windowSelected: false });
     const at0 = (d: ReturnType<typeof toErrorSeries>) => points(d.series[0]!.data)[0]![1];
     expect(at0(coarse)).toBeCloseTo(at0(fine) / 2, 9);
   });
@@ -44,13 +45,13 @@ describe('toErrorSeries', () => {
   it('names the folded remainder rather than drawing an unlabelled series', () => {
     const d = toErrorSeries(response({
       series: [{ message: null, total: 3, points: [{ startOffsetMs: 0, count: 3 }] }],
-    }));
+    }), { windowSelected: false });
     expect(d.series[0]!.name).toBe(OTHER_LABEL);
     expect(d.columns).toContain(OTHER_LABEL);
   });
 
   it('says a run predates the recording instead of drawing empty axes', () => {
-    const d = toErrorSeries(response({ available: false }));
+    const d = toErrorSeries(response({ available: false }), { windowSelected: false });
     expect(d.empty).toBeTruthy();
     expect(d.series).toHaveLength(0);
   });
@@ -59,8 +60,8 @@ describe('toErrorSeries', () => {
     // The distinction `available` exists for. Both states draw nothing, and
     // only one of them is good news; a reader who cannot tell "this run
     // passed" from "we did not record this" has been told nothing.
-    const missing = toErrorSeries(response({ available: false })).empty;
-    const clean = toErrorSeries(response({ available: true })).empty;
+    const missing = toErrorSeries(response({ available: false }), { windowSelected: false }).empty;
+    const clean = toErrorSeries(response({ available: true }), { windowSelected: false }).empty;
     expect(clean).toBeTruthy();
     expect(clean).not.toBe(missing);
   });
@@ -73,7 +74,7 @@ describe('toErrorSeries', () => {
         { message: 'a', total: 1, points: [{ startOffsetMs: 0, count: 1 }] },
         { message: 'b', total: 1, points: [{ startOffsetMs: 2000, count: 1 }] },
       ],
-    }));
+    }), { windowSelected: false });
     expect(d.rows).toHaveLength(2);
     expect(d.rows.map((r) => r.label)).toEqual(['0', '2']);
   });
@@ -86,7 +87,7 @@ describe('toErrorSeries', () => {
         { message: 'a', total: 1, points: [{ startOffsetMs: 0, count: 1 }] },
         { message: 'b', total: 1, points: [{ startOffsetMs: 1000, count: 1 }] },
       ],
-    }));
+    }), { windowSelected: false });
     expect(d.rows[0]!.values[1]).toBe('—');
   });
 });
@@ -98,5 +99,28 @@ describe('the palette has room for what the engine keeps', () => {
     // push `Other errors` off the chart silently, because assignPalette leaves
     // an excess series UNDRAWN rather than cycling hues.
     expect(MAX_CATEGORICAL_SERIES).toBeGreaterThanOrEqual(ERROR_SERIES_KEEP + 1);
+  });
+});
+
+/**
+ * A WINDOW THAT SELECTS NO FAILURES IS NOT A RUN THAT HAD NONE. The empty
+ * payload is the same either way, so the flag is the only thing that says which
+ * question the reader asked; each case is an exclusive pair for that reason.
+ */
+describe('toErrorSeries — a window that selects no failures', () => {
+  it('names the window, not the run', () => {
+    expectAboutTheWindow(toErrorSeries(response({ available: true }), { windowSelected: true }).empty);
+  });
+
+  it('still says the run had no failures when no window is selected', () => {
+    expectAboutTheRun(toErrorSeries(response({ available: true }), { windowSelected: false }).empty);
+  });
+
+  /** A fact about when the run was STORED, which a window cannot change — so it
+   *  is the one sentence that must read the same either way. */
+  it.each([true, false])('keeps the ingestion sentence under either flag (windowSelected=%s)', (windowSelected) => {
+    const d = toErrorSeries(response({ available: false }), { windowSelected });
+    expect(d.empty).toMatch(/ingested before failures were recorded/i);
+    expect(d.empty).not.toMatch(/window/i);
   });
 });

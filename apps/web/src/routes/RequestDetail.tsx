@@ -234,18 +234,21 @@ export default function RequestDetail() {
 
       <Payload query={stats} slots={[INDICATORS]}>
         {(data) => (
-          <IndicatorsChart stats={data} row={requestRow(data, name)} label={name} />
+          // Never windowed: this page's endpoints take no `from`/`to`, and
+          // `WholeRunNotice` says so — so none of its charts is ever drawn under
+          // a window, and each passes `windowSelected={false}`.
+          <IndicatorsChart stats={data} row={requestRow(data, name)} label={name} windowSelected={false} />
         )}
       </Payload>
 
       <Payload query={distribution} slots={[DISTRIBUTION]}>
-        {(data) => <DistributionChart distribution={data} />}
+        {(data) => <DistributionChart distribution={data} windowSelected={false} />}
       </Payload>
 
       <Payload query={series} slots={[PERCENTILES, REQUESTS, RESPONSES]}>
         {(data) => (
           <>
-            <PercentilesChart series={data} />
+            <PercentilesChart series={data} windowSelected={false} />
             <RequestRateChart series={data} title={REQUESTS.title} />
             <ResponseRateChart series={data} title={RESPONSES.title} />
           </>

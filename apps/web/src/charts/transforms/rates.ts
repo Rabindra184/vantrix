@@ -328,7 +328,15 @@ const COMBINED_LINES = ['Requests', 'Total', 'Responses OK', 'Responses KO'] as 
  * split (`startedOkCount`/`startedKoCount`) would put a request's outcome in
  * the second it began, which is a different chart and the one GE does not draw.
  */
-export function toRequestsAndResponses(series: SeriesResponse): ChartData {
+export function toRequestsAndResponses(
+  series: SeriesResponse,
+  /**
+   * REQUIRED, no default: "recorded for this run" is false of a window that
+   * simply selected nothing, and a wrong value is silent. The Report passes
+   * `window !== null`; the Summary passes `false`.
+   */
+  opts: { readonly windowSelected: boolean },
+): ChartData {
   const columns = [TIME_COLUMN, ...COMBINED_LINES];
   if (series.buckets.length === 0) {
     return {
@@ -336,7 +344,9 @@ export function toRequestsAndResponses(series: SeriesResponse): ChartData {
       axisLabels: [],
       columns,
       rows: [],
-      empty: 'No requests were recorded for this run, so there are no request or response rates to show.',
+      empty: opts.windowSelected
+        ? 'No requests ran in the selected window, so there are no request or response rates to show.'
+        : 'No requests were recorded for this run, so there are no request or response rates to show.',
     };
   }
   // The payload's own width — see `rateChart`'s divisor note.

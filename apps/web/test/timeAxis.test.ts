@@ -73,14 +73,14 @@ describe('the run page draws one time axis', () => {
   it.each([
     ['toRequestRate', () => toRequestRate(series, { x: 'ms' })],
     ['toResponseRate', () => toResponseRate(series, { x: 'ms' })],
-    ['toPercentiles', () => toPercentiles(series, undefined, 'ok', { x: 'ms' })],
+    ['toPercentiles', () => toPercentiles(series, { outcome: 'ok', x: 'ms', windowSelected: false })],
   ])('%s plots elapsed milliseconds, in pairs', (_name, build) => {
     for (const xs of xsOf(build())) expect(xs).toEqual(seriesOffsets);
   });
 
   it.each([
-    ['toConcurrentUsers', () => toConcurrentUsers(users, { x: 'ms' })],
-    ['toUserStartRate', () => toUserStartRate(users, { x: 'ms' })],
+    ['toConcurrentUsers', () => toConcurrentUsers(users, { windowSelected: false, x: 'ms' })],
+    ['toUserStartRate', () => toUserStartRate(users, { windowSelected: false, x: 'ms' })],
   ])('%s plots elapsed milliseconds, in pairs', (_name, build) => {
     for (const xs of xsOf(build())) expect(xs).toEqual(userOffsets);
   });

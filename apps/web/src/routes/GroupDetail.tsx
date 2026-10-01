@@ -244,6 +244,10 @@ export default function GroupDetail() {
             row={groupRow(data, name, 'group_cumulated')}
             label={name}
             noun="group"
+            // Never windowed: this page's endpoints take no `from`/`to`, and
+            // `WholeRunNotice` says so — so none of its charts is ever drawn
+            // under a window, and each passes `windowSelected={false}`.
+            windowSelected={false}
           />
         )}
       </Payload>
@@ -256,13 +260,14 @@ export default function GroupDetail() {
                 distribution={data}
                 id={distribution.id}
                 title={distribution.title}
+                windowSelected={false}
               />
             )}
           </Payload>
           <Payload query={seriesFor[family]} slots={[percentiles]}>
             {(data) =>
               data.groupSeriesAvailable ? (
-                <PercentilesChart series={data} id={percentiles.id} title={percentiles.title} />
+                <PercentilesChart series={data} id={percentiles.id} title={percentiles.title} windowSelected={false} />
               ) : (
                 <Undrawn slot={percentiles} reason={NO_GROUP_SERIES} />
               )

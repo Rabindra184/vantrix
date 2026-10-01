@@ -59,7 +59,7 @@ afterEach(cleanup);
 
 describe('RequestsAndResponsesChart — the colours it hands ECharts', () => {
   it('draws Responses KO in the failed status colour and OK in the passed one', () => {
-    render(<RequestsAndResponsesChart series={fixture.series as unknown as SeriesResponse} />);
+    render(<RequestsAndResponsesChart series={fixture.series as unknown as SeriesResponse} windowSelected={false} />);
 
     const names = (lastOption()['series'] as { name: string }[]).map((s) => s.name);
     expect(names).toEqual(['Requests', 'Total', 'Responses OK', 'Responses KO']);
@@ -82,7 +82,7 @@ describe('RequestsAndResponsesChart — the colours it hands ECharts', () => {
   });
 
   it('shares the one run-time crosshair the other time charts carry', () => {
-    render(<RequestsAndResponsesChart series={fixture.series as unknown as SeriesResponse} />);
+    render(<RequestsAndResponsesChart series={fixture.series as unknown as SeriesResponse} windowSelected={false} />);
 
     // The literal the existing charts spell out. The new chart reads it from
     // `RUN_TIME_GROUP`; if that constant ever drifts from what they carry, the
@@ -102,7 +102,7 @@ describe('RequestsAndResponsesChart — the colours it hands ECharts', () => {
  */
 describe('RequestsAndResponsesChart — what it is called', () => {
   it('is the figure, titled and axis-named as the spec says', () => {
-    render(<RequestsAndResponsesChart series={fixture.series as unknown as SeriesResponse} />);
+    render(<RequestsAndResponsesChart series={fixture.series as unknown as SeriesResponse} windowSelected={false} />);
 
     const figure = screen.getByTestId('chart-requests-and-responses');
     expect(
@@ -116,7 +116,7 @@ describe('UserEndRateChart — what it is called, and which crosshair it joins',
   const users = fixture.users as unknown as UsersResponse;
 
   it('is the figure, titled and axis-named as the spec says', () => {
-    render(<UserEndRateChart users={users} />);
+    render(<UserEndRateChart users={users} windowSelected={false} />);
 
     const figure = screen.getByTestId('chart-user-end-rate');
     expect(
@@ -128,7 +128,7 @@ describe('UserEndRateChart — what it is called, and which crosshair it joins',
   it('hands the crosshair group its page gives it on to `Chart`', () => {
     // A prop, unlike the combined chart's: the users charts are drawn by pages
     // that own the group (`UsersChartProps.group`).
-    render(<UserEndRateChart users={users} group="run-time" />);
+    render(<UserEndRateChart users={users} group="run-time" windowSelected={false} />);
     expect(connectSpy).toHaveBeenCalledWith('run-time');
   });
 });

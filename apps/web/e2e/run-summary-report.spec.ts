@@ -464,3 +464,52 @@ test('a window that selects no requests says so, not that nothing was recorded',
   await expect(page.getByText('No requests ran in the selected window')).toBeVisible();
   await expect(page.getByText(/no statistics were recorded/i)).toHaveCount(0);
 });
+
+/**
+ * ═══ THE CHARTS ARE THE VIEW A READER SEES FIRST, AND THEY USED TO LIE ═══
+ *
+ * The case above is the Table view. The Report opens on CHARTS, and under the
+ * same empty window its seven charts said "No requests failed in this run." on
+ * a run with 24 failures, "No response times were recorded for this run" and
+ * the rest — each a run-wide claim about a window that happened to hold nothing.
+ * They name the window now. Nothing is clicked: this is the default view.
+ *
+ * TWO DIFFERENT PATHS TO THE SAME SENTENCE, both asserted. Five charts read an
+ * empty payload and their transforms say so; the two distribution charts read a
+ * `/distribution` that answers 404 for a window selecting no buckets, which
+ * `Payload` used to relay as the API's own text — "…which lists every row this
+ * run recorded." — naming "this run" and a run id. That is turned into the
+ * empty payload at the query, so all seven read alike.
+ *
+ * THE ABSENCE IS PAIRED WITH THE PRESENCE. "No chart says 'this run'" is
+ * satisfied by seven figures that never drew, so the case first requires all
+ * seven to have settled on a sentence naming the window, and counts them.
+ * And the unit seam (`ChartWindowSelected.test.tsx`) proves each component
+ * forwards the flag it is given; this proves the PAGE derives it from the URL.
+ */
+test('under a window that selects no requests, the Report’s charts name the window, not the run', async ({
+  page,
+}) => {
+  const runId = await seeded(page);
+  await page.goto(`${runReportPath(runId)}?from=62000&to=63000`);
+  const requests = page.locator('section#requests');
+  // The DEFAULT view: Charts is the pressed one, and Table is never clicked.
+  await expect(requests.getByRole('button', { name: 'Charts', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+
+  const figures = requests.locator('figure[data-testid^="chart-"]');
+  await expect(figures).toHaveCount(7);
+  for (const id of REPORT_REQUEST_CHARTS) {
+    await expect(requests.getByTestId(`chart-${id}`).getByRole('status'), id).toContainText(/selected window/i);
+  }
+  // The two the brief names, by their own sentences.
+  await expect(requests.getByTestId('chart-errors-over-time')).toContainText('No requests failed in the selected window.');
+  await expect(requests.getByTestId('chart-percentiles')).toContainText('No response times fall in the selected window.');
+
+  // Every figure has settled on a window sentence, so reading them all is safe.
+  const said = await requests.locator('figure[data-testid^="chart-"] [role="status"]').allTextContents();
+  expect(said, 'one sentence per chart').toHaveLength(7);
+  for (const sentence of said) expect(sentence).not.toMatch(/this run/i);
+});
