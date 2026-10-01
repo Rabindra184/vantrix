@@ -82,6 +82,17 @@ const GLOBAL_ASSERTION: ToolAssertion = {
   outcome: 'passed',
 };
 
+const FOR_ALL_ASSERTION: ToolAssertion = {
+  expression: 'Session: max of response time is less than 2.0',
+  assertion: {
+    path: { kind: 'forAll' },
+    target: { kind: 'responseTime', stat: 'max' },
+    condition: { kind: 'lt', value: 2 },
+  },
+  actualValue: 1,
+  outcome: 'passed',
+};
+
 /** A run ingested before the decoder existed: prose and nothing else. */
 const UNDECODED_ASSERTION: ToolAssertion = {
   expression: 'Place Order: percentage of failed events is less than 5.0',
@@ -161,6 +172,54 @@ describe('PlatformGatesBar', () => {
     );
   });
 
+  it('offers no link to configure rules when it does not know the project', async () => {
+    // `projectRulesPath(undefined)` is `/projects/undefined/rules`, which
+    // resolves and renders — a dead end that looks like a feature.
+    at('/r', <PlatformGatesBar runId={RUN_ID} assertions={[]} ran />);
+    await userEvent.click(screen.getByRole('button', { name: 'Platform gates' }));
+    expect(screen.getByText(/adding one affects future runs/i)).toBeVisible();
+    expect(screen.queryByRole('link', { name: 'Configure SLA rules' })).toBeNull();
+  });
+
+  /**
+   * The first review's finding 1, which the table this card replaces was
+   * pinned against: an error rate is stored as a FRACTION and read as a
+   * percentage, so the raw number beside a limit reading `1%` is
+   * floating-point noise in the one place two numbers are compared. The raw
+   * string is asserted ABSENT as well as the formatted one present — a second
+   * copy printed elsewhere on the card would satisfy a positive-only check.
+   */
+  it('shows a failed error-rate actual in the same unit as its limit', () => {
+    at(
+      '/r',
+      <PlatformGatesBar
+        runId={RUN_ID}
+        ran
+        assertions={[
+          {
+            ...PLATFORM_GATE,
+            actualValue: 0.0223463687150838,
+            rule: {
+              scope: 'run',
+              targetName: null,
+              // `response_time` WITH an `error_rate` metric is what the
+              // evaluator really stores: `family` is the statistics family the
+              // row comes from, not the quantity.
+              family: 'response_time',
+              metric: 'error_rate',
+              comparator: 'lte',
+              threshold: 0.01,
+            },
+          },
+        ]}
+      />,
+    );
+    const card = screen.getByTestId('gate-card');
+    expect(card).toHaveTextContent('2.2346%');
+    expect(card).not.toHaveTextContent('0.0223463687150838');
+    expect(card).toHaveTextContent('1%');
+  });
+
   it('keeps the CSV export beside a populated bar', () => {
     at('/r', <PlatformGatesBar runId={RUN_ID} assertions={[PLATFORM_GATE]} ran />);
     expect(screen.getByRole('button', { name: /export csv/i })).toBeVisible();
@@ -235,6 +294,53 @@ describe('SimulationAssertionsBar', () => {
       `/runs/${RUN_ID}/groups/Catalog`,
     );
     expect(screen.queryByRole('link', { name: 'Ghost' })).toBeNull();
+  });
+
+  it('addresses a nested request by its unspaced path, not its spaced label', () => {
+    at(
+      '/r',
+      <SimulationAssertionsBar
+        runId={RUN_ID}
+        assertions={[details(['Cart', 'Add To Cart'], 'failed')]}
+        stats={STATS.stats}
+      />,
+    );
+    expect(screen.getByRole('link', { name: 'Cart / Add To Cart' })).toHaveAttribute(
+      'href',
+      `/runs/${RUN_ID}/requests/${encodeURIComponent('Cart/Add To Cart')}`,
+    );
+  });
+
+  it('leaves the run and every-request targets as plain text', () => {
+    // Passing, so the bar is shut on arrival and the hash opens it — a failed
+    // row would open it, and these two are the ones that must never link.
+    at(
+      '/r#simulation-assertions',
+      <SimulationAssertionsBar
+        runId={RUN_ID}
+        assertions={[GLOBAL_ASSERTION, FOR_ALL_ASSERTION]}
+        stats={STATS.stats}
+      />,
+    );
+    const cards = screen.getAllByTestId('simulation-card');
+    expect(cards).toHaveLength(2);
+    ['the run', 'every request'].forEach((label, i) => {
+      expect(cards[i]).toHaveTextContent(`Target: ${label}`);
+      expect(within(cards[i]!).queryByRole('link')).toBeNull();
+    });
+  });
+
+  it('names the target before the statistics can say whether it is linkable', () => {
+    // `stats` is null until the run's rows load. A card that withheld its
+    // target entirely would be worse than the dead end linking guards against:
+    // the name renders at once and only the link waits.
+    at(
+      '/r',
+      <SimulationAssertionsBar runId={RUN_ID} assertions={[details(['Search'], 'failed')]} stats={null} />,
+    );
+    const card = screen.getByTestId('simulation-card');
+    expect(card).toHaveTextContent('Target: Search');
+    expect(within(card).queryByRole('link')).toBeNull();
   });
 
   it('keeps an undecoded check’s sentence, and offers it no target it does not have', () => {
