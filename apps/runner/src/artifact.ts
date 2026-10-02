@@ -54,10 +54,7 @@ export async function prepareGatlingRun(
           '-cp',
           await jarClasspath(config, artifactPath),
           'io.gatling.app.Gatling',
-          '-s',
-          artifact.simulationClass,
-          '-rf',
-          resultsDir,
+          ...gatlingFlags(artifact.simulationClass, resultsDir),
         ],
         env: runnerChildEnv(config),
         uid: config.childUid ?? undefined,
@@ -85,10 +82,7 @@ export async function prepareGatlingRun(
           '-cp',
           path.join(gatlingHome, 'lib', '*'),
           'io.gatling.app.Gatling',
-          '-s',
-          artifact.simulationClass,
-          '-rf',
-          resultsDir,
+          ...gatlingFlags(artifact.simulationClass, resultsDir),
         ],
         env: runnerChildEnv(config),
         uid: config.childUid ?? undefined,
@@ -102,6 +96,36 @@ export async function prepareGatlingRun(
     `Unsupported runner artifact kind "${artifact.kind}".`,
     'Upload a Gatling fat jar or a Gatling bundle archive.',
   );
+}
+
+/**
+ * Gatling's own arguments, after the main class — ONE definition, so the two
+ * artifact kinds cannot disagree about them.
+ *
+ * ═══ `--no-reports`: THE RUNNER NEVER READS A REPORT ═══
+ *
+ * Gatling does not end when the simulation does. `Gatling$.start` returns from
+ * `Runner.run` and then runs `RunResultProcessor.processRunResult`, which
+ * re-parses the whole `simulation.log` and writes the HTML reports — and an
+ * exception there (an OutOfMemoryError on a big soak log, a full disk under the
+ * reports folder) escapes `main` as exit 1 over a COMPLETE log. The runner
+ * deletes the work directory, where those reports land, in the executor's
+ * `finally`, so that work was never read by anybody and was the largest
+ * after-the-run failure surface there is.
+ *
+ * Spelled out of the jars, not remembered: `io.gatling.shared.cli.GatlingCliOptions.NoReports`
+ * in gatling-shared-cli 0.0.7 (the one gatling-app 3.15.1 ships with) is long
+ * name `no-reports`, short `nr`, "Runs simulation but does not generate
+ * reports", and `RunResultProcessor.reportsGenerationEnabled` honours it.
+ * `javap -c` on `initLogFileData` shows what it leaves alone: the log is still
+ * re-read when the simulation `hasAssertions`, so a failed Gatling assertion
+ * still exits 2 and still prints its lines — only the report is skipped. A
+ * simulation with no assertions no longer re-reads its log at all.
+ */
+const NO_REPORTS = '--no-reports';
+
+function gatlingFlags(simulationClass: string, resultsDir: string): string[] {
+  return ['-s', simulationClass, '-rf', resultsDir, NO_REPORTS];
 }
 
 /**
