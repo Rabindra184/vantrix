@@ -222,7 +222,13 @@ export class RunnerRepository {
       )
       SELECT id FROM job
     `;
-    return inserted.length === 1 ? this.find(input.orgId, input.projectId, input.job.id) : null;
+    if (inserted.length !== 1) return null;
+    // Null means "version refused", so it must never stand for a job that WAS
+    // queued and then could not be read back — that is an invariant broken,
+    // and it says so, naming the job, the way retry does.
+    const row = await this.find(input.orgId, input.projectId, input.job.id);
+    if (!row) throw new Error(`runner job ${input.job.id} was queued but could not be read back`);
+    return row;
   }
 
   async listRecent(orgId: string, projectId: string, limit = 20): Promise<RunnerJobWithArtifact[]> {
@@ -439,9 +445,44 @@ export class RunnerRepository {
     `;
   }
 
-  /** Pass 2: a version goes with its file when it is NOT any package's current
-   *  version, NO job references it any more, and it was uploaded before the
-   *  window. A package's current version is never swept. */
+  /**
+   * Pass 2: a version goes with its file when it is NOT any package's current
+   * version, NO job references it any more, and it was uploaded before the
+   * window. A package's current version is never swept.
+   *
+   * ═══ LOCK, THEN RE-CHECK: TWO STATEMENTS IN ONE TRANSACTION ═══
+   *
+   * One statement cannot do this safely. Its NOT EXISTS predicates are read on
+   * the statement's snapshot, and FOR UPDATE SKIP LOCKED does not re-check them
+   * when it takes the lock — EvalPlanQual re-checks only a row that was itself
+   * UPDATEd, and nothing updates a version row: an upload that REUSES an
+   * existing version (same bytes) only KEY SHARE locks it, through the
+   * current_artifact_id foreign key. So an upload that made a version current,
+   * committing after the snapshot but before the lock, was deleted anyway: ON
+   * DELETE SET NULL silently emptied the package's current version and the
+   * runner removed the file. A job inserted in the same window instead tripped
+   * runner_job's ON DELETE RESTRICT and failed the whole batch.
+   *
+   * So statement 1 only CHOOSES and LOCKS (FOR UPDATE OF a SKIP LOCKED), and
+   * statement 2 — a separate statement, so under READ COMMITTED it takes a
+   * fresh snapshot — deletes only the locked versions that are STILL unneeded.
+   * Anything committed before the lock, statement 2 sees. After the lock,
+   * nothing can make a locked version current or point a job at it: both need
+   * a KEY SHARE lock on the version, which waits behind FOR UPDATE. And a
+   * writer already holding one when statement 1 runs makes it skip that row.
+   *
+   * THE RESIDUAL: a writer that reaches a version AFTER statement 1 locked it —
+   * a queue or a retry inserting a job on it, an upload of the same bytes
+   * making it current — waits for this transaction, then fails on its own
+   * foreign key (23503) once the row is gone. Loud, and on that one request:
+   * the sweep completes, and nothing is deleted or emptied silently.
+   *
+   * THE SNAPSHOT-TO-LOCK WINDOW ITSELF IS ARGUED, NOT RED-VERIFIED. It lies
+   * inside statement 1, and nothing outside the database can park a statement
+   * between taking its snapshot and taking its row locks. The tests pin what
+   * can be reached: the lock held across both statements, by parking this
+   * transaction between them.
+   */
   async deleteUnneededVersionsOlderThan(
     scope: RunnerClaimScope,
     cutoff: Date,
@@ -450,21 +491,30 @@ export class RunnerRepository {
     const projectPredicate = scope.projectId
       ? Prisma.sql`AND a.project_id = ${scope.projectId}::uuid`
       : Prisma.empty;
-    return this.prisma.$queryRaw<{ artifactId: string; storagePath: string }[]>`
-      DELETE FROM runner_artifact
-      WHERE id IN (
-        SELECT a.id FROM runner_artifact a
-        WHERE a.org_id = ${scope.orgId}::uuid
-          ${projectPredicate}
-          AND a.created_at < ${cutoff}
-          AND NOT EXISTS (SELECT 1 FROM package p WHERE p.current_artifact_id = a.id)
-          AND NOT EXISTS (SELECT 1 FROM runner_job j WHERE j.artifact_id = a.id)
-        ORDER BY a.created_at ASC, a.id ASC
-        LIMIT ${limit}
-        FOR UPDATE OF a SKIP LOCKED
-      )
-      RETURNING id AS "artifactId", storage_path AS "storagePath"
-    `;
+    return this.prisma.$transaction(
+      async (tx) => {
+        const locked = await tx.$queryRaw<{ id: string }[]>`
+          SELECT a.id FROM runner_artifact a
+          WHERE a.org_id = ${scope.orgId}::uuid
+            ${projectPredicate}
+            AND a.created_at < ${cutoff}
+            AND NOT EXISTS (SELECT 1 FROM package p WHERE p.current_artifact_id = a.id)
+            AND NOT EXISTS (SELECT 1 FROM runner_job j WHERE j.artifact_id = a.id)
+          ORDER BY a.created_at ASC, a.id ASC
+          LIMIT ${limit}
+          FOR UPDATE OF a SKIP LOCKED
+        `;
+        if (locked.length === 0) return [];
+        return tx.$queryRaw<{ artifactId: string; storagePath: string }[]>`
+          DELETE FROM runner_artifact a
+          WHERE a.id = ANY(${locked.map((row) => row.id)}::uuid[])
+            AND NOT EXISTS (SELECT 1 FROM package p WHERE p.current_artifact_id = a.id)
+            AND NOT EXISTS (SELECT 1 FROM runner_job j WHERE j.artifact_id = a.id)
+          RETURNING a.id AS "artifactId", a.storage_path AS "storagePath"
+        `;
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted },
+    );
   }
 
   async status(jobId: string): Promise<string | null> {
@@ -681,7 +731,7 @@ export class RunnerRepository {
     `;
     if (inserted.length === 1) {
       const row = await this.find(input.orgId, input.projectId, input.id);
-      if (!row) throw new Error('runner job retry insert returned no row');
+      if (!row) throw new Error(`runner job ${input.id} was queued as a retry but could not be read back`);
       return { kind: 'retried', row };
     }
     // Nothing was queued. Either the source is not retryable, or its package

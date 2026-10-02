@@ -33,18 +33,22 @@ async function seedProject(slug = 'acme'): Promise<{ orgId: string; projectId: s
 }
 
 /**
- * A job queued on a version of a package called `checkout load`, through the
- * real repositories. The JOB is named `nightly` on purpose: the queue events
- * name the package, and a run name sharing its words could not tell the two
- * apart.
+ * A job queued on a version of a package of its own, through the real
+ * repositories, answered with the package's name for the assertions on the
+ * Using package line. The name carries a random suffix because a project
+ * refuses a second package of one name, and a helper that throws on its
+ * second call fails a test for a reason unrelated to it. The JOB is named
+ * `nightly` on purpose: the queue events name the package, and a run name
+ * sharing its words could not tell the two apart.
  */
 async function queue(
   orgId: string,
   projectId: string,
   job: Partial<CreateRunnerJobInput['job']> = {},
   version: { bytes?: number; storagePath?: string } = {},
-): Promise<RunnerJobWithArtifact> {
-  const pkg = await packages.create({ id: randomUUID(), orgId, projectId, name: 'checkout load', kind: 'gatling_jar' });
+): Promise<RunnerJobWithArtifact & { packageName: string }> {
+  const packageName = `checkout load ${randomUUID().slice(0, 8)}`;
+  const pkg = await packages.create({ id: randomUUID(), orgId, projectId, name: packageName, kind: 'gatling_jar' });
   const added = await packages.addVersion(orgId, projectId, pkg.id, {
     artifactId: randomUUID(),
     filename: 'checkout.jar',
@@ -74,7 +78,7 @@ async function queue(
     },
   });
   if (!created) throw new Error('createQueued refused the version');
-  return created;
+  return { ...created, packageName };
 }
 
 /** A queued job, written straight into the tables — so the constraint cases
@@ -203,7 +207,7 @@ describe('the queue events — written with the job, by the same statement', () 
     const { orgId, projectId } = await seedProject();
     const created = await queue(orgId, projectId, {}, { bytes: 1_887_437 });
     const events = await eventsOf(created.job.id);
-    expect(events.map((e) => e.message)).toEqual(QUEUED('com.example.CheckoutSimulation', 'checkout load', '1.8 MiB'));
+    expect(events.map((e) => e.message)).toEqual(QUEUED('com.example.CheckoutSimulation', created.packageName, '1.8 MiB'));
     expect(events.every((e) => e.source === 'perfportal' && e.phase === null)).toBe(true);
     expect(await writersOf('runner_job_event', created.job.id)).toEqual(await writersOf('runner_job', created.job.id));
   });
@@ -216,7 +220,7 @@ describe('the queue events — written with the job, by the same statement', () 
     const retried = await repo.retry({ id: retryId, orgId, projectId, sourceJobId: source.job.id, requestedBy: 'tester' });
     if (retried.kind !== 'retried') throw new Error(`expected a retry, got ${retried.kind}`);
     expect(retried.row.job.id).toBe(retryId);
-    expect((await eventsOf(retryId)).map((e) => e.message)).toEqual(QUEUED('com.example.CheckoutSimulation', 'checkout load', '4.0 KiB'));
+    expect((await eventsOf(retryId)).map((e) => e.message)).toEqual(QUEUED('com.example.CheckoutSimulation', source.packageName, '4.0 KiB'));
     expect(await writersOf('runner_job_event', retryId)).toEqual(await writersOf('runner_job', retryId));
     expect(await eventsOf(source.job.id)).toHaveLength(3);
   });
@@ -273,7 +277,7 @@ describe('cancel — one event for a job it actually moved', () => {
     const moved = await repo.cancel(orgId, projectId, created.job.id, { recordRequest: false });
     expect(moved?.job.status).toBe('cancelled');
     expect((await eventsOf(created.job.id)).map((e) => e.message)).toEqual(
-      QUEUED('com.example.CheckoutSimulation', 'checkout load', '4.0 KiB'),
+      QUEUED('com.example.CheckoutSimulation', created.packageName, '4.0 KiB'),
     );
   });
 });
@@ -314,7 +318,7 @@ describe('listEventsForRun — what the run page reads', () => {
     const found = await repo.listEventsForRun(orgId, projectId, runId);
     expect(found?.jobId).toBe(created.job.id);
     expect(found?.events.map((e) => e.phase ?? e.message)).toEqual([
-      ...QUEUED('com.example.CheckoutSimulation', 'checkout load', '4.0 KiB'),
+      ...QUEUED('com.example.CheckoutSimulation', created.packageName, '4.0 KiB'),
       "Claimed by the runner on 'node-1'",
       'Deploying',
     ]);

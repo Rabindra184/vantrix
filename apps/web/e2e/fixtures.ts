@@ -389,6 +389,12 @@ export const QUEUED_EVENT_COUNT = 3;
  * the real repositories, on a version of the package `checkout load`, so the
  * queue events are the real writer's — and their `Using package` line names
  * that PACKAGE, while the job itself is the run `nightly`.
+ *
+ * THE PACKAGE NAME IS FIXED, `checkout load` — the line a spec on the Logs tab
+ * would read as `Using package: 'checkout load'`, matching the Logs panel's unit
+ * fixtures. (run-logs.spec.ts does not assert that line today; it reads the
+ * count, the first line, the phases and the closing line.) A project refuses a
+ * second package of one name, so call this at most once per project.
  */
 export async function seedRunnerRunWithEvents(orgId: string): Promise<string> {
   const runId = await seedRunWithData(orgId);

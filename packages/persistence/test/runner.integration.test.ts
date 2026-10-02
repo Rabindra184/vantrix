@@ -698,6 +698,170 @@ describe('retention', () => {
     expect(await prisma.runnerArtifact.findUnique({ where: { id: v1 } })).not.toBeNull();
   });
 
+  it('sweeps old terminal jobs across every project of the org when the runner is org-wide', async () => {
+    const { orgA, orgB, projectA1, projectA2, projectB1 } = await seed();
+    const repo = new RunnerRepository(prisma);
+    const a1 = await queueJob(repo, orgA, projectA1);
+    const a2 = await queueJob(repo, orgA, projectA2);
+    const b1 = await queueJob(repo, orgB, projectB1);
+    await pool.query(`UPDATE runner_job SET status = 'complete' WHERE id = ANY($1::uuid[])`, [[a1, a2, b1]]);
+    await age('runner_job', [a1, a2, b1], '40 days');
+
+    const swept = await repo.deleteTerminalJobsOlderThan({ orgId: orgA }, daysAgo(30));
+
+    expect(swept.map((row) => row.jobId).sort()).toEqual([a1, a2].sort());
+    expect(await prisma.runnerJob.findUnique({ where: { id: b1 } })).not.toBeNull();
+  });
+
+  it('sweeps unneeded versions across every project of the org when the runner is org-wide', async () => {
+    const { orgA, orgB, projectA1, projectA2, projectB1 } = await seed();
+    const repo = new RunnerRepository(prisma);
+    const superseded = async (orgId: string, projectId: string): Promise<string> => {
+      const { packageId, artifactId } = await packageWithVersion(orgId, projectId);
+      await addVersion(orgId, projectId, packageId);
+      await age('runner_artifact', [artifactId], '40 days');
+      return artifactId;
+    };
+    const a1 = await superseded(orgA, projectA1);
+    const a2 = await superseded(orgA, projectA2);
+    const b1 = await superseded(orgB, projectB1);
+
+    const swept = await repo.deleteUnneededVersionsOlderThan({ orgId: orgA }, daysAgo(30));
+
+    expect(swept.map((row) => row.artifactId).sort()).toEqual([a1, a2].sort());
+    expect(await prisma.runnerArtifact.findUnique({ where: { id: b1 } })).not.toBeNull();
+  });
+
+  /**
+   * ═══ THE SWEEP, PARKED BETWEEN ITS TWO STATEMENTS ═══
+   *
+   * Pass 2 chooses and locks its versions in one statement and deletes the ones
+   * still unneeded in a second. What can be reached from outside is the gap
+   * between them, so these park the sweep there — holding its locks — and try
+   * to make the locked version needed: an upload of the same bytes making it
+   * current, a queue putting a job on it. Both must WAIT for the sweep and then
+   * fail on their own foreign key; the sweep must finish, and the package keep
+   * its current version. (The window the two statements exist to close — a
+   * commit between statement 1's snapshot and its lock — lies inside one
+   * statement and cannot be parked from here; see the method's comment.)
+   */
+  function pausedBeforeSecondStatement(
+    inTheGap: (sweepPid: number) => Promise<void>,
+  ): { repo: RunnerRepository; reached: () => boolean } {
+    let reached = false;
+    const client = new Proxy(prisma, {
+      get(target, prop) {
+        const value: unknown = Reflect.get(target, prop, target);
+        if (typeof value !== 'function') return value;
+        const fn = value as (...args: unknown[]) => unknown;
+        if (prop !== '$transaction') return fn.bind(target);
+        return (callback: (tx: unknown) => Promise<unknown>, options?: unknown) =>
+          target.$transaction(async (tx) => {
+            let queries = 0;
+            const paused = new Proxy(tx, {
+              get(txTarget, txProp) {
+                const txValue: unknown = Reflect.get(txTarget, txProp, txTarget);
+                if (typeof txValue !== 'function') return txValue;
+                const txFn = txValue as (...args: unknown[]) => unknown;
+                if (txProp !== '$queryRaw') return txFn.bind(txTarget);
+                return async (...args: unknown[]) => {
+                  queries += 1;
+                  if (queries === 2) {
+                    reached = true;
+                    const [me] = await txTarget.$queryRawUnsafe<{ pid: number }[]>(
+                      'SELECT pg_backend_pid()::int AS pid',
+                    );
+                    await inTheGap(me!.pid);
+                  }
+                  return txFn.apply(txTarget, args);
+                };
+              },
+            });
+            return callback(paused);
+          }, options as Parameters<typeof target.$transaction>[1]);
+      },
+    });
+    return { repo: new RunnerRepository(client), reached: () => reached };
+  }
+
+  /** Waits until `pending` is blocked by the sweep's backend. It must stay
+   *  well under the 5 s Prisma gives the parked sweep's transaction, so a slow
+   *  arrangement fails here, naming what it waited for. */
+  async function blockedBySweep(sweepPid: number, pending: Promise<unknown>, what: string): Promise<void> {
+    let settled = false;
+    pending.then(
+      () => { settled = true; },
+      () => { settled = true; },
+    );
+    const deadline = Date.now() + 3_000;
+    for (;;) {
+      if (settled) throw new Error(`${what} finished while the sweep held the version: nothing locks it`);
+      const waiting = await pool.query<{ n: number }>(
+        'SELECT count(*)::int AS n FROM pg_stat_activity WHERE $1 = ANY (pg_blocking_pids(pid))',
+        [sweepPid],
+      );
+      if (waiting.rows[0]!.n > 0) return;
+      if (Date.now() > deadline) throw new Error(`timed out waiting for ${what} to queue behind the sweep`);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+
+  it('cannot make a version current while the sweep holds it: the upload waits, then fails, and the package keeps its current version', async () => {
+    const { orgA, projectA1 } = await seed();
+    const { packageId, artifactId: v1 } = await packageWithVersion(orgA, projectA1);
+    const v1Row = await prisma.runnerArtifact.findUniqueOrThrow({ where: { id: v1 } });
+    const v2 = await addVersion(orgA, projectA1, packageId);
+    await age('runner_artifact', [v1], '40 days');
+
+    let upload: Promise<unknown> = Promise.resolve();
+    const { repo, reached } = pausedBeforeSecondStatement(async (sweepPid) => {
+      // The same bytes as v1: addVersion REUSES that row and makes it current.
+      upload = packages.addVersion(orgA, projectA1, packageId, {
+        artifactId: randomUUID(), filename: 'checkout.jar', gatlingVersion: '3.11.5',
+        sha256: v1Row.sha256, bytes: Number(v1Row.bytes), simulations: null,
+        storagePath: `runner-artifacts/${randomUUID()}.jar`,
+      });
+      await blockedBySweep(sweepPid, upload, 'the upload');
+    });
+
+    try {
+      const swept = await repo.deleteUnneededVersionsOlderThan({ orgId: orgA, projectId: projectA1 }, daysAgo(30));
+
+      expect(reached()).toBe(true);
+      expect(swept.map((row) => row.artifactId)).toEqual([v1]);
+      await expect(upload).rejects.toThrow(/23503|foreign key/);
+      expect((await packages.find(orgA, projectA1, packageId))?.current?.artifactId).toBe(v2);
+    } finally {
+      await Promise.allSettled([upload]);
+    }
+  });
+
+  it('cannot point a job at a version while the sweep holds it: the queue waits, then fails, and the sweep finishes', async () => {
+    const { orgA, projectA1 } = await seed();
+    const { packageId, artifactId: v1 } = await packageWithVersion(orgA, projectA1);
+    await addVersion(orgA, projectA1, packageId);
+    await age('runner_artifact', [v1], '40 days');
+    const jobId = randomUUID();
+
+    let queued: Promise<unknown> = Promise.resolve();
+    const { repo, reached } = pausedBeforeSecondStatement(async (sweepPid) => {
+      queued = new RunnerRepository(prisma).createQueued(jobInput(orgA, projectA1, v1, { id: jobId }));
+      await blockedBySweep(sweepPid, queued, 'the queue');
+    });
+
+    try {
+      const swept = await repo.deleteUnneededVersionsOlderThan({ orgId: orgA, projectId: projectA1 }, daysAgo(30));
+
+      expect(reached()).toBe(true);
+      expect(swept.map((row) => row.artifactId)).toEqual([v1]);
+      await expect(queued).rejects.toThrow(/23503|foreign key/);
+      expect(await prisma.runnerJob.findUnique({ where: { id: jobId } })).toBeNull();
+      expect(await eventsOf(jobId)).toEqual([]);
+    } finally {
+      await Promise.allSettled([queued]);
+    }
+  });
+
   it('sweeps a version whose package was deleted once its jobs are gone', async () => {
     const { orgA, projectA1 } = await seed();
     const repo = new RunnerRepository(prisma);
@@ -710,5 +874,45 @@ describe('retention', () => {
 
     expect(swept).toEqual([{ artifactId, storagePath: path }]);
     expect(await prisma.runnerArtifact.findUnique({ where: { id: artifactId } })).toBeNull();
+  });
+});
+
+/**
+ * ═══ A JOB THAT WAS QUEUED BUT CANNOT BE READ BACK ═══
+ *
+ * Impossible short of a delete between the insert and the read, and the one
+ * answer that must never come back for it is "refused" — null from
+ * createQueued, not_retryable from retry — while a queued job exists. Both
+ * throw, naming the job. `find` is overridden to stand in for the read missing.
+ */
+describe('a queued job the repository cannot read back', () => {
+  class Unreadable extends RunnerRepository {
+    override async find(): Promise<null> {
+      return null;
+    }
+  }
+
+  it('createQueued throws, naming the job, rather than answering that the version was refused', async () => {
+    const { orgA, projectA1 } = await seed();
+    const { artifactId } = await packageWithVersion(orgA, projectA1);
+    const jobId = randomUUID();
+
+    await expect(new Unreadable(prisma).createQueued(jobInput(orgA, projectA1, artifactId, { id: jobId })))
+      .rejects.toThrow(jobId);
+    // The job WAS queued, which is why null would have been a lie.
+    expect(await prisma.runnerJob.findUnique({ where: { id: jobId } })).not.toBeNull();
+  });
+
+  it('retry throws too, naming the retried job', async () => {
+    const { orgA, projectA1 } = await seed();
+    const repo = new RunnerRepository(prisma);
+    const sourceId = await queueJob(repo, orgA, projectA1);
+    await pool.query(`UPDATE runner_job SET status = 'failed' WHERE id = $1`, [sourceId]);
+    const retryId = randomUUID();
+
+    await expect(new Unreadable(prisma).retry({
+      id: retryId, orgId: orgA, projectId: projectA1, sourceJobId: sourceId, requestedBy: 'tester',
+    })).rejects.toThrow(retryId);
+    expect(await prisma.runnerJob.findUnique({ where: { id: retryId } })).not.toBeNull();
   });
 });
