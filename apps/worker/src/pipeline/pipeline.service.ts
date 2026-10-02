@@ -453,7 +453,9 @@ export class PipelineService {
          * comment above this block is about. `stream_abandoned_at` is NULL for
          * every run that predates it and every run that closes properly, so
          * this expression is `'complete'` byte-for-byte on every existing
-         * path; only `Sweeper`'s running arm ever sets it. */
+         * path; only two writers ever set it: `Sweeper`'s running arm, and the
+         * on-prem runner's `closeAbandoned` through
+         * `claimForClose({ abandoned: true })`. */
         `UPDATE run SET status = CASE WHEN stream_abandoned_at IS NULL
                                       THEN 'complete' ELSE 'incomplete' END,
                 verdict = $2, tool_version = $3, ingested_at = now(),

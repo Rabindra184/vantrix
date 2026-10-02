@@ -128,7 +128,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **181 files / 2313 tests**, it
+`nvm use` first, and if a run reports fewer than **181 files / 2333 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -202,6 +202,261 @@ pages**. That file then passed **20 / 20, five times out of five**, at a load
 of 17. This branch touches the sweeper and its test file and nothing an API
 read reaches. Against a SCRATCH DATABASE (`perfportal_sweeperkeep`), a scratch
 Redis INDEX (db 13) and e2e port 4100.
+
+The runner-keeps-a-dying-run branch added no unit FILE and 20 unit cases — 9
+to `apps/runner/test/run-events.test.ts`, 2 to `artifact.test.ts` and 9 net in
+`executor-events.test.ts` — from **181 / 2313 to 181 / 2333**. Integration moves with those
+twenty, ONE new file (`apps/runner/test/live-sink.integration.test.ts`, 6) and
+1 case in `packages/persistence/test/run-live.integration.test.ts`, from
+**170 / 2086 to 171 / 2113**, and **e2e stays 168**. It is a defect found by
+accident during the summary-report branch's real-run check, and its review
+round — which found the first cut claiming more than it knew, in four places —
+is half of what it measured.
+
+**A RUNNER RUN WHOSE GATLING DIED PART-WAY WAS FAILED AS UNREADABLE, AND ITS
+JOB READ "complete".** A Gatling SIGTERMed 25 seconds in exited 143. The runner logged
+"keeping the run because simulation.log was produced", closed it as a
+finished stream and marked the job `complete`; the pipeline then met the
+half-record the dying process left and failed the run:
+
+```
+  400 LOG_MALFORMED  simulation.log could not be decoded: needed 4 bytes at 8190, have 0
+  remediation        "Confirm the Gatling run finished and that the whole results
+                      directory was archived without modification."
+```
+
+A run that had measured real requests, reported as unreadable, with a
+remediation about an archive no reader made, beside a job saying it worked.
+
+**AND THE QUIETER HALF WAS NEVER SEEN.** A Gatling killed between two flushes
+leaves a log ending on a record boundary, which parses fine — so that run
+ended `complete`, a claim that the load test ran to its end. The truncation
+was only what made the defect loud.
+
+**GATLING'S OWN EXIT CODES DECIDE IT, READ OUT OF ITS JAR.**
+`io.gatling.app.cli.StatusCode` in gatling-app 3.15.1 is Success 0,
+InvalidArguments 1, AssertionsFailed 2, so only 0 and 2 mean the simulation
+ran to its end — 2 being one of its own assertions failing, which
+`ParitySimulation` does on purpose. `endedEarly` is any other code, or a
+signal. **A JVM that handles SIGTERM exits 143 with NO signal reported**,
+measured on the real kill, so "a signal was reported" would have missed the
+one case that actually happened.
+
+**A PRODUCER THAT DIED IS AN ABANDONED STREAM, AND THE SWEEPER ALREADY KNEW
+WHAT TO DO WITH ONE.** `RunnerLiveSink.closeAbandoned` follows
+`Sweeper#claimForAssembly` and `#assembleAbandoned` in order, with ONE
+deliberate difference (the next paragraph): claim the
+run with `stream_abandoned_at` in the SAME statement, assemble, cut to the
+last whole record with `truncateToWholeRecords` (the decoder that owns
+record framing — the runner depends on `@perfportal/plugin-gatling` now),
+store that, and hand it to the pipeline, which ends it `incomplete` WITH its
+statistics. The job then FAILS with `GATLING_ENDED_EARLY`, naming how Gatling
+ended, through the same settle-the-run-then-throw shape the
+no-`simulation.log` branch beside it already used. Run `incomplete`, job
+`failed`: the two say the same thing.
+
+**`claimForClose` TAKES A REQUIRED `{ abandoned }`.** A default would read
+every forgetting caller as a healthy close, with nothing anywhere saying so —
+this file's rule for a parameter whose wrong value is silent. The API's
+client-driven close passes `false`, because its protocol has no field for a
+producer that died.
+
+**FAILURE NEVER STRANDS THE RUN.** Before `finalizeLive`, any failure — the
+bucket, the chunks, a log with no whole record — finalizes it `incomplete`
+with no statistics. AFTER it, the stored log is whole and the row is at
+`parsing` carrying `stream_abandoned_at`, so a refusing queue leaves it
+there for the sweeper's `parsing` arm to re-enqueue — exactly how `close()`
+recovers past the same point — and the data survives. The first draft marked
+it incomplete there too, which would have thrown away a valid log. **That is
+where it deliberately parts from the sweeper**, whose `#assembleAbandoned` has
+ONE `catch` around everything: a `#reenqueue` that fails AFTER its sha UPDATE
+marks the run `incomplete` and discards a log it had stored whole. The first
+version of this entry, and of the code comment, said "step for step"; it is
+not, on exactly this point (KNOWN AND LEFT). The sweeper-keeps-a-stored-log
+branch has since given the sweeper the same boundary.
+
+**THE REVIEW FOUND THE FIRST CUT CLAIMING MORE THAN IT KNEW, IN FOUR PLACES.**
+Each was a sentence — in a job, a log, a comment — stating something the code
+had not established:
+
+  - **AN EXIT THAT IS NEITHER 0 NOR 2 CAN FOLLOW A FINISHED SIMULATION.** In
+    gatling-app 3.15.1 `Gatling$.start` returns from `Runner.run` and then runs
+    `RunResultProcessor.processRunResult`, which re-parses the log and writes
+    the HTML reports; an exception there (an OutOfMemoryError on a big soak
+    log, a full disk under the reports folder) escapes `main` as exit 1 over a
+    COMPLETE log. The runner never read those reports — the executor deletes
+    the work directory they land in — so both launch commands pass
+    `--no-reports` now, from ONE `gatlingFlags()` helper. Spelled out of the
+    jars rather than remembered: `io.gatling.shared.cli.GatlingCliOptions.NoReports`
+    is long name `no-reports`, short `nr`, "Runs simulation but does not
+    generate reports", and it lives in **`gatling-shared-cli-0.0.7`** — the
+    jar gatling-app 3.15.1 ships with, not a 3.15.1 jar.
+    `RunResultProcessor.reportsGenerationEnabled` honours it, and `javap -c` on
+    `initLogFileData` shows what it leaves alone: the log is still re-read when
+    the simulation `hasAssertions`, so a failed Gatling assertion still exits 2
+    and still prints its lines. A simulation with none no longer re-reads its
+    log at all. `strings` is no help here — macOS's reads a class file's
+    CAFEBABE as a fat Mach-O and refuses it; `javap -c -constants` is what works.
+    **The job's message states the evidence, not the simulation:**
+    `Gatling exited with code 143 rather than a finished simulation's exit code
+    (0, or 2 when a Gatling assertion failed).` — never "before the simulation
+    finished", which an exit-1-after-finish would make false.
+
+  - **THE JOB SAID THE RUN KEPT WHAT IT MEASURED WHEN IT MIGHT NOT HAVE.**
+    `closeAbandoned` returned nothing, and falls back to `incomplete` with no
+    statistics on a storage error, a log with no whole record, or no bytes. It
+    returns `'kept' | 'empty' | 'not_claimed'` now (kept being stored and
+    finalized, whether or not the queue took it), and the job's remediation and
+    the Logs ending are chosen from it. Each outcome is pinned where it arises:
+    the whole-records case is `kept`, the no-whole-record case and the new
+    bucket-refuses case are `empty`.
+
+  - **THE LOGS TAB ENDED `Run failed: …` OVER A RUN THAT DID NOT FAIL.** The
+    run ended `incomplete`; the JOB failed. The Logs ending is `Run ended early:
+    Gatling exited with code 143. What it measured was kept.` (or `Nothing it
+    measured could be kept.`), written by the catch — still the ONE place a
+    failed job's log gets its last line — from a line the executor sets just
+    before the throw, so the catch cannot write a second ending.
+
+  - **A CANCEL AFTER THE INJECTION ENDED WROTE THE INJECTION AND THE ENDING
+    AGAIN.** `markClosing` is past the injection, and `closeAbandoned` spends S3
+    reads and up to three seconds of queue retries — a window a cancel (or the
+    runner's own shutdown, which cancels the job and then awaits the run) can
+    land in. The catch wrote the cancelled ending: a second injection-ended
+    line, a second Ending phase and "Run ended without results" over a run
+    that kept its results. A stage `'ending'`, set right after `markClosing`,
+    stops it, and `#recordCancelledEnding` does not take that stage at all.
+
+  And one it did not name: **a zero-byte log under a JVM-handled SIGTERM was
+  still keyed on `result.signal`.** Exit 143 with no signal, before Gatling's
+  first flush, read as an ordinary exit and sent the operator to "confirm the
+  simulation class is correct". `wasTerminated` — a signal OR a code above 128 —
+  decides now, beside `endedEarly`.
+
+**RED-VERIFIED, EVERY MUTATION ON ITS OWN CASE**, from a checkpoint commit
+with each replacement count asserted, persistence rebuilt around its
+mutation:
+
+```
+  executor   endedEarly never true (the before-state)  both it.each rows: closeAbandoned never called
+             close() instead of closeAbandoned()       the same two rows
+  rule       exit 2 counted as early                   the finished-run rule case + the exit-2 executor case
+             a signal ignored                          the signal rule case ALONE (a real SIGKILL's code
+                                                       is null, which is not 0 or 2 either)
+  sink       no truncation                             the whole-records case ("expected 18884 to be less
+                                                       than 18884") and the no-whole-record case
+             an empty log enqueued                     the no-whole-record case alone
+  claim      abandoned ignored                         the claim case + the sink's whole-records case
+```
+
+**AND THE REVIEW ROUND'S, THE SAME WAY, FROM A SECOND CHECKPOINT:**
+
+```
+  artifact   --no-reports out of the shared helper     the jar case AND the bundle case
+             dropped from the jar builder alone        the jar case alone
+             dropped from the bundle builder alone     the bundle case alone
+             placed before the main class              the jar case ("expected 7 to be greater than 8")
+  message    "... before the simulation finished."     the rule's message cases (2) + 2 executor rows
+  zero-byte  terminated = a signal alone               the exit-143 row alone
+             the code-above-128 arm dropped            the rule case + that same row
+  sink       the post-finalize guard deleted           the queue-refuses case alone
+                                                       ("expected 'incomplete' to be 'parsing'")
+             the catch not marking incomplete          the bucket-refuses case alone
+             the outcome always `kept`                 the bucket-refuses case alone
+             the no-whole-record return says `kept`    the no-whole-record case alone
+             a cut at an EARLIER record                the whole-records case ("expected 14803 to be
+                                                       less than 1024")
+             a stored log that is not a prefix         the whole-records case, on `equals`
+  ending     the old catch (a cancel checked first)    six cases, the cancel-after-injection one among them
+             the early line never written              five cases
+             `stage = 'ending'` never set              the non-early cancel case ALONE
+  advice     the `empty` remediation branch dead       the rule case + the `empty` executor row
+```
+
+**TWO OF THOSE ARE WORTH READING TWICE.** `stage = 'ending'` removed fails ONE
+case and not the early-exit one: the early-exit case is held by the executor's
+`endedEarlyLine` branch, which the catch tests FIRST, so the stage guard only
+matters for a failure that is NOT an early exit — a Gatling that wrote nothing,
+a close that threw. Without a case for THAT, the guard was dead code with a
+passing suite, which is what the first draft of the round had. And the
+whole-records case's two new assertions are the pair "a prefix" and "under one
+record of slack": decodable and shorter is also true of a log that threw most
+of the run away, which the earlier-record cut shows (14,803 bytes of slack).
+
+**AND A TEST DOUBLE HAD TO LEARN WHAT `closed` MEANS.** The executor's catch
+aborts a run whose sink is not `closed`; the harness's sink had `closed:
+false` as a constant, so the first green run failed on `abortIncomplete`
+being called — true of the mock, false of the real sink, whose
+`closeAbandoned` closes it in its `finally`. The mock's `closeAbandoned` sets
+`closed` now, which keeps the assertion about the executor's own check — and
+the review round's zero-byte cases then failed on `abortIncomplete` being
+called TWICE, for the same reason one method over: the real one closes the
+sink, the mock did not, so the catch aborted again. Both close it now.
+
+**THE REAL RUN.** The developer database, the API, worker and runner from this
+worktree on Redis db 11, a real `ParitySimulation` bundle, and Gatling
+SIGTERMed by PID 25 seconds in — exit 143, the same 8,190 streamed bytes that
+failed before. The run ended `incomplete`, `stream_abandoned_at` set, its log
+cut to **8,177** bytes, **185 requests and 3 KO** kept, its SLA rules judged;
+the job `failed`, `GATLING_ENDED_EARLY`; the Logs tab ended on
+`Run failed: GATLING_ENDED_EARLY: Gatling exited with code 143 before the
+simulation finished.`; the run page read "Load test stopped early · 18s".
+The token it minted was revoked afterwards.
+
+**AND AGAIN AFTER THE REVIEW ROUND, WITH BOTH RUNS THE ROUND NEEDED.** Same
+stack, rebuilt. A run with NO kill ended Gatling exit 2 — `ParitySimulation`'s
+deliberate failing assertion — with `--no-reports` as the command line's last
+argument: the run `complete`, the job `complete`, 14 statistics rows, and the
+job log still printed `Parsing log file(s)...` and all three assertion lines
+(`Search: 95th percentile … less than 100.0 : false (actual : 1875.0)`), with
+NO `Generating reports...` line anywhere. A run SIGTERMed by PID 25 seconds in
+ended `incomplete`, `stream_abandoned_at` set, 187 requests and 3 KO kept
+across 14 rows; the job `failed` with `GATLING_ENDED_EARLY` and the message
+`Gatling exited with code 143 rather than a finished simulation's exit code (0,
+or 2 when a Gatling assertion failed).`; and its events ended `Run injection
+ended with reason 'Gatling exited with code 143'`, `--- Ending`,
+`Run ended early: Gatling exited with code 143. What it measured was kept.`,
+with no `Run failed` line. Stopped by PID — the worker took a second TERM — and
+the token revoked.
+
+**KNOWN AND LEFT, EACH A DECISION RATHER THAN AN OVERSIGHT:**
+
+  - The API's client-driven close (the Gradle plugin's live mode) still closes
+    as healthy — its protocol has no way to say the producer died, and a client
+    whose Gatling crashed sends its close anyway. That is a protocol change,
+    its own branch.
+  - **An exit that is not 0 or 2 can still follow a finished simulation.**
+    `--no-reports` removed the biggest after-the-run failure, not all of them:
+    an `after {}` hook throwing, or the assertion re-read running out of
+    memory, still exits 1 over a whole log. Such a run is kept as `incomplete`
+    WITH its whole log, and the job says how the process ended without
+    claiming where the simulation was. Telling the two apart needs Gatling's own
+    "completed" line, which goes through logback — controlled by the uploaded
+    artifact, and silenced by the reference bundle — so stdout cannot be relied
+    on as evidence.
+  - **The sweeper's own abandoned path still has the discarded-log defect**
+    described above: its `catch` marks a run `incomplete` when `#reenqueue`
+    fails after the log was stored whole. `Sweeper` is not touched here; it is
+    its own branch. Done by the sweeper-keeps-a-stored-log branch, which
+    merged after this one.
+  - **A deliberate cancel discards data while a crash keeps it.** A run the
+    operator cancels ends through `abortIncomplete` with no statistics, and one
+    whose Gatling died ends with everything it measured. Whether a cancelled
+    run should keep its partial data is a product decision for a later branch.
+  - A failure after the injection ended that is NOT an early exit (a Gatling
+    that wrote nothing, a close that threw) ends the log on `Run failed: …`
+    even when a cancel landed meanwhile, where the job reads `cancelled` —
+    the alternative is a second Ending phase, which is worse.
+
+**WHAT WAS RUN.** `typecheck` and `lint` exit 0 by their own exit codes;
+`test:unit` **181 / 2333**, zero `Errors` lines; `test:integration`
+**171 / 2113, exit 0, zero failures**; `pnpm test:e2e` **168 passed, exit 0** —
+every total the one counted from the source before any suite ran, on the final
+tree (the commit after it changes `CLAUDE.md` alone), against a SCRATCH
+DATABASE (`perfportal_runnerdeath`), a scratch Redis INDEX (db 14 — db 9 held
+164 keys of somebody else's) and e2e port 3900, from a worktree at an undotted
+path. Each suite started at a 1-minute load under 8 (4.67, 7.01 and 4.79),
+with another worktree's integration run beside it on its own stores.
 
 The run-logs branch added SEVEN unit files —
 `packages/contracts/test/run-events.test.ts` (10),

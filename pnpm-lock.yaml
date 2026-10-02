@@ -153,6 +153,9 @@ importers:
       '@perfportal/persistence':
         specifier: workspace:*
         version: link:../../packages/persistence
+      '@perfportal/plugin-gatling':
+        specifier: workspace:*
+        version: link:../../packages/plugin-gatling
       '@perfportal/storage':
         specifier: workspace:*
         version: link:../../packages/storage

@@ -1,15 +1,32 @@
 import { createHash } from 'node:crypto';
+import { Readable } from 'node:stream';
 import { engineOptionsFrom } from '@perfportal/core';
 import {
   ProjectRepository,
   RunRepository,
   type RunnerJobWithArtifact,
 } from '@perfportal/persistence';
+import { truncateToWholeRecords } from '@perfportal/plugin-gatling';
 import { BlobStore, LiveChunkStore } from '@perfportal/storage';
 import type { RunnerConfig } from './config.js';
 import { RunnerExecutionError } from './errors.js';
 import type { RunnerIngestQueue } from './ingest-queue.js';
 import type { RunnerLiveNotifier } from './live-notifier.js';
+
+/**
+ * What `closeAbandoned` did with a run whose Gatling died, which is what the
+ * job's message and the run's Logs tab have to say about it.
+ *
+ *   kept         the log was cut to whole records, stored and finalized, and
+ *                either enqueued for parsing or left at `parsing` for the
+ *                sweeper — either way the run will end `incomplete` WITH its
+ *                statistics
+ *   empty        the run was finalized `incomplete` with NO statistics: a
+ *                storage error, not one whole record, or no bytes at all
+ *   not_claimed  the claim did not land, so another process had already
+ *                closed the run and this decided nothing about it
+ */
+export type AbandonedOutcome = 'kept' | 'empty' | 'not_claimed';
 
 export class RunnerLiveSink {
   readonly #config: RunnerConfig;
@@ -142,7 +159,7 @@ export class RunnerLiveSink {
   async close(): Promise<void> {
     if (this.#closed) return;
     const runId = this.#requireRunId();
-    const claimed = await this.#runs.claimForClose(runId);
+    const claimed = await this.#runs.claimForClose(runId, { abandoned: false });
     if (!claimed) {
       this.#closed = true;
       return;
@@ -196,7 +213,7 @@ export class RunnerLiveSink {
   async abortIncomplete(): Promise<void> {
     if (this.#closed) return;
     const runId = this.#requireRunId();
-    const claimed = await this.#runs.claimForClose(runId);
+    const claimed = await this.#runs.claimForClose(runId, { abandoned: false });
     if (!claimed) {
       this.#closed = true;
       return;
@@ -204,6 +221,93 @@ export class RunnerLiveSink {
     this.#notifier.closed(runId);
     await this.#runs.markIncomplete(runId);
     this.#closed = true;
+  }
+
+  /**
+   * ═══ A RUN WHOSE GATLING DIED PART-WAY, KEPT AS WHAT IT IS ═══
+   *
+   * `close()` treats a stream as finished. Handed the log of a Gatling that
+   * ended early, it stored a log ending in a half-record, the pipeline's pull
+   * parser threw on it, and the run was failed `LOG_MALFORMED` with a
+   * remediation about archiving that no reader did. Measured on a real run
+   * killed 25 s in: `needed 4 bytes at 8190, have 0`.
+   *
+   * A producer that stopped before its simulation finished is an ABANDONED
+   * stream, and the sweeper already knows what to do with one. This does the
+   * same, in the same order (`Sweeper#claimForAssembly` and
+   * `#assembleAbandoned`): claim the run with `stream_abandoned_at` in the
+   * same statement, assemble, cut to the last whole record with the decoder
+   * that owns record framing, store that, and hand it to the pipeline — which
+   * ends it `incomplete`, WITH the statistics it measured.
+   *
+   * FAILURE NEVER STRANDS THE RUN. Before `finalizeLive`, any failure — the
+   * bucket, the chunks, a log with no whole record — finalizes the run
+   * `incomplete` with no statistics, which is the most it could otherwise
+   * have said. AFTER it, the stored log is whole and the row is at `parsing`
+   * carrying `stream_abandoned_at`, so a queue that refuses the job leaves
+   * it there: the sweeper's `parsing` arm re-enqueues it, exactly as it
+   * recovers `close()` past the same point, and the data survives.
+   *
+   * THE SWEEPER FOLLOWS THE SAME RULE NOW, AND THIS IS WHERE IT STARTED. The
+   * sweeper's `#assembleAbandoned` had one `catch` around everything, so a
+   * `#reenqueue` that failed AFTER its sha UPDATE marked the run `incomplete`
+   * and discarded a log it had already stored whole; the
+   * sweeper-keeps-a-stored-log branch gave it the same `stored` boundary this
+   * keeps at `finalizeLive`.
+   *
+   * IT SAYS WHICH OF THE THREE THINGS HAPPENED (`AbandonedOutcome`), because
+   * the caller's job message and the run's Logs ending must not claim the run
+   * kept what it measured when it did not.
+   */
+  async closeAbandoned(): Promise<AbandonedOutcome> {
+    if (this.#closed) return 'not_claimed';
+    const runId = this.#requireRunId();
+    const claimed = await this.#runs.claimForClose(runId, { abandoned: true });
+    if (!claimed) {
+      this.#closed = true;
+      return 'not_claimed';
+    }
+    this.#notifier.closed(runId);
+    let finalized = false;
+    try {
+      const state = await this.#runs.liveState(runId);
+      const bundleKey = this.#bundleKey;
+      if ((state?.streamOffset ?? this.#offset) === 0 || !bundleKey) {
+        await this.#runs.markIncomplete(runId);
+        return 'empty';
+      }
+      await this.#chunks.finalize(runId, bundleKey);
+      const whole = truncateToWholeRecords(await this.#blobs.get(bundleKey));
+      // Not one whole record arrived: enqueuing would drive the pipeline into
+      // a parse failure, a WORSE answer than the truth.
+      if (whole.length === 0) {
+        await this.#runs.markIncomplete(runId);
+        return 'empty';
+      }
+      // `putStream` hashes and meters in one pass, as the sweeper's does; the
+      // ceiling is the live run's own, which the streamed bytes already met.
+      const { sha256, bytes } = await this.#blobs.putStream(
+        bundleKey,
+        Readable.from([whole]),
+        this.#config.maxLogBytes,
+      );
+      await this.#runs.finalizeLive(runId, sha256, bytes);
+      finalized = true;
+      await this.#enqueueForParsing(runId);
+    } catch (err) {
+      if (finalized) {
+        console.error(`runner: run ${runId} is stored but could not be queued; the sweeper will re-enqueue it:`, err);
+      } else {
+        console.error(`runner: could not keep the data of run ${runId}, whose Gatling ended early:`, err);
+        await this.#runs.markIncomplete(runId).catch((markErr: unknown) => {
+          console.error(`runner: failed to mark run ${runId} incomplete`, markErr);
+        });
+      }
+    } finally {
+      this.#closed = true;
+    }
+    // Stored and finalized is kept, whether or not the queue took it.
+    return finalized ? 'kept' : 'empty';
   }
 
   #requireRunId(): string {
