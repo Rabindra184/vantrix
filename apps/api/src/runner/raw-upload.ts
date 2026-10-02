@@ -50,6 +50,7 @@ export async function readRawUpload(
       'Send the file with "Content-Type: application/octet-stream" and the raw bytes as the body.',
     );
   }
+  assertClientStillConnected(req);
   const declared = req.headers['content-length'];
   if (declared !== undefined && Number(declared) > maxBytes) {
     req.resume();
@@ -84,6 +85,11 @@ export async function readRawUpload(
     await pipeline(meter, sink);
   } catch (err) {
     req.unpipe(meter);
+    // resume() is what DRAINS the rest of the body, so the client can finish
+    // sending and read the 413 and the connection can be reused. Without it a
+    // bare http server stalls (measured: a client could not finish a 64 MiB
+    // upload). The app's own suite does not catch its removal, so this comment
+    // is the guard.
     req.resume();
     // After the file has closed, not before: see whenClosed.
     await whenClosed(sink);
@@ -127,4 +133,32 @@ export function whenClosed(stream: WriteStream): Promise<void> {
     stream.once('close', () => resolve());
     stream.destroy();
   });
+}
+
+/**
+ * Refuses an upload whose client has already gone, BEFORE a file is opened or a
+ * listener attached.
+ *
+ * The handlers await their project and package lookups before they read the
+ * body, so a request aborted during one has already emitted its 'close' by the
+ * time a reader starts: listening for one from then on waits for ever, and
+ * piping a destroyed request never flows, so the reader's pipeline would never
+ * settle and would leave an empty file and its descriptor behind (or, for the
+ * multipart reader, just a handler that never returns). Shared by both readers.
+ */
+export function assertClientStillConnected(req: Request): void {
+  // A body that has been read to its end is not an abort, though Node destroys
+  // a finished request too: what to do with one (a JSON body Express already
+  // consumed, say) is the caller's own check.
+  if (req.readableEnded) return;
+  // `destroyed` alone is enough: a socket that is destroyed but whose request is
+  // not yet flagged still has its 'close' to come, which the readers' own
+  // listeners will hear.
+  if (req.destroyed) {
+    throw badRequest(
+      'UPLOAD_ABORTED',
+      'The client closed the connection before the upload was read.',
+      'Retry the upload, and keep the connection open until the response arrives.',
+    );
+  }
 }

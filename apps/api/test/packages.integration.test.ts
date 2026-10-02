@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { Agent, request as httpRequest, type Server } from 'node:http';
+import { Agent, request as httpRequest, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { PackageSchema, type Package } from '@perfportal/contracts';
 import { hashToken, mintToken } from '@perfportal/core';
-import { PackageRepository, RunnerRepository } from '@perfportal/persistence';
+import { PackageRepository, ProjectRepository, RunnerRepository } from '@perfportal/persistence';
 import { createTestApp, type TestContext } from './support/app.js';
 import { signUpAsOrgMember } from './support/session.js';
 import { gatlingManifest, writeJar } from '../../../packages/storage/test/support/jar.js';
@@ -239,6 +239,69 @@ function chunkedPut(
   });
 }
 
+/**
+ * A request whose CLIENT goes away while the handler is still parked on an await
+ * it makes BEFORE it reads the body. `park` receives the one call the handler
+ * is parked on and is released only once the server has seen the socket close,
+ * so the request is already aborted when the handler resumes — which is when a
+ * reader that only listens for an abort from then on would wait for ever.
+ *
+ * Nothing here sleeps: the handler announces that it is parked, the client
+ * destroys its socket, the server-side request reports `close`, and only then
+ * is the handler released. Resolves with the server-side response, which is
+ * `writableEnded` once the handler has answered (or tried to, on a socket
+ * nobody is reading); never resolving is the hang.
+ */
+async function abortWhileParked(
+  method: 'PUT' | 'POST',
+  pathAndQuery: string,
+  headers: Record<string, string>,
+  park: (parked: () => void, gate: Promise<void>) => void,
+): Promise<{ settled: () => Promise<void> }> {
+  const server = ctx.app.getHttpServer() as Server;
+  let serverReq: IncomingMessage | undefined;
+  let serverRes: ServerResponse | undefined;
+  const watch = (incoming: IncomingMessage, outgoing: ServerResponse): void => {
+    // Express rewrites req.url as it routes, so the request is told apart by its
+    // method: it is the only one of that method in flight.
+    if (incoming.method === method) {
+      serverReq = incoming;
+      serverRes = outgoing;
+    }
+  };
+  server.on('request', watch);
+  await new Promise<void>((listening) => server.listen(0, '127.0.0.1', listening));
+  const { port } = server.address() as AddressInfo;
+
+  let handlerParked!: () => void;
+  const parked = new Promise<void>((resolve) => (handlerParked = resolve));
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  park(handlerParked, gate);
+
+  const client = httpRequest({ host: '127.0.0.1', port, method, path: pathAndQuery, agent: false, headers });
+  client.on('error', () => undefined); // it is destroyed on purpose
+  client.write(Buffer.alloc(16, 1)); // no Content-Length: chunked, so the body is unfinished
+  await parked;
+  const closedServerSide = new Promise<void>((resolve) => serverReq!.once('close', () => resolve()));
+  client.destroy();
+  await closedServerSide;
+  release();
+
+  return {
+    settled: async () => {
+      try {
+        // The deadline: a handler that never returns fails here, not in the
+        // file's own timeout.
+        await vi.waitFor(() => expect(serverRes!.writableEnded).toBe(true), { timeout: 5_000, interval: 10 });
+      } finally {
+        server.off('request', watch);
+        server.close();
+      }
+    },
+  };
+}
+
 describe('POST /v1/projects/:slug/packages', () => {
   it('creates a package with no file (201), and lists it', async () => {
     const res = await create(asSession(), { name: 'Checkout', kind: 'gatling_jar' });
@@ -316,6 +379,30 @@ describe('POST /v1/projects/:slug/packages', () => {
     expect(res.status, body(res)).toBe(400);
     expect(res.body.code).toBe('INVALID_PACKAGE_METADATA');
     expect(await filesOnDisk()).toEqual([]);
+  });
+
+  it('settles a create whose client went away before its body was read', async () => {
+    const repository = ctx.app.get(ProjectRepository);
+    const findBySlugInOrg = repository.findBySlugInOrg.bind(repository);
+    const aborted = await abortWhileParked(
+      'POST',
+      PACKAGES,
+      { ...asSession(), 'Content-Type': 'multipart/form-data; boundary=----aborted' },
+      (parked, gate) => {
+        // The handler's own lookup of the project, made before it reads a byte.
+        vi.spyOn(repository, 'findBySlugInOrg').mockImplementationOnce(async (...args) => {
+          parked();
+          await gate;
+          return findBySlugInOrg(...args);
+        });
+      },
+    );
+
+    await aborted.settled();
+
+    expect(await filesOnDisk()).toEqual([]);
+    const listed = await request(ctx.app.getHttpServer()).get(PACKAGES).set(asSession());
+    expect((listed.body as { items: Package[] }).items).toEqual([]);
   });
 
   it('refuses a file part with a name and no bytes, and leaves neither a file nor a package', async () => {
@@ -481,6 +568,32 @@ describe('PUT /v1/projects/:slug/packages/:packageId/content', () => {
     expect(PackageSchema.parse(res.body).current?.filename).toBe('Soak.jar');
   });
 
+  it('settles a PUT whose client went away before its body was read, leaving no file behind', async () => {
+    const pkg = await createPackage(asSession());
+    const repository = ctx.app.get(PackageRepository);
+    const find = repository.find.bind(repository);
+    const aborted = await abortWhileParked(
+      'PUT',
+      `${PACKAGES}/${pkg.id}/content?filename=a.jar`,
+      { ...asSession(), 'Content-Type': 'application/octet-stream' },
+      (parked, gate) => {
+        // The handler's own lookup of the package, which it makes before it
+        // reads a byte of the body.
+        vi.spyOn(repository, 'find').mockImplementationOnce(async (...args) => {
+          parked();
+          await gate;
+          return find(...args);
+        });
+      },
+    );
+
+    await aborted.settled();
+
+    // An aborted upload must not leave the empty file the handler opened for it
+    // (and so must not have held its descriptor open either).
+    expect(await filesOnDisk()).toEqual([]);
+  });
+
   it('refuses a bundle PUT to a jar package, and leaves no file', async () => {
     const pkg = await createPackage(asSession());
     const before = await filesOnDisk();
@@ -628,6 +741,10 @@ describe('the upload size cap (MAX_RUNNER_ARTIFACT_BYTES)', () => {
 
     expect(res.status, body(res)).toBe(413);
     expect(res.body.code).toBe('BUNDLE_TOO_LARGE');
+    // The multipart reader serves the runner start route too, so its wording
+    // must not call a package file a "runner artifact".
+    expect(res.body.detail).toContain(`${CAP}-byte`);
+    expect(res.body.detail).not.toMatch(/runner/i);
     expect(await filesOnDisk()).toEqual([]);
     const listed = await request(ctx.app.getHttpServer()).get(PACKAGES).set(asSession());
     expect((listed.body as { items: Package[] }).items).toEqual([]);

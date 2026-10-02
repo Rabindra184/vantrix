@@ -6,7 +6,7 @@ import { pipeline } from 'node:stream/promises';
 import { ingestError } from '@perfportal/core';
 import busboy from 'busboy';
 import type { Request } from 'express';
-import { whenClosed } from './raw-upload.js';
+import { assertClientStillConnected, whenClosed } from './raw-upload.js';
 
 export interface RunnerUpload {
   metadataRaw: string;
@@ -32,6 +32,15 @@ export function readRunnerMultipart(
   options: { readonly fileRequired: boolean },
 ): Promise<RunnerUpload> {
   return new Promise((resolve, reject) => {
+    // Before anything is attached: see assertClientStillConnected. The callers
+    // await lookups first, so the abort may already have happened, and the
+    // 'aborted' listener below would never hear it.
+    try {
+      assertClientStillConnected(req);
+    } catch (err) {
+      reject(err);
+      return;
+    }
     let settled = false;
     let bb: busboy.Busboy;
     try {
@@ -58,9 +67,9 @@ export function readRunnerMultipart(
 
     const tooLargeError = () =>
       ingestError('BUNDLE_TOO_LARGE', {
-        message: `This runner artifact exceeds the ${maxBytes}-byte upload limit.`,
+        message: `This artifact file exceeds the ${maxBytes}-byte upload limit.`,
         remediation:
-          'Upload a smaller runnable Gatling artifact, or raise MAX_RUNNER_ARTIFACT_BYTES for this on-prem node.',
+          'Upload a smaller Gatling artifact (a jar or a runnable bundle), or raise MAX_RUNNER_ARTIFACT_BYTES for this on-prem node.',
         detail: { maxBytes },
       });
 
