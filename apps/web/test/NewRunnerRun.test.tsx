@@ -153,6 +153,10 @@ const SEARCH_ID = '00000000-0000-4000-8000-0000000000f3';
 
 const CHECKOUT_FILE = 'gatling-gradle-plugin-demo-kotlin-main-tests.jar';
 
+/** The line the form draws when `?package=` names a package it cannot offer. */
+const IGNORED_LINK =
+  'The package in this link has no file to run, or is not in this project. Choose one below.';
+
 function packageOf(id: string, name: string, current: Package['current']): Package {
   return {
     id,
@@ -803,6 +807,26 @@ describe('NewRunnerRun — starting from a package', () => {
 
     expect(select.value).toBe(CHECKOUT_ID);
     expect(optionLabels(select)).toHaveLength(3);
+    // AND SAYS SO. A silent fallback is a form ready to queue a load test of a
+    // package the reader did not choose, looking just like the one they did.
+    const line = screen.getByText(IGNORED_LINK);
+    // Above the select, and tied to it, so it is heard where it matters.
+    expect(line.compareDocumentPosition(select) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(select.getAttribute('aria-describedby')).toBe(line.id);
+  });
+
+  /** The pair of the case above: the line describes a link the form IGNORED,
+   *  so a link it followed, or no link at all, must not draw it. */
+  it.each([
+    ['names a package the form offers', `?package=${SEARCH_ID}`],
+    ['names no package at all', ''],
+  ])('says nothing about the link when it %s', async (_what, query) => {
+    servePackages(EMPTY, CHECKOUT, SEARCH);
+    mount(`/projects/alpha/run/new${query}`);
+    const select = await packageSelect();
+
+    expect(screen.queryByText(IGNORED_LINK)).toBeNull();
+    expect(select.hasAttribute('aria-describedby')).toBe(false);
   });
 
   /* ---------------------------------------------------------------------- *

@@ -515,6 +515,37 @@ describe('Packages — the row menu', () => {
     );
   });
 
+  /**
+   * ═══ A PACKAGE WITH NO FILE HAS NOTHING TO RUN ═══
+   *
+   * The New run form offers only packages that have a file, and falls back to
+   * the first that does when a link names one without — so this item, on an
+   * empty package, opened a form ready to queue a load test of a package the
+   * reader never chose. It is disabled there, with the reason in TEXT and as
+   * the item's description: the Delete item's rule, in the same menu. And the
+   * pair: on a package WITH a file it is the ordinary, enabled link.
+   */
+  it('disables New run from this package on a package with no file, and says why', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findAllByTestId('package-row');
+
+    const menu = await openMenu(user, 'Empty');
+    const item = within(menu).getByRole('menuitem', { name: 'New run from this package' });
+    expect(item).toHaveAttribute('aria-disabled', 'true');
+    expect(item).toHaveAccessibleDescription('Upload a file to it first.');
+    // Not a link while disabled: an href would still go somewhere.
+    expect(item).not.toHaveAttribute('href');
+    await user.keyboard('{Escape}');
+    await menuSettled();
+
+    const withFile = await openMenu(user, 'Checkout');
+    const enabled = within(withFile).getByRole('menuitem', { name: 'New run from this package' });
+    expect(enabled).not.toHaveAttribute('aria-disabled');
+    expect(enabled).toHaveAttribute('href', projectNewRunnerRunPath('checkout', CHECKOUT.id));
+    expect(withFile).not.toHaveTextContent('Upload a file to it first.');
+  });
+
   it('names its trigger after its row, so a page of them is not a page of "More"', async () => {
     renderPage();
     await screen.findAllByTestId('package-row');

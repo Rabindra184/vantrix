@@ -287,7 +287,10 @@ function NewRunnerRunProject({
    * list, and by the time it is followed the package may have lost its file or
    * gone. A link naming something the form cannot offer is ignored, and the
    * first package with a file is chosen instead — the form opens usable rather
-   * than on a value no option carries. */
+   * than on a value no option carries. And it SAYS so, in a line above the
+   * select: a fallback made in silence is a form ready to queue a load test of
+   * a package the reader did not choose, looking exactly like the one they
+   * did. */
   const [searchParams] = useSearchParams();
   const requestedPackage = searchParams.get('package');
   const packages = useQuery({
@@ -300,6 +303,9 @@ function NewRunnerRunProject({
     setForm((current) => ({ ...current, source: offered.length > 0 ? 'package' : 'upload' }));
   }
   const defaultPackage = offered.find((p) => p.id === requestedPackage) ?? offered[0] ?? null;
+  // An EMPTY `?package=` names nothing, so there is no link to have ignored.
+  const linkIgnored =
+    requestedPackage !== null && requestedPackage !== '' && !offered.some((p) => p.id === requestedPackage);
   const chosenPackage = offered.find((p) => p.id === form.packageId) ?? defaultPackage;
   const mode: 'loading' | 'package' | 'upload' =
     form.source === null
@@ -522,6 +528,15 @@ function NewRunnerRunProject({
                   decision this group asks for is which package. */}
               <legend className={LEGEND}>Package</legend>
 
+              {/* Only where the select is drawn: in upload mode there is
+                  nothing "below" to choose from. Tied to the select, so a
+                  screen reader landing on it hears why it holds what it does. */}
+              {mode === 'package' && linkIgnored && (
+                <p id="runner-package-link" className="text-[0.8125rem] leading-snug text-muted">
+                  The package in this link has no file to run, or is not in this project. Choose one below.
+                </p>
+              )}
+
               {mode === 'upload' && (
                 /* THE INPUT IS `sr-only`, SO THE LABEL WEARS ITS FOCUS RING.
                    The app-wide `:focus-visible` rule lands on the input, which
@@ -575,6 +590,7 @@ function NewRunnerRunProject({
                       id="runner-package"
                       ref={packageSelectRef}
                       className={INPUT}
+                      aria-describedby={mode === 'package' && linkIgnored ? 'runner-package-link' : undefined}
                       disabled={mode === 'loading'}
                       value={mode === 'loading' ? '' : (chosenPackage?.id ?? '')}
                       onChange={(event) => {

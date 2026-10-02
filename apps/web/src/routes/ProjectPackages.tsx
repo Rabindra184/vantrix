@@ -506,6 +506,7 @@ function PackageActions({
 
   const [draft, setDraft] = useState(pkg.name);
   const reasonId = useId();
+  const newRunReasonId = useId();
 
   /* The two ends of an in-flight upload. `progress` is `null` until the browser
      has reported anything, a fraction below 1 while bytes move, and 1 once they
@@ -643,9 +644,29 @@ function PackageActions({
             >
               Rename
             </DropdownMenuItem>
-            <DropdownMenuItem asChild>
-              <Link to={projectNewRunnerRunPath(slug, pkg.id)}>New run from this package</Link>
-            </DropdownMenuItem>
+            {/* ═══ NO NEW RUN FROM A PACKAGE WITH NOTHING TO RUN ═══
+                The form only offers packages that have a file, and a link
+                naming one without falls back to the first that does — so this
+                item, on an empty package, opened a form ready to queue a load
+                test of a package the reader did not choose. Disabled instead,
+                with its reason in text tied to it: the Delete item's pattern
+                below, for the same reason. Not a link while disabled — a
+                disabled item that still carried an `href` would still go
+                somewhere for anything that follows it. */}
+            {pkg.current === null ? (
+              <>
+                <p id={newRunReasonId} className="px-2 pb-1 text-[0.75rem] leading-snug text-muted">
+                  Upload a file to it first.
+                </p>
+                <DropdownMenuItem disabled aria-describedby={newRunReasonId}>
+                  New run from this package
+                </DropdownMenuItem>
+              </>
+            ) : (
+              <DropdownMenuItem asChild>
+                <Link to={projectNewRunnerRunPath(slug, pkg.id)}>New run from this package</Link>
+              </DropdownMenuItem>
+            )}
             <DropdownMenuSeparator />
             {/* ═══ THE REASON IS TEXT, NOT A TOOLTIP ═══
                 `ChartActions`' rule for a disabled item. A `title` is invisible
