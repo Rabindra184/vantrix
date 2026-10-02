@@ -56,10 +56,23 @@ ALTER TABLE "run" ADD CONSTRAINT "run_package_id_fkey" FOREIGN KEY ("package_id"
 -- The seven statements between the BACKFILL markers are read and executed
 -- verbatim by packages/persistence/test/package-backfill.integration.test.ts:
 -- keep them seven, and keep every semicolon a statement terminator.
--- One package per project per filename stem and kind; the stem is the filename
--- without its extension (a .tar.gz counts as one), at most 112 characters so a
--- -NN suffix fits the 120-character name. A stem the project already used,
--- ignoring case, takes -2, -3 in upload order.
+--
+-- ═══ THE BACKFILL MUST NEVER ABORT A DEPLOY ═══
+-- One package per project per filename stem IGNORING CASE and kind, because a
+-- package name is unique per project ignoring case and the backfill must not
+-- be able to propose two that are not. The stem is the filename without its
+-- extension (a .tar.gz counts as one), at most 112 characters; the package is
+-- named after the stem of the group's EARLIEST upload.
+--
+-- The one case a name can still collide is the same stem in the two kinds (a
+-- jar and a bundle both called load): the later group takes a " (2)" suffix,
+-- in upload order. A suffix with a space and parentheses, never "-2", because
+-- every stored filename passed through the API's sanitizeFilename, which
+-- replaces anything outside letters, digits, underscore, dot, hyphen and space
+-- with an underscore: no stem can contain a parenthesis, so a " (n)" name
+-- cannot equal any stem or another generated name. A "-n" suffix could, and
+-- did: load.jar, Load.jar and load-2.jar made the unique index refuse "load-2".
+-- 112 characters plus " (NN)" still fits the 120-character name.
 -- BACKFILL: begin
 UPDATE runner_job j
 SET name = a.name, simulation_class = a.simulation_class
@@ -67,7 +80,8 @@ FROM runner_artifact a
 WHERE a.id = j.artifact_id AND j.name IS NULL;
 
 CREATE TEMP TABLE package_backfill AS
-SELECT gen_random_uuid() AS id, s.org_id, s.project_id, s.kind, s.stem,
+SELECT gen_random_uuid() AS id, s.org_id, s.project_id, s.kind, lower(s.stem) AS stem_key,
+       (array_agg(s.stem ORDER BY s.created_at, s.stem))[1] AS stem,
        min(s.created_at) AS first_at, max(s.created_at) AS last_at
 FROM (
   SELECT org_id, project_id, kind, created_at,
@@ -75,14 +89,14 @@ FROM (
   FROM runner_artifact
   WHERE package_id IS NULL
 ) s
-GROUP BY s.org_id, s.project_id, s.kind, s.stem;
+GROUP BY s.org_id, s.project_id, s.kind, lower(s.stem);
 
 INSERT INTO package (id, org_id, project_id, name, kind, created_at, updated_at)
 SELECT x.id, x.org_id, x.project_id,
-       CASE WHEN x.n = 1 THEN x.stem ELSE x.stem || '-' || x.n END,
+       CASE WHEN x.n = 1 THEN x.stem ELSE x.stem || ' (' || x.n || ')' END,
        x.kind, x.first_at, x.last_at
 FROM (
-  SELECT b.*, row_number() OVER (PARTITION BY b.project_id, lower(b.stem) ORDER BY b.first_at, b.kind) AS n
+  SELECT b.*, row_number() OVER (PARTITION BY b.project_id, b.stem_key ORDER BY b.first_at, b.kind) AS n
   FROM package_backfill b
 ) x;
 
@@ -92,7 +106,7 @@ FROM package_backfill b
 WHERE a.package_id IS NULL
   AND b.project_id = a.project_id
   AND b.kind = a.kind
-  AND b.stem = COALESCE(NULLIF(left(regexp_replace(a.filename, '(\.tar\.gz|\.[^.]+)$', '', 'i'), 112), ''), 'package');
+  AND b.stem_key = lower(COALESCE(NULLIF(left(regexp_replace(a.filename, '(\.tar\.gz|\.[^.]+)$', '', 'i'), 112), ''), 'package'));
 
 UPDATE package p
 SET current_artifact_id = (

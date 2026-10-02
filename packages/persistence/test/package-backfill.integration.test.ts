@@ -132,11 +132,68 @@ describe('the backfill that made packages of existing artifacts', () => {
     });
   });
 
-  it('suffixes a stem the project already used, ignoring case, and keeps kinds apart', async () => {
+  it('makes one package of filenames that differ only in case, and keeps kinds apart', async () => {
     await withLegacySchema(async (client) => {
-      await legacy(client, { filename: 'Load.jar', createdAt: '2026-08-01T10:00:00Z' });
-      await legacy(client, { filename: 'load.jar', createdAt: '2026-08-02T10:00:00Z' });
-      await legacy(client, { filename: 'load.tar.gz', kind: 'gatling_bundle', createdAt: '2026-08-03T10:00:00Z' });
+      const first = await legacy(client, { filename: 'Load.jar', createdAt: '2026-08-01T10:00:00Z' });
+      const second = await legacy(client, { filename: 'load.jar', createdAt: '2026-08-02T10:00:00Z' });
+      const bundle = await legacy(client, { filename: 'load.tar.gz', kind: 'gatling_bundle', createdAt: '2026-08-03T10:00:00Z' });
+
+      for (const statement of backfillStatements()) await client.query(statement);
+
+      const packages = await client.query<{ id: string; name: string; kind: string; current: string }>(
+        `SELECT id, name, kind, current_artifact_id AS current FROM package WHERE project_id = $1 ORDER BY created_at`,
+        [projectId],
+      );
+      // The jar package is named after its EARLIEST upload's stem; the bundle
+      // shares the stem ignoring case, so its name is taken and it is suffixed.
+      expect(packages.rows.map((p) => ({ name: p.name, kind: p.kind }))).toEqual([
+        { name: 'Load', kind: 'gatling_jar' },
+        { name: 'load (2)', kind: 'gatling_bundle' },
+      ]);
+      expect(packages.rows[0]!.current).toBe(second.artifactId);
+      expect(packages.rows[1]!.current).toBe(bundle.artifactId);
+
+      const versions = await client.query<{ id: string; package_id: string }>(
+        `SELECT id, package_id FROM runner_artifact WHERE id = ANY($1::uuid[])`,
+        [[first.artifactId, second.artifactId]],
+      );
+      expect(versions.rows).toHaveLength(2);
+      expect(new Set(versions.rows.map((v) => v.package_id))).toEqual(new Set([packages.rows[0]!.id]));
+    });
+  });
+
+  it('puts demo.jar and DEMO.jar in one package', async () => {
+    await withLegacySchema(async (client) => {
+      const lower = await legacy(client, { filename: 'demo.jar', createdAt: '2026-08-01T10:00:00Z' });
+      const upper = await legacy(client, { filename: 'DEMO.jar', createdAt: '2026-08-02T10:00:00Z' });
+
+      for (const statement of backfillStatements()) await client.query(statement);
+
+      const packages = await client.query<{ id: string; name: string; current: string }>(
+        `SELECT id, name, current_artifact_id AS current FROM package WHERE project_id = $1`,
+        [projectId],
+      );
+      expect(packages.rows.map((p) => p.name)).toEqual(['demo']);
+      expect(packages.rows[0]!.current).toBe(upper.artifactId);
+      const versions = await client.query<{ package_id: string }>(
+        `SELECT package_id FROM runner_artifact WHERE id = ANY($1::uuid[])`,
+        [[lower.artifactId, upper.artifactId]],
+      );
+      expect(versions.rows.map((v) => v.package_id)).toEqual([packages.rows[0]!.id, packages.rows[0]!.id]);
+    });
+  });
+
+  it('never proposes two names that differ only in case, even when a stem looks like a suffix', async () => {
+    await withLegacySchema(async (client) => {
+      // The collision that aborted the first backfill: load.jar and Load.jar
+      // were two packages, the second suffixed to load-2, and load-2.jar was a
+      // third by that very name. The bundle is what makes the suffix rule
+      // bite: a jar and a bundle called load need a disambiguator, and a
+      // "-2" one would meet load-2.jar.
+      await legacy(client, { filename: 'load.jar', createdAt: '2026-08-01T10:00:00Z' });
+      await legacy(client, { filename: 'Load.jar', createdAt: '2026-08-02T10:00:00Z' });
+      await legacy(client, { filename: 'load-2.jar', createdAt: '2026-08-03T10:00:00Z' });
+      await legacy(client, { filename: 'load.tar.gz', kind: 'gatling_bundle', createdAt: '2026-08-04T10:00:00Z' });
 
       for (const statement of backfillStatements()) await client.query(statement);
 
@@ -145,10 +202,12 @@ describe('the backfill that made packages of existing artifacts', () => {
         [projectId],
       );
       expect(names.rows).toEqual([
-        { name: 'Load', kind: 'gatling_jar' },
+        { name: 'load', kind: 'gatling_jar' },
         { name: 'load-2', kind: 'gatling_jar' },
-        { name: 'load-3', kind: 'gatling_bundle' },
+        { name: 'load (2)', kind: 'gatling_bundle' },
       ]);
+      const distinct = new Set(names.rows.map((r) => r.name.toLowerCase()));
+      expect(distinct.size).toBe(names.rows.length);
     });
   });
 });
