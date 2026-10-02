@@ -418,6 +418,45 @@ describe('PackageRepository', () => {
     }
   });
 
+  it("gives the lock-waiting transactions a budget that outlasts the arrangement deadline", async () => {
+    // The lock-wait cases park their arrangement for up to ARRANGEMENT_DEADLINE_MS
+    // and rely on the repository's transactions outliving that wait, so a stuck
+    // arrangement fails naming its own cause rather than as P2028. That is a fact
+    // about the OPTIONS each transaction is started with, and a fast one to check
+    // without waiting on a lock: record what `$transaction` is called with.
+    const PRISMA_DEFAULT_TIMEOUT_MS = 5_000;
+    const recorded: { call: string; options: { timeout?: number } | undefined }[] = [];
+    let calling = '';
+    const recording = new Proxy(prisma, {
+      get(target, prop) {
+        const value: unknown = Reflect.get(target, prop, target);
+        if (typeof value !== 'function') return value;
+        const fn = value as (...args: unknown[]) => unknown;
+        if (prop !== '$transaction') return fn.bind(target);
+        return (...args: unknown[]) => {
+          recorded.push({ call: calling, options: args[1] as { timeout?: number } | undefined });
+          return fn.apply(target, args);
+        };
+      },
+    });
+    const repository = new PackageRepository(recording);
+
+    // Neither package exists, so each call takes its lock, finds nothing and ends.
+    calling = 'addVersion';
+    expect(await repository.addVersion(orgA, checkout, randomUUID(), version())).toBeNull();
+    calling = 'delete';
+    expect(await repository.delete(orgA, checkout, randomUUID())).toEqual({ kind: 'not_found' });
+
+    expect(recorded.map((r) => r.call)).toEqual(['addVersion', 'delete']);
+    for (const { call, options } of recorded) {
+      const timeout = options?.timeout ?? PRISMA_DEFAULT_TIMEOUT_MS;
+      expect(
+        timeout,
+        `${call}'s $transaction was started with ${JSON.stringify(options)}: a ${timeout} ms budget does not outlast the ${ARRANGEMENT_DEADLINE_MS} ms the lock-wait cases may spend parked on its lock`,
+      ).toBeGreaterThan(ARRANGEMENT_DEADLINE_MS);
+    }
+  });
+
   it('never reaches across tenants', async () => {
     const created = await make(checkout, 'Checkout');
     expect(await packages.find(orgA, search, created.id)).toBeNull();
