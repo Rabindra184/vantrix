@@ -30,6 +30,7 @@ const NewProject = lazy(() => import('./routes/NewProject'));
 const NoOrg = lazy(() => import('./routes/NoOrg'));
 const ProjectRuns = lazy(() => import('./routes/ProjectRuns'));
 const ProjectSetup = lazy(() => import('./routes/ProjectSetup'));
+const ProjectPackages = lazy(() => import('./routes/ProjectPackages'));
 const ProjectRulesPage = lazy(() => import('./routes/ProjectRulesPage'));
 const ProjectAccess = lazy(() => import('./routes/ProjectAccess'));
 const ProjectTests = lazy(() => import('./routes/ProjectTests'));
@@ -72,6 +73,7 @@ export default function App() {
             <Route path={NEW_PROJECT_ROUTE} element={<NewProject />} />
             <Route path="/projects/:slug/run/new" element={<NewRunnerRun />} />
             <Route path="/projects/:slug/setup" element={<ProjectSetup />} />
+            <Route path="/projects/:slug/packages" element={<ProjectPackages />} />
             {/* Rules and Access were sections of the setup page until review M15
                 asked for them to be separate destinations. The setup SEGMENT is
                 unchanged on purpose — see `projectSetupPath`. */}

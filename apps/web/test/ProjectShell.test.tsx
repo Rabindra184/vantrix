@@ -20,8 +20,8 @@ afterEach(() => vi.unstubAllGlobals());
  * configuration pages drew a tab strip naming none of them. SLA rules and API
  * tokens were therefore reachable only by first landing on Add results.
  *
- * `ProjectShell` is the one strip, on all five. What this file pins is the
- * part a browser cannot cheaply prove five times over: that every section
+ * `ProjectShell` is the one strip, on all six. What this file pins is the
+ * part a browser cannot cheaply prove six times over: that every section
  * resolves to its own URL for the slug in hand, that exactly one is current,
  * and that the launch action is NOT one of them.
  *
@@ -45,6 +45,7 @@ const PROJECT = {
 const SECTIONS: readonly [ProjectSection, string, string][] = [
   ['tests', 'Tests', '/projects/checkout'],
   ['runs', 'Runs', '/projects/checkout/runs'],
+  ['packages', 'Packages', '/projects/checkout/packages'],
   ['setup', 'Add results', '/projects/checkout/setup'],
   ['rules', 'SLA rules', '/projects/checkout/rules'],
   ['access', 'API tokens', '/projects/checkout/access'],
@@ -83,7 +84,7 @@ function renderShell(current: ProjectSection, path = '/projects/checkout') {
 
 const nav = () => screen.getByRole('navigation', { name: 'Project sections' });
 
-describe('ProjectShell — the five sections', () => {
+describe('ProjectShell — the six sections', () => {
   it('offers every section, in order, each at its own URL', async () => {
     stubProjects();
     renderShell('tests');
@@ -103,7 +104,7 @@ describe('ProjectShell — the five sections', () => {
    * section repeats its name as a heading, so a strip with none — or with two
    * — is not a styling slip, it is the navigation failing to do its only job.
    *
-   * Run over all five, because the failure mode is per-section: a `NavLink`
+   * Run over all six, because the failure mode is per-section: a `NavLink`
    * with no `end` would mark Tests current on every one of these, since every
    * project URL starts with `/projects/:slug`. That is exactly why the shell
    * takes an explicit `current` instead.
@@ -124,7 +125,7 @@ describe('ProjectShell — the five sections', () => {
    * the strip — because "not in the nav" alone would pass just as happily
    * against a page that had lost the action altogether.
    */
-  it('keeps New on-prem run as an action beside the heading, not a sixth tab', async () => {
+  it('keeps New on-prem run as an action beside the heading, not a seventh tab', async () => {
     stubProjects();
     renderShell('tests');
     await screen.findByRole('heading', { level: 1, name: 'Checkout Flow' });
@@ -184,7 +185,7 @@ describe('ProjectShell — what it draws before and instead of a project', () =>
   /**
    * ═══ THE WAY OUT MUST LEAVE, AND MUST NOT BORROW THE RAIL'S NAME ═══
    *
-   * Every one of the five URLs carries the slug that just failed to resolve,
+   * Every one of the six URLs carries the slug that just failed to resolve,
    * so "Back to project" — what this offered when it was `ProjectConfigPage`,
    * a page reached only from a working project — is an offer to reload the
    * same error.
