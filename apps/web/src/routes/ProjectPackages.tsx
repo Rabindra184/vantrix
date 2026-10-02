@@ -9,7 +9,7 @@ import { MoreIcon, UploadIcon } from '../components/icons';
 import { SkeletonTable } from '../components/Skeleton';
 import { EmptyState, ErrorState, LoadingState } from '../components/States';
 import TableFrame from '../components/TableFrame';
-import { INPUT, ROW, TABLE, TD, TH, THEAD } from '../components/tableStyles';
+import { INPUT, ROW, TABLE, TD, TH, THEAD, TH_ROW } from '../components/tableStyles';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -249,6 +249,8 @@ function NewPackageForm({ slug }: { readonly slug: string }) {
   const [kind, setKind] = useState<PackageKind>('gatling_jar');
   const [file, setFile] = useState<File | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const fileId = useId();
+  const fileHelpId = `${fileId}-help`;
 
   const clearFile = () => {
     setFile(null);
@@ -307,20 +309,30 @@ function NewPackageForm({ slug }: { readonly slug: string }) {
         </select>
       </label>
 
-      <label className="flex flex-col gap-1.5 text-[0.8125rem] font-medium">
-        File (optional)
+      {/* ═══ A NAME IDENTIFIES, A DESCRIPTION EXPLAINS ═══
+          The sentence is a SIBLING of the label, tied to the input with
+          `aria-describedby`. Inside the `<label>` it became the input's
+          accessible name — "File (optional) A package can be made empty and
+          given its first file from its row later." — which is review 09-13
+          M21's defect, in a form written after it was recorded. */}
+      <div className="flex flex-col gap-1.5">
+        <label htmlFor={fileId} className="text-[0.8125rem] font-medium">
+          File (optional)
+        </label>
         <input
+          id={fileId}
           ref={fileInput}
           type="file"
           data-testid="new-package-file"
           accept={PACKAGE_ACCEPT[kind]}
-          className="min-w-0 max-w-full text-[0.8125rem] font-normal text-primary file:mr-3 file:rounded-md file:border file:border-default file:bg-surface file:px-3 file:py-1.5 file:text-[0.8125rem] file:text-primary"
+          aria-describedby={fileHelpId}
+          className="min-w-0 max-w-full text-[0.8125rem] text-primary file:mr-3 file:rounded-md file:border file:border-default file:bg-surface file:px-3 file:py-1.5 file:text-[0.8125rem] file:text-primary"
           onChange={(event) => setFile(event.target.files?.[0] ?? null)}
         />
-        <span className="text-[0.6875rem] font-normal text-muted">
+        <p id={fileHelpId} className="text-[0.6875rem] text-muted">
           A package can be made empty and given its first file from its row later.
-        </span>
-      </label>
+        </p>
+      </div>
 
       {create.isError && <Problem error={create.error} />}
 
@@ -392,7 +404,7 @@ function NameCell({ pkg, size }: { readonly pkg: Package; readonly size: 'row' |
 function PackageRow({ slug, pkg, armed, onArm }: RowProps) {
   return (
     <tr data-testid="package-row" data-package-id={pkg.id} className={ROW}>
-      <th scope="row" className="px-3 py-2 text-left align-middle">
+      <th scope="row" className={TH_ROW}>
         <NameCell pkg={pkg} size="row" />
       </th>
       <td className={TD}>{FORMAT_LABEL[pkg.kind]}</td>
@@ -411,7 +423,7 @@ function PackageRow({ slug, pkg, armed, onArm }: RowProps) {
 }
 
 /**
- * The same facts as a card, for a viewport under 768px — seven columns do not
+ * The same facts as a card, for a viewport under 768px — six columns do not
  * fit a phone, and a table scrolled sideways hides the one column (Actions)
  * that is the point of the row. The testids are the table row's own: a compact
  * layout is not a reason for a spec to have to know which one it is looking at.
@@ -525,7 +537,30 @@ function PackageActions({
   const remove = useMutation({
     mutationFn: () => deletePackage(slug, pkg.id),
     onSuccess: refresh,
+    // A REFUSED DELETE IS NEWS ABOUT THE LIST. A 409 says a run of this package
+    // is queued or running — which the menu did not know, or its Delete would
+    // not have been enabled. Left alone, the menu keeps offering an enabled
+    // Delete after the server has said no; refetched, it shows the reason.
+    onError: refresh,
   });
+
+  /**
+   * Arms rename or delete, starting that block from NOTHING. `rename` and
+   * `remove` live here, and this component never unmounts, so a refused
+   * attempt's error would otherwise be waiting when the reader came back to the
+   * block — an old "that name is taken" shown over an input they have not
+   * touched. Every way into a block passes through here (another row's arming
+   * disarms this one silently), so this is the one place the reset belongs.
+   */
+  function arm(next: Armed['mode']) {
+    if (next === 'rename') {
+      rename.reset();
+      setDraft(pkg.name);
+    } else {
+      remove.reset();
+    }
+    onArm({ id: pkg.id, mode: next });
+  }
 
   /** Leaves rename or delete, and puts focus on the one control that is still
    *  there: the block the reader was in is about to unmount under it. */
@@ -604,10 +639,7 @@ function PackageActions({
               was unwitnessed — removing it failed nothing. */}
           <DropdownMenuContent align="end" className="w-[17rem]">
             <DropdownMenuItem
-              onSelect={() => {
-                setDraft(pkg.name);
-                onArm({ id: pkg.id, mode: 'rename' });
-              }}
+              onSelect={() => arm('rename')}
             >
               Rename
             </DropdownMenuItem>
@@ -629,9 +661,7 @@ function PackageActions({
             <DropdownMenuItem
               disabled={active > 0}
               aria-describedby={active > 0 ? reasonId : undefined}
-              onSelect={() => {
-                onArm({ id: pkg.id, mode: 'delete' });
-              }}
+              onSelect={() => arm('delete')}
             >
               Delete
             </DropdownMenuItem>

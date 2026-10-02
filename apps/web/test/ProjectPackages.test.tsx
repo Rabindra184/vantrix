@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
-import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
@@ -16,6 +16,11 @@ import { projectNewRunnerRunPath } from '../src/routes/paths.js';
 // `document.body` — see CLAUDE.md on the flake that caused.
 afterEach(cleanup);
 afterEach(() => vi.unstubAllGlobals());
+// jsdom ships no `navigator.clipboard`; the case that needs one installs it and
+// this takes it away again, so no later case inherits a clipboard it did not ask for.
+afterEach(() => {
+  Reflect.deleteProperty(navigator, 'clipboard');
+});
 
 /**
  * ═══ BACKLOG #8 — A PACKAGE IS A FIRST-CLASS THING, AND THIS IS ITS PAGE ═══
@@ -220,15 +225,30 @@ describe('Packages — what the table says', () => {
     expect(within(rowOf(CHECKOUT.id)).getByText('1 test · 1 run')).toBeInTheDocument();
   });
 
+  /**
+   * THE LABEL AND THE VALUE ARE TWO PROPS. A button named "Copy package id
+   * <id>" that copied the package's NAME would satisfy a check on the name
+   * alone, so what lands on the clipboard is read as well. The whole id, which
+   * is what every `/v1/projects/{slug}/packages/{id}` endpoint takes.
+   */
   it('copies the package id, named after its row', async () => {
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+      writable: true,
+    });
     renderPage();
     await screen.findAllByTestId('package-row');
 
     for (const pkg of [CHECKOUT, EMPTY]) {
-      expect(
-        within(rowOf(pkg.id)).getByRole('button', { name: `Copy package id ${pkg.id}` }),
-      ).toBeInTheDocument();
+      const button = within(rowOf(pkg.id)).getByRole('button', { name: `Copy package id ${pkg.id}` });
+      await act(async () => {
+        fireEvent.click(button);
+      });
+      expect(writeText).toHaveBeenLastCalledWith(pkg.id);
     }
+    expect(writeText).toHaveBeenCalledTimes(2);
   });
 
   it('filters by name', async () => {
@@ -394,6 +414,23 @@ describe('Packages — creating one', () => {
       '.zip,.tgz,.tar.gz',
     );
   });
+
+  /**
+   * A NAME IDENTIFIES, A DESCRIPTION EXPLAINS (review 09-13 M21). The help
+   * sentence inside the `<label>` would make the input's accessible name the
+   * whole of it, read out before the reader knows what the control is.
+   */
+  it('names the file input by its label and describes it by the help sentence', async () => {
+    fetchPackages.mockResolvedValue({ items: [] });
+    renderPage();
+    await screen.findByText('No packages yet');
+    const input = within(newPackage()).getByTestId('new-package-file');
+
+    expect(input).toHaveAccessibleName('File (optional)');
+    expect(input).toHaveAccessibleDescription(
+      'A package can be made empty and given its first file from its row later.',
+    );
+  });
 });
 
 describe('Packages — changing the format of a package being created', () => {
@@ -436,11 +473,13 @@ describe('Packages — the row menu', () => {
 
     const menu = await openMenu(user, 'Checkout');
 
-    expect(within(menu).getByRole('menuitem', { name: /^delete/i })).toHaveAttribute(
-      'aria-disabled',
-      'true',
-    );
+    const deleteItem = within(menu).getByRole('menuitem', { name: /^delete/i });
+    expect(deleteItem).toHaveAttribute('aria-disabled', 'true');
     expect(menu).toHaveTextContent('2 runs of it are queued or running');
+    // The line is tied to the item it is about. A paragraph beside a disabled
+    // item explains it only to someone who reads the whole menu; a screen
+    // reader landing on the item hears the reason from its description.
+    expect(deleteItem).toHaveAccessibleDescription(/2 runs of it are queued or running/);
   });
 
   it('says it in the singular for one active run, and leaves delete enabled with none', async () => {
@@ -548,6 +587,63 @@ describe('Packages — deleting', () => {
     );
   });
 
+  it('starts a re-armed delete from nothing: an old refusal is not waiting there', async () => {
+    const user = userEvent.setup();
+    deletePackage.mockRejectedValue(
+      new ProblemError(409, {
+        code: 'PACKAGE_IN_USE',
+        detail: '1 run of this package is queued or running.',
+        remediation: 'Wait for it to finish.',
+      }),
+    );
+    renderPage();
+    await screen.findAllByTestId('package-row');
+    const row = within(rowOf(CHECKOUT.id));
+
+    await user.click(within(await openMenu(user, 'Checkout')).getByRole('menuitem', { name: /^delete/i }));
+    await user.click(row.getByRole('button', { name: 'Delete package' }));
+    expect(await row.findByRole('alert')).toHaveTextContent('queued or running');
+
+    await user.click(row.getByRole('button', { name: 'Cancel' }));
+    await user.click(within(await openMenu(user, 'Checkout')).getByRole('menuitem', { name: /^delete/i }));
+
+    expect(row.getByText(/Delete package "Checkout"\?/)).toBeInTheDocument();
+    expect(row.queryByRole('alert')).toBeNull();
+  });
+
+  /**
+   * A REFUSED DELETE IS NEWS ABOUT THE LIST. The 409 says a run of the package
+   * is queued or running, which the menu did not know — it offered Delete. Left
+   * alone, it goes on offering it after the server has said no.
+   */
+  it('re-fetches the list when a delete is refused, so the menu stops offering it', async () => {
+    const user = userEvent.setup();
+    deletePackage.mockRejectedValue(
+      new ProblemError(409, {
+        code: 'PACKAGE_IN_USE',
+        detail: '1 run of this package is queued or running.',
+        remediation: 'Wait for it to finish.',
+      }),
+    );
+    renderPage();
+    await screen.findAllByTestId('package-row');
+    const row = within(rowOf(CHECKOUT.id));
+    await user.click(within(await openMenu(user, 'Checkout')).getByRole('menuitem', { name: /^delete/i }));
+
+    // By the time the server answers, a run has started.
+    fetchPackages.mockResolvedValue({
+      items: [{ ...CHECKOUT, usage: { tests: 2, runs: 10, activeJobs: 1 } }, EMPTY],
+    });
+    await user.click(row.getByRole('button', { name: 'Delete package' }));
+    await row.findByRole('alert');
+    await user.click(row.getByRole('button', { name: 'Cancel' }));
+
+    expect(fetchPackages).toHaveBeenCalledTimes(2);
+    const menu = await openMenu(user, 'Checkout');
+    expect(within(menu).getByRole('menuitem', { name: /^delete/i })).toHaveAttribute('aria-disabled', 'true');
+    expect(menu).toHaveTextContent('1 run of it is queued or running');
+  });
+
   /** One armed row at a time, as `ProjectRules` does it: arming a second
    *  disarms the first, so two destructive confirmations are never on screen. */
   it('arms one row at a time', async () => {
@@ -637,6 +733,38 @@ describe('Packages — renaming', () => {
 
     expect(within(rowOf(EMPTY.id)).getByText(/Delete package "Empty"\?/)).toBeInTheDocument();
     expect(cancel).toHaveFocus();
+  });
+
+  /**
+   * `rename` lives in a component that never unmounts, so a refused save's
+   * error is still there when the reader comes back to the block. Re-opened, it
+   * would show "that name is taken" over an input they have not touched.
+   */
+  it('starts a re-opened rename from nothing: an old refusal is not waiting there', async () => {
+    const user = userEvent.setup();
+    renamePackage.mockRejectedValue(
+      new ProblemError(409, {
+        code: 'PACKAGE_NAME_TAKEN',
+        detail: 'This project already has a package called "Empty".',
+        remediation: 'Choose another name.',
+      }),
+    );
+    renderPage();
+    await screen.findAllByTestId('package-row');
+    const row = within(rowOf(CHECKOUT.id));
+
+    await user.click(within(await openMenu(user, 'Checkout')).getByRole('menuitem', { name: 'Rename' }));
+    const input = row.getByLabelText('New name for Checkout');
+    await user.clear(input);
+    await user.type(input, 'Empty');
+    await user.click(row.getByRole('button', { name: 'Save' }));
+    expect(await row.findByRole('alert')).toHaveTextContent('already has a package called "Empty"');
+
+    await user.click(row.getByRole('button', { name: 'Cancel' }));
+    await user.click(within(await openMenu(user, 'Checkout')).getByRole('menuitem', { name: 'Rename' }));
+
+    expect(row.getByLabelText('New name for Checkout')).toHaveValue('Checkout');
+    expect(row.queryByRole('alert')).toBeNull();
   });
 
   it('Cancel leaves the name alone and calls nothing', async () => {
@@ -736,7 +864,7 @@ describe('Packages — uploading a file', () => {
 
 describe('Packages — below 768px', () => {
   /**
-   * Cards, not a table: seven columns do not fit a phone. The same rows, the
+   * Cards, not a table: six columns do not fit a phone. The same rows, the
    * same testids and the same actions — a compact layout is not a reason for a
    * spec to have to know which one it is looking at.
    */

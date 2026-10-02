@@ -38,7 +38,7 @@ import { runName } from '../runNumber';
  * (Project runs, Add results, New on-prem run), while `/projects/:slug/runs`
  * drew a DIFFERENT row of three and the configuration pages drew a tab strip
  * naming none of them. `ProjectShell` owns all of it, so the project's name,
- * its five sections and the one launch action are identical on every project
+ * its six sections and the one launch action are identical on every project
  * page. The name still comes from `GET /v1/projects` rather than from the
  * first test's row, for the reason that file states: a project with no tests
  * still has a name.
