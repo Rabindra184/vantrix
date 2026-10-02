@@ -741,9 +741,9 @@ describe('retention', () => {
    * to make the locked version needed: an upload of the same bytes making it
    * current, a queue putting a job on it. Both must WAIT for the sweep and then
    * fail on their own foreign key; the sweep must finish, and the package keep
-   * its current version. (The window the two statements exist to close — a
-   * commit between statement 1's snapshot and its lock — lies inside one
-   * statement and cannot be parked from here; see the method's comment.)
+   * its current version. The same gap is where a lock-free commit, made in
+   * replica mode, rebuilds the state the real race leaves, so statement 2's
+   * re-check can be pinned (see commitWithoutForeignKeyLocks below).
    */
   function pausedBeforeSecondStatement(
     inTheGap: (sweepPid: number) => Promise<void>,
@@ -805,6 +805,134 @@ describe('retention', () => {
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
   }
+
+  /**
+   * Commits one statement with the foreign-key triggers off for that
+   * transaction only (session_replication_role = replica), so it takes NO lock
+   * on the version it names.
+   *
+   * WHY REPLICA MODE: the race statement 2's re-check exists for is a commit
+   * landing INSIDE statement 1 — after its snapshot, before its row locks — and
+   * no harness can park a statement there. A real writer arriving in the gap
+   * between the statements needs a KEY SHARE lock on the version instead, so it
+   * waits on the sweep's FOR UPDATE (the two cases above). Replica mode builds
+   * the identical post-window state — a version statement 1 chose and locked
+   * that has since become current, or come to be referenced by a job — without
+   * waiting. It needs a superuser (perfportal is one, locally and in CI's
+   * service containers); a role that is not fails here loudly with "permission
+   * denied to set parameter", deliberately: a skipped pin is no pin.
+   */
+  async function commitWithoutForeignKeyLocks(sql: string, params: unknown[]): Promise<void> {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SET LOCAL session_replication_role = replica');
+      await client.query(sql, params);
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  /** True when another transaction holds the version's row lock — here, that
+   *  statement 1 really chose and locked it, so a case built on that is not
+   *  vacuous. Autocommit: a lock this probe takes is released at once. */
+  async function lockedElsewhere(artifactId: string): Promise<boolean> {
+    const probe = await pool.query('SELECT id FROM runner_artifact WHERE id = $1 FOR UPDATE SKIP LOCKED', [artifactId]);
+    return probe.rowCount === 0;
+  }
+
+  it('re-checks the current version in statement 2: a version made current after the lock is kept', async () => {
+    const { orgA, projectA1 } = await seed();
+    const { packageId, artifactId: v1 } = await packageWithVersion(orgA, projectA1);
+    await addVersion(orgA, projectA1, packageId);
+    await age('runner_artifact', [v1], '40 days');
+
+    let chosen = false;
+    const { repo, reached } = pausedBeforeSecondStatement(async () => {
+      chosen = await lockedElsewhere(v1);
+      await commitWithoutForeignKeyLocks('UPDATE package SET current_artifact_id = $1 WHERE id = $2', [v1, packageId]);
+    });
+
+    const swept = await repo.deleteUnneededVersionsOlderThan({ orgId: orgA, projectId: projectA1 }, daysAgo(30));
+
+    expect(reached()).toBe(true);
+    expect(chosen).toBe(true);
+    expect(swept).toEqual([]);
+    expect((await packages.find(orgA, projectA1, packageId))?.current?.artifactId).toBe(v1);
+    expect(await prisma.runnerArtifact.findUnique({ where: { id: v1 } })).not.toBeNull();
+  });
+
+  it('re-checks job references in statement 2: a version a job came to need after the lock is kept, and the sweep does not fail', async () => {
+    const { orgA, projectA1 } = await seed();
+    const { packageId, artifactId: v1 } = await packageWithVersion(orgA, projectA1);
+    await addVersion(orgA, projectA1, packageId);
+    await age('runner_artifact', [v1], '40 days');
+
+    let chosen = false;
+    const { repo, reached } = pausedBeforeSecondStatement(async () => {
+      chosen = await lockedElsewhere(v1);
+      await commitWithoutForeignKeyLocks(
+        `INSERT INTO runner_job (org_id, project_id, artifact_id, status, requested_by, name, simulation_class)
+         VALUES ($1, $2, $3, 'complete', 'tester', 'nightly', 'com.example.CheckoutSimulation')`,
+        [orgA, projectA1, v1],
+      );
+    });
+
+    // Awaited directly: without the re-check the delete trips runner_job's
+    // ON DELETE RESTRICT and this rejects with 23503.
+    const swept = await repo.deleteUnneededVersionsOlderThan({ orgId: orgA, projectId: projectA1 }, daysAgo(30));
+
+    expect(reached()).toBe(true);
+    expect(chosen).toBe(true);
+    expect(swept).toEqual([]);
+    expect(await prisma.runnerArtifact.findUnique({ where: { id: v1 } })).not.toBeNull();
+  });
+
+  /**
+   * ═══ STATEMENT 1'S OWN PREDICATES, AT LIMIT 1 ═══
+   *
+   * Statement 2's re-check would keep a current or referenced version that
+   * statement 1 chose, so at the default limit dropping statement 1's
+   * predicates changes nothing visible. It is a liveness bug all the same:
+   * ORDER BY created_at ASC LIMIT n would lock the same n oldest needed
+   * versions on every tick, statement 2 would keep them all, and retention
+   * would stall for good. At limit 1 the oldest such version is the whole
+   * batch, so the stall shows.
+   */
+  it('chooses only versions that are not current, so an old current version cannot stall the sweep at limit 1', async () => {
+    const { orgA, projectA1 } = await seed();
+    const repo = new RunnerRepository(prisma);
+    const p1 = await packageWithVersion(orgA, projectA1);
+    const p2 = await packageWithVersion(orgA, projectA1);
+    await addVersion(orgA, projectA1, p2.packageId);
+    await age('runner_artifact', [p1.artifactId], '50 days');
+    await age('runner_artifact', [p2.artifactId], '40 days');
+    const oldPath = await storagePathOf(p2.artifactId);
+
+    const swept = await repo.deleteUnneededVersionsOlderThan({ orgId: orgA, projectId: projectA1 }, daysAgo(30), 1);
+
+    expect(swept).toEqual([{ artifactId: p2.artifactId, storagePath: oldPath }]);
+  });
+
+  it('chooses only versions no job needs, so an old referenced version cannot stall the sweep at limit 1', async () => {
+    const { orgA, projectA1 } = await seed();
+    const repo = new RunnerRepository(prisma);
+    const { packageId, artifactId: referenced } = await packageWithVersion(orgA, projectA1);
+    await queueOn(repo, orgA, projectA1, referenced);
+    const eligible = await addVersion(orgA, projectA1, packageId);
+    await addVersion(orgA, projectA1, packageId);
+    await age('runner_artifact', [referenced], '50 days');
+    await age('runner_artifact', [eligible], '40 days');
+    const eligiblePath = await storagePathOf(eligible);
+
+    const swept = await repo.deleteUnneededVersionsOlderThan({ orgId: orgA, projectId: projectA1 }, daysAgo(30), 1);
+
+    expect(swept).toEqual([{ artifactId: eligible, storagePath: eligiblePath }]);
+  });
 
   it('cannot make a version current while the sweep holds it: the upload waits, then fails, and the package keeps its current version', async () => {
     const { orgA, projectA1 } = await seed();

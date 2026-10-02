@@ -477,11 +477,18 @@ export class RunnerRepository {
    * foreign key (23503) once the row is gone. Loud, and on that one request:
    * the sweep completes, and nothing is deleted or emptied silently.
    *
-   * THE SNAPSHOT-TO-LOCK WINDOW ITSELF IS ARGUED, NOT RED-VERIFIED. It lies
-   * inside statement 1, and nothing outside the database can park a statement
-   * between taking its snapshot and taking its row locks. The tests pin what
-   * can be reached: the lock held across both statements, by parking this
-   * transaction between them.
+   * WHAT IS PINNED, AND THE ONE THING ONLY ARGUED. The tests park this
+   * transaction between its statements. There, a writer that needs a lock on
+   * the version waits and fails ("cannot make a version current while the sweep
+   * holds it", "cannot point a job at a version while the sweep holds it"); and
+   * a commit that takes NO lock on the version, made in replica mode, rebuilds
+   * the state the race leaves, which statement 2's re-check must catch
+   * ("re-checks the current version in statement 2", "re-checks job references
+   * in statement 2"). Statement 1's own predicates are pinned at limit 1
+   * ("chooses only versions that are not current", "chooses only versions no
+   * job needs"). What remains argued is only the race's real interleaving: the
+   * commit landing INSIDE statement 1, between its snapshot and its row locks,
+   * which nothing outside the database can force.
    */
   async deleteUnneededVersionsOlderThan(
     scope: RunnerClaimScope,
