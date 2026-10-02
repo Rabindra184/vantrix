@@ -343,7 +343,10 @@ with its replacement count asserted:
     changing: 1s without a change ends it, and 5s from the reveal is the cap. A
     Summary whose `/stats` takes longer than a second to answer after the reveal
     is not held, and the reveal lands where the one-shot always did. The 1s was
-    measured against a ~75ms settle on a local API, not against a slow one.
+    measured against a ~75ms settle on a local API, not against a slow one. A
+    change made INSIDE a long task is no longer missed (see above); one made
+    after a full second of genuine stillness still is, which is the limit of
+    any settle window.
   - A scroll that raises none of `keepInPlace`'s four inputs — a scrollbar
     drag in Firefox fires no pointerdown on the content, and assistive
     technology scrolls without one — can be read as drift and pulled back if a
@@ -449,6 +452,39 @@ them, so its own corrections never cancel it), after 1s without a layout change,
 at a 5s cap, and with the effect; it scrolls and never re-focuses; and without a
 `ResizeObserver` the one-shot reveal is as it was.
 
+**AND THE CROSS-BROWSER RUN FOUND TWO HOLES IN IT, NEITHER OF WHICH A FAST
+MACHINE CAN SHOW.** Dispatched on `57c58a7`, it collected 537 and passed 531,
+with 5 skipped and ONE FLAKY: WebKit's `/errors` landing at 1280x720, `#errors`
+at a viewport ratio of 0.29, green on retry. The first fix written for it raised
+the idle window from 1s to 3s, and it was wrong; the trace said why. Every
+response was in by +50ms, and Playwright's own first look at `#errors` came
+**two seconds** after it asked — the page had run a two-second TASK. A task that
+moves the layout and outlasts `SETTLE_IDLE_MS` leaves the idle timer OVERDUE,
+and WebKit runs that timer before the rendering step that would have delivered
+the `ResizeObserver` callback, so `stop()` disconnected the observer with the
+shift unreported. A longer window only narrows that race. **A SILENCE MEASURED
+ACROSS A BLOCKED THREAD IS NOT STILLNESS**: both timers now MEASURE before they
+decide (`getBoundingClientRect` forces the layout the task produced), the idle
+timer corrects a drift and waits again instead of stopping, and the cap makes
+one last correction. Chromium cannot reproduce it at all — after a long task its
+scheduler renders before it runs an overdue timer.
+
+**SO THE RACE IS MADE ON DEMAND, AND THAT EXPOSED THE SECOND HOLE.** The new
+browser case grows the column above the target 400px inside a 1.5s task, 600ms
+after the reveal — inside the idle window, so the shift's timer is due before
+any idle deadline, and the hold leaves the idle timer overdue however slow the
+machine. Against the old keeper WebKit left `#errors` at **top 789 of 720**; the
+same shift with no hold was corrected. The first version made the shift in the
+reveal's very next task, and with the race fixed it still failed ONCE IN NINE,
+on Firefox, at a ratio of **0.96**: `#errors` is the last thing on the Summary,
+so the reveal stops at the page bottom with the target short of its rest, and
+when its rows arrive the section grows DOWNWARD — its top never moves, so a
+keeper watching only the top let its bottom slide past the fold. A scroll the
+page bottom clamped is now followed when the page grows; growth under an
+UNCLAMPED target (a table below it) is still left alone, and that pair is
+asserted both ways. The browser case waits 600ms so that a failure there is the
+race and not this, which `AppShell.test.tsx` pins directly.
+
 **THE LANDING IS ASSERTED AS "FULLY IN VIEW", NOT "IN THE UPPER HALF", AND THE
 REASON IS THE PAGE.** The errors section is the last thing on the Summary, so
 the page bottom clamps the scroll before the section can reach the top: top 407
@@ -551,6 +587,12 @@ COUNT ASSERTED:**
                                                          the filter case without its workaround
                same, 1440x900 only                       ratio 0.0298 (nine pixels visible)
                wheel not an input, six runs              the reader-wins case 6 of 6
+  keeper       idle timer stops on silence again         the unreported-shift case alone
+               cap stops with no last correction         the cap-correction case alone
+               a clamped scroll not followed             the grows-downward case alone
+               every growth followed (clamped = true)    the unclamped case alone
+               the keeper as CI ran it (WebKit)          the blocked-thread e2e: top 789, and
+                                                         ratio 0.98 / 0 on two more runs
   charts       each transform's flag ignored             that transform's window cases + that
                                                          chart's seam case (7 transforms)
                errors "always window"                    the run-sentence pair
