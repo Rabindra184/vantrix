@@ -33,6 +33,7 @@ import {
   StatsResponseSchema,
   StreamAcceptedSchema,
   StreamRejectedSchema,
+  RunnerStartByPackageRequestSchema,
   RunnerStartMetadataSchema,
   RunnerStartResponseSchema,
   RunnerJobListResponseSchema,
@@ -116,6 +117,7 @@ const SOURCE: Record<string, ZodTypeAny> = {
   // came to be absent from the document while it went on describing a
   // "runner" scope a token can hold.
   RunnerStartMetadata: RunnerStartMetadataSchema,
+  RunnerStartByPackageRequest: RunnerStartByPackageRequestSchema,
   RunnerStartResponse: RunnerStartResponseSchema,
   RunnerJobListResponse: RunnerJobListResponseSchema,
   RunnerJobActionResponse: RunnerJobActionResponseSchema,

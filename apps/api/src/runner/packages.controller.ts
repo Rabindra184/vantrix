@@ -37,7 +37,7 @@ import { Scopes } from '../auth/scopes.decorator.js';
 import { SessionOnlyGuard } from '../auth/session-only.guard.js';
 import { badRequest, conflict, notFound, uuidParam } from '../common/validation.js';
 import type { AppConfig } from '../config.js';
-import { extensionFor, inspectArtifact, sanitizeFilename } from './package-files.js';
+import { extensionFor, inspectArtifact, packageNotFound, sanitizeFilename } from './package-files.js';
 import { readRawUpload } from './raw-upload.js';
 import { readRunnerMultipart } from './runner.multipart.js';
 
@@ -315,10 +315,6 @@ export class PackagesController {
     if (!row) throw packageNotFound(id);
     return toPackage(row);
   }
-}
-
-function packageNotFound(id: string) {
-  return notFound(`No package ${id} in this project.`, 'List this project’s packages with GET /v1/projects/{slug}/packages.');
 }
 
 function nameTaken(name: string) {

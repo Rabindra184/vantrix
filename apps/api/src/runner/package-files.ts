@@ -1,7 +1,7 @@
 import path from 'node:path';
 import type { GatlingJarFacts } from '@perfportal/core';
 import { readGatlingJar } from '@perfportal/storage';
-import { badRequest } from '../common/validation.js';
+import { badRequest, notFound } from '../common/validation.js';
 
 export function sanitizeFilename(filename: string): string {
   return path.basename(filename).replace(/[^\w.\- ]/g, '_') || 'gatling-artifact';
@@ -71,4 +71,11 @@ export function assertSimulationListed(simulations: readonly string[] | null, si
     `This jar declares no simulation called "${simulationClass}".`,
     `Use one of the simulations it does declare: ${simulations.join(', ')}.`,
   );
+}
+
+/** One 404 for a package this project does not have (a wrong id, another
+ *  project's, or one deleted) — shared by the package routes and the runner's
+ *  start, so the two cannot drift into describing one absence two ways. */
+export function packageNotFound(id: string) {
+  return notFound(`No package ${id} in this project.`, 'List this project’s packages with GET /v1/projects/{slug}/packages.');
 }

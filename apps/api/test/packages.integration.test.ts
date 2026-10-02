@@ -248,25 +248,36 @@ function chunkedPut(
  *
  * Nothing here sleeps: the handler announces that it is parked, the client
  * destroys its socket, the server-side request reports `close`, and only then
- * is the handler released. Resolves with the server-side response, which is
- * `writableEnded` once the handler has answered (or tried to, on a socket
- * nobody is reading); never resolving is the hang.
+ * is the handler released. `settled` resolves with what the handler ANSWERED —
+ * the server-side response's status, and the body it handed to `end` — once
+ * that response is `writableEnded` (the handler answered, or tried to, on a
+ * socket nobody is reading); never resolving is the hang. The answer is read on
+ * the SERVER because the client is gone and can read nothing.
  */
 async function abortWhileParked(
   method: 'PUT' | 'POST',
   pathAndQuery: string,
   headers: Record<string, string>,
   park: (parked: () => void, gate: Promise<void>) => void,
-): Promise<{ settled: () => Promise<void> }> {
+): Promise<{ settled: () => Promise<{ status: number; body: { code?: string } }> }> {
   const server = ctx.app.getHttpServer() as Server;
   let serverReq: IncomingMessage | undefined;
   let serverRes: ServerResponse | undefined;
+  let answered = '';
   const watch = (incoming: IncomingMessage, outgoing: ServerResponse): void => {
     // Express rewrites req.url as it routes, so the request is told apart by its
     // method: it is the only one of that method in flight.
     if (incoming.method === method) {
       serverReq = incoming;
       serverRes = outgoing;
+      // Express's send() hands the whole body to end() in one call; keep a copy
+      // of it on the way through.
+      const end = outgoing.end.bind(outgoing) as (...args: unknown[]) => ServerResponse;
+      outgoing.end = ((...args: unknown[]) => {
+        const [chunk] = args;
+        if (typeof chunk === 'string' || Buffer.isBuffer(chunk)) answered += chunk.toString();
+        return end(...args);
+      }) as ServerResponse['end'];
     }
   };
   server.on('request', watch);
@@ -298,6 +309,7 @@ async function abortWhileParked(
         server.off('request', watch);
         server.close();
       }
+      return { status: serverRes!.statusCode, body: JSON.parse(answered || '{}') as { code?: string } };
     },
   };
 }
@@ -398,8 +410,12 @@ describe('POST /v1/projects/:slug/packages', () => {
       },
     );
 
-    await aborted.settled();
+    const answer = await aborted.settled();
 
+    // The handler REFUSED the request, rather than merely returning: the guard's
+    // own 400, not a 500 from a reader that tripped over a destroyed stream.
+    expect(answer.status, JSON.stringify(answer.body)).toBe(400);
+    expect(answer.body.code).toBe('UPLOAD_ABORTED');
     expect(await filesOnDisk()).toEqual([]);
     const listed = await request(ctx.app.getHttpServer()).get(PACKAGES).set(asSession());
     expect((listed.body as { items: Package[] }).items).toEqual([]);
@@ -587,8 +603,10 @@ describe('PUT /v1/projects/:slug/packages/:packageId/content', () => {
       },
     );
 
-    await aborted.settled();
+    const answer = await aborted.settled();
 
+    expect(answer.status, JSON.stringify(answer.body)).toBe(400);
+    expect(answer.body.code).toBe('UPLOAD_ABORTED');
     // An aborted upload must not leave the empty file the handler opened for it
     // (and so must not have held its descriptor open either).
     expect(await filesOnDisk()).toEqual([]);

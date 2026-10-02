@@ -7,22 +7,41 @@ import {
   RunnerJobActionResponseSchema,
   RunnerJobListResponseSchema,
   RunnerJobLogsResponseSchema,
+  RunnerStartByPackageRequestSchema,
   RunnerStartMetadataSchema,
   RunnerStartResponseSchema,
+  type RunnerArtifactKind,
   type RunnerJobActionResponse,
   type RunnerJobListResponse,
   type RunnerJobLogsResponse,
+  type RunnerStartMetadata,
   type RunnerStartResponse,
 } from '@perfportal/contracts';
-import type { GatlingJarFacts } from '@perfportal/core';
-import { ProjectRepository, RunnerRepository, type ProjectRecord } from '@perfportal/persistence';
-import { readGatlingJar } from '@perfportal/storage';
+import {
+  PackageNameTakenError,
+  PackageRepository,
+  ProjectRepository,
+  RunnerRepository,
+  type PackageRecord,
+  type PackageVersionRecord,
+  type ProjectRecord,
+  type RunnerArtifactRecord,
+  type RunnerJobRecord,
+  type RunnerJobWithArtifact,
+} from '@perfportal/persistence';
 import { CONFIG } from '../auth/auth.module.js';
 import { Scopes } from '../auth/scopes.decorator.js';
-import { badRequest, uuidParam } from '../common/validation.js';
+import { badRequest, conflict, notFound, uuidParam } from '../common/validation.js';
 import type { AppConfig } from '../config.js';
+import {
+  assertSimulationListed,
+  extensionFor,
+  inspectArtifact,
+  packageNameFromFilename,
+  packageNotFound,
+  sanitizeFilename,
+} from './package-files.js';
 import { readRunnerMultipart } from './runner.multipart.js';
-import { notFound } from '../common/validation.js';
 
 @Controller('/v1/projects/:slug/runner')
 export class RunnerController {
@@ -30,111 +49,203 @@ export class RunnerController {
     @Inject(CONFIG) private readonly config: AppConfig,
     private readonly projects: ProjectRepository,
     private readonly runner: RunnerRepository,
+    private readonly packages: PackageRepository,
   ) {}
 
   @Post('runs')
   @Scopes('runner')
-  async start(
-    @Param('slug') slug: string,
-    @Req() req: Request,
-  ): Promise<RunnerStartResponse> {
+  async start(@Param('slug') slug: string, @Req() req: Request): Promise<RunnerStartResponse> {
     const tenant = req.tenant!;
     const project = await this.resolveProject(tenant.orgId, tenant.projectId, slug);
+    // Two bodies, one route (the spec): JSON starts from a package with no
+    // upload; multipart is the upload-and-start every existing caller sends.
+    // req.is reads Content-Type; Express's json() has parsed a JSON body
+    // into req.body by now, and left a multipart one untouched for busboy.
+    if (req.is('application/json')) return this.startFromPackage(req, project);
+    return this.startFromUpload(req, project);
+  }
 
+  /**
+   * A run from a package's CURRENT version, as this request reads it. Nothing
+   * is uploaded and nothing is written: the job is queued on the version row
+   * the package points at.
+   */
+  private async startFromPackage(req: Request, project: ProjectRecord): Promise<RunnerStartResponse> {
+    const tenant = req.tenant!;
+    // `.strict()`: a JSON body carrying artifactKind or gatlingVersion is a
+    // caller who thinks it is uploading, and is told so rather than ignored.
+    const parsed = RunnerStartByPackageRequestSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw badRequest(
+        'INVALID_RUNNER_METADATA',
+        `Invalid runner start: ${describeIssues(parsed.error.issues, 'body')}`,
+        'Send a JSON body with packageId, name and simulationClass to start from a package, or POST ' +
+          'multipart/form-data with a "metadata" part and an "artifact" file to upload one. See ' +
+          '/v1/openapi.json for the full schema.',
+      );
+    }
+    const body = parsed.data;
+
+    const pkg = await this.packages.find(tenant.orgId, project.id, body.packageId);
+    if (!pkg) throw packageNotFound(body.packageId);
+    if (pkg.current === null) {
+      throw conflict(
+        'PACKAGE_HAS_NO_FILE',
+        `Package "${pkg.name}" has no file to run yet.`,
+        'Upload one with PUT /v1/projects/{slug}/packages/{packageId}/content, then start the run.',
+      );
+    }
+    assertSimulationListed(pkg.current.simulations, body.simulationClass);
+
+    const created = await this.runner.createQueued({
+      orgId: tenant.orgId,
+      projectId: project.id,
+      artifactId: pkg.current.artifactId,
+      job: { id: randomUUID(), requestedBy: tenant.tokenId, ...jobFields(body) },
+    });
+    // Null means ONE thing: the package was deleted between the read above and
+    // the queue (a delete holds the package FOR UPDATE, which wins against the
+    // start's FOR SHARE). Every other miss throws, and surfaces as itself.
+    if (created === null) throw packageNotFound(body.packageId);
+    return startedResponse(created);
+  }
+
+  /**
+   * The upload-and-start: the file becomes a VERSION of a package — the one the
+   * metadata's "package" names, or the one its filename stem names — and the
+   * job is queued on that version.
+   *
+   * ═══ WHO REMOVES THE FILE, AND WHEN ═══
+   *
+   * Until a version row names the file, every failure removes it: nothing else
+   * knows it exists. From the moment `addVersion` commits, the row does, so no
+   * failure after that removes it — the version is a real one of its package
+   * whether or not a job ever runs it, and a retry of the same bytes reuses it.
+   * The one file removed after that point is the DUPLICATE, when the package
+   * already held these bytes and `addVersion` made the earlier version current
+   * instead of storing this one.
+   */
+  private async startFromUpload(req: Request, project: ProjectRecord): Promise<RunnerStartResponse> {
+    const tenant = req.tenant!;
     const artifactId = randomUUID();
-    const jobId = randomUUID();
     const dir = path.resolve(this.config.runner.artifactDir, tenant.orgId, project.id);
     await mkdir(dir, { recursive: true });
     const tmpPath = path.join(dir, `${artifactId}.part`);
+    // readRunnerMultipart removes its own partial file when it fails.
     const upload = await readRunnerMultipart(req, tmpPath, this.config.runner.maxArtifactBytes, {
       fileRequired: true,
     });
 
-    let rawMetadata: unknown;
+    let finalPath: string | null = null;
+    let filed: { metadata: RunnerStartMetadata; packageId: string; version: PackageVersionRecord; reused: boolean };
     try {
-      rawMetadata = parseMetadata(upload.metadataRaw);
-    } catch (err) {
-      await unlink(tmpPath).catch(() => undefined);
-      throw err;
-    }
-
-    const metadata = RunnerStartMetadataSchema.safeParse(rawMetadata);
-    if (!metadata.success) {
-      await unlink(tmpPath).catch(() => undefined);
-      throw badRequest(
-        'INVALID_RUNNER_METADATA',
-        `Invalid runner metadata: ${metadata.error.issues.map((i) => `${i.path.join('.')} ${i.message}`).join('; ')}`,
-        'Send metadata with name, artifactKind and simulationClass. See /v1/openapi.json for the full schema.',
-      );
-    }
-
-    const filename = sanitizeFilename(upload.filename);
-    let ext: string;
-    try {
-      ext = extensionFor(filename, metadata.data.artifactKind);
-    } catch (err) {
-      await unlink(tmpPath).catch(() => undefined);
-      throw err;
-    }
-    const relativeStoragePath = path.join(tenant.orgId, project.id, `${artifactId}${ext}`);
-    const finalPath = path.resolve(this.config.runner.artifactDir, relativeStoragePath);
-    try {
+      const metadata = parseStartMetadata(upload.metadataRaw);
+      const filename = sanitizeFilename(upload.filename);
+      const ext = extensionFor(filename, metadata.artifactKind);
+      const storagePath = path.join(tenant.orgId, project.id, `${artifactId}${ext}`);
+      finalPath = path.resolve(this.config.runner.artifactDir, storagePath);
       await rename(tmpPath, finalPath);
+      const facts = await inspectArtifact(finalPath, metadata.artifactKind);
+      // EVERYTHING THAT CAN REFUSE THE FILE HAPPENS BEFORE A PACKAGE IS FOUND OR
+      // MADE: a jar that is not a jar, or one that does not declare the class,
+      // must not leave behind a package named after it.
+      assertSimulationListed(facts.simulations, metadata.simulationClass);
+
+      const pkg = await this.packageForUpload(
+        tenant.orgId,
+        project.id,
+        metadata.package ?? packageNameFromFilename(filename),
+        metadata.artifactKind,
+      );
+      const added = await this.packages.addVersion(tenant.orgId, project.id, pkg.id, {
+        artifactId,
+        filename,
+        // What the jar's own manifest says, when it says anything; otherwise
+        // (a bundle, or a jar with no Gatling-Version) what the requester said.
+        gatlingVersion: facts.gatlingVersion ?? metadata.gatlingVersion ?? null,
+        sha256: upload.sha256,
+        bytes: upload.bytes,
+        simulations: facts.simulations,
+        storagePath,
+      });
+      // Deleted between the lookup and the version: no row was made, so the
+      // file is still only this request's, and the catch removes it.
+      if (added === null) throw packageNotFound(pkg.id);
+      filed = { metadata, packageId: pkg.id, version: added.version, reused: added.reused };
     } catch (err) {
       await unlink(tmpPath).catch(() => undefined);
+      if (finalPath !== null) await unlink(finalPath).catch(() => undefined);
       throw err;
     }
 
-    if (metadata.data.artifactKind === 'gatling_jar') {
+    // The package already held these bytes: the EARLIER version was made current
+    // and is the one the job runs, and the file just written is the duplicate.
+    // Its row was never created, so nothing names it.
+    if (filed.reused && finalPath !== null) await unlink(finalPath).catch(() => undefined);
+
+    const created = await this.runner.createQueued({
+      orgId: tenant.orgId,
+      projectId: project.id,
+      // THE VERSION THIS UPLOAD MADE CURRENT, never the package's current as
+      // anything reads it now: a concurrent upload may already have replaced
+      // it, and a run must start from the jar this request carried.
+      artifactId: filed.version.artifactId,
+      job: { id: randomUUID(), requestedBy: tenant.tokenId, ...jobFields(filed.metadata) },
+    });
+    // A package delete won the race after addVersion committed. The file is
+    // deliberately NOT removed here: the version row still names it, and the
+    // delete — which locked the package after that row existed — handed its
+    // storage path back to the DELETE handler, which removes it. Removing it
+    // here too would only race that handler for the same file.
+    if (created === null) throw packageNotFound(filed.packageId);
+    return startedResponse(created);
+  }
+
+  /**
+   * The package an upload-and-start files its file in, created with the
+   * upload's kind when the project has none by that name.
+   *
+   * THE NAME IS MATCHED BY THE DATABASE, NEVER HERE. The schema has trimmed it,
+   * and `findByName` compares lower(name) — the expression the unique index is
+   * declared on — so " checkout " lands in "Checkout", and a comparison here
+   * could only disagree with the index that decides what a duplicate is.
+   *
+   * A package this creates for an upload that then fails (storing its version,
+   * say) is left, empty: the next upload of that name lands in it, which is what
+   * would have happened anyway.
+   */
+  private async packageForUpload(
+    orgId: string,
+    projectId: string,
+    name: string,
+    kind: RunnerArtifactKind,
+  ): Promise<PackageRecord> {
+    const byName = (): Promise<PackageRecord | null> => this.packages.findByName(orgId, projectId, name);
+    let pkg = await byName();
+    if (pkg === null) {
       try {
-        await assertJarDeclaresSimulation(finalPath, metadata.data.simulationClass);
+        pkg = await this.packages.create({ id: randomUUID(), orgId, projectId, name, kind });
       } catch (err) {
-        await unlink(finalPath).catch(() => undefined);
-        throw err;
+        if (!(err instanceof PackageNameTakenError)) throw err;
+        // Another start (or a person) took the name between the lookup and the
+        // insert. That package is this one.
+        pkg = await byName();
+        // Taken and then renamed or deleted again within this one request. A
+        // 500 is the honest answer, and its own advice — retry — is the right
+        // one: the next attempt finds or creates whatever holds the name then.
+        if (pkg === null) {
+          throw new Error(`package "${name}" was created by a concurrent request and then could not be found`);
+        }
       }
     }
-
-    let created: Awaited<ReturnType<RunnerRepository['createQueued']>>;
-    try {
-      created = await this.runner.createQueued({
-        artifact: {
-          id: artifactId,
-          orgId: tenant.orgId,
-          projectId: project.id,
-          name: metadata.data.name,
-          filename,
-          kind: metadata.data.artifactKind,
-          simulationClass: metadata.data.simulationClass,
-          gatlingVersion: metadata.data.gatlingVersion ?? null,
-          sha256: upload.sha256,
-          bytes: upload.bytes,
-          storagePath: relativeStoragePath,
-        },
-        job: {
-          id: jobId,
-          requestedBy: tenant.tokenId,
-          environment: metadata.data.environment ?? null,
-          branch: metadata.data.branch ?? null,
-          commitSha: metadata.data.commitSha ?? null,
-          testSlug: metadata.data.test ?? null,
-          javaOptions: metadata.data.javaOptions ?? null,
-          systemProperties: metadata.data.systemProperties,
-        },
-      });
-    } catch (err) {
-      await unlink(finalPath).catch(() => undefined);
-      throw err;
+    if (pkg.kind !== kind) {
+      throw badRequest(
+        'PACKAGE_KIND_MISMATCH',
+        `Package "${pkg.name}" holds ${pkg.kind}; this upload is a ${kind}.`,
+        `Name a package that holds ${kind} files in the metadata's "package" field, or a new name to create one.`,
+      );
     }
-
-    return RunnerStartResponseSchema.parse({
-      artifact: toArtifact(created.artifact),
-      job: toJob(created.job),
-      next: {
-        reportUrl: created.job.runId === null ? null : `/runs/${created.job.runId}`,
-        runner:
-          'Queued on this on-prem node. The local runner process should claim this job, start Gatling, stream simulation.log into /v1/runs/live, and attach the resulting run id.',
-      },
-    });
+    return pkg;
   }
 
   @Get('runs')
@@ -147,7 +258,7 @@ export class RunnerController {
     const project = await this.resolveProject(tenant.orgId, tenant.projectId, slug);
     const rows = await this.runner.listRecent(tenant.orgId, project.id);
     return RunnerJobListResponseSchema.parse({
-      items: rows.map((row) => ({ artifact: toArtifact(row.artifact), job: toJob(row.job) })),
+      items: rows.map(present),
     });
   }
 
@@ -164,7 +275,7 @@ export class RunnerController {
     if (!row)
       throw notFound(`No cancellable runner job ${jobId} in this project.`, 'Only a queued or running job can be cancelled. GET /v1/projects/{slug}/runner/runs '
         + 'lists this project\u2019s jobs with their status.');
-    return RunnerJobActionResponseSchema.parse({ artifact: toArtifact(row.artifact), job: toJob(row.job) });
+    return RunnerJobActionResponseSchema.parse(present(row));
   }
 
   @Get('runs/:jobId/logs')
@@ -197,17 +308,30 @@ export class RunnerController {
   ): Promise<RunnerJobActionResponse> {
     const tenant = req.tenant!;
     const project = await this.resolveProject(tenant.orgId, tenant.projectId, slug);
-    const row = await this.runner.retry({
+    const result = await this.runner.retry({
       id: randomUUID(),
       orgId: tenant.orgId,
       projectId: project.id,
       sourceJobId: jobId,
       requestedBy: tenant.tokenId,
     });
-    if (!row)
-      throw notFound(`No retryable runner job ${jobId} in this project.`, 'Only a failed or cancelled job can be retried. GET /v1/projects/{slug}/runner/runs '
-        + 'lists this project\u2019s jobs with their status.');
-    return RunnerJobActionResponseSchema.parse({ artifact: toArtifact(row.artifact), job: toJob(row.job) });
+    switch (result.kind) {
+      case 'retried':
+        return RunnerJobActionResponseSchema.parse(present(result.row));
+      case 'not_retryable':
+        throw notFound(`No retryable runner job ${jobId} in this project.`, 'Only a failed or cancelled job can be retried. GET /v1/projects/{slug}/runner/runs '
+          + 'lists this project\u2019s jobs with their status.');
+      case 'package_deleted':
+        // A retry runs the VERSION the failed job ran, and that version's file
+        // went with its package. Nothing here may suggest that a new package of
+        // the same name brings it back: it does not, the job names the old
+        // package's version.
+        throw conflict(
+          'PACKAGE_DELETED',
+          'The package this job ran was deleted, so it cannot run again.',
+          'Start a new run from a package with POST /v1/projects/{slug}/runner/runs.',
+        );
+    }
   }
 
   private async resolveProject(
@@ -223,9 +347,11 @@ export class RunnerController {
   }
 }
 
-function parseMetadata(raw: string): unknown {
+/** The multipart "metadata" part, parsed and validated. */
+function parseStartMetadata(raw: string): RunnerStartMetadata {
+  let json: unknown;
   try {
-    return JSON.parse(raw);
+    json = JSON.parse(raw);
   } catch {
     throw badRequest(
       'INVALID_RUNNER_METADATA',
@@ -233,77 +359,59 @@ function parseMetadata(raw: string): unknown {
       'Send a JSON "metadata" multipart field before the artifact file.',
     );
   }
+  const parsed = RunnerStartMetadataSchema.safeParse(json);
+  if (!parsed.success) {
+    throw badRequest(
+      'INVALID_RUNNER_METADATA',
+      `Invalid runner metadata: ${describeIssues(parsed.error.issues, 'metadata')}`,
+      'Send metadata with name, artifactKind and simulationClass. See /v1/openapi.json for the full schema.',
+    );
+  }
+  return parsed.data;
 }
 
-function extensionFor(filename: string, kind: string): string {
-  const lower = filename.toLowerCase();
-  const ext = lower.endsWith('.tar.gz') ? '.tar.gz' : path.extname(lower);
-  const allowed = kind === 'gatling_jar' ? new Set(['.jar']) : new Set(['.zip', '.tgz', '.tar.gz']);
-  if (ext === '') return kind === 'gatling_jar' ? '.jar' : '.zip';
-  if (allowed.has(ext)) return ext;
-  throw badRequest(
-    'UNSUPPORTED_RUNNER_ARTIFACT_EXTENSION',
-    `Runner artifact "${filename}" is not a supported ${kind} upload.`,
-    kind === 'gatling_jar'
-      ? 'Upload a .jar file, or choose the runnable bundle artifact type.'
-      : 'Upload a .zip, .tgz, or .tar.gz runnable bundle, or choose the Gatling jar artifact type.',
-  );
-}
-
-function sanitizeFilename(filename: string): string {
-  return path.basename(filename).replace(/[^\w.\- ]/g, '_') || 'gatling-artifact';
+/** A schema's issues as one sentence; a root-level issue (an unrecognised key,
+ *  say) is named after what it was found in rather than printed with no path. */
+function describeIssues(
+  issues: readonly { path: readonly (string | number)[]; message: string }[],
+  root: string,
+): string {
+  return issues.map((i) => `${i.path.join('.') || root} ${i.message}`).join('; ');
 }
 
 /**
- * Refuses an upload the runner could never execute, while the requester is
- * still looking at the form.
- *
- * ═══ THE COST OF NOT DOING THIS IS NINETY SECONDS AND A WRONG ANSWER ═══
- *
- * A mistyped simulation class is only discovered when Gatling exits without
- * producing `simulation.log`, which the runner reports as
- * SIMULATION_LOG_NOT_FOUND — a message that also covers a broken artifact, a
- * missing runtime and a dead JVM. The requester gets it minutes later, in a
- * job log, and it does not name the typo.
- *
- * A jar packaged by Gatling's own tooling states its simulations in the
- * manifest (`Gatling-Simulations`), which is exactly what Gatling Enterprise
- * reads to list them for you. Checking against that turns the whole class of
- * mistake into an immediate 400 that names the real classes.
- *
- * ═══ ONLY WHEN THE JAR ACTUALLY SAYS ═══
- *
- * A hand-rolled shadow jar carries no such header, and an empty list is NOT
- * evidence of no simulations — it means nobody wrote the header. Validating
- * against an absent list would reject perfectly good fat jars, so silence here
- * means "cannot check", never "wrong".
- *
- * Being unreadable as a zip IS decided, though, and decided against: that jar
- * can never run, and saying so now beats a queued job dying on it later.
+ * The job's own fields, from either start's body: ONE spelling of the mapping,
+ * so the JSON start and the upload-and-start cannot drift into carrying
+ * different metadata — the trap a declared test fell into once across four
+ * submit paths (CLAUDE.md, the test-per-configuration entry).
  */
-async function assertJarDeclaresSimulation(
-  jarPath: string,
-  simulationClass: string,
-): Promise<void> {
-  let facts: GatlingJarFacts;
-  try {
-    facts = await readGatlingJar(jarPath);
-  } catch (err) {
-    throw badRequest(
-      'RUNNER_ARTIFACT_NOT_A_JAR',
-      `The uploaded file could not be read as a jar: ${err instanceof Error ? err.message : String(err)}`,
-      'Upload a .jar built by `gradlew gatlingEnterprisePackage` (or an equivalent Maven/sbt packager), or choose the runnable bundle artifact type.',
-    );
-  }
+function jobFields(
+  meta: Pick<
+    RunnerStartMetadata,
+    'name' | 'simulationClass' | 'environment' | 'branch' | 'commitSha' | 'test' | 'javaOptions' | 'systemProperties'
+  >,
+) {
+  return {
+    name: meta.name,
+    simulationClass: meta.simulationClass,
+    environment: meta.environment ?? null,
+    branch: meta.branch ?? null,
+    commitSha: meta.commitSha ?? null,
+    testSlug: meta.test ?? null,
+    javaOptions: meta.javaOptions ?? null,
+    systemProperties: meta.systemProperties,
+  };
+}
 
-  if (facts.simulations.length === 0) return;
-  if (facts.simulations.includes(simulationClass)) return;
-
-  throw badRequest(
-    'SIMULATION_CLASS_NOT_IN_ARTIFACT',
-    `This jar declares no simulation called "${simulationClass}".`,
-    `Use one of the simulations it does declare: ${facts.simulations.join(', ')}.`,
-  );
+function startedResponse(created: RunnerJobWithArtifact): RunnerStartResponse {
+  return RunnerStartResponseSchema.parse({
+    ...present(created),
+    next: {
+      reportUrl: created.job.runId === null ? null : `/runs/${created.job.runId}`,
+      runner:
+        'Queued on this on-prem node. The local runner process should claim this job, start Gatling, stream simulation.log into /v1/runs/live, and attach the resulting run id.',
+    },
+  });
 }
 
 async function readLogTail(
@@ -330,23 +438,23 @@ async function readLogTail(
   }
 }
 
-function toArtifact(artifact: {
-  id: string;
-  name: string;
-  filename: string;
-  kind: string;
-  simulationClass: string;
-  gatlingVersion: string | null;
-  sha256: string;
-  bytes: number;
-  createdAt: Date;
-}) {
+/** A job and the version it runs, as the wire carries them. */
+function present(row: RunnerJobWithArtifact) {
+  return { artifact: toArtifact(row.artifact, row.job), job: toJob(row.job, row.artifact) };
+}
+
+/**
+ * A version as RunnerArtifactSchema describes it. Its name and class are the
+ * JOB's: one version serves many jobs, each naming its own run and class, so
+ * the version row carries neither.
+ */
+function toArtifact(artifact: RunnerArtifactRecord, job: RunnerJobRecord) {
   return {
     id: artifact.id,
-    name: artifact.name,
+    name: job.name,
     filename: artifact.filename,
     kind: artifact.kind,
-    simulationClass: artifact.simulationClass,
+    simulationClass: job.simulationClass,
     gatlingVersion: artifact.gatlingVersion,
     sha256: artifact.sha256,
     bytes: artifact.bytes,
@@ -354,22 +462,8 @@ function toArtifact(artifact: {
   };
 }
 
-function toJob(job: {
-  id: string;
-  artifactId: string;
-  runId: string | null;
-  status: string;
-  requestedBy: string;
-  environment: string | null;
-  branch: string | null;
-  commitSha: string | null;
-  testSlug: string | null;
-  javaOptions: string | null;
-  systemProperties: Record<string, string>;
-  error: { code: string; message: string; remediation: string } | null;
-  createdAt: Date;
-  updatedAt: Date;
-}) {
+/** The package comes from the VERSION: null once that package was deleted. */
+function toJob(job: RunnerJobRecord, artifact: RunnerArtifactRecord) {
   return {
     id: job.id,
     artifactId: job.artifactId,
@@ -380,6 +474,10 @@ function toJob(job: {
     branch: job.branch,
     commitSha: job.commitSha,
     testSlug: job.testSlug,
+    name: job.name,
+    simulationClass: job.simulationClass,
+    packageId: artifact.packageId,
+    packageName: artifact.packageName,
     javaOptions: job.javaOptions,
     systemProperties: job.systemProperties,
     error: job.error,
