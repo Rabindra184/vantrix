@@ -61,8 +61,15 @@ ALTER TABLE "run" ADD CONSTRAINT "run_package_id_fkey" FOREIGN KEY ("package_id"
 -- One package per project per filename stem IGNORING CASE and kind, because a
 -- package name is unique per project ignoring case and the backfill must not
 -- be able to propose two that are not. The stem is the filename without its
--- extension (a .tar.gz counts as one), at most 112 characters; the package is
+-- extension (a .tar.gz counts as one), at most 112 characters, with the spaces
+-- either end trimmed, and "package" when nothing is left; the package is
 -- named after the stem of the group's EARLIEST upload.
+--
+-- THE SAME STEM THE API COMPUTES (packageNameFromFilename, in
+-- apps/api/src/runner/package-files.ts), the trim included: "my file .jar"
+-- is "my file" there, so it must be here, or the next upload of that filename
+-- would miss the package made for its predecessors and start a second one.
+-- Both stem expressions below (the grouping and the join) spell it.
 --
 -- The one case a name can still collide is the same stem in the two kinds (a
 -- jar and a bundle both called load): the later group takes a " (2)" suffix,
@@ -85,7 +92,7 @@ SELECT gen_random_uuid() AS id, s.org_id, s.project_id, s.kind, lower(s.stem) AS
        min(s.created_at) AS first_at, max(s.created_at) AS last_at
 FROM (
   SELECT org_id, project_id, kind, created_at,
-         COALESCE(NULLIF(left(regexp_replace(filename, '(\.tar\.gz|\.[^.]+)$', '', 'i'), 112), ''), 'package') AS stem
+         COALESCE(NULLIF(btrim(left(regexp_replace(filename, '(\.tar\.gz|\.[^.]+)$', '', 'i'), 112)), ''), 'package') AS stem
   FROM runner_artifact
   WHERE package_id IS NULL
 ) s
@@ -106,7 +113,7 @@ FROM package_backfill b
 WHERE a.package_id IS NULL
   AND b.project_id = a.project_id
   AND b.kind = a.kind
-  AND b.stem_key = lower(COALESCE(NULLIF(left(regexp_replace(a.filename, '(\.tar\.gz|\.[^.]+)$', '', 'i'), 112), ''), 'package'));
+  AND b.stem_key = lower(COALESCE(NULLIF(btrim(left(regexp_replace(a.filename, '(\.tar\.gz|\.[^.]+)$', '', 'i'), 112)), ''), 'package'));
 
 UPDATE package p
 SET current_artifact_id = (

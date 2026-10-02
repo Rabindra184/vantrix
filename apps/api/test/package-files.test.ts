@@ -9,6 +9,13 @@ describe('a package name from a filename', () => {
     ['bundle.zip', 'bundle'],
     ['archive', 'archive'],
     ['.jar', 'package'],
+    // The rows packages/persistence/test/package-backfill.integration.test.ts
+    // restates: the migration's backfill has to name each of these exactly as
+    // this function does, so the same inputs are pinned on both sides.
+    ['my file .jar', 'my file'],
+    ['nightly-load', 'nightly-load'],
+    [`${'x'.repeat(130)}.jar`, 'x'.repeat(112)],
+    [`${'y'.repeat(111)} tail.jar`, 'y'.repeat(111)],
   ])('%s → %s', (filename, name) => {
     expect(packageNameFromFilename(filename)).toBe(name);
   });

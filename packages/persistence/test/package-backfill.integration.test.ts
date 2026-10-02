@@ -183,6 +183,46 @@ describe('the backfill that made packages of existing artifacts', () => {
     });
   });
 
+  /**
+   * ═══ THE BACKFILL'S STEM IS THE API'S STEM ═══
+   *
+   * A package made here is found again by the next upload of the same filename
+   * only if both name it alike — and they did not: `left(…, 112)` kept the
+   * space before the extension that the API's `.trim()` drops, so "my file
+   * .jar" became "my file " here and "my file" there, and a later upload of
+   * that very file missed the package and started a second one.
+   *
+   * THE EXPECTED NAMES ARE `packageNameFromFilename`'S, RESTATED rather than
+   * imported (apps/api/src/runner/package-files.ts): this package cannot import
+   * from apps/api — it is outside this package's rootDir, and apps/api depends
+   * on this package. Each filename is also a row of
+   * apps/api/test/package-files.test.ts's own table, which pins it against that
+   * function, so the two halves of the pair are asserted on the same inputs.
+   *
+   * The name is read THROUGH THE VERSION'S package_id, because the join is half
+   * the claim: the second stem expression has to find the package the first one
+   * named, and a version left with no package would make this read nothing.
+   */
+  it.each([
+    ['a stem with a space before its extension', 'my file .jar', 'my file'],
+    ['a filename that is only an extension', '.jar', 'package'],
+    ['a filename with no extension', 'nightly-load', 'nightly-load'],
+    ['a stem longer than 112 characters', `${'x'.repeat(130)}.jar`, 'x'.repeat(112)],
+    ['a stem cut at 112 characters just after a space', `${'y'.repeat(111)} tail.jar`, 'y'.repeat(111)],
+  ])('names the package for %s exactly as the API would', async (_what, filename, expected) => {
+    await withLegacySchema(async (client) => {
+      const { artifactId } = await legacy(client, { filename, createdAt: '2026-08-01T10:00:00Z' });
+
+      for (const statement of backfillStatements()) await client.query(statement);
+
+      const named = await client.query<{ name: string }>(
+        `SELECT p.name FROM runner_artifact a JOIN package p ON p.id = a.package_id WHERE a.id = $1`,
+        [artifactId],
+      );
+      expect(named.rows.map((row) => row.name)).toEqual([expected]);
+    });
+  });
+
   it('never proposes two names that differ only in case, even when a stem looks like a suffix', async () => {
     await withLegacySchema(async (client) => {
       // The collision that aborted the first backfill: load.jar and Load.jar
