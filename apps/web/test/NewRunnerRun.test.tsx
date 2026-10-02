@@ -834,6 +834,17 @@ describe('NewRunnerRun — starting from a package', () => {
     expect((screen.getByLabelText(/^package name\b/i) as HTMLInputElement).placeholder).toBe(stem);
   });
 
+  /** `PackageNameSchema` caps a name at 120 characters and the server refuses a
+   *  longer one, so the field stops short of it — as the note's textarea does
+   *  for its own cap. */
+  it('stops the package name at the 120 characters the server allows', async () => {
+    noPackages();
+    mount();
+    await screen.findByLabelText(/artifact file/i);
+
+    expect((screen.getByLabelText(/^package name\b/i) as HTMLInputElement).maxLength).toBe(120);
+  });
+
   it('switches to the upload fields, and back, with the two controls the form offers', async () => {
     servePackages(CHECKOUT, EMPTY);
     mount();
@@ -897,6 +908,78 @@ describe('NewRunnerRun — starting from a package', () => {
     fireEvent.change(select, { target: { value: SEARCH_ID } });
 
     expect((screen.getByLabelText(/simulation class/i) as HTMLInputElement).value).toBe('');
+  });
+
+  /**
+   * FOCUS FOLLOWS THE SWITCH, IN BOTH DIRECTIONS.
+   *
+   * Package → upload: the select the reader is on is REPLACED by a different
+   * control in the same slot, and without a key React reuses the DOM node — so
+   * focus stays on it, silently renamed `Artifact type`, while the file input
+   * the switch just demanded sits ABOVE it in the tab order. A native select
+   * fires `change` on ArrowDown, so a keyboard user reaches this by arrowing
+   * past an option.
+   *
+   * Upload → package: the button the reader just pressed is removed, and focus
+   * falls to `<body>`, so the next Tab starts from the top of the page.
+   *
+   * Each case focuses the control FIRST and asserts it holds focus, so it
+   * cannot pass by focus having been nowhere to begin with. The file has no
+   * jest-dom matchers; `document.activeElement` is compared directly.
+   */
+  it('moves focus to the file input when the select switches to uploading', async () => {
+    servePackages(CHECKOUT);
+    mount();
+    const select = await packageSelect();
+    select.focus();
+    expect(document.activeElement).toBe(select);
+
+    fireEvent.change(select, { target: { value: '__upload__' } });
+
+    expect(document.activeElement).toBe(screen.getByLabelText(/artifact file/i));
+  });
+
+  /**
+   * THE KEYS, PINNED ON THEIR OWN. The focus effect above would cover for a
+   * missing key — it moves focus to the right place whatever node React kept —
+   * so the focus cases cannot tell whether the Package select was REPLACED or
+   * silently turned into `Artifact type`. A reused node carries everything else
+   * with it (its state, its accessible name until the next render, a screen
+   * reader's place in it); a replaced one is gone.
+   */
+  it('replaces the Package select with the upload controls instead of reusing its node', async () => {
+    servePackages(CHECKOUT);
+    mount();
+    const select = await packageSelect();
+
+    fireEvent.change(select, { target: { value: '__upload__' } });
+
+    expect(select.isConnected).toBe(false);
+    expect(screen.getByLabelText('Artifact type').isConnected).toBe(true);
+  });
+
+  it('moves focus to the Package select when the way back is taken', async () => {
+    servePackages(CHECKOUT);
+    mount();
+    fireEvent.change(await packageSelect(), { target: { value: '__upload__' } });
+    const way = screen.getByRole('button', { name: 'Choose an existing package' });
+    way.focus();
+    expect(document.activeElement).toBe(way);
+
+    fireEvent.click(way);
+
+    expect(document.activeElement).toBe(await packageSelect());
+  });
+
+  /** Nothing takes focus on its own: it moves only for a SWITCH the reader made,
+   *  never when the list settles under them. */
+  it('does not take focus when the form first draws', async () => {
+    servePackages(CHECKOUT);
+    mount();
+    const select = await packageSelect();
+
+    expect(document.activeElement).not.toBe(select);
+    expect(document.activeElement).toBe(document.body);
   });
 
   it('asks for a Gatling version, and counts it under Advanced, only when uploading', async () => {

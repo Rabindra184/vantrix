@@ -1,5 +1,7 @@
 import {
+  useEffect,
   useMemo,
+  useRef,
   useState,
   type ChangeEvent,
   type Dispatch,
@@ -191,7 +193,7 @@ function knownSimulations(pkg: OfferedPackage | null): readonly string[] | null 
  * see the name that WOULD be used before the start uses it. The two have to
  * agree for the preview to be true, and a case pins the ones that matter.
  */
-export function packageNameFromFile(filename: string): string {
+function packageNameFromFile(filename: string): string {
   const stem = filename.replace(/(\.tar\.gz|\.[^.]+)$/i, '').slice(0, 112).trim();
   return stem === '' ? 'package' : stem;
 }
@@ -305,6 +307,28 @@ function NewRunnerRunProject({
       : form.source === 'package' && chosenPackage !== null
         ? 'package'
         : 'upload';
+
+  /* ═══ FOCUS FOLLOWS A SWITCH BETWEEN PACKAGE AND UPLOAD ═══
+   *
+   * The control a reader just used is gone after either switch, so focus has to
+   * be put somewhere deliberately — the first control of the mode they entered:
+   * the file input (the thing uploading needs first) or the Package select.
+   *
+   * A REF SET BY THE HANDLERS, ACTED ON AFTER THE COMMIT. Focusing inside the
+   * handler would target a control that is not rendered yet. The ref records
+   * only that the READER asked for a switch, so nothing takes focus when the
+   * list settles under them or the mode changes for any other reason; and it is
+   * read once and cleared, so a switch that did not change the mode cannot
+   * leave a stale request for a later one. */
+  const focusAfterSwitch = useRef<'upload' | 'package' | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const packageSelectRef = useRef<HTMLSelectElement>(null);
+  useEffect(() => {
+    const wanted = focusAfterSwitch.current;
+    focusAfterSwitch.current = null;
+    if (wanted === 'upload' && mode === 'upload') fileInputRef.current?.focus();
+    if (wanted === 'package' && mode === 'package') packageSelectRef.current?.focus();
+  }, [mode]);
 
   /* The simulation a start will carry. From a package with a known list it is
      the reader's pick, or the FIRST of the list when they have not picked or
@@ -499,13 +523,19 @@ function NewRunnerRunProject({
               <legend className={LEGEND}>Package</legend>
 
               {mode === 'upload' && (
-                <label className="flex cursor-pointer flex-col gap-2 rounded-xl border border-dashed border-default bg-sunken p-4 transition-ui hover:bg-page">
+                /* THE INPUT IS `sr-only`, SO THE LABEL WEARS ITS FOCUS RING.
+                   The app-wide `:focus-visible` rule lands on the input, which
+                   is clipped to one pixel — tabbing to the file control showed
+                   nothing at all. `has-[:focus-visible]` puts the same 2px
+                   `--color-ring` outline on the visible box around it. */
+                <label className="flex cursor-pointer flex-col gap-2 rounded-xl border border-dashed border-default bg-sunken p-4 transition-ui hover:bg-page has-[:focus-visible]:[outline:2px_solid_var(--color-ring)] has-[:focus-visible]:outline-offset-2">
                   <span className="flex items-center gap-2 text-sm font-medium text-primary">
                     <UploadIcon className="h-4 w-4" />
                     Artifact file
                   </span>
                   <span className="text-[0.8125rem] text-muted">{artifactHint}</span>
                   <input
+                    ref={fileInputRef}
                     className="sr-only"
                     type="file"
                     accept=".jar,.zip,.tgz,.tar.gz"
@@ -516,7 +546,12 @@ function NewRunnerRunProject({
 
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 {mode === 'upload' ? (
-                  <Field label="Artifact type" id="runner-kind" hint={ARTIFACT_HINTS[form.artifactKind]}>
+                  <Field
+                    key="artifact-kind"
+                    label="Artifact type"
+                    id="runner-kind"
+                    hint={ARTIFACT_HINTS[form.artifactKind]}
+                  >
                     <select
                       id="runner-kind"
                       className={INPUT}
@@ -529,14 +564,22 @@ function NewRunnerRunProject({
                     </select>
                   </Field>
                 ) : (
-                  <Field label="Package" id="runner-package">
+                  /* DISTINCT KEYS for the two controls that share this slot.
+                     Without them React sees a `Field` holding a `select` in
+                     both branches and REUSES the DOM node, so focus on the
+                     Package select silently becomes focus on `Artifact type`
+                     — a native select fires `change` on ArrowDown, so a
+                     keyboard user gets there just by arrowing. */
+                  <Field key="package-select" label="Package" id="runner-package">
                     <select
                       id="runner-package"
+                      ref={packageSelectRef}
                       className={INPUT}
                       disabled={mode === 'loading'}
                       value={mode === 'loading' ? '' : (chosenPackage?.id ?? '')}
                       onChange={(event) => {
                         const chosen = event.target.value;
+                        if (chosen === UPLOAD_OPTION) focusAfterSwitch.current = 'upload';
                         // The simulation is cleared with the package: it
                         // belongs to the package that listed it.
                         setForm((current) =>
@@ -583,6 +626,9 @@ function NewRunnerRunProject({
                       id="runner-package-name"
                       className={INPUT}
                       value={form.packageName}
+                      // `PackageNameSchema`'s own cap: the server refuses a
+                      // longer name, so the field stops short of one.
+                      maxLength={120}
                       placeholder={artifact === null ? undefined : packageNameFromFile(artifact.name)}
                       onChange={update('packageName', setForm)}
                     />
@@ -591,7 +637,10 @@ function NewRunnerRunProject({
                     <button
                       type="button"
                       className="w-fit cursor-pointer pb-2 text-[0.8125rem] font-medium text-accent hover:underline hover:underline-offset-2"
-                      onClick={() => setForm((current) => ({ ...current, source: 'package', simulationClass: '' }))}
+                      onClick={() => {
+                        focusAfterSwitch.current = 'package';
+                        setForm((current) => ({ ...current, source: 'package', simulationClass: '' }));
+                      }}
                     >
                       Choose an existing package
                     </button>
