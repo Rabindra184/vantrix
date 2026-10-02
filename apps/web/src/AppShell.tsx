@@ -35,7 +35,8 @@ import { DEFAULT_ROUTE } from './routes/paths';
  * `scroll-margin-top` still applies) whenever the target has drifted. The
  * observed boxes are the root element and `<main>`; the target's own position,
  * not their size, decides whether to move, because most growth (a table below
- * the target) changes a height and moves nothing.
+ * the target) changes a height and moves nothing — with one exception, a
+ * target the page bottom clamped short of its rest, which `correct` explains.
  *
  * ═══ AND THE READER ALWAYS WINS ═══
  *
@@ -72,7 +73,15 @@ const READER_INPUTS = ['wheel', 'touchstart', 'keydown', 'pointerdown'] as const
 function keepInPlace(target: HTMLElement): () => void {
   if (typeof ResizeObserver === 'undefined') return () => {};
 
+  /** How much further the page could still scroll down. */
+  const roomBelow = (): number => {
+    const page = document.scrollingElement ?? document.documentElement;
+    return page.scrollHeight - window.innerHeight - window.scrollY;
+  };
   let top = target.getBoundingClientRect().top;
+  /* The reveal's scroll stopped at the page bottom, so the target sits short of
+     its rest: true of `#errors`, the last thing on the Summary. */
+  let clamped = roomBelow() < 1;
   let idle = 0;
   let cap = 0;
   let observer: ResizeObserver | null = null;
@@ -87,14 +96,23 @@ function keepInPlace(target: HTMLElement): () => void {
     for (const type of READER_INPUTS) document.removeEventListener(type, stop, { capture: true });
   };
 
-  /** Puts the target back if it has moved; says whether it had to. */
+  /** Puts the target back where the reveal meant it to be; says whether it
+   *  had to. Two reasons to move, and only two: the target was pushed (sub-
+   *  pixel noise is not drift; a real shift is tens of pixels), or the scroll
+   *  was clamped at the page bottom and the page has grown since, so it can
+   *  now go further. The second is a section that grows DOWNWARD under a
+   *  clamped scroll — its rows arriving — whose top never moves while its
+   *  bottom slides past the fold: measured on Firefox at a ratio of 0.96. A
+   *  page that grows below an UNCLAMPED target (a table under it) is neither,
+   *  and is left alone. */
   const correct = (): boolean => {
-    // Sub-pixel noise is not drift; a real shift is tens of pixels.
-    if (Math.abs(target.getBoundingClientRect().top - top) < 1) return false;
+    const pushed = Math.abs(target.getBoundingClientRect().top - top) >= 1;
+    if (!pushed && !(clamped && roomBelow() >= 1)) return false;
     target.scrollIntoView({ block: 'start' });
     // Re-read rather than assume: a clamped scroll lands short of the margin,
     // and the NEXT drift is measured from where the target actually is.
     top = target.getBoundingClientRect().top;
+    clamped = roomBelow() < 1;
     return true;
   };
   // The idle window's end: a drift found now means the page was still moving

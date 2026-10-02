@@ -570,4 +570,59 @@ describe('AppShell — a revealed fragment holds its place while the page settle
       vi.useRealTimers();
     }
   });
+
+  /** WHERE THE PAGE BOTTOM CLAMPED THE SCROLL, growth below is not "nothing
+   *  moved". `#errors` is the last thing on the Summary, so the reveal stops at
+   *  the page bottom with the target short of its rest; when its rows then
+   *  arrive the section grows DOWNWARD — its top never moves, its bottom slides
+   *  past the fold (measured on Firefox at a ratio of 0.96). The page now has
+   *  room to go further, and the keeper takes it. Paired with the unclamped
+   *  case below, because "scroll whenever the page grows" passes this one. */
+  describe('a target the page bottom clamped short of its rest', () => {
+    /** How far the page could still scroll down: `scrollHeight` is the
+     *  viewport plus this, with `scrollY` at 0. */
+    let room: number;
+    const restore: Array<() => void> = [];
+
+    beforeEach(() => {
+      room = 0;
+      const root = document.documentElement;
+      Object.defineProperty(root, 'scrollHeight', { configurable: true, get: () => window.innerHeight + room });
+      restore.push(() => delete (root as { scrollHeight?: number }).scrollHeight);
+      // A scroll to the target consumes the room below it, as reaching the page
+      // bottom does.
+      scrollIntoView.mockImplementation(() => {
+        top = landsAt;
+        room = 0;
+      });
+    });
+
+    afterEach(() => {
+      for (const undo of restore.splice(0)) undo();
+    });
+
+    it('follows a section that grows downward under a clamped scroll', async () => {
+      await revealed(); // room 0: the reveal stopped at the page bottom
+
+      room = 300; // its rows arrived: taller page, the target's top unmoved
+      FakeResizeObserver.instances[0]!.fire();
+      expect(scrollIntoView).toHaveBeenCalledTimes(2);
+
+      // At the bottom again, a callback with nothing new does not scroll.
+      FakeResizeObserver.instances[0]!.fire();
+      expect(scrollIntoView).toHaveBeenCalledTimes(2);
+    });
+
+    it('leaves an unclamped target alone when the page grows below it', async () => {
+      room = 500; // the reveal reached its rest with page to spare
+      scrollIntoView.mockImplementation(() => {
+        top = landsAt;
+      });
+      await revealed();
+
+      room = 800; // a table under the target grew; the target did not move
+      FakeResizeObserver.instances[0]!.fire();
+      expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    });
+  });
 });

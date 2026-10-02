@@ -237,6 +237,53 @@ for (const [old, rest, hash] of [
 }
 
 /**
+ * ═══ A SHIFT MADE BEHIND A BLOCKED THREAD IS STILL CORRECTED ═══
+ *
+ * The cross-browser run flaked this landing on WebKit with every response in
+ * by +50ms: Playwright's own first look at `#errors` came two seconds after it
+ * asked, i.e. the page ran a two-second task, and the target was left at a
+ * viewport ratio of 0.29. A task that moves the layout and outlasts the
+ * keeper's idle window leaves its timer OVERDUE, and WebKit runs that timer
+ * before the rendering step that would have delivered the `ResizeObserver`
+ * callback — so a keeper that stopped on silence never heard about the shift.
+ *
+ * This makes that happen on demand rather than on a slow runner's say-so. The
+ * reveal sets `tabindex` and arms the keeper in one task; 600ms later — inside
+ * the idle window, so that timer is due before any idle deadline — the column
+ * above the target grows 400px AND the thread is held for 1.5s, which leaves
+ * the idle timer overdue however slow the machine. The 600ms is not a guess at
+ * when the page settles; it only lets the Summary arrive first, so a failure
+ * is this race and not the clamped-growth case `AppShell` also handles.
+ * Measured against the keeper as it was: WebKit left `#errors` at top 789 of a
+ * 720px viewport; the same shift with no block was corrected. **CHROMIUM
+ * PASSES EITHER WAY**, because after a long task its scheduler renders before
+ * it runs an overdue timer — so this case guards the race on WebKit, in the
+ * cross-browser job, and `AppShell.test.tsx` pins the mechanism in every run.
+ */
+test('a shift made behind a blocked thread is still corrected', async ({ page }) => {
+  const runId = await seeded(page);
+  await page.addInitScript(() => {
+    const flag = window as unknown as { __shifted?: true };
+    new MutationObserver((_records, observer) => {
+      if (document.getElementById('errors')?.getAttribute('tabindex') !== '-1') return;
+      observer.disconnect();
+      setTimeout(() => {
+        document.getElementById('main')!.style.paddingTop = '400px';
+        const started = performance.now();
+        while (performance.now() - started < 1_500) {
+          // Held, as a slow runner's render held it.
+        }
+        flag.__shifted = true;
+      }, 600);
+    }).observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ['tabindex'] });
+  });
+  await page.goto(`${runPath(runId)}/errors?from=0&to=10000`);
+  await summarySettled(page);
+  await page.waitForFunction(() => (window as unknown as { __shifted?: true }).__shifted === true);
+  await expect(page.locator('#errors')).toBeInViewport({ ratio: 1 });
+});
+
+/**
  * AN OLD `/errors` LINK KEEPS THE REQUEST IT WAS NARROWED TO. `request` is the
  * other query parameter a pasted errors link carries, and it is the one the
  * Errors tab's filter wrote (review 09-13 M15): "the errors for Place Order"
