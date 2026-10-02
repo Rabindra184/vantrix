@@ -88,7 +88,7 @@ describe('the lifecycle stamps, on both identity builders', () => {
     ctx = await createTestApp();
     const runId = await openLive();
     await streamFirstChunk(runId);
-    expect(await new RunRepository(ctx.prisma).claimForClose(runId)).toBe(true);
+    expect(await new RunRepository(ctx.prisma).claimForClose(runId, { abandoned: false })).toBe(true);
 
     const res = await read(runId);
     expect(res.status).toBe(202);
