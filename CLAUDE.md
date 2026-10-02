@@ -155,15 +155,17 @@ items, `ChartWindowSelected.test.tsx` and `distributionQuery.windowed.test.ts`
 — and DELETED three
 (`RunErrorsTab.live`, `RunOverviewTab.live`, `ToolAssertions`, whose claims
 moved into the new files), renaming two more, plus one case to
-`DesktopOnly.test.tsx`, from **181 / 2313 to 188 / 2484**. Integration moves with the two new `.ts` files and the `.ts`
+`DesktopOnly.test.tsx`, from **181 / 2313 to 188 / 2488**. Integration moves with the two new `.ts` files and the `.ts`
 cases (`paths`, `transforms.rates`, `transforms.users`, and the empty-window
 pairs in the seven `transforms.*` files), from **170 / 2086 to
-172 / 2142**, and **e2e rises to 179**: 168, minus 2 cases deleted, plus 1
-(`run-tables.spec.ts`' heading outline split in two), plus the twelve cases of the
-new `apps/web/e2e/run-summary-report.spec.ts` (179 measured; ten more specs
-were moved onto the new pages without changing their count). It measured
-186 / 2401, 171 / 2103 and 176 before the final review's fix wave, and
-186 / 2412, 171 / 2103 and 177 after it, before its last two items. It is
+172 / 2142**, and **e2e rises to 180**: 168, minus 2 cases deleted, plus 1
+(`run-tables.spec.ts`' heading outline split in two), plus the thirteen cases of the
+new `apps/web/e2e/run-summary-report.spec.ts` (ten more specs were moved onto
+the new pages without changing their count). It measured
+186 / 2401, 171 / 2103 and 176 before the final review's fix wave,
+186 / 2412, 171 / 2103 and 177 after it, before its last two items, and
+188 / 2484, 172 / 2142 and 179 before the cross-browser run's two keeper
+fixes (four unit cases and one browser case). It is
 backlog item #7 of the Gatling Enterprise comparison: the run page becomes
 GE's two pages, a **Summary** that is always the whole run and a **Report**
 that carries the time window and the charts in collapsible sections. Seven
@@ -630,8 +632,19 @@ fix: `build` read unit **186 / 2400**, integration
 **528** (176 × three engines) and passed **523 with 5 skipped, none failed or
 flaky**, in 23.3 minutes — the collapsible sections are where WebKit's
 visibility workaround has bitten this repository before, and it did not. The
-cross-browser job has not seen the last two items: a `ResizeObserver` that
-scrolls and a wheel are exactly what an engine could disagree about.
+second dispatch, on `57c58a7`, carried the last two items, and a
+`ResizeObserver` that scrolls was exactly what two engines disagreed about: its
+one flaky case is the keeper's two holes recorded above.
+
+**RE-MEASURED AFTER MERGING `main`**, where the runner-keeps-a-dying-run and
+sweeper-keeps-a-stored-log branches had both landed, with the two keeper fixes
+on top: `pnpm build`, `typecheck` and `lint` exit 0; `test:unit` **188 / 2508**
+(this branch's 2488 plus the runner branch's twenty), zero `Errors` lines;
+`test:integration` **173 / 2171, exit 0, zero failures** (172 / 2142 plus the
+runner branch's file and twenty-seven cases and the sweeper branch's two);
+`pnpm test:e2e` **180 passed, exit 0** — each total predicted before the run, on
+the same scratch stores. `run-summary-report.spec.ts` alone then passed **78 of
+78** across the three engines, twice each, with the keeper fixes in.
 
 **THE REAL RUN.** The developer database with the API, worker and on-prem
 runner from this worktree on Node 22 and their own Redis index (db 11), and a
