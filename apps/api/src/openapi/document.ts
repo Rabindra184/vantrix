@@ -539,7 +539,8 @@ const responses: Record<string, ResponseObject> = {
   PackageRejected: {
     description:
       'The request was refused before anything was stored — code INVALID_PACKAGE_METADATA (the ' +
-      '"metadata" part or the rename body is missing a field or fails its schema), ' +
+      '"metadata" part or the rename body is missing a field or fails its schema, or a create ' +
+      'was sent as JSON or any other body that is not multipart/form-data), ' +
       'PACKAGE_KIND_MISMATCH (the file\'s extension does not suit the package\'s kind: a jar ' +
       'package holds a .jar, a bundle package a .zip, .tgz or .tar.gz), RUNNER_ARTIFACT_NOT_A_JAR ' +
       '(a file sent to a jar package could not be read as a jar), STREAM_BODY_CONSUMED (a PUT ' +
@@ -547,6 +548,16 @@ const responses: Record<string, ResponseObject> = {
       'before the handler ran — send application/octet-stream), BUNDLE_EMPTY (the file had no ' +
       'bytes), or INVALID_ID (a malformed packageId). A refused upload leaves no file on disk. ' +
       'Always application/problem+json with a required "remediation".',
+    content: problem(),
+  },
+  PackageTooLarge: {
+    description:
+      'The file is larger than this node\'s upload limit, MAX_RUNNER_ARTIFACT_BYTES (512 MB by ' +
+      'default) — code BUNDLE_TOO_LARGE, with the limit in "meta.maxBytes". On a PUT a declared ' +
+      'Content-Length over the limit is refused before the body is read; a chunked body is cut ' +
+      'off as it crosses the limit, and either way no file is left on disk and no package or ' +
+      'version is created. This is the limit on ONE package file, not the decompressed-size ' +
+      'cap an ingested bundle is held to. application/problem+json with a required "remediation".',
     content: problem(),
   },
   PackageConflict: {
@@ -1846,7 +1857,7 @@ const paths: Record<string, PathItemObject> = {
         '403': ref('Forbidden'),
         '404': ref('NotFound'),
         '409': ref('PackageConflict'),
-        '413': ref('BundleTooLarge'),
+        '413': ref('PackageTooLarge'),
       },
     },
   },
@@ -1886,7 +1897,7 @@ const paths: Record<string, PathItemObject> = {
         '401': ref('Unauthorized'),
         '403': ref('Forbidden'),
         '404': ref('NotFound'),
-        '413': ref('BundleTooLarge'),
+        '413': ref('PackageTooLarge'),
       },
     },
   },

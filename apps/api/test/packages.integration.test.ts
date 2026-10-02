@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { Agent, request as httpRequest, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -29,6 +31,7 @@ let ctx: TestContext;
 let artifactDir: string;
 let jarDir: string;
 let previousArtifactDir: string | undefined;
+let previousArtifactCap: string | undefined;
 let runnerToken: string;
 let cookie: string;
 
@@ -40,6 +43,7 @@ beforeEach(async () => {
   // uses, for the same reason.
   previousArtifactDir = process.env.RUNNER_ARTIFACT_DIR;
   process.env.RUNNER_ARTIFACT_DIR = artifactDir;
+  previousArtifactCap = process.env.MAX_RUNNER_ARTIFACT_BYTES;
 
   ctx = await createTestApp();
   runnerToken = await mintBearer(['runner', 'read']);
@@ -53,6 +57,8 @@ afterEach(async () => {
   await ctx?.close();
   if (previousArtifactDir === undefined) delete process.env.RUNNER_ARTIFACT_DIR;
   else process.env.RUNNER_ARTIFACT_DIR = previousArtifactDir;
+  if (previousArtifactCap === undefined) delete process.env.MAX_RUNNER_ARTIFACT_BYTES;
+  else process.env.MAX_RUNNER_ARTIFACT_BYTES = previousArtifactCap;
   await rm(artifactDir, { recursive: true, force: true });
   await rm(jarDir, { recursive: true, force: true });
 });
@@ -129,6 +135,108 @@ const remove = (auth: Auth, id: string, slug = 'checkout') =>
  *  either kind shows. */
 async function filesOnDisk(): Promise<string[]> {
   return (await readdir(path.join(artifactDir, ctx.orgId, ctx.projectId)).catch(() => [])).sort();
+}
+
+/**
+ * A fresh app whose upload cap is `cap` bytes. `loadConfig()` reads
+ * MAX_RUNNER_ARTIFACT_BYTES when the app is built (as it does RUNNER_ARTIFACT_DIR),
+ * so the cap cannot be changed under a running app; the other cases keep the
+ * default and only the ones that need a few-bytes cap pay for a second app.
+ * The variable is restored in afterEach.
+ */
+async function restartWithCap(cap: number): Promise<void> {
+  await ctx.close();
+  process.env.MAX_RUNNER_ARTIFACT_BYTES = String(cap);
+  ctx = await createTestApp();
+  runnerToken = await mintBearer(['runner', 'read']);
+  cookie = await signUpAsOrgMember(ctx, 'package-author-capped@example.test');
+}
+
+/**
+ * A PUT whose body is CHUNKED (no Content-Length) and written slowly, over a
+ * socket this helper opens itself, so the request is still incomplete when the
+ * server first judges its size. That is the only state in which destroying the
+ * request destroys the socket, and so the only one in which a 413 can be lost
+ * as a reset.
+ *
+ * Resolves only when BOTH halves have happened: the response arrived AND the
+ * client managed to finish sending its whole body, so a 413 that came at the
+ * price of an abandoned upload fails here too. It REJECTS if the connection
+ * dies before a response, which is the reset itself.
+ */
+function chunkedPut(
+  pathAndQuery: string,
+  auth: Auth,
+  chunks: readonly Buffer[],
+  gapMs: number,
+): Promise<{ status: number; body: { code?: string } }> {
+  return new Promise((resolve, reject) => {
+    const server = ctx.app.getHttpServer() as Server;
+    server.listen(0, '127.0.0.1', () => {
+      const { port } = server.address() as AddressInfo;
+      // keep-alive, so the server does not simply hang up once it has answered.
+      const agent = new Agent({ keepAlive: true });
+      let result: { status: number; body: { code?: string } } | null = null;
+      let finished = false;
+      let settled = false;
+      const done = (error?: Error): void => {
+        if (settled) return;
+        if (error === undefined && (result === null || !finished)) return;
+        settled = true;
+        clearTimeout(deadline);
+        agent.destroy();
+        server.close();
+        if (error !== undefined) reject(error);
+        else resolve(result!);
+      };
+      // The request DEADLINE: a hang fails here, not in the file's own timeout.
+      const deadline = setTimeout(
+        () =>
+          done(
+            new Error(
+              result === null
+                ? 'no response within 5s'
+                : 'the 413 arrived but the client could not finish sending: the server stopped reading the request',
+            ),
+          ),
+        5_000,
+      );
+      const req = httpRequest(
+        {
+          host: '127.0.0.1',
+          port,
+          method: 'PUT',
+          path: pathAndQuery,
+          agent,
+          headers: { ...auth, 'Content-Type': 'application/octet-stream' },
+        },
+        (res) => {
+          const parts: Buffer[] = [];
+          res.on('data', (part: Buffer) => parts.push(part));
+          res.on('end', () => {
+            result = {
+              status: res.statusCode ?? 0,
+              body: JSON.parse(Buffer.concat(parts).toString('utf8') || '{}') as { code?: string },
+            };
+            done();
+          });
+        },
+      );
+      req.on('finish', () => {
+        finished = true;
+        done();
+      });
+      req.on('error', (err) => done(err));
+      void (async () => {
+        for (const chunk of chunks) {
+          if (req.destroyed) return;
+          req.write(chunk);
+          await new Promise((next) => setTimeout(next, gapMs));
+        }
+        if (!req.destroyed) req.end();
+      })();
+    });
+  });
 }
 
 describe('POST /v1/projects/:slug/packages', () => {
@@ -239,6 +347,43 @@ describe('POST /v1/projects/:slug/packages', () => {
     expect((listed.body as { items: Package[] }).items).toEqual([]);
     // And the retry the caller makes next is not refused.
     expect((await create(asSession(), { name: 'Checkout', kind: 'gatling_jar' }, jar)).status).toBe(201);
+  });
+
+  it('answers a JSON create in this route\'s own terms, and creates nothing', async () => {
+    // The natural first attempt: {name, kind} as JSON. The runner's reader would
+    // answer BUNDLE_NOT_ARCHIVE about "the runner request"; this route says what
+    // IT takes.
+    const res = await request(ctx.app.getHttpServer())
+      .post(PACKAGES)
+      .set(asSession())
+      .send({ name: 'Checkout', kind: 'gatling_jar' });
+
+    expect(res.status, body(res)).toBe(400);
+    expect(res.body.code).toBe('INVALID_PACKAGE_METADATA');
+    expect(res.body.detail).toContain('multipart/form-data');
+    expect(res.body.remediation).toContain('"metadata"');
+    expect(res.body.remediation).toContain('"artifact"');
+    const listed = await request(ctx.app.getHttpServer()).get(PACKAGES).set(asSession());
+    expect((listed.body as { items: Package[] }).items).toEqual([]);
+    expect(await filesOnDisk()).toEqual([]);
+  });
+
+  it('says so, and still answers with the original error, when the compensating delete fails too', async () => {
+    const jar = await thinJar('example.BasicSimulation');
+    const repository = ctx.app.get(PackageRepository);
+    vi.spyOn(repository, 'addVersion').mockRejectedValueOnce(new Error('boom'));
+    vi.spyOn(repository, 'delete').mockRejectedValueOnce(new Error('delete failed too'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    const res = await create(asSession(), { name: 'Checkout', kind: 'gatling_jar' }, jar);
+
+    // The caller still learns what actually went wrong, not the cleanup's failure...
+    expect(res.status, body(res)).toBe(500);
+    // ...and an operator learns an empty package now exists, and what that costs.
+    const message = warn.mock.calls.map((call) => String(call[0])).join('\n');
+    expect(message).toContain('EMPTY package');
+    expect(message).toContain('409 PACKAGE_NAME_TAKEN');
+    warn.mockRestore();
   });
 
   it('refuses a file whose extension does not suit the kind, and leaves neither a file nor a package', async () => {
@@ -466,6 +611,96 @@ describe('PATCH and DELETE /v1/projects/:slug/packages/:packageId', () => {
 
     const gone = await request(ctx.app.getHttpServer()).get(PACKAGES).set(asSession());
     expect((gone.body as { items: Package[] }).items).toEqual([]);
+  });
+});
+
+describe('the upload size cap (MAX_RUNNER_ARTIFACT_BYTES)', () => {
+  const CAP = 256;
+
+  it('refuses a create whose file is over the cap (413), leaving no file and no package', async () => {
+    await restartWithCap(CAP);
+
+    const res = await request(ctx.app.getHttpServer())
+      .post(PACKAGES)
+      .set(asSession())
+      .field('metadata', JSON.stringify({ name: 'Checkout', kind: 'gatling_jar' }))
+      .attach('artifact', Buffer.alloc(CAP * 4, 1), 'big.jar');
+
+    expect(res.status, body(res)).toBe(413);
+    expect(res.body.code).toBe('BUNDLE_TOO_LARGE');
+    expect(await filesOnDisk()).toEqual([]);
+    const listed = await request(ctx.app.getHttpServer()).get(PACKAGES).set(asSession());
+    expect((listed.body as { items: Package[] }).items).toEqual([]);
+  });
+
+  it('refuses a PUT whose declared length is over the cap (413), and leaves no file', async () => {
+    await restartWithCap(CAP);
+    const pkg = await createPackage(asSession());
+
+    // supertest declares the true length, so this is the common browser/curl path.
+    const res = await put(asSession(), pkg.id, Buffer.alloc(CAP + 1, 1), 'a.jar');
+
+    expect(res.status, body(res)).toBe(413);
+    expect(res.body.code).toBe('BUNDLE_TOO_LARGE');
+    expect(res.body.meta).toEqual({ maxBytes: CAP });
+    expect(await filesOnDisk()).toEqual([]);
+  });
+
+  it('refuses on the declared length alone, without waiting for a body that never comes', async () => {
+    await restartWithCap(CAP);
+    const pkg = await createPackage(asSession());
+
+    // A Content-Length far over the cap with a few bytes behind it. Judged on
+    // the header, the answer is immediate; judged on the body, the server waits
+    // for bytes that are never sent, which is what the deadline would report.
+    const res = await request(ctx.app.getHttpServer())
+      .put(`${PACKAGES}/${pkg.id}/content?filename=a.jar`)
+      .set(asSession())
+      .set('Content-Type', 'application/octet-stream')
+      .set('Content-Length', String(CAP * 1000))
+      .send(Buffer.from('tiny'))
+      .timeout({ deadline: 5_000, response: 5_000 });
+
+    expect(res.status, body(res)).toBe(413);
+    expect(res.body.code).toBe('BUNDLE_TOO_LARGE');
+    expect(await filesOnDisk()).toEqual([]);
+  });
+
+  it('delivers the 413, rather than a reset, to a chunked body that crosses the cap mid-stream', async () => {
+    await restartWithCap(CAP);
+    const pkg = await createPackage(asSession());
+
+    // No Content-Length, so nothing can be refused early: the first chunk is
+    // already over the cap and the request is still being sent for ~250ms after.
+    // Destroying that request destroys its socket, and the client then gets a
+    // reset in place of this response.
+    const res = await chunkedPut(
+      `${PACKAGES}/${pkg.id}/content?filename=a.jar`,
+      asSession(),
+      // 16 MiB in 1 MiB chunks, so the upload is still going well after the
+      // first chunk has tripped the cap.
+      Array.from({ length: 16 }, () => Buffer.alloc(1024 * 1024, 1)),
+      15,
+    );
+
+    expect(res.status).toBe(413);
+    expect(res.body.code).toBe('BUNDLE_TOO_LARGE');
+    // The partial file was removed before the answer was sent.
+    expect(await filesOnDisk()).toEqual([]);
+  });
+
+  it('accepts a file of exactly the cap, and refuses one byte more', async () => {
+    await restartWithCap(CAP);
+    const bundle = await createPackage(asSession(), 'gatling_bundle', 'Bundle');
+
+    const exact = await put(asSession(), bundle.id, Buffer.alloc(CAP, 1), 'b.tgz');
+    expect(exact.status, body(exact)).toBe(200);
+    expect(PackageSchema.parse(exact.body).current?.bytes).toBe(CAP);
+
+    const over = await put(asSession(), bundle.id, Buffer.alloc(CAP + 1, 2), 'b.tgz');
+    expect(over.status, body(over)).toBe(413);
+    // The version already in force is untouched, and its file is the only one.
+    expect(await filesOnDisk()).toHaveLength(1);
   });
 });
 

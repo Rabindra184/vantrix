@@ -24,7 +24,7 @@ import {
   type Package,
   type PackageListResponse,
 } from '@perfportal/contracts';
-import { ingestError } from '@perfportal/core';
+import { IngestError, ingestError } from '@perfportal/core';
 import {
   PackageNameTakenError,
   PackageRepository,
@@ -87,9 +87,18 @@ export class PackagesController {
     const dir = path.resolve(this.config.runner.artifactDir, orgId, project.id);
     await mkdir(dir, { recursive: true });
     const tmpPath = path.join(dir, `${artifactId}.part`);
-    const upload = await readRunnerMultipart(req, tmpPath, this.config.runner.maxArtifactBytes, {
-      fileRequired: false,
-    });
+    let upload: Awaited<ReturnType<typeof readRunnerMultipart>>;
+    try {
+      upload = await readRunnerMultipart(req, tmpPath, this.config.runner.maxArtifactBytes, {
+        fileRequired: false,
+      });
+    } catch (err) {
+      // A JSON {name, kind} is the natural first attempt, and the reader's own
+      // refusal talks about the RUNNER's upload. Only that one refusal is
+      // re-spoken in this route's terms; every other failure is the reader's.
+      if (err instanceof IngestError && err.code === 'BUNDLE_NOT_ARCHIVE') throw notMultipart();
+      throw err;
+    }
 
     // A file is whatever left a name or a byte behind. A browser form with an
     // empty file input sends a part with no name and no bytes, which is "no
@@ -149,7 +158,13 @@ export class PackagesController {
         } catch (err) {
           // The package was made a moment ago for this file and has nothing
           // else; leaving it would turn the caller's retry into a 409.
-          await this.packages.delete(orgId, project.id, created.id).catch(() => undefined);
+          await this.packages.delete(orgId, project.id, created.id).catch((deleteErr: unknown) => {
+            console.warn(
+              `could not remove package ${created.id} ("${metadata.name}") after storing its first version failed: ` +
+                'an EMPTY package now exists, so a retry of the same name will answer 409 PACKAGE_NAME_TAKEN until it is deleted',
+              deleteErr,
+            );
+          });
           throw err;
         }
         if (added === null) throw packageNotFound(created.id);
@@ -298,7 +313,7 @@ export class PackagesController {
   private async respond(orgId: string, projectId: string, id: string): Promise<Package> {
     const row = await this.packages.find(orgId, projectId, id);
     if (!row) throw packageNotFound(id);
-    return PackageSchema.parse(toPackage(row));
+    return toPackage(row);
   }
 }
 
@@ -311,6 +326,14 @@ function nameTaken(name: string) {
     'PACKAGE_NAME_TAKEN',
     `This project already has a package called "${name}".`,
     'Choose another name, or upload a new version to the existing package with PUT /v1/projects/{slug}/packages/{packageId}/content.',
+  );
+}
+
+function notMultipart() {
+  return badRequest(
+    'INVALID_PACKAGE_METADATA',
+    'A package is created with a multipart/form-data request, not a JSON body.',
+    'POST multipart/form-data with a "metadata" part holding {"name":"Checkout","kind":"gatling_jar"} and, optionally, a file part named "artifact".',
   );
 }
 
@@ -361,8 +384,10 @@ async function removeIfUnder(root: string, storedPath: string): Promise<void> {
   });
 }
 
-function toPackage(record: PackageWithUsage) {
-  return {
+/** The contract is the arbiter of the shape: a row that does not fit it (a kind
+ *  outside the enum, say) fails HERE rather than reaching a client. */
+function toPackage(record: PackageWithUsage): Package {
+  return PackageSchema.parse({
     id: record.id,
     name: record.name,
     kind: record.kind,
@@ -381,5 +406,5 @@ function toPackage(record: PackageWithUsage) {
             uploadedAt: record.current.uploadedAt.toISOString(),
           },
     usage: record.usage,
-  };
+  });
 }

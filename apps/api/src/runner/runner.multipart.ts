@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto';
-import { createWriteStream } from 'node:fs';
+import { createWriteStream, type WriteStream } from 'node:fs';
 import { unlink } from 'node:fs/promises';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { ingestError } from '@perfportal/core';
 import busboy from 'busboy';
 import type { Request } from 'express';
+import { whenClosed } from './raw-upload.js';
 
 export interface RunnerUpload {
   metadataRaw: string;
@@ -51,6 +52,7 @@ export function readRunnerMultipart(
     let bytes = 0;
     const hash = createHash('sha256');
     let fileWritten: Promise<void> | null = null;
+    let sink: WriteStream | null = null;
     let fileSeen = false;
     let fileTooLarge = false;
 
@@ -67,9 +69,17 @@ export function readRunnerMultipart(
       settled = true;
       req.unpipe(bb);
       req.resume();
-      void unlink(targetPath).catch(() => undefined).finally(() => {
-        reject(err);
-      });
+      // THE FILE IS REMOVED ONLY AFTER ITS STREAM HAS CLOSED. createWriteStream
+      // opens lazily, so an unlink issued the moment the cap trips (the first
+      // chunk) can run BEFORE the open, find nothing, and leave the file the
+      // open then creates — a `.part` per refused upload. Destroying the sink
+      // and waiting for 'close' makes the unlink come after the file exists.
+      void (sink === null ? Promise.resolve() : whenClosed(sink))
+        .then(() => unlink(targetPath))
+        .catch(() => undefined)
+        .finally(() => {
+          reject(err);
+        });
     };
 
     const complete = (upload: RunnerUpload) => {
@@ -108,7 +118,8 @@ export function readRunnerMultipart(
           callback(null, chunk);
         },
       });
-      fileWritten = pipeline(stream, meter, createWriteStream(targetPath));
+      sink = createWriteStream(targetPath);
+      fileWritten = pipeline(stream, meter, sink);
       void fileWritten.catch((err) => fail(err));
     });
 
