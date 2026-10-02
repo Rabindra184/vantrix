@@ -428,6 +428,68 @@ export async function seedRunnerRunWithEvents(orgId: string): Promise<string> {
 }
 
 /**
+ * A package with one version, and optionally a job QUEUED on it — the package
+ * the Packages page's menu has to refuse to delete.
+ *
+ * ═══ A QUEUED JOB STAYS QUEUED, AND THAT IS WHAT THE CASE NEEDS ═══
+ *
+ * No runner process runs in this harness (the webServer starts the API alone),
+ * so a job queued here is never claimed. "A run of it is queued" is therefore a
+ * state a spec can hold for as long as it likes and end on purpose, by
+ * cancelling the job through the API — the route a person's Cancel button calls.
+ *
+ * THE NAME IS RANDOM, AND OPENS WITH A WORD NO PAGE LINK USES. A project
+ * refuses a second package of one name (ignoring case), and Playwright matches
+ * accessible names as a case-insensitive substring — so a package called
+ * "Packages" or "Checkout" is one more way for a link query to resolve two
+ * elements. Pass `name` for a case that is about what a LONG one does.
+ *
+ * THE FILE DOES NOT EXIST ON DISK. The version row's `storagePath` points at
+ * nothing, which is fine for what this seed is for: a delete removes whatever
+ * is there with `force`, and the job is never run. A case that needs a jar a
+ * runner can open uploads one through the page.
+ */
+export async function seedPackage(
+  orgId: string,
+  opts: { name?: string; filename?: string; queueJob?: boolean } = {},
+): Promise<{ id: string; name: string; filename: string; jobId: string | null }> {
+  const projectId = await projectFor(orgId);
+  const name = opts.name ?? `Soak jar ${randomUUID().slice(0, 8)}`;
+  const filename = opts.filename ?? `soak-${randomUUID().slice(0, 8)}.jar`;
+  const packages = new PackageRepository(prisma);
+  const pkg = await packages.create({ id: randomUUID(), orgId, projectId, name, kind: 'gatling_jar' });
+  const added = await packages.addVersion(orgId, projectId, pkg.id, {
+    artifactId: randomUUID(), filename, gatlingVersion: '3.15.1',
+    sha256: randomUUID().replaceAll('-', '').repeat(2), bytes: 1_887_437,
+    simulations: ['example.BasicSimulation'], storagePath: `runner-artifacts/${randomUUID()}.jar`,
+  });
+  if (!added) throw new Error('seedPackage: the package version was not added');
+  if (opts.queueJob !== true) return { id: pkg.id, name, filename, jobId: null };
+
+  const created = await new RunnerRepository(prisma).createQueued({
+    orgId, projectId, artifactId: added.version.artifactId,
+    job: {
+      id: randomUUID(), requestedBy: 'e2e', name: 'queued from the fixture',
+      simulationClass: 'example.BasicSimulation', environment: null, branch: null,
+      commitSha: null, testSlug: null, javaOptions: null, systemProperties: {},
+    },
+  });
+  if (!created) throw new Error('seedPackage: createQueued refused the version');
+  return { id: pkg.id, name, filename, jobId: created.job.id };
+}
+
+/**
+ * How many VERSION rows a package has. `GET …/packages` reports only the
+ * current one, so "starting a run did not upload the jar again" cannot be read
+ * off the API: an upload of bytes the package already holds is answered with
+ * the existing version, which looks exactly like a start that reused it. The
+ * rows are the only thing that counts versions.
+ */
+export function packageVersionCount(packageId: string): Promise<number> {
+  return prisma.runnerArtifact.count({ where: { packageId } });
+}
+
+/**
  * Rename a seeded run's simulation, for the cases that are about the LENGTH of
  * that string rather than its value.
  *
