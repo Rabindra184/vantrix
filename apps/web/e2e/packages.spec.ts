@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
@@ -29,6 +29,9 @@ import { signIn } from './helpers.js';
 
 let jarDir: string;
 let jarPath: string;
+/** A second build of the same jar — different bytes, so a PUT of it is a new
+ *  version rather than the one the package already holds. */
+let rebuiltJarPath: string;
 
 test.beforeAll(async () => {
   // A THIN jar, as `gatlingEnterprisePackage` builds one: a manifest naming the
@@ -46,6 +49,18 @@ test.beforeAll(async () => {
       }),
     },
     { name: 'example/BasicSimulation.class', content: 'x' },
+  ]);
+  rebuiltJarPath = path.join(jarDir, 'checkout-load-v2.jar');
+  await writeJar(rebuiltJarPath, [
+    {
+      name: 'META-INF/MANIFEST.MF',
+      content: gatlingManifest({
+        'Gatling-Version': '3.15.1',
+        'Gatling-Simulations': 'example.BasicSimulation,example.SoakSimulation',
+      }),
+    },
+    { name: 'example/BasicSimulation.class', content: 'x' },
+    { name: 'example/SoakSimulation.class', content: 'y' },
   ]);
 });
 
@@ -97,6 +112,9 @@ test('a package is created, uploaded to, and started from without uploading agai
   await seedPackage(admin.orgId, { name: `Decoy jar ${Date.now()}` });
   await page.reload();
   await expect(rows(page)).toHaveCount(2);
+  // AND IT IS ABOVE. A decoy that sorted second would leave the first package
+  // the one the reader meant again, and the link with nothing to get right.
+  await expect(rows(page).first()).toContainText('Decoy jar');
 
   const row = rows(page).filter({ hasText: 'Checkout jar' });
   await expect(row).toHaveCount(1);
@@ -177,9 +195,11 @@ test('delete is refused while a run is queued, with the reason on screen, and al
   await expect(page.getByText('1 run of it is queued or running', { exact: true })).toBeVisible();
 
   await page.keyboard.press('Escape');
-  await expect(remove).toBeHidden();
   // Paired, because `toBeHidden` is also true of an element that was never
-  // there: the menu closed, and the row it belongs to is still on the page.
+  // there: the TRIGGER says its menu is shut — a fact about the menu that
+  // exists either way — and the row it belongs to is still on the page.
+  await expect(actionsOf(page, seeded.name)).toHaveAttribute('aria-expanded', 'false');
+  await expect(remove).toBeHidden();
   await expect(rows(page)).toHaveCount(1);
 
   const cancelled = await page.request.post(
@@ -216,13 +236,14 @@ test('the page fits a phone', async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 812 });
 
   const admin = await seedAdmin();
-  // A real class-and-version file name is the widest unbroken string this page
-  // draws: UAX#14 gives no break after a full stop followed by a letter, so
-  // only the row's own break rule stands between it and a sideways scroll.
+  // The package NAME is the widest unbroken string this page draws: a dotted
+  // class-style name, where UAX#14 gives no break after a full stop followed by
+  // a letter, so only the row's own break rule stands between it and a
+  // sideways scroll. The filename beside it is long too, but its hyphens are
+  // break opportunities.
   const long = await seedPackage(admin.orgId, {
     name: 'com.acme.checkout.simulations.CheckoutPeakLoadSimulationNightlySoak',
     filename: 'acme-checkout-peak-load-simulations-1.0.0-SNAPSHOT-all.jar',
-    queueJob: true,
   });
   await seedPackage(admin.orgId);
   await signIn(page, admin);
@@ -247,4 +268,57 @@ test('the page fits a phone', async ({ page }) => {
   const box = await trigger.boundingBox();
   expect(box, 'the actions menu has a box').not.toBeNull();
   expect(box!.x + box!.width).toBeLessThanOrEqual(375);
+});
+
+/**
+ * ═══ A NEW BUILD, UPLOADED FROM THE ROW ═══
+ *
+ * The row's Upload is the one path here that sends a file with XHR — a raw PUT
+ * of the file's bytes, with its name in `?filename=` — and no browser had ever
+ * driven it: the component cases stub the request, and CI runs this file on
+ * WebKit and Firefox too. So it goes through the row's own button, the file
+ * chooser that button opens, and the server, and the evidence is on both sides:
+ * the row shows the new file, and the package now has TWO version rows — the
+ * old one kept underneath, which is what lets a retry run the exact bytes its
+ * job ran.
+ */
+test('a new build is uploaded from the package row, and the old version stays underneath', async ({
+  page,
+}) => {
+  const admin = await seedAdmin();
+  await signIn(page, admin);
+
+  // The first build goes in through the API the page's own session uses — the
+  // create form is the first case's subject; the upload under test is the
+  // second.
+  const created = await page.request.post('/v1/projects/checkout/packages', {
+    multipart: {
+      metadata: JSON.stringify({ name: 'Checkout jar', kind: 'gatling_jar' }),
+      artifact: {
+        name: 'checkout-load.jar',
+        mimeType: 'application/java-archive',
+        buffer: await readFile(jarPath),
+      },
+    },
+  });
+  expect(created.status(), await created.text()).toBe(201);
+  const { id: packageId } = (await created.json()) as { id: string };
+
+  await page.goto('/projects/checkout/packages');
+  const row = rows(page).filter({ hasText: 'Checkout jar' });
+  await expect(row).toContainText('checkout-load.jar');
+  expect(await packageVersionCount(packageId)).toBe(1);
+
+  // Armed BEFORE the click: the chooser can open faster than the next line.
+  const chooser = page.waitForEvent('filechooser');
+  await row.getByRole('button', { name: 'Upload a file to Checkout jar', exact: true }).click();
+  await (await chooser).setFiles(rebuiltJarPath);
+
+  // The NEW file's name, which only `?filename=` carries: without it the
+  // server stores the bytes as "Checkout jar.jar".
+  await expect(row).toContainText('checkout-load-v2.jar');
+  await expect(row).not.toContainText('checkout-load.jar');
+  // The status line exists only while the upload is in flight, and is gone.
+  await expect(row.getByRole('status')).toHaveCount(0);
+  expect(await packageVersionCount(packageId)).toBe(2);
 });
