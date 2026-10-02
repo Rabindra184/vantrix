@@ -1,4 +1,4 @@
-import { describeSlaMeasurement, formatSlaValue } from '@perfportal/contracts';
+import { describeSlaMeasurement, formatSlaBound } from '@perfportal/contracts';
 import type { Assertion } from '@perfportal/contracts';
 
 /** One count per outcome, keyed by the outcome itself. */
@@ -27,10 +27,12 @@ export function describeAssertionRule(rule: Assertion['rule']): string {
      compares — and every other surface in this product renders that same
      number as a percentage. A rule reading "≤ 0.01" beside tiles reading
      "2.68%" made the author the one person who had to convert, which is the
-     trap `slaThresholdWarning` exists to catch. `formatSlaValue` is the
+     trap `slaThresholdWarning` exists to catch. `formatSlaBound` is the
      single place that decision lives, so the table, the run page's evidence
-     panel and the CSV export cannot drift apart. */
-  return `${rule.metric} of ${target} (${rule.family}) ${comparator} ${formatSlaValue(rule.metric, rule.threshold)}`;
+     panel and the CSV export cannot drift apart — and it writes the bound
+     EXACTLY as its author typed it, so the file's Rule column never rounds a
+     limit (`100.004 ms` stays `100.004 ms`). */
+  return `${rule.metric} of ${target} (${rule.family}) ${comparator} ${formatSlaBound(rule.metric, rule.threshold)}`;
 }
 
 /**
@@ -50,13 +52,13 @@ export function describeAssertionRule(rule: Assertion['rule']): string {
  * what a reader has gone looking for. That is the finding's own "put the raw
  * expression in Details", with the export as the details.
  *
- * The BOUND is identical in both, through `formatSlaValue` — the one place that
+ * The BOUND is identical in both, through `formatSlaBound` — the one place that
  * decision lives, so a table cell and the exported row cannot disagree about
  * what `≤ 0.01` means.
  */
 export function describeAssertionRuleForReader(rule: Assertion['rule']): string {
   const comparator = rule.comparator === 'lte' ? '≤' : '≥';
-  return `${describeSlaMeasurement(rule)} ${comparator} ${formatSlaValue(rule.metric, rule.threshold)}`;
+  return `${describeSlaMeasurement(rule)} ${comparator} ${formatSlaBound(rule.metric, rule.threshold)}`;
 }
 
 /**

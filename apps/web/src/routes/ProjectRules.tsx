@@ -8,7 +8,7 @@ import {
   slaMetricUnit,
   describeSlaMeasurement,
   describeSlaRule,
-  formatSlaValue,
+  formatSlaBound,
   type CreateSlaRuleRequest,
   type SlaRule,
   type SlaRuleListResponse,
@@ -220,7 +220,7 @@ const FIELD_GUIDANCE: Record<string, { label: string; help: string }> = {
    * The VALUES do not. `p95` stays `p95`, because review N01 spent four
    * branches making that one word mean one thing everywhere — it is the
    * statistics table's column, the run-totals tile, and what
-   * `formatSlaValue` and the preview sentence below render. Renaming it
+   * `formatSlaBound` and the preview sentence below render. Renaming it
    * here would re-open exactly the drift that pass closed, and would leave a
    * reader unable to find on the run page the thing they had just gated.
    * M09 lists "raw p95" among its examples; this is the half of that finding
@@ -1447,7 +1447,7 @@ function RulesTable({
                   monospace cell, so comparing six rules meant reading six sentences
                   and diffing them by eye. Split on the seam the contract already
                   draws — `describeSlaMeasurement` is WHAT is measured, the comparator
-                  plus `formatSlaValue` is the bound — which is also the split the
+                  plus `formatSlaBound` is the bound — which is also the split the
                   review's own wireframe draws. Neither helper is new: the run page's
                   gates table has rendered the first since review.md 3. */}
               <th className={TH}>Measurement</th>
@@ -1629,5 +1629,5 @@ function measurementOf(rule: SlaRule): string {
  * describer above performs, and the reason neither needs a wider type.
  */
 function limitOf(rule: SlaRule): string {
-  return `${rule.comparator === 'lte' ? '≤' : '≥'} ${formatSlaValue(rule.metric, rule.threshold)}`;
+  return `${rule.comparator === 'lte' ? '≤' : '≥'} ${formatSlaBound(rule.metric, rule.threshold)}`;
 }

@@ -1,4 +1,4 @@
-import type { ToolAssertion } from '@perfportal/contracts';
+import { roundForReading, type ToolAssertion } from '@perfportal/contracts';
 
 /**
  * One simulation assertion, broken into the columns a reader scans.
@@ -154,6 +154,9 @@ export function toolAssertionParts(assertion: ToolAssertion): ToolAssertionParts
 export function formatActual(assertion: ToolAssertion): string {
   if (assertion.actualValue === null) return '—';
   const { unit } = toolAssertionParts(assertion);
-  const rounded = Number(assertion.actualValue.toFixed(2));
+  // `roundForReading`, not a `toFixed` of its own: the platform gates table
+  // rounds its measured times through the same function, so the two kinds of
+  // check on one page cannot drift apart about what a measurement looks like.
+  const rounded = roundForReading(assertion.actualValue);
   return unit === null ? String(rounded) : bound(rounded, unit);
 }

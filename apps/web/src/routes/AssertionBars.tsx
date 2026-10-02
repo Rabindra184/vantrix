@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { describeSlaOutcome, formatSlaValue } from '@perfportal/contracts';
+import { describeSlaOutcome, formatSlaMeasured } from '@perfportal/contracts';
 import type { Assertion, StatRow, ToolAssertion } from '@perfportal/contracts';
 import Button from '../components/Button';
 import CollapsibleSection from '../components/CollapsibleSection';
@@ -144,9 +144,14 @@ export function PlatformGatesBar({
               {/* The same two cells the gates table carried: the measured
                   value through the rule's own formatter, and the outcome in
                   words — the stored message only for a not-applicable gate.
-                  A dash, never `0`, where nothing was measured. */}
+                  A dash, never `0`, where nothing was measured. A
+                  MEASUREMENT, so it is rounded for reading and widened where
+                  rounding would make it read as equal to the rule's own bound
+                  in the line above — `Actual: 100 ms` under `≤ 100 ms` on a
+                  gate that FAILED is the contradiction the guard prevents. */}
               <p className="text-[0.8125rem] tabular-nums text-primary">
-                Actual: {a.actualValue === null ? '—' : formatSlaValue(a.rule.metric, a.actualValue)}
+                Actual:{' '}
+                {a.actualValue === null ? '—' : formatSlaMeasured(a.rule.metric, a.actualValue, a.rule.threshold)}
               </p>
               <p className="text-[0.8125rem] text-muted">{describeSlaOutcome(a) ?? a.message}</p>
             </li>

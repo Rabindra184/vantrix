@@ -228,6 +228,39 @@ describe('PlatformGatesBar', () => {
     expect(within(notApplicable).getByText('No matching request was measured.')).toBeVisible();
   });
 
+  /**
+   * ═══ THE ACTUAL IS READ BESIDE THE BOUND, AND THEY MAY NOT TIE ═══
+   *
+   * A measured time is rounded for reading, and a mean of 100.004 ms against a
+   * limit of 100 ms rounded to "100 ms" — so a FAILED gate showed `Actual:
+   * 100 ms` directly under a title reading `≤ 100 ms`. `formatSlaMeasured`
+   * takes the rule's threshold for exactly that reason, and a call site that
+   * dropped the widening would still read plausibly. The bound is asserted as
+   * typed in the same card: the guard widens the MEASUREMENT, never the bound.
+   */
+  it('does not let a failed gate show an actual equal to its limit', () => {
+    const tie: Assertion = {
+      ruleId: '55555555-5555-4555-8555-555555555555',
+      outcome: 'failed',
+      actualValue: 100.004,
+      message: 'mean breached its threshold.',
+      rule: {
+        scope: 'run',
+        targetName: null,
+        family: 'response_time',
+        metric: 'mean',
+        comparator: 'lte',
+        threshold: 100,
+      },
+    };
+    at('/r', <PlatformGatesBar runId={RUN_ID} assertions={[tie]} ran />);
+    const card = screen.getAllByTestId('gate-card')[0]!;
+    expect(card).toHaveTextContent('Whole-run mean response time \u2264 100 ms');
+    expect(card).toHaveTextContent('Actual: 100.004 ms');
+    expect(card).not.toHaveTextContent(/Actual: 100 ms/);
+    expect(within(card).getByText('Whole-run mean response time 100.004 ms exceeds the 100 ms limit.')).toBeVisible();
+  });
+
   it.each([
     [undefined, true, 'Platform gates are judged once the run finishes.'],
     [[], false, 'The run stopped before anything could be processed, so no SLA rule ran.'],
