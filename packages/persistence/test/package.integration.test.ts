@@ -113,12 +113,42 @@ async function countArtifacts(packageId: string): Promise<number> {
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-async function waitUntil(what: string, probe: () => Promise<boolean>, ms = 10_000): Promise<void> {
+/**
+ * How long an arrangement may take to reach the state a lock-wait case needs
+ * (everyone queued, a commit visible). It is deliberately BELOW the 30 s that
+ * the repository gives the transactions that queue (`LOCK_WAITING_TX`), so a
+ * stuck arrangement fails here naming what it was waiting for, never as a
+ * Prisma P2028 from a transaction that outlived its budget.
+ */
+const ARRANGEMENT_DEADLINE_MS = 10_000;
+
+async function waitUntil(
+  what: string,
+  probe: () => Promise<boolean>,
+  ms = ARRANGEMENT_DEADLINE_MS,
+): Promise<void> {
   const deadline = Date.now() + ms;
   while (!(await probe())) {
     if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
     await sleep(25);
   }
+}
+
+/**
+ * Watches a promise the test does not await yet, and hands back a check a probe
+ * calls on every turn: if the promise has REJECTED, the check throws that
+ * rejection, so a call that failed on its own surfaces as itself rather than as
+ * its probe's timeout ten seconds later.
+ */
+function watchRejection(promise: Promise<unknown>): () => void {
+  const seen: { failed: boolean; error?: unknown } = { failed: false };
+  promise.catch((error: unknown) => {
+    seen.failed = true;
+    seen.error = error;
+  });
+  return () => {
+    if (seen.failed) throw seen.error;
+  };
 }
 
 /**
@@ -155,15 +185,19 @@ async function addVersionWithGap(packageId: string, mine: NewPackageVersion, inT
     release = resolve;
   });
   const first = new PackageRepository(gated(prisma, gate)).addVersion(orgA, checkout, packageId, mine);
-  void first.catch(() => undefined);
+  const rethrowIfFailed = watchRejection(first);
   try {
     await waitUntil('the upload to commit', async () => {
+      // An upload that fails before it commits is the cause, not the timeout.
+      rethrowIfFailed();
       const found = await pool.query('SELECT 1 FROM runner_artifact WHERE id = $1', [mine.artifactId]);
       return found.rowCount === 1;
     });
     await inTheGap();
   } finally {
     release();
+    // Never leave the upload running into the next test's reset.
+    await Promise.allSettled([first]);
   }
   return first;
 }
@@ -338,19 +372,21 @@ describe('PackageRepository', () => {
     // budget.
     await Promise.all(uploads.map(() => prisma.$queryRaw`SELECT 1`));
     const holder = await pool.connect();
+    let pending: Promise<unknown>[] = [];
     try {
       const { rows } = await holder.query<{ pid: number }>('SELECT pg_backend_pid() AS pid');
       const holderPid = rows[0]!.pid;
       await holder.query('BEGIN');
       await holder.query('SELECT id FROM package WHERE id = $1 FOR UPDATE', [created.id]);
 
-      const calls = Promise.all(
-        uploads.map((upload) => packages.addVersion(orgA, checkout, created.id, upload)),
-      );
-      void calls.catch(() => undefined);
+      const started = uploads.map((upload) => packages.addVersion(orgA, checkout, created.id, upload));
+      pending = started;
+      const calls = Promise.all(started);
+      const rethrowIfFailed = watchRejection(calls);
       // Transitively: only the first waiter on a row is blocked by the holder,
       // the rest queue behind that waiter's tuple lock.
       await waitUntil('all four uploads to be in flight', async () => {
+        rethrowIfFailed();
         const waiting = await pool.query<{ n: number }>(
           `WITH RECURSIVE queued(pid) AS (
              SELECT pid FROM pg_stat_activity WHERE $1 = ANY (pg_blocking_pids(pid))
@@ -375,6 +411,10 @@ describe('PackageRepository', () => {
     } finally {
       await holder.query('ROLLBACK').catch(() => undefined);
       holder.release();
+      // If the arrangement fell over before the COMMIT, the ROLLBACK above is
+      // what frees the lock: wait for the uploads it releases to finish, so none
+      // of them runs on into the next test's reset.
+      await Promise.allSettled(pending);
     }
   });
 
@@ -465,30 +505,27 @@ describe('PackageRepository', () => {
     // a delete that counted first would see nothing and remove a package a run
     // is about to start from.
     const starter = await pool.connect();
+    let outcome: Promise<unknown> = Promise.resolve();
     try {
       const { rows } = await starter.query<{ pid: number }>('SELECT pg_backend_pid() AS pid');
       const starterPid = rows[0]!.pid;
       await starter.query('BEGIN');
       await starter.query('SELECT id FROM package WHERE id = $1 FOR SHARE', [created.id]);
 
-      const outcome = packages.delete(orgA, checkout, created.id).then(
+      outcome = packages.delete(orgA, checkout, created.id).then(
         (result) => result,
         (err: unknown) => err,
       );
 
       // Poll from a connection that is neither the starter's nor the delete's,
       // in autocommit: a snapshot taken inside a transaction would freeze.
-      const deadline = Date.now() + 10_000;
-      let blocked = 0;
-      while (blocked === 0 && Date.now() < deadline) {
+      await waitUntil('the delete to queue behind the start', async () => {
         const waiting = await pool.query<{ n: number }>(
           'SELECT count(*)::int AS n FROM pg_stat_activity WHERE $1 = ANY (pg_blocking_pids(pid))',
           [starterPid],
         );
-        blocked = waiting.rows[0]!.n;
-        if (blocked === 0) await new Promise((resolve) => setTimeout(resolve, 25));
-      }
-      expect(blocked, 'the delete never queued behind the start').toBeGreaterThan(0);
+        return waiting.rows[0]!.n > 0;
+      });
 
       await starter.query(
         `INSERT INTO runner_job (org_id, project_id, artifact_id, status, requested_by, name, simulation_class)
@@ -502,6 +539,9 @@ describe('PackageRepository', () => {
     } finally {
       await starter.query('ROLLBACK').catch(() => undefined);
       starter.release();
+      // A delete still queued when the arrangement fell over is released by the
+      // ROLLBACK: let it finish rather than run on into the next test's reset.
+      await outcome;
     }
   });
 
