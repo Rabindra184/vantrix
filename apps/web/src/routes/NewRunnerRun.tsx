@@ -187,15 +187,32 @@ function knownSimulations(pkg: OfferedPackage | null): readonly string[] | null 
  * The package an upload of `filename` is filed in when none is named: its name
  * without the extension (`.tar.gz` counted as one), at most 112 characters.
  *
- * A COPY of the server's rule (`packageNameFromFilename`,
- * `apps/api/src/runner/package-files.ts`), which is the authority — this only
- * previews it, in the field's placeholder and the Review group, so a reader can
- * see the name that WOULD be used before the start uses it. The two have to
- * agree for the preview to be true, and a case pins the ones that matter.
+ * A COPY of the server's rule, which is the authority — this only previews it,
+ * in the field's placeholder and the Review group, so a reader can see the name
+ * that WOULD be used before the start uses it. The two have to agree for the
+ * preview to be true, and one table of cases pins both copies.
+ *
+ * THE SERVER'S RULE IS TWO STEPS, AND THIS COPIES BOTH. The start stores the
+ * upload under `sanitizeFilename(name)` and takes the stem of THAT
+ * (`packageNameFromFilename`, both in `apps/api/src/runner/package-files.ts`),
+ * so `checkout (1).jar` is filed under `checkout _1_` — and a preview of the
+ * stem alone read `checkout (1)`, a package the start never makes.
  */
 function packageNameFromFile(filename: string): string {
-  const stem = filename.replace(/(\.tar\.gz|\.[^.]+)$/i, '').slice(0, 112).trim();
+  const stem = sanitizeFilename(filename).replace(/(\.tar\.gz|\.[^.]+)$/i, '').slice(0, 112).trim();
   return stem === '' ? 'package' : stem;
+}
+
+/**
+ * The server's `sanitizeFilename`, mirrored exactly: the basename (POSIX, which
+ * is what `path.basename` is on the server), every character outside letters,
+ * digits, underscore, dot, hyphen and space made an underscore, and
+ * `gatling-artifact` for nothing left. A browser's `File.name` carries no
+ * directory, so the first step is the server's and never changes anything here.
+ */
+function sanitizeFilename(filename: string): string {
+  const base = filename.replace(/\/+$/, '').split('/').pop() ?? '';
+  return base.replace(/[^\w.\- ]/g, '_') || 'gatling-artifact';
 }
 
 /** What a submit hands the mutation: one of two requests to one route. */

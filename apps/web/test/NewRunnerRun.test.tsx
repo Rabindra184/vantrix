@@ -863,6 +863,10 @@ describe('NewRunnerRun — starting from a package', () => {
     ['search-bundle.zip', 'search-bundle'],
     ['v1.2.jar', 'v1.2'],
     [`${'x'.repeat(130)}.jar`, 'x'.repeat(112)],
+    // The server stores an upload under its SANITIZED name and takes the stem
+    // of that: a stem read off the raw name would preview a package the start
+    // never makes. The same row is in apps/api/test/package-files.test.ts.
+    ['checkout (1).jar', 'checkout _1_'],
   ])('previews the package an upload of %s is filed under', async (filename, stem) => {
     noPackages();
     mount();

@@ -1,6 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { assertSimulationListed, packageNameFromFilename } from '../src/runner/package-files.js';
+import {
+  assertSimulationListed,
+  packageNameFromFilename,
+  sanitizeFilename,
+} from '../src/runner/package-files.js';
 
+/**
+ * THE PACKAGE AN UPLOAD IS FILED IN, as the upload-and-start computes it: the
+ * stem of the SANITIZED filename (runner.controller.ts sanitizes first and
+ * hands that to `packageNameFromFilename`). Asserted as the composition because
+ * that is what a person meets, and because the New run form's preview
+ * (apps/web/test/NewRunnerRun.test.tsx) copies both steps: `checkout (1).jar` is
+ * the row that separates them, and it is in both tables.
+ */
 describe('a package name from a filename', () => {
   it.each([
     ['gatling-gradle-plugin-demo-kotlin-main-tests.jar', 'gatling-gradle-plugin-demo-kotlin-main-tests'],
@@ -16,8 +28,11 @@ describe('a package name from a filename', () => {
     ['nightly-load', 'nightly-load'],
     [`${'x'.repeat(130)}.jar`, 'x'.repeat(112)],
     [`${'y'.repeat(111)} tail.jar`, 'y'.repeat(111)],
+    // Sanitized first: the parentheses become underscores before the stem is
+    // taken. The same row is in the New run form's preview table.
+    ['checkout (1).jar', 'checkout _1_'],
   ])('%s → %s', (filename, name) => {
-    expect(packageNameFromFilename(filename)).toBe(name);
+    expect(packageNameFromFilename(sanitizeFilename(filename))).toBe(name);
   });
 
   it('caps the stem at 112 characters, as the backfill does', () => {
