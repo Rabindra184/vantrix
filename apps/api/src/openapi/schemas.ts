@@ -38,6 +38,12 @@ import {
   RunnerJobListResponseSchema,
   RunnerJobActionResponseSchema,
   RunnerJobLogsResponseSchema,
+  PackageListResponseSchema,
+  PackageSchema,
+  PackageUsageSchema,
+  PackageVersionSchema,
+  CreatePackageRequestSchema,
+  RenamePackageRequestSchema,
   TelemetryBatchSchema,
   TelemetryResponseSchema,
   TokenListResponseSchema,
@@ -114,6 +120,13 @@ const SOURCE: Record<string, ZodTypeAny> = {
   RunnerJobListResponse: RunnerJobListResponseSchema,
   RunnerJobActionResponse: RunnerJobActionResponseSchema,
   RunnerJobLogsResponse: RunnerJobLogsResponseSchema,
+  // PACKAGES: a project's named, reusable Gatling artifacts.
+  Package: PackageSchema,
+  PackageVersion: PackageVersionSchema,
+  PackageUsage: PackageUsageSchema,
+  PackageListResponse: PackageListResponseSchema,
+  CreatePackageRequest: CreatePackageRequestSchema,
+  RenamePackageRequest: RenamePackageRequestSchema,
 };
 
 /**

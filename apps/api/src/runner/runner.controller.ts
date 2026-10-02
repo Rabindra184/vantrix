@@ -46,7 +46,9 @@ export class RunnerController {
     const dir = path.resolve(this.config.runner.artifactDir, tenant.orgId, project.id);
     await mkdir(dir, { recursive: true });
     const tmpPath = path.join(dir, `${artifactId}.part`);
-    const upload = await readRunnerMultipart(req, tmpPath, this.config.runner.maxArtifactBytes);
+    const upload = await readRunnerMultipart(req, tmpPath, this.config.runner.maxArtifactBytes, {
+      fileRequired: true,
+    });
 
     let rawMetadata: unknown;
     try {

@@ -158,6 +158,22 @@ describe('POST /v1/projects/:slug/runner/runs artifact checks', () => {
     expect(res.body.code).toBe('RUNNER_ARTIFACT_NOT_A_JAR');
   });
 
+  it('still refuses a start with no artifact file, though package creation accepts one', async () => {
+    // readRunnerMultipart's `fileRequired` is the one switch between the two:
+    // a package may be created empty, a run may not be started without
+    // something to run, so this route must keep passing `true`.
+    const res = await request(ctx.app.getHttpServer())
+      .post('/v1/projects/checkout/runner/runs')
+      .set('Authorization', `Bearer ${runnerToken}`)
+      .field(
+        'metadata',
+        JSON.stringify({ name: 'load', artifactKind: 'gatling_jar', simulationClass: 'example.BasicSimulation' }),
+      );
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('BUNDLE_EMPTY');
+  });
+
   it('leaves a runnable bundle unexamined — these checks are jar-shaped', async () => {
     // A .tgz is not a zip and has no manifest; running the jar reader over one
     // would reject every bundle upload.
