@@ -7,14 +7,16 @@ import {
   type ReactNode,
   type SetStateAction,
 } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import type {
+  Package,
   RunnerArtifactKind,
   RunnerJob,
   RunnerJobListResponse,
   RunnerJobLogsResponse,
   RunnerJobStatus,
+  RunnerStartByPackageRequest,
   RunnerStartMetadata,
   RunnerStartResponse,
 } from '@perfportal/contracts';
@@ -24,6 +26,7 @@ import { EmptyState, ErrorState, LoadingState } from '../components/States';
 import TableFrame from '../components/TableFrame';
 import { ChevronLeftIcon, PlayIcon, RefreshIcon, StopIcon, UploadIcon } from '../components/icons';
 import { ProblemError } from '../api/fetch';
+import { fetchPackages, packagesQueryKey } from '../api/packages';
 import { fetchProjects, projectsQueryKey } from '../api/projects';
 import {
   cancelRunnerJob,
@@ -33,8 +36,10 @@ import {
   retryRunnerJob,
   runnerJobsQueryKey,
   startRunnerRun,
+  startRunnerRunFromPackage,
 } from '../api/runner';
 import { fetchProjectTests, projectTestsQueryKey } from '../api/tests';
+import { formatBytes } from '../api/uploadBundle';
 import { ROW, TABLE, TD, TH, THEAD, INPUT } from '../components/tableStyles';
 import { runnerReadiness, type RunnerReadinessKind } from './runnerReadiness';
 import useDocumentTitle from '../useDocumentTitle';
@@ -42,6 +47,32 @@ import { projectPath, runPath } from './paths';
 
 type FormState = {
   name: string;
+  /**
+   * WHERE THE RUN'S FILE COMES FROM.
+   *
+   *   null      — not decided yet: the packages list has not settled. The form
+   *               cannot know which fields to draw, and a guess made before the
+   *               answer arrived is how a form flashes the wrong ones and
+   *               switches a moment later, so it draws the Package group
+   *               loading instead.
+   *   'package' — start from `packageId`'s current version: a JSON start, no
+   *               upload.
+   *   'upload'  — send a file, filed in the package `packageName` names.
+   *
+   * DECIDED ONCE, WHEN THE LIST FIRST SETTLES — `package` if any package has a
+   * file, else `upload` (and also `upload` when the list could not be loaded)
+   * — and changed after that only by the reader. A list that refreshes later
+   * (an upload creates a package) must never move the fields under somebody
+   * who is part-way through filling them in; the form offers the new package
+   * through `Choose an existing package` instead.
+   */
+  source: 'package' | 'upload' | null;
+  /** The package the reader picked; '' means "the default" — the one
+   *  `?package=` named if it can be run, else the first that can. */
+  packageId: string;
+  /** Upload mode only: the package the file is filed in. Blank means the
+   *  package its filename stem names — the server's rule, not this form's. */
+  packageName: string;
   artifactKind: RunnerArtifactKind;
   simulationClass: string;
   gatlingVersion: string;
@@ -70,6 +101,9 @@ type FormState = {
 
 const initialForm: FormState = {
   name: '',
+  source: null,
+  packageId: '',
+  packageName: '',
   artifactKind: 'gatling_jar',
   simulationClass: '',
   gatlingVersion: '',
@@ -104,6 +138,68 @@ const ARTIFACT_HINTS: Record<RunnerArtifactKind, string> = {
   gatling_bundle:
     'A .zip or .tgz holding a Gatling distribution: bin/gatling.sh beside a lib/ of jars, with your simulation among them.',
 };
+
+/* ======================================================================== *
+ * PACKAGES — A RUN STARTS FROM ONE, AND UPLOADING A JAR IS THE LAST OPTION
+ * ======================================================================== */
+
+/** The Package select's last option: not a package, a way to make one. */
+const UPLOAD_OPTION = '__upload__';
+
+/** Said under the typed Simulation field when a package's list is UNKNOWN. */
+const SIMULATIONS_UNKNOWN_HINT = "This package's simulations aren't known yet — type the class.";
+
+/**
+ * A package that has a file. One without cannot be started, so it is not
+ * offered — a choice the reader could make and the server would refuse is the
+ * defect `FAMILIES_FOR_SCOPE` exists to prevent on the rules form.
+ */
+type OfferedPackage = Package & { readonly current: NonNullable<Package['current']> };
+
+function offeredPackages(items: readonly Package[]): OfferedPackage[] {
+  return items.filter((item): item is OfferedPackage => item.current !== null);
+}
+
+/** `Checkout · checkout.jar · 1.8 MB · Gatling 3.15.1` — the exact file a start
+ *  would run, which is what separates two packages that differ in a letter. */
+function packageOptionLabel({ name, current }: OfferedPackage): string {
+  const version = current.gatlingVersion ? ` · Gatling ${current.gatlingVersion}` : '';
+  return `${name} · ${current.filename} · ${formatBytes(current.bytes)}${version}`;
+}
+
+/**
+ * The simulations a package declares, or null when the form cannot offer a
+ * choice from them.
+ *
+ * NULL IS "UNKNOWN", NEVER "NONE" — the contract's rule (`PackageVersionSchema`),
+ * for a bundle or a jar with no manifest header. An empty list is treated the
+ * same, because a dropdown with no options is a control that cannot be used,
+ * and typing a class is the only way forward either way.
+ */
+function knownSimulations(pkg: OfferedPackage | null): readonly string[] | null {
+  const list = pkg?.current.simulations ?? null;
+  return list !== null && list.length > 0 ? list : null;
+}
+
+/**
+ * The package an upload of `filename` is filed in when none is named: its name
+ * without the extension (`.tar.gz` counted as one), at most 112 characters.
+ *
+ * A COPY of the server's rule (`packageNameFromFilename`,
+ * `apps/api/src/runner/package-files.ts`), which is the authority — this only
+ * previews it, in the field's placeholder and the Review group, so a reader can
+ * see the name that WOULD be used before the start uses it. The two have to
+ * agree for the preview to be true, and a case pins the ones that matter.
+ */
+export function packageNameFromFile(filename: string): string {
+  const stem = filename.replace(/(\.tar\.gz|\.[^.]+)$/i, '').slice(0, 112).trim();
+  return stem === '' ? 'package' : stem;
+}
+
+/** What a submit hands the mutation: one of two requests to one route. */
+type Launch =
+  | { readonly kind: 'package'; readonly request: RunnerStartByPackageRequest }
+  | { readonly kind: 'upload'; readonly metadata: RunnerStartMetadata; readonly artifact: File };
 
 export default function NewRunnerRun() {
   const { slug = '' } = useParams<{ slug: string }>();
@@ -163,14 +259,84 @@ function NewRunnerRunProject({
   const [formError, setFormError] = useState<string | null>(null);
   const [created, setCreated] = useState<RunnerStartResponse | null>(null);
 
+  /* ═══ WHERE THE FORM OPENS IS DECIDED BY THE PACKAGES, NOT ASSUMED ═══
+   *
+   * `mode` has three values on purpose:
+   *
+   *   loading — the packages list has not settled. The Package group draws its
+   *             own loading state and nothing else about the file, because
+   *             opening on the upload fields (the old form) and switching a
+   *             moment later would put a file input under the pointer that
+   *             vanishes as the reader reaches for it.
+   *   package — a package has a file and the reader has not asked to upload.
+   *   upload  — everything else: no package has a file, the list could not be
+   *             loaded (a launch form must not be blocked by a dropdown it
+   *             could not fill — the test picker's rule), or the reader
+   *             chose `Upload a new jar…`.
+   *
+   * THE DECISION IS MADE DURING RENDER, NOT IN AN EFFECT, for the reason
+   * `useLiveRun` resets its state that way: an effect commits one frame of the
+   * undecided form first, and the whole point is that there is no frame in
+   * which the wrong fields are on screen. React re-renders at once, before
+   * anything is committed, and the guard (`source` is no longer null) ends it.
+   *
+   * THE PACKAGE IS DERIVED. `?package=<id>` preselects a package only when it
+   * is among those that can be run: the Packages page builds that link from a
+   * list, and by the time it is followed the package may have lost its file or
+   * gone. A link naming something the form cannot offer is ignored, and the
+   * first package with a file is chosen instead — the form opens usable rather
+   * than on a value no option carries. */
+  const [searchParams] = useSearchParams();
+  const requestedPackage = searchParams.get('package');
+  const packages = useQuery({
+    queryKey: packagesQueryKey(slug),
+    queryFn: () => fetchPackages(slug),
+    enabled: slug !== '',
+  });
+  const offered = useMemo(() => offeredPackages(packages.data?.items ?? []), [packages.data]);
+  if (form.source === null && !packages.isPending) {
+    setForm((current) => ({ ...current, source: offered.length > 0 ? 'package' : 'upload' }));
+  }
+  const defaultPackage = offered.find((p) => p.id === requestedPackage) ?? offered[0] ?? null;
+  const chosenPackage = offered.find((p) => p.id === form.packageId) ?? defaultPackage;
+  const mode: 'loading' | 'package' | 'upload' =
+    form.source === null
+      ? 'loading'
+      : form.source === 'package' && chosenPackage !== null
+        ? 'package'
+        : 'upload';
+
+  /* The simulation a start will carry. From a package with a known list it is
+     the reader's pick, or the FIRST of the list when they have not picked or
+     their pick is not in THIS package's list — so "the first one is selected
+     when the package changes" is a property of what is rendered, which a
+     handler that forgets to reset something cannot break, and a list that
+     changes under the reader cannot leave a value no option carries.
+     Everywhere else it is what was typed. The handlers still clear the typed
+     text when the package or the source changes: it belongs to what it was
+     typed for. */
+  const simulations = mode === 'package' ? knownSimulations(chosenPackage) : null;
+  const simulationClass =
+    simulations === null
+      ? form.simulationClass
+      : simulations.includes(form.simulationClass)
+        ? form.simulationClass
+        : (simulations[0] ?? '');
+
   const mutation = useMutation({
-    mutationFn: (metadata: RunnerStartMetadata) => {
-      if (artifact === null) throw new Error('Choose a Gatling artifact before starting the run.');
-      return startRunnerRun({ projectSlug: slug, metadata, artifact });
-    },
+    mutationFn: (launch: Launch) =>
+      launch.kind === 'package'
+        ? startRunnerRunFromPackage(slug, launch.request)
+        : startRunnerRun({ projectSlug: slug, metadata: launch.metadata, artifact: launch.artifact }),
     onSuccess: (response) => {
       setCreated(response);
       void queryClient.invalidateQueries({ queryKey: runnerJobsQueryKey(slug) });
+      // An upload files its jar in a package — made on the spot when the name
+      // is new — and a start from one changes that package's `usage`, so the
+      // list is stale either way. It refreshes IN THE BACKGROUND: the fields
+      // stay as they are (`source` was decided once) and `Choose an existing
+      // package` appears when there is now one to choose.
+      void queryClient.invalidateQueries({ queryKey: packagesQueryKey(slug) });
     },
   });
 
@@ -183,30 +349,69 @@ function NewRunnerRunProject({
   const submit = (event: FormEvent) => {
     event.preventDefault();
     setCreated(null);
+    // Nothing can be started until the packages list has said which kind of
+    // start this is. The button is disabled meanwhile; this is the Enter key.
+    if (mode === 'loading') return;
     const parsedProps = parseSystemProperties(form.systemProperties);
     if (parsedProps.kind === 'error') {
       setFormError(parsedProps.message);
       return;
     }
+
+    // `testMode` decides whether a slug travels at all: 'default' means the
+    // worker groups by simulation class, which is not the same fact as an
+    // empty text box.
+    const test = form.testMode !== 'default' && form.test.trim() ? form.test.trim() : undefined;
+
+    // THE OPTIONAL KEYS ARE NAMED IN EACH LITERAL, with possibly-undefined
+    // values, never spread in conditionally: a mistyped key inside
+    // `...(x ? { … } : {})` is accepted by the compiler and silently never
+    // sent, which is how a field once reached three submit paths and missed
+    // the fourth. Written twice on purpose — a shared object would hide the
+    // same typo from both literals.
+    if (mode === 'package' && chosenPackage !== null) {
+      setFormError(null);
+      mutation.mutate({
+        kind: 'package',
+        request: {
+          packageId: chosenPackage.id,
+          simulationClass: simulationClass.trim(),
+          name: form.name.trim(),
+          environment: form.environment.trim() ? form.environment.trim() : undefined,
+          branch: form.branch.trim() ? form.branch.trim() : undefined,
+          commitSha: form.commitSha.trim() ? form.commitSha.trim() : undefined,
+          test,
+          javaOptions: form.javaOptions.trim() ? form.javaOptions.trim() : undefined,
+          systemProperties: parsedProps.value,
+        },
+      });
+      return;
+    }
+
     if (artifact === null) {
       setFormError('Choose the jar or bundle this node should run.');
       return;
     }
     setFormError(null);
     mutation.mutate({
-      name: form.name.trim(),
-      artifactKind: form.artifactKind,
-      simulationClass: form.simulationClass.trim(),
-      gatlingVersion: form.gatlingVersion.trim() ? form.gatlingVersion.trim() : undefined,
-      environment: form.environment.trim() ? form.environment.trim() : undefined,
-      branch: form.branch.trim() ? form.branch.trim() : undefined,
-      commitSha: form.commitSha.trim() ? form.commitSha.trim() : undefined,
-      // `testMode` decides whether a slug travels at all: 'default' means
-      // the worker groups by simulation class, which is not the same fact
-      // as an empty text box.
-      test: form.testMode !== 'default' && form.test.trim() ? form.test.trim() : undefined,
-      javaOptions: form.javaOptions.trim() ? form.javaOptions.trim() : undefined,
-      systemProperties: parsedProps.value,
+      kind: 'upload',
+      artifact,
+      metadata: {
+        name: form.name.trim(),
+        artifactKind: form.artifactKind,
+        simulationClass: simulationClass.trim(),
+        gatlingVersion: form.gatlingVersion.trim() ? form.gatlingVersion.trim() : undefined,
+        environment: form.environment.trim() ? form.environment.trim() : undefined,
+        branch: form.branch.trim() ? form.branch.trim() : undefined,
+        commitSha: form.commitSha.trim() ? form.commitSha.trim() : undefined,
+        test,
+        javaOptions: form.javaOptions.trim() ? form.javaOptions.trim() : undefined,
+        systemProperties: parsedProps.value,
+        // Blank means the file's own stem, which the SERVER works out: sending
+        // this form's copy of the rule would make the client the authority on
+        // a name the server has to reconcile with the database anyway.
+        package: form.packageName.trim() ? form.packageName.trim() : undefined,
+      },
     });
   };
 
@@ -225,9 +430,17 @@ function NewRunnerRunProject({
 
   /* How many of the collapsed fields carry a value. Without it a JVM option
      typed and then forgotten sits invisible behind a closed disclosure, which
-     is a worse failure than the clutter the disclosure removes. */
-  const advancedCount = [form.commitSha, form.gatlingVersion, form.javaOptions, form.systemProperties]
-    .filter((value) => value.trim() !== '').length;
+     is a worse failure than the clutter the disclosure removes.
+
+     A Gatling version describes a FILE, so it neither shows nor counts outside
+     upload mode: a value typed for an upload and abandoned for a package must
+     not sit in the count of a disclosure that does not contain it. */
+  const advancedCount = [
+    form.commitSha,
+    mode === 'upload' ? form.gatlingVersion : '',
+    form.javaOptions,
+    form.systemProperties,
+  ].filter((value) => value.trim() !== '').length;
 
   return (
     <div className="flex flex-col gap-6">
@@ -278,46 +491,113 @@ function NewRunnerRunProject({
               claim that it is a sequence goes. */}
           <form className="flex flex-col gap-6" onSubmit={submit}>
             <fieldset className="flex flex-col gap-4">
-              <legend className={LEGEND}>Artifact</legend>
+              {/* ═══ THE GROUP WAS "ARTIFACT" AND IS "PACKAGE" ═══
+                  A run starts from one of the project's packages — a named,
+                  reusable artifact — and a file is something the reader
+                  uploads INTO one. The old name described the file; the
+                  decision this group asks for is which package. */}
+              <legend className={LEGEND}>Package</legend>
 
-              <label className="flex cursor-pointer flex-col gap-2 rounded-xl border border-dashed border-default bg-sunken p-4 transition-ui hover:bg-page">
-                <span className="flex items-center gap-2 text-sm font-medium text-primary">
-                  <UploadIcon className="h-4 w-4" />
-                  Artifact file
-                </span>
-                <span className="text-[0.8125rem] text-muted">{artifactHint}</span>
-                <input
-                  className="sr-only"
-                  type="file"
-                  accept=".jar,.zip,.tgz,.tar.gz"
-                  onChange={(event) => setArtifact(event.target.files?.[0] ?? null)}
-                />
-              </label>
+              {mode === 'upload' && (
+                <label className="flex cursor-pointer flex-col gap-2 rounded-xl border border-dashed border-default bg-sunken p-4 transition-ui hover:bg-page">
+                  <span className="flex items-center gap-2 text-sm font-medium text-primary">
+                    <UploadIcon className="h-4 w-4" />
+                    Artifact file
+                  </span>
+                  <span className="text-[0.8125rem] text-muted">{artifactHint}</span>
+                  <input
+                    className="sr-only"
+                    type="file"
+                    accept=".jar,.zip,.tgz,.tar.gz"
+                    onChange={(event) => setArtifact(event.target.files?.[0] ?? null)}
+                  />
+                </label>
+              )}
 
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <Field label="Artifact type" id="runner-kind" hint={ARTIFACT_HINTS[form.artifactKind]}>
-                  <select
-                    id="runner-kind"
-                    className={INPUT}
-                    aria-describedby="runner-kind-hint"
-                    value={form.artifactKind}
-                    onChange={update('artifactKind', setForm)}
-                  >
-                    <option value="gatling_jar">Gatling jar</option>
-                    <option value="gatling_bundle">Runnable bundle</option>
-                  </select>
-                </Field>
-                <Field label="Simulation class" id="runner-simulation">
-                  <input
-                    id="runner-simulation"
-                    className={INPUT}
-                    value={form.simulationClass}
-                    placeholder="example.BasicSimulation"
-                    onChange={update('simulationClass', setForm)}
-                    required
-                  />
-                </Field>
+                {mode === 'upload' ? (
+                  <Field label="Artifact type" id="runner-kind" hint={ARTIFACT_HINTS[form.artifactKind]}>
+                    <select
+                      id="runner-kind"
+                      className={INPUT}
+                      aria-describedby="runner-kind-hint"
+                      value={form.artifactKind}
+                      onChange={update('artifactKind', setForm)}
+                    >
+                      <option value="gatling_jar">Gatling jar</option>
+                      <option value="gatling_bundle">Runnable bundle</option>
+                    </select>
+                  </Field>
+                ) : (
+                  <Field label="Package" id="runner-package">
+                    <select
+                      id="runner-package"
+                      className={INPUT}
+                      disabled={mode === 'loading'}
+                      value={mode === 'loading' ? '' : (chosenPackage?.id ?? '')}
+                      onChange={(event) => {
+                        const chosen = event.target.value;
+                        // The simulation is cleared with the package: it
+                        // belongs to the package that listed it.
+                        setForm((current) =>
+                          chosen === UPLOAD_OPTION
+                            ? { ...current, source: 'upload', simulationClass: '' }
+                            : { ...current, packageId: chosen, simulationClass: '' },
+                        );
+                      }}
+                    >
+                      {mode === 'loading' ? (
+                        <option value="">Loading packages…</option>
+                      ) : (
+                        <>
+                          {offered.map((pkg) => (
+                            <option key={pkg.id} value={pkg.id}>
+                              {packageOptionLabel(pkg)}
+                            </option>
+                          ))}
+                          <option value={UPLOAD_OPTION}>Upload a new jar…</option>
+                        </>
+                      )}
+                    </select>
+                  </Field>
+                )}
+                <SimulationField
+                  mode={mode}
+                  simulations={simulations}
+                  value={simulationClass}
+                  onChange={(value) => setForm((current) => ({ ...current, simulationClass: value }))}
+                />
               </div>
+
+              {mode === 'upload' && (
+                <div className="grid grid-cols-1 items-end gap-4 md:grid-cols-2">
+                  {/* ═══ THE WEB LEVER FOR "THAT NAME IS ANOTHER KIND" ═══
+                      Leaving this blank files the upload in the package its
+                      file's name stem names — which is what the placeholder
+                      shows. `foo.jar` after `foo.zip` has the SAME stem and a
+                      different kind, so the server refuses it with a
+                      remediation naming the metadata's "package" field; typing
+                      a different name here is how the upload goes elsewhere. */}
+                  <Field label="Package name" id="runner-package-name" optional>
+                    <input
+                      id="runner-package-name"
+                      className={INPUT}
+                      value={form.packageName}
+                      placeholder={artifact === null ? undefined : packageNameFromFile(artifact.name)}
+                      onChange={update('packageName', setForm)}
+                    />
+                  </Field>
+                  {offered.length > 0 && (
+                    <button
+                      type="button"
+                      className="w-fit cursor-pointer pb-2 text-[0.8125rem] font-medium text-accent hover:underline hover:underline-offset-2"
+                      onClick={() => setForm((current) => ({ ...current, source: 'package', simulationClass: '' }))}
+                    >
+                      Choose an existing package
+                    </button>
+                  )}
+                </div>
+              )}
             </fieldset>
 
             <fieldset className="flex flex-col gap-4">
@@ -357,9 +637,11 @@ function NewRunnerRunProject({
                     <Field label="Commit SHA" id="runner-commit" optional>
                       <input id="runner-commit" className={INPUT} value={form.commitSha} onChange={update('commitSha', setForm)} />
                     </Field>
-                    <Field label="Gatling version" id="runner-gatling-version" optional>
-                      <input id="runner-gatling-version" className={INPUT} value={form.gatlingVersion} onChange={update('gatlingVersion', setForm)} />
-                    </Field>
+                    {mode === 'upload' && (
+                      <Field label="Gatling version" id="runner-gatling-version" optional>
+                        <input id="runner-gatling-version" className={INPUT} value={form.gatlingVersion} onChange={update('gatlingVersion', setForm)} />
+                      </Field>
+                    )}
                   </div>
 
                   <Field label="JVM options" id="runner-java-options" optional>
@@ -396,7 +678,18 @@ function NewRunnerRunProject({
 
             <fieldset className="flex flex-col gap-4">
               <legend className={LEGEND}>Review</legend>
-              <ReviewSummary form={form} artifact={artifact} properties={parsedProperties} />
+              <ReviewSummary
+                form={form}
+                simulation={simulationClass}
+                source={
+                  mode === 'package' && chosenPackage !== null
+                    ? { kind: 'package', pkg: chosenPackage }
+                    : mode === 'upload'
+                      ? { kind: 'upload', artifact }
+                      : { kind: 'loading' }
+                }
+                properties={parsedProperties}
+              />
 
               {(formError !== null || mutation.isError) && (
                 <div role="alert" className="rounded-lg border border-default bg-sunken p-3 text-[0.8125rem] text-primary">
@@ -406,7 +699,7 @@ function NewRunnerRunProject({
               )}
 
               <div className="flex flex-wrap items-center gap-3">
-                <Button type="submit" variant="primary" loading={mutation.isPending}>
+                <Button type="submit" variant="primary" loading={mutation.isPending} disabled={mode === 'loading'}>
                   <PlayIcon className="h-3.5 w-3.5" />
                   Queue run
                 </Button>
@@ -556,6 +849,91 @@ function TestPicker({
 }
 
 /* ======================================================================== *
+ * WHICH SIMULATION — CHOSEN FROM THE PACKAGE'S LIST WHEN IT HAS ONE
+ * ======================================================================== */
+
+/**
+ * The simulation to run: a dropdown over what the chosen package DECLARES, or
+ * the typed field it replaces when that is not known.
+ *
+ * ═══ A TYPED CLASS IS ONLY AS GOOD AS ITS SPELLING ═══
+ *
+ * A jar's manifest lists its simulations, and the server refuses a class the
+ * jar does not declare (`SIMULATION_CLASS_NOT_IN_ARTIFACT`) — after the start
+ * has been sent. Offering the list moves that refusal to where it is free: a
+ * choice the reader cannot get wrong.
+ *
+ * ═══ UNKNOWN IS NOT NONE ═══
+ *
+ * A bundle, or a jar with no manifest header, declares nothing the product can
+ * read, and `simulations: null` says so. The field then degrades to typing and
+ * SAYS why — a text box that appeared where a dropdown was expected, with no
+ * word on it, would read as a bug. In upload mode there is no package to be
+ * unknown about, so the hint is not shown and the field is the plain old one.
+ *
+ * Loading draws the dropdown, disabled and empty: the control the field is
+ * most likely to become, rather than a text box that turns into one.
+ */
+function SimulationField({
+  mode,
+  simulations,
+  value,
+  onChange,
+}: {
+  readonly mode: 'loading' | 'package' | 'upload';
+  readonly simulations: readonly string[] | null;
+  readonly value: string;
+  readonly onChange: (value: string) => void;
+}) {
+  if (mode === 'loading') {
+    return (
+      <Field label="Simulation" id="runner-simulation">
+        <select id="runner-simulation" className={INPUT} disabled value="" onChange={() => undefined}>
+          <option value="" />
+        </select>
+      </Field>
+    );
+  }
+
+  if (simulations !== null) {
+    return (
+      <Field label="Simulation" id="runner-simulation">
+        <select
+          id="runner-simulation"
+          className={INPUT}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+        >
+          {simulations.map((simulation) => (
+            <option key={simulation} value={simulation}>
+              {simulation}
+            </option>
+          ))}
+        </select>
+      </Field>
+    );
+  }
+
+  return (
+    <Field
+      label="Simulation class"
+      id="runner-simulation"
+      hint={mode === 'package' ? SIMULATIONS_UNKNOWN_HINT : undefined}
+    >
+      <input
+        id="runner-simulation"
+        className={INPUT}
+        value={value}
+        placeholder={mode === 'upload' ? 'example.BasicSimulation' : undefined}
+        aria-describedby={mode === 'package' ? 'runner-simulation-hint' : undefined}
+        onChange={(event) => onChange(event.target.value)}
+        required
+      />
+    </Field>
+  );
+}
+
+/* ======================================================================== *
  * REVIEW — WHAT WILL ACTUALLY BE SENT
  * ======================================================================== */
 
@@ -575,13 +953,24 @@ function TestPicker({
  * is a summary of the launch rather than an interpretation of it, and it is
  * also the only place a mistyped key is visible before the run starts.
  */
+type ReviewRow = { readonly label: string; readonly value: string; readonly missing?: boolean };
+
+type ReviewSource =
+  | { readonly kind: 'loading' }
+  | { readonly kind: 'package'; readonly pkg: OfferedPackage }
+  | { readonly kind: 'upload'; readonly artifact: File | null };
+
 function ReviewSummary({
   form,
-  artifact,
+  simulation,
+  source,
   properties,
 }: {
   readonly form: FormState;
-  readonly artifact: File | null;
+  /** The simulation the start will carry — derived by the form, not read off
+   *  `form`, because from a package's list it may be the first one. */
+  readonly simulation: string;
+  readonly source: ReviewSource;
   readonly properties: ReturnType<typeof parseSystemProperties>;
 }) {
   /* ═══ ONLY THE ROWS THAT SAY SOMETHING — review M11 ═══
@@ -604,9 +993,46 @@ function ReviewSummary({
   const optional = (label: string, value: string) =>
     value.trim() === '' ? null : { label, value: value.trim() };
 
-  const rows: readonly { label: string; value: string; missing?: boolean }[] = [
-    { label: 'Artifact', value: artifact?.name ?? 'none chosen', missing: artifact === null },
-    { label: 'Simulation', value: form.simulationClass.trim() || 'not set', missing: form.simulationClass.trim() === '' },
+  /* ═══ WHAT THE RUN WILL EXECUTE, IN THE TERMS OF ITS SOURCE ═══
+   *
+   * From a package the reader chose a NAME, and what a start runs is a FILE —
+   * the package's current version, which another upload can replace. So both
+   * are read back: the name, and the exact file and size, because two
+   * packages that differ in a letter are told apart by what they hold.
+   *
+   * For an upload, `Artifact` stays what it was, and `Package` says where it
+   * will be filed — the typed name, or the stem the server will use. It is an
+   * OPTIONAL row (nothing chosen, nothing typed, nothing to say), for the
+   * reason the rows below it are.
+   *
+   * While the packages list loads there is nothing true to say about either. */
+  const sourceRows: readonly (ReviewRow | null)[] =
+    source.kind === 'package'
+      ? [
+          { label: 'Package', value: source.pkg.name },
+          {
+            label: 'File',
+            value: `${source.pkg.current.filename} · ${formatBytes(source.pkg.current.bytes)}`,
+          },
+        ]
+      : source.kind === 'upload'
+        ? [
+            {
+              label: 'Artifact',
+              value: source.artifact?.name ?? 'none chosen',
+              missing: source.artifact === null,
+            },
+            optional(
+              'Package',
+              form.packageName.trim() ||
+                (source.artifact === null ? '' : packageNameFromFile(source.artifact.name)),
+            ),
+          ]
+        : [];
+
+  const rows: readonly ReviewRow[] = [
+    ...sourceRows,
+    { label: 'Simulation', value: simulation.trim() || 'not set', missing: simulation.trim() === '' },
     { label: 'Run name', value: form.name.trim() || 'not set', missing: form.name.trim() === '' },
     {
       label: 'Test',
@@ -620,7 +1046,7 @@ function ReviewSummary({
     optional('Branch', form.branch),
     optional('Commit', form.commitSha),
     optional('JVM options', form.javaOptions),
-  ].filter((row): row is { label: string; value: string; missing?: boolean } => row !== null);
+  ].filter((row): row is ReviewRow => row !== null);
 
   return (
     <div className="rounded-xl border border-default bg-sunken p-4" data-testid="review-summary">
@@ -866,6 +1292,7 @@ function RecentJobs({ slug, query }: { readonly slug: string; readonly query: Us
           <thead className={THEAD}>
             <tr>
               <th scope="col" className={TH}>Created</th>
+              <th scope="col" className={TH}>Package</th>
               <th scope="col" className={TH}>Artifact</th>
               <th scope="col" className={TH}>Simulation</th>
               <th scope="col" className={TH}>Status</th>
@@ -877,6 +1304,11 @@ function RecentJobs({ slug, query }: { readonly slug: string; readonly query: Us
             {query.data.items.map(({ artifact, job }) => (
               <tr key={job.id} className={ROW}>
                 <td className={TD}>{new Date(job.createdAt).toLocaleString()}</td>
+                {/* THREE ANSWERS. A name; NULL, once the package was deleted
+                    (the job stays and the package does not, which is worth
+                    saying); or ABSENT, an API that predates packages — which
+                    says nothing, and must not claim a deletion. */}
+                <td className={TD}>{job.packageName ?? (job.packageId === null ? 'Package deleted' : '—')}</td>
                 <td className={TD}>{artifact.filename}</td>
                 <td className={TD}>{artifact.simulationClass}</td>
                 <td className={TD}>{job.status}</td>

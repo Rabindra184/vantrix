@@ -1,10 +1,19 @@
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { RouterProvider, createMemoryRouter } from 'react-router-dom';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  RunnerStartByPackageRequestSchema,
+  type Package,
+  type PackageListResponse,
+  type RunnerJobListResponse,
+  type RunnerStartByPackageRequest,
+} from '@perfportal/contracts';
+import { ProblemError } from '../src/api/fetch.js';
+import { fetchPackages, packagesQueryKey } from '../src/api/packages.js';
 import { fetchProjects } from '../src/api/projects.js';
-import { fetchRunnerJobs, startRunnerRun } from '../src/api/runner.js';
+import { fetchRunnerJobs, startRunnerRun, startRunnerRunFromPackage } from '../src/api/runner.js';
 import { fetchProjectTests } from '../src/api/tests.js';
 import NewRunnerRun from '../src/routes/NewRunnerRun.js';
 
@@ -50,6 +59,55 @@ vi.mock('../src/api/runner.js', async (importOriginal) => ({
     },
     next: { reportUrl: null, runner: 'queued' },
   })),
+  startRunnerRunFromPackage: vi.fn(async (_slug: string, request: RunnerStartByPackageRequest) => ({
+    artifact: {
+      id: '00000000-0000-4000-8000-0000000000c3',
+      name: request.name,
+      filename: 'gatling-gradle-plugin-demo-kotlin-main-tests.jar',
+      kind: 'gatling_jar',
+      simulationClass: request.simulationClass,
+      gatlingVersion: '3.15.1',
+      sha256: 'sha',
+      bytes: 1_887_437,
+      createdAt: new Date('2026-08-20T00:00:00.000Z').toISOString(),
+    },
+    job: {
+      id: '00000000-0000-4000-8000-0000000000d4',
+      artifactId: '00000000-0000-4000-8000-0000000000c3',
+      runId: null,
+      status: 'queued',
+      requestedBy: 'token',
+      environment: null,
+      branch: null,
+      commitSha: null,
+      testSlug: null,
+      javaOptions: null,
+      systemProperties: {},
+      error: null,
+      createdAt: new Date('2026-08-20T00:00:00.000Z').toISOString(),
+      updatedAt: new Date('2026-08-20T00:00:00.000Z').toISOString(),
+    },
+    next: { reportUrl: null, runner: 'queued' },
+  })),
+}));
+
+/**
+ * The PACKAGE PICKER reads this — a run starts from one of the project's
+ * packages, and uploading a jar is the last option rather than the form.
+ *
+ * Mocked with a default that RETURNS packages, so the form opens in package
+ * mode, and every case that types a simulation class or attaches a file says
+ * `noPackages()` out loud. Left to fail, the query would error and the form
+ * would open on the upload fields: the old cases would pass while testing the
+ * fallback instead of the feature, which is the trap the test picker's mock
+ * below records. And the default is installed in a top-level `beforeEach`, not
+ * in this factory, because a factory is hoisted above every declaration and
+ * cannot read the fixtures — and because a case that replaces it must not leak
+ * into the next one.
+ */
+vi.mock('../src/api/packages.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/api/packages.js')>()),
+  fetchPackages: vi.fn(),
 }));
 
 /**
@@ -79,21 +137,91 @@ vi.mock('../src/api/tests.js', async (importOriginal) => ({
   })),
 }));
 
+const CHECKOUT_ID = '00000000-0000-4000-8000-0000000000f1';
+const EMPTY_ID = '00000000-0000-4000-8000-0000000000f2';
+const SEARCH_ID = '00000000-0000-4000-8000-0000000000f3';
+
+const CHECKOUT_FILE = 'gatling-gradle-plugin-demo-kotlin-main-tests.jar';
+
+function packageOf(id: string, name: string, current: Package['current']): Package {
+  return {
+    id,
+    name,
+    kind: 'gatling_jar',
+    createdAt: '2026-09-20T08:00:00.000Z',
+    updatedAt: '2026-10-01T09:30:00.000Z',
+    current,
+    usage: { tests: 0, runs: 0, activeJobs: 0 },
+  };
+}
+
+function versionOf(
+  filename: string,
+  bytes: number,
+  gatlingVersion: string | null,
+  simulations: readonly string[] | null,
+): NonNullable<Package['current']> {
+  return {
+    artifactId: '00000000-0000-4000-8000-0000000000a9',
+    filename,
+    bytes,
+    sha256: 'sha',
+    gatlingVersion,
+    simulations: simulations === null ? null : [...simulations],
+    uploadedAt: '2026-10-01T09:30:00.000Z',
+  };
+}
+
+/** A jar that declares two simulations. 1,887,437 bytes reads `1.8 MB`. */
+const CHECKOUT = packageOf(
+  CHECKOUT_ID,
+  'Checkout',
+  versionOf(CHECKOUT_FILE, 1_887_437, '3.15.1', ['example.BasicSimulation', 'example.Other']),
+);
+/** A package with no file yet: nothing to run, so nothing to offer. */
+const EMPTY = packageOf(EMPTY_ID, 'Empty', null);
+/** A bundle has no manifest to read, so its simulations are UNKNOWN — never `[]`. */
+const SEARCH = packageOf(SEARCH_ID, 'Search', versionOf('search-bundle.zip', 4096, null, null));
+
+const fetchPackagesMock = vi.mocked(fetchPackages);
 const fetchProjectsMock = vi.mocked(fetchProjects);
 const fetchProjectTestsMock = vi.mocked(fetchProjectTests);
 const fetchRunnerJobsMock = vi.mocked(fetchRunnerJobs);
 const startRunnerRunMock = vi.mocked(startRunnerRun);
+const startRunnerRunFromPackageMock = vi.mocked(startRunnerRunFromPackage);
+
+/** The project's packages for the next mount. */
+const servePackages = (...items: readonly Package[]) =>
+  fetchPackagesMock.mockImplementation(async () => ({ items: [...items] }));
+/** A project with no packages at all: the form opens on the upload fields. */
+const noPackages = () => servePackages();
+
+beforeEach(() => {
+  // RESET, not just re-install: a `...Once` a case queued and never consumed —
+  // which is exactly what a case that FAILS before its call leaves behind —
+  // would otherwise answer the NEXT case's first call, and one failure would
+  // read as several. `mockReset` puts the factory's own implementation back.
+  fetchPackagesMock.mockReset();
+  fetchRunnerJobsMock.mockReset();
+  startRunnerRunMock.mockReset();
+  startRunnerRunFromPackageMock.mockReset();
+  servePackages(CHECKOUT, EMPTY);
+});
 
 afterEach(() => {
   cleanup();
+  fetchPackagesMock.mockClear();
   fetchProjectsMock.mockClear();
   fetchProjectTestsMock.mockClear();
   fetchRunnerJobsMock.mockClear();
   startRunnerRunMock.mockClear();
+  startRunnerRunFromPackageMock.mockClear();
 });
 
 describe('NewRunnerRun', () => {
   it('does not reuse form or artifact state after project navigation', async () => {
+    // Typing a class and attaching a file are UPLOAD-mode acts.
+    noPackages();
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     const router = createMemoryRouter(
       [{ path: '/projects/:slug/run/new', element: <NewRunnerRun /> }],
@@ -106,7 +234,9 @@ describe('NewRunnerRun', () => {
       </QueryClientProvider>,
     );
 
-    const alphaName = await screen.findByLabelText(/run name/i);
+    // The upload fields exist once the packages list has settled, empty.
+    await screen.findByLabelText(/artifact file/i);
+    const alphaName = screen.getByLabelText(/run name/i);
     fireEvent.change(alphaName, { target: { value: 'alpha metadata' } });
     fireEvent.change(screen.getByLabelText(/simulation class/i), { target: { value: 'example.AlphaSimulation' } });
     fireEvent.change(screen.getByLabelText(/artifact file/i), {
@@ -125,6 +255,8 @@ describe('NewRunnerRun', () => {
     });
 
     expect(await screen.findByText('Beta')).not.toBeNull();
+    // Beta's own packages query has to settle before its fields exist.
+    await screen.findByLabelText(/artifact file/i);
     expect((screen.getByLabelText(/run name/i) as HTMLInputElement).value).toBe('');
     expect(screen.getByText(/no artifact selected/i)).not.toBeNull();
 
@@ -182,8 +314,12 @@ describe('NewRunnerRun', () => {
     return router;
   }
 
-  /** Everything a queue needs except the test, which each case supplies. */
-  function fillRequired() {
+  /** Everything a queue needs except the test, which each case supplies. UPLOAD
+   *  mode: the class is typed and the file attached, so the cases that use it
+   *  say `noPackages()` first. Async because those fields exist only once the
+   *  packages query has settled. */
+  async function fillRequired() {
+    await screen.findByLabelText(/artifact file/i);
     fireEvent.change(screen.getByLabelText(/run name/i), { target: { value: 'soak' } });
     fireEvent.change(screen.getByLabelText(/simulation class/i), {
       target: { value: 'example.AlphaSimulation' },
@@ -196,9 +332,10 @@ describe('NewRunnerRun', () => {
   const queue = () => fireEvent.click(screen.getByRole('button', { name: /queue run/i }));
 
   it('omits the test entirely when the default grouping is kept', async () => {
+    noPackages();
     mount();
     await screen.findByLabelText(/run name/i);
-    fillRequired();
+    await fillRequired();
     queue();
 
     await screen.findByText(/run queued/i);
@@ -229,6 +366,7 @@ describe('NewRunnerRun', () => {
   });
 
   it('sends the slug of an existing test when one is picked', async () => {
+    noPackages();
     mount();
     await screen.findByLabelText(/run name/i);
     // The option is named for the reader — the test's NAME — while the value
@@ -237,7 +375,7 @@ describe('NewRunnerRun', () => {
     // slugifying anything here.
     const picker = await screen.findByLabelText('Test');
     fireEvent.change(picker, { target: { value: 'checkout-soak' } });
-    fillRequired();
+    await fillRequired();
     queue();
 
     await screen.findByText(/run queued/i);
@@ -253,6 +391,7 @@ describe('NewRunnerRun', () => {
    * with a dropdown next to it.
    */
   it('reveals a slug field only when creating a test, and sends what was typed', async () => {
+    noPackages();
     mount();
     const picker = await screen.findByLabelText('Test');
     expect(screen.queryByLabelText(/new test slug/i)).toBeNull();
@@ -261,7 +400,7 @@ describe('NewRunnerRun', () => {
     const slug = screen.getByLabelText(/new test slug/i);
     fireEvent.change(slug, { target: { value: 'nightly-smoke' } });
 
-    fillRequired();
+    await fillRequired();
     queue();
     await screen.findByText(/run queued/i);
     expect(startRunnerRunMock.mock.calls[0]?.[0]?.metadata).toMatchObject({
@@ -279,13 +418,14 @@ describe('NewRunnerRun', () => {
    * accident rather than on purpose.
    */
   it('falls back to a typed slug when the tests list cannot be loaded', async () => {
+    noPackages();
     fetchProjectTestsMock.mockRejectedValueOnce(new Error('tests unavailable'));
     mount();
     await screen.findByLabelText(/run name/i);
 
     const typed = await screen.findByPlaceholderText('checkout-soak');
     fireEvent.change(typed, { target: { value: 'checkout-soak' } });
-    fillRequired();
+    await fillRequired();
     queue();
 
     await screen.findByText(/run queued/i);
@@ -408,6 +548,7 @@ describe('NewRunnerRun — what will be sent, and what is known about the node',
    * form is not a second section of this page, it IS the page.
    */
   it('names the task once', async () => {
+    noPackages();
     mount();
     await screen.findByLabelText(/artifact file/i);
 
@@ -430,11 +571,12 @@ describe('NewRunnerRun — what will be sent, and what is known about the node',
    * without their numbers, not that they are gone.
    */
   it('groups the fields without claiming they are a sequence', async () => {
+    noPackages();
     mount();
     await screen.findByLabelText(/artifact file/i);
 
     const legends = [...document.querySelectorAll('legend')].map((l) => l.textContent?.trim());
-    expect(legends).toEqual(['Artifact', 'Execution', 'Review']);
+    expect(legends).toEqual(['Package', 'Execution', 'Review']);
   });
 
   /**
@@ -450,6 +592,7 @@ describe('NewRunnerRun — what will be sent, and what is known about the node',
    * asserted, because either alone passes against the wrong design.
    */
   it('shows what is set and what is still needed, and nothing else', async () => {
+    noPackages();
     mount();
     await screen.findByLabelText(/artifact file/i);
     const summary = screen.getByTestId('review-summary');
@@ -466,6 +609,7 @@ describe('NewRunnerRun — what will be sent, and what is known about the node',
 
   /** And an optional value appears as soon as it is one. */
   it('adds an optional row once it has something to say', async () => {
+    noPackages();
     mount();
     await screen.findByLabelText(/artifact file/i);
 
@@ -475,5 +619,785 @@ describe('NewRunnerRun — what will be sent, and what is known about the node',
     fireEvent.change(screen.getByLabelText(/^branch\b/i), { target: { value: 'main' } });
     expect(within(summary()).getByText('Branch')).toBeDefined();
     expect(within(summary()).getByText('main')).toBeDefined();
+  });
+});
+
+/* ======================================================================== *
+ * STARTING FROM A PACKAGE (backlog #8)
+ * ======================================================================== */
+
+describe('NewRunnerRun — starting from a package', () => {
+  /** Returns the query client, for the cases that change the list under a form
+   *  that is already drawn. */
+  function mount(entry = '/projects/alpha/run/new') {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const router = createMemoryRouter(
+      [{ path: '/projects/:slug/run/new', element: <NewRunnerRun /> }],
+      { initialEntries: [entry] },
+    );
+    render(
+      <QueryClientProvider client={client}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    );
+    return client;
+  }
+
+  /**
+   * The Package select, once the packages list has SETTLED.
+   *
+   * While the query is pending the same control exists, disabled, with one
+   * option — so `findByLabelText('Package')` resolves on the loading state and
+   * every assertion after it would read a list that has not arrived. The last
+   * option is what only a settled list has.
+   */
+  async function packageSelect(): Promise<HTMLSelectElement> {
+    await screen.findByRole('option', { name: 'Upload a new jar…' });
+    return screen.getByLabelText('Package') as HTMLSelectElement;
+  }
+
+  const optionLabels = (select: HTMLElement) =>
+    within(select)
+      .getAllByRole('option')
+      .map((option) => option.textContent);
+
+  const queue = () => fireEvent.click(screen.getByRole('button', { name: /queue run/i }));
+  const advanced = () => screen.getByTestId('advanced').textContent ?? '';
+
+  /** One Review row's value — the `dd` beside the `dt` that names it. */
+  const reviewValue = (label: string): string | null => {
+    const term = within(screen.getByTestId('review-summary')).queryByText(label);
+    return term?.closest('div')?.querySelector('dd')?.textContent ?? null;
+  };
+
+  const attach = (filename: string) =>
+    fireEvent.change(screen.getByLabelText(/artifact file/i), {
+      target: { files: [new File(['x'], filename, { type: 'application/java-archive' })] },
+    });
+
+  /* ---------------------------------------------------------------------- *
+   * THE PICKER
+   * ---------------------------------------------------------------------- */
+
+  it("offers the project's packages that have a file, and an upload option last", async () => {
+    servePackages(CHECKOUT, EMPTY);
+    mount();
+
+    expect(optionLabels(await packageSelect())).toEqual([
+      'Checkout · gatling-gradle-plugin-demo-kotlin-main-tests.jar · 1.8 MB · Gatling 3.15.1',
+      'Upload a new jar…',
+    ]);
+  });
+
+  /** A bundle's manifest is not read, so it has no Gatling version — and an
+   *  option reading "Gatling null" would be the schema read aloud. */
+  it('leaves Gatling out of a label when the package carries no version', async () => {
+    servePackages(SEARCH);
+    mount();
+
+    expect(optionLabels(await packageSelect())).toEqual([
+      'Search · search-bundle.zip · 4.0 KB',
+      'Upload a new jar…',
+    ]);
+  });
+
+  it('opens in package mode, on the first package, with no upload fields', async () => {
+    servePackages(EMPTY, CHECKOUT, SEARCH);
+    mount();
+    const select = await packageSelect();
+
+    // The first package WITH A FILE — `Empty` is listed first and is skipped.
+    expect(select.value).toBe(CHECKOUT_ID);
+    expect(screen.queryByLabelText(/artifact file/i)).toBeNull();
+    expect(screen.queryByLabelText('Artifact type')).toBeNull();
+    expect(screen.queryByLabelText(/^package name\b/i)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Choose an existing package' })).toBeNull();
+  });
+
+  it("lists the chosen package's simulations as a dropdown", async () => {
+    // The bundle is first, so the form opens on a package whose list is
+    // unknown and CHOOSING is what makes the control a dropdown.
+    servePackages(SEARCH, CHECKOUT);
+    mount();
+    const select = await packageSelect();
+    expect(screen.getByLabelText(/simulation class/i).tagName).toBe('INPUT');
+
+    fireEvent.change(select, { target: { value: CHECKOUT_ID } });
+
+    const simulation = screen.getByLabelText('Simulation') as HTMLSelectElement;
+    expect(simulation.tagName).toBe('SELECT');
+    expect(optionLabels(simulation)).toEqual(['example.BasicSimulation', 'example.Other']);
+    expect(simulation.value).toBe('example.BasicSimulation');
+    expect(screen.queryByLabelText(/simulation class/i)).toBeNull();
+  });
+
+  it("selects a package's first simulation again whenever the package changes", async () => {
+    servePackages(CHECKOUT, SEARCH);
+    mount();
+    const select = await packageSelect();
+    const simulation = () => screen.getByLabelText('Simulation') as HTMLSelectElement;
+
+    fireEvent.change(simulation(), { target: { value: 'example.Other' } });
+    expect(simulation().value).toBe('example.Other');
+
+    // Away and back: `example.Other` was the reader's choice for THAT visit.
+    fireEvent.change(select, { target: { value: SEARCH_ID } });
+    fireEvent.change(select, { target: { value: CHECKOUT_ID } });
+    expect(simulation().value).toBe('example.BasicSimulation');
+  });
+
+  it("falls back to typing, and says why, when the package's list is unknown", async () => {
+    servePackages(SEARCH);
+    mount();
+    await packageSelect();
+
+    const simulation = screen.getByLabelText(/simulation class/i);
+    expect(simulation.tagName).toBe('INPUT');
+    const hint = "This package's simulations aren't known yet — type the class.";
+    expect(screen.getByText(hint)).toBeDefined();
+    // Tied to the control, so it is announced WITH it rather than read past.
+    const describedBy = simulation.getAttribute('aria-describedby');
+    expect(describedBy).not.toBeNull();
+    expect(document.getElementById(describedBy ?? '')?.textContent).toBe(hint);
+  });
+
+  it('preselects ?package=<id>', async () => {
+    servePackages(CHECKOUT, SEARCH);
+    mount(`/projects/alpha/run/new?package=${SEARCH_ID}`);
+    const select = await packageSelect();
+
+    // Not the first package: the default would have been Checkout.
+    expect(select.value).toBe(SEARCH_ID);
+    expect(screen.getByLabelText(/simulation class/i).tagName).toBe('INPUT');
+  });
+
+  /**
+   * A LINK IS DATA, AND DATA CAN BE STALE. The Packages page builds
+   * `?package=<id>` from a list, and by the time the link is followed the
+   * package may have lost its file or gone. Either way the form must open
+   * usable, on the first package it can actually run.
+   */
+  it.each([
+    ['a package with no file', EMPTY_ID],
+    ['a package this project does not have', '00000000-0000-4000-8000-0000000000ff'],
+  ])('ignores ?package= naming %s and preselects the first package with a file', async (_what, id) => {
+    servePackages(EMPTY, CHECKOUT, SEARCH);
+    mount(`/projects/alpha/run/new?package=${id}`);
+    const select = await packageSelect();
+
+    expect(select.value).toBe(CHECKOUT_ID);
+    expect(optionLabels(select)).toHaveLength(3);
+  });
+
+  /* ---------------------------------------------------------------------- *
+   * THE UPLOAD FIELDS — a choice, and the fallback
+   * ---------------------------------------------------------------------- */
+
+  it('opens on the upload fields when the project has no packages', async () => {
+    noPackages();
+    mount();
+    await screen.findByLabelText(/artifact file/i);
+
+    expect(screen.queryByLabelText('Package')).toBeNull();
+    expect(screen.getByLabelText('Artifact type')).toBeDefined();
+    expect(screen.getByLabelText(/^package name\b/i)).toBeDefined();
+    // Nobody to go back to.
+    expect(screen.queryByRole('button', { name: 'Choose an existing package' })).toBeNull();
+    // The typed field's own placeholder, and none of the package-mode hint.
+    expect((screen.getByLabelText(/simulation class/i) as HTMLInputElement).placeholder).toBe(
+      'example.BasicSimulation',
+    );
+    expect(screen.queryByText(/simulations aren't known yet/i)).toBeNull();
+  });
+
+  /**
+   * THE PLACEHOLDER IS THE DEFAULT, SHOWN. Leaving `Package name` blank files
+   * the upload in the package its file's name stem names, so the field says
+   * which — and typing anything else is how an upload goes elsewhere, which is
+   * the lever a refused upload points at (below). A client COPY of the server's
+   * rule: the server's answer is the authority and this is only the preview.
+   */
+  it.each([
+    ['checkout-load.jar', 'checkout-load'],
+    ['nightly.tar.gz', 'nightly'],
+    ['search-bundle.zip', 'search-bundle'],
+    ['v1.2.jar', 'v1.2'],
+    [`${'x'.repeat(130)}.jar`, 'x'.repeat(112)],
+  ])('previews the package an upload of %s is filed under', async (filename, stem) => {
+    noPackages();
+    mount();
+    await screen.findByLabelText(/artifact file/i);
+    attach(filename);
+
+    expect((screen.getByLabelText(/^package name\b/i) as HTMLInputElement).placeholder).toBe(stem);
+  });
+
+  it('switches to the upload fields, and back, with the two controls the form offers', async () => {
+    servePackages(CHECKOUT, EMPTY);
+    mount();
+    const select = await packageSelect();
+
+    fireEvent.change(select, { target: { value: '__upload__' } });
+    await screen.findByLabelText(/artifact file/i);
+    expect(screen.queryByLabelText('Package')).toBeNull();
+    expect(screen.getByLabelText('Artifact type')).toBeDefined();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Choose an existing package' }));
+    expect(((await packageSelect()) as HTMLSelectElement).value).toBe(CHECKOUT_ID);
+    expect(screen.queryByLabelText(/artifact file/i)).toBeNull();
+  });
+
+  /**
+   * A TYPED CLASS BELONGS TO ITS SOURCE. Carrying a class typed for a bundle
+   * into the upload field would pre-fill one the NEW jar may not declare — a
+   * value the reader never typed for it, refused by the server a moment after a
+   * click that looked like it only changed where the file comes from. Both
+   * directions, one case each: the handlers are different code.
+   */
+  it('does not carry a class typed for a package into an upload', async () => {
+    servePackages(SEARCH);
+    mount();
+    const select = await packageSelect();
+    fireEvent.change(screen.getByLabelText(/simulation class/i), {
+      target: { value: 'example.Typed' },
+    });
+
+    fireEvent.change(select, { target: { value: '__upload__' } });
+
+    expect((screen.getByLabelText(/simulation class/i) as HTMLInputElement).value).toBe('');
+  });
+
+  it('does not carry a class typed for an upload into a package', async () => {
+    servePackages(SEARCH);
+    mount();
+    fireEvent.change(await packageSelect(), { target: { value: '__upload__' } });
+    fireEvent.change(screen.getByLabelText(/simulation class/i), {
+      target: { value: 'example.Typed' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Choose an existing package' }));
+
+    expect((screen.getByLabelText(/simulation class/i) as HTMLInputElement).value).toBe('');
+  });
+
+  /** The same rule between two packages, where it is the typed class that
+   *  could leak: a bundle's class, typed, must not reappear on the bundle
+   *  after a visit to a jar whose dropdown never showed it. */
+  it('does not carry a typed class from one package to another', async () => {
+    servePackages(SEARCH, CHECKOUT);
+    mount();
+    const select = await packageSelect();
+    fireEvent.change(screen.getByLabelText(/simulation class/i), {
+      target: { value: 'example.Typed' },
+    });
+
+    fireEvent.change(select, { target: { value: CHECKOUT_ID } });
+    fireEvent.change(select, { target: { value: SEARCH_ID } });
+
+    expect((screen.getByLabelText(/simulation class/i) as HTMLInputElement).value).toBe('');
+  });
+
+  it('asks for a Gatling version, and counts it under Advanced, only when uploading', async () => {
+    servePackages(CHECKOUT);
+    mount();
+    const select = await packageSelect();
+
+    expect(screen.queryByLabelText(/gatling version/i)).toBeNull();
+    fireEvent.change(screen.getByLabelText(/jvm options/i), { target: { value: '-Xmx2g' } });
+    expect(advanced()).toMatch(/\(1 set\)/);
+
+    fireEvent.change(select, { target: { value: '__upload__' } });
+    fireEvent.change(screen.getByLabelText(/gatling version/i), { target: { value: '3.14.0' } });
+    expect(advanced()).toMatch(/\(2 set\)/);
+
+    // Back to a package: the version describes a FILE, so it neither shows nor
+    // counts — and (checked on the wire below) is not sent.
+    fireEvent.click(screen.getByRole('button', { name: 'Choose an existing package' }));
+    expect(screen.queryByLabelText(/gatling version/i)).toBeNull();
+    expect(advanced()).toMatch(/\(1 set\)/);
+  });
+
+  it('groups the fields under the same three legends in either mode', async () => {
+    servePackages(CHECKOUT);
+    mount();
+    const select = await packageSelect();
+    const legends = () => [...document.querySelectorAll('legend')].map((l) => l.textContent?.trim());
+
+    expect(legends()).toEqual(['Package', 'Execution', 'Review']);
+    fireEvent.change(select, { target: { value: '__upload__' } });
+    expect(legends()).toEqual(['Package', 'Execution', 'Review']);
+  });
+
+  /* ---------------------------------------------------------------------- *
+   * THE LIST LOADING, AND THE LIST FAILING
+   * ---------------------------------------------------------------------- */
+
+  /**
+   * NO FLASH OF UPLOAD MODE. Before the list settles the form cannot know
+   * whether to open on a package or on the upload fields, and guessing
+   * `upload` — the old form — and switching a moment later would put a file
+   * input under a reader's pointer that vanishes as they reach for it. The
+   * Package group renders its own loading state instead, the way the test
+   * picker does, and a run cannot be queued from it.
+   */
+  it('shows the Package group loading, and no upload fields, until the list settles', async () => {
+    let release: (value: PackageListResponse) => void = () => undefined;
+    fetchPackagesMock.mockImplementationOnce(
+      () =>
+        new Promise<PackageListResponse>((resolve) => {
+          release = resolve;
+        }),
+    );
+    mount();
+
+    const loading = (await screen.findByLabelText('Package')) as HTMLSelectElement;
+    expect(loading.disabled).toBe(true);
+    expect(optionLabels(loading)).toEqual(['Loading packages…']);
+    expect(screen.queryByLabelText(/artifact file/i)).toBeNull();
+    expect(screen.queryByLabelText(/^package name\b/i)).toBeNull();
+    expect((screen.getByRole('button', { name: /queue run/i }) as HTMLButtonElement).disabled).toBe(true);
+
+    await act(async () => {
+      release({ items: [CHECKOUT] });
+    });
+    const settled = await packageSelect();
+    expect(settled.disabled).toBe(false);
+    expect(settled.value).toBe(CHECKOUT_ID);
+    expect((screen.getByRole('button', { name: /queue run/i }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  /**
+   * A LAUNCH FORM MUST NOT BE BLOCKED BY A LIST IT COULD NOT LOAD — the test
+   * picker's rule, applied to the new control. The form opens on the upload
+   * fields, offers no way back to a list that does not exist, and queues.
+   */
+  it('opens on the upload fields, with no way back, when the list cannot be loaded', async () => {
+    fetchPackagesMock.mockRejectedValueOnce(new Error('packages unavailable'));
+    mount();
+    await screen.findByLabelText(/artifact file/i);
+
+    expect(screen.queryByLabelText('Package')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Choose an existing package' })).toBeNull();
+
+    fireEvent.change(screen.getByLabelText(/run name/i), { target: { value: 'soak' } });
+    fireEvent.change(screen.getByLabelText(/simulation class/i), {
+      target: { value: 'example.AlphaSimulation' },
+    });
+    attach('alpha.jar');
+    queue();
+
+    await screen.findByText(/run queued/i);
+    expect(startRunnerRunMock).toHaveBeenCalledTimes(1);
+    expect(startRunnerRunFromPackageMock).not.toHaveBeenCalled();
+  });
+
+  /* ---------------------------------------------------------------------- *
+   * SUBMIT
+   * ---------------------------------------------------------------------- */
+
+  it('sends a JSON start for a package, and never the multipart upload', async () => {
+    servePackages(CHECKOUT, EMPTY);
+    mount();
+    await packageSelect();
+    fireEvent.change(screen.getByLabelText(/run name/i), { target: { value: 'nightly' } });
+    queue();
+
+    await screen.findByText(/run queued/i);
+    expect(startRunnerRunMock).not.toHaveBeenCalled();
+    expect(startRunnerRunFromPackageMock).toHaveBeenCalledTimes(1);
+    expect(startRunnerRunFromPackageMock).toHaveBeenCalledWith('alpha', {
+      packageId: CHECKOUT_ID,
+      simulationClass: 'example.BasicSimulation',
+      name: 'nightly',
+      systemProperties: {},
+    });
+  });
+
+  /**
+   * ASSERTED ON THE WIRE, and against the contract's own STRICT schema. The
+   * request names a package, so `artifactKind` and `gatlingVersion` — which
+   * describe a FILE — must not be on it, and a strict schema refuses an
+   * unknown key where a `toHaveBeenCalledWith` would not notice one.
+   */
+  it('carries the run metadata, and nothing that describes a file, on a package start', async () => {
+    servePackages(CHECKOUT);
+    mount();
+    const select = await packageSelect();
+
+    // A Gatling version typed for an upload, then abandoned for a package.
+    fireEvent.change(select, { target: { value: '__upload__' } });
+    fireEvent.change(screen.getByLabelText(/gatling version/i), { target: { value: '3.14.0' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Choose an existing package' }));
+
+    fireEvent.change(screen.getByLabelText(/run name/i), { target: { value: 'nightly' } });
+    fireEvent.change(screen.getByLabelText(/^environment\b/i), { target: { value: 'staging' } });
+    fireEvent.change(screen.getByLabelText(/^branch\b/i), { target: { value: 'main' } });
+    fireEvent.change(screen.getByLabelText(/commit sha/i), { target: { value: 'abc1234' } });
+    fireEvent.change(await screen.findByLabelText('Test'), { target: { value: 'checkout-soak' } });
+    fireEvent.change(screen.getByLabelText(/jvm options/i), { target: { value: '-Xmx2g' } });
+    fireEvent.change(screen.getByLabelText(/system properties/i), { target: { value: 'users=5' } });
+    queue();
+
+    await screen.findByText(/run queued/i);
+    const wire = JSON.parse(
+      JSON.stringify(startRunnerRunFromPackageMock.mock.calls[0]?.[1] ?? {}),
+    ) as Record<string, unknown>;
+    expect(wire).toEqual({
+      packageId: CHECKOUT_ID,
+      simulationClass: 'example.BasicSimulation',
+      name: 'nightly',
+      environment: 'staging',
+      branch: 'main',
+      commitSha: 'abc1234',
+      test: 'checkout-soak',
+      javaOptions: '-Xmx2g',
+      systemProperties: { users: '5' },
+    });
+    expect(RunnerStartByPackageRequestSchema.safeParse(wire).success).toBe(true);
+  });
+
+  it('omits every optional field it was not given, rather than sending an empty one', async () => {
+    servePackages(CHECKOUT);
+    mount();
+    await packageSelect();
+    fireEvent.change(screen.getByLabelText(/run name/i), { target: { value: 'nightly' } });
+    queue();
+
+    await screen.findByText(/run queued/i);
+    const wire = JSON.parse(
+      JSON.stringify(startRunnerRunFromPackageMock.mock.calls[0]?.[1] ?? {}),
+    ) as Record<string, unknown>;
+    expect(Object.keys(wire).sort()).toEqual(['name', 'packageId', 'simulationClass', 'systemProperties']);
+  });
+
+  it('sends a typed simulation class when the package lists none', async () => {
+    servePackages(SEARCH);
+    mount();
+    await packageSelect();
+    fireEvent.change(screen.getByLabelText(/run name/i), { target: { value: 'nightly' } });
+    fireEvent.change(screen.getByLabelText(/simulation class/i), {
+      target: { value: 'example.Typed' },
+    });
+    queue();
+
+    await screen.findByText(/run queued/i);
+    expect(startRunnerRunFromPackageMock.mock.calls[0]?.[1]).toMatchObject({
+      packageId: SEARCH_ID,
+      simulationClass: 'example.Typed',
+    });
+  });
+
+  it('files an upload in the package it names, through the multipart start', async () => {
+    servePackages(CHECKOUT, EMPTY);
+    mount();
+    const select = await packageSelect();
+    fireEvent.change(select, { target: { value: '__upload__' } });
+
+    fireEvent.change(screen.getByLabelText(/run name/i), { target: { value: 'soak' } });
+    fireEvent.change(screen.getByLabelText(/simulation class/i), {
+      target: { value: 'example.AlphaSimulation' },
+    });
+    attach('alpha.jar');
+    fireEvent.change(screen.getByLabelText(/^package name\b/i), { target: { value: 'Nightly jar' } });
+    queue();
+
+    await screen.findByText(/run queued/i);
+    expect(startRunnerRunFromPackageMock).not.toHaveBeenCalled();
+    expect(startRunnerRunMock.mock.calls[0]?.[0]?.metadata).toMatchObject({
+      name: 'soak',
+      artifactKind: 'gatling_jar',
+      simulationClass: 'example.AlphaSimulation',
+      package: 'Nightly jar',
+    });
+  });
+
+  /**
+   * AN UPLOAD MAKES A PACKAGE — or adds a version to one — so the list this
+   * form drew from is stale the moment a start succeeds. Asserted on the
+   * second request, not on what the form does with it: what the form does with
+   * a list that changes is the next case, and one claim per case is what lets a
+   * failure say which half broke.
+   */
+  it('asks for the packages again once a run is queued', async () => {
+    noPackages();
+    mount();
+    await screen.findByLabelText(/artifact file/i);
+    fireEvent.change(screen.getByLabelText(/run name/i), { target: { value: 'soak' } });
+    fireEvent.change(screen.getByLabelText(/simulation class/i), {
+      target: { value: 'example.AlphaSimulation' },
+    });
+    attach('alpha.jar');
+    queue();
+
+    await screen.findByText(/run queued/i);
+    await waitFor(() => expect(fetchPackagesMock).toHaveBeenCalledTimes(2));
+  });
+
+  /**
+   * THE FORM MUST NOT MOVE UNDER THE READER WHEN THE LIST CHANGES. The project
+   * had no package, so the form opened on the upload fields; a refresh then
+   * finds one. If the mode followed the list, the file input would swap for a
+   * dropdown mid-sentence. It was decided once: the fields stay, what was typed
+   * stays, and the new package is offered through the way back.
+   */
+  it('keeps the upload fields, and what was typed, when the list gains a package', async () => {
+    noPackages();
+    const client = mount();
+    await screen.findByLabelText(/artifact file/i);
+    fireEvent.change(screen.getByLabelText(/simulation class/i), {
+      target: { value: 'example.AlphaSimulation' },
+    });
+    expect(screen.queryByRole('button', { name: 'Choose an existing package' })).toBeNull();
+
+    servePackages(CHECKOUT);
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: packagesQueryKey('alpha') });
+    });
+
+    const way = await screen.findByRole('button', { name: 'Choose an existing package' });
+    expect(screen.queryByLabelText('Package')).toBeNull();
+    expect((screen.getByLabelText(/simulation class/i) as HTMLInputElement).value).toBe(
+      'example.AlphaSimulation',
+    );
+
+    fireEvent.click(way);
+    expect((await packageSelect()).value).toBe(CHECKOUT_ID);
+  });
+
+  it('names no package on an upload that typed none, leaving the stem to the server', async () => {
+    noPackages();
+    mount();
+    await screen.findByLabelText(/artifact file/i);
+    fireEvent.change(screen.getByLabelText(/run name/i), { target: { value: 'soak' } });
+    fireEvent.change(screen.getByLabelText(/simulation class/i), {
+      target: { value: 'example.AlphaSimulation' },
+    });
+    attach('alpha.jar');
+    queue();
+
+    await screen.findByText(/run queued/i);
+    const sent = JSON.parse(
+      JSON.stringify(startRunnerRunMock.mock.calls[0]?.[0]?.metadata ?? {}),
+    ) as Record<string, unknown>;
+    expect(sent).not.toHaveProperty('package');
+  });
+
+  /**
+   * THE WEB LEVER FOR A REFUSAL THE API ALREADY SENDS. `foo.jar` uploaded after
+   * `foo.zip` has the same stem, `foo`, and a different KIND, so the API answers
+   * 400 `PACKAGE_KIND_MISMATCH` and its remediation names the metadata's
+   * `"package"` field — which, on this form, is `Package name`. The form shows
+   * the refusal in its own words and the field it points at is right there,
+   * already previewing the name that collided.
+   */
+  it('shows a refused upload in the API’s words, and lets a different name file it elsewhere', async () => {
+    noPackages();
+    startRunnerRunMock.mockRejectedValueOnce(
+      new ProblemError(400, {
+        code: 'PACKAGE_KIND_MISMATCH',
+        detail: 'Package "foo" holds gatling_bundle; this upload is a gatling_jar.',
+        remediation:
+          'Name a package that holds gatling_jar files in the metadata\'s "package" field, or a new name to create one.',
+      }),
+    );
+    mount();
+    await screen.findByLabelText(/artifact file/i);
+    fireEvent.change(screen.getByLabelText(/run name/i), { target: { value: 'soak' } });
+    fireEvent.change(screen.getByLabelText(/simulation class/i), {
+      target: { value: 'example.AlphaSimulation' },
+    });
+    attach('foo.jar');
+    queue();
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('Package "foo" holds gatling_bundle; this upload is a gatling_jar.');
+    expect(alert.textContent).toContain('"package" field');
+    // The control that remediation names is on this form, and it shows the name
+    // that collided as the one it would have used.
+    const field = screen.getByLabelText(/^package name\b/i) as HTMLInputElement;
+    expect(field.placeholder).toBe('foo');
+
+    fireEvent.change(field, { target: { value: 'foo-jar' } });
+    queue();
+    await screen.findByText(/run queued/i);
+    expect(startRunnerRunMock).toHaveBeenCalledTimes(2);
+    expect(startRunnerRunMock.mock.calls[1]?.[0]?.metadata).toMatchObject({ package: 'foo-jar' });
+  });
+
+  it('shows a refused package start in the API’s words too', async () => {
+    startRunnerRunFromPackageMock.mockRejectedValueOnce(
+      new ProblemError(404, {
+        code: 'NOT_FOUND',
+        detail: `No package ${CHECKOUT_ID} in this project.`,
+        remediation: 'List this project’s packages with GET /v1/projects/{slug}/packages.',
+      }),
+    );
+    servePackages(CHECKOUT);
+    mount();
+    await packageSelect();
+    fireEvent.change(screen.getByLabelText(/run name/i), { target: { value: 'nightly' } });
+    queue();
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain(`No package ${CHECKOUT_ID} in this project.`);
+    expect(alert.textContent).toContain('GET /v1/projects/{slug}/packages');
+  });
+
+  it('refuses an upload with no file chosen, and says so', async () => {
+    servePackages(CHECKOUT);
+    mount();
+    const select = await packageSelect();
+    fireEvent.change(select, { target: { value: '__upload__' } });
+    fireEvent.change(screen.getByLabelText(/run name/i), { target: { value: 'soak' } });
+    fireEvent.change(screen.getByLabelText(/simulation class/i), {
+      target: { value: 'example.AlphaSimulation' },
+    });
+    queue();
+
+    expect((await screen.findByRole('alert')).textContent).toMatch(/choose the jar or bundle/i);
+    expect(startRunnerRunMock).not.toHaveBeenCalled();
+    expect(startRunnerRunFromPackageMock).not.toHaveBeenCalled();
+  });
+
+  /* ---------------------------------------------------------------------- *
+   * REVIEW
+   * ---------------------------------------------------------------------- */
+
+  it('reads back the package and the exact file in Review', async () => {
+    servePackages(CHECKOUT, EMPTY);
+    mount();
+    await packageSelect();
+
+    expect(reviewValue('Package')).toBe('Checkout');
+    expect(reviewValue('File')).toBe(`${CHECKOUT_FILE} · 1.8 MB`);
+    // The package's file is not an "Artifact" the reader chose.
+    expect(reviewValue('Artifact')).toBeNull();
+    expect(reviewValue('Simulation')).toBe('example.BasicSimulation');
+  });
+
+  it('follows the package the reader picks', async () => {
+    servePackages(CHECKOUT, SEARCH);
+    mount();
+    const select = await packageSelect();
+
+    fireEvent.change(select, { target: { value: SEARCH_ID } });
+    expect(reviewValue('Package')).toBe('Search');
+    expect(reviewValue('File')).toBe('search-bundle.zip · 4.0 KB');
+    // Unknown list, nothing typed yet: drawn as missing, like any required row.
+    expect(reviewValue('Simulation')).toBe('not set');
+  });
+
+  it('reads back the file and the package an upload will be filed in', async () => {
+    noPackages();
+    mount();
+    await screen.findByLabelText(/artifact file/i);
+    attach('foo.jar');
+
+    expect(reviewValue('Artifact')).toBe('foo.jar');
+    expect(reviewValue('File')).toBeNull();
+    // The stem, until a name is typed — what the server will file it under.
+    expect(reviewValue('Package')).toBe('foo');
+
+    fireEvent.change(screen.getByLabelText(/^package name\b/i), { target: { value: 'foo-jar' } });
+    expect(reviewValue('Package')).toBe('foo-jar');
+  });
+
+  it('shows no Package row for an upload that has no file and no name yet', async () => {
+    noPackages();
+    mount();
+    await screen.findByLabelText(/artifact file/i);
+
+    expect(reviewValue('Artifact')).toBe('none chosen');
+    expect(reviewValue('Package')).toBeNull();
+  });
+});
+
+/* ======================================================================== *
+ * THE JOBS TABLE
+ * ======================================================================== */
+
+describe('NewRunnerRun — the jobs table names each job’s package', () => {
+  const createdAt = '2026-08-20T00:00:00.000Z';
+
+  function jobRow(
+    id: string,
+    package_: { readonly packageId?: string | null; readonly packageName?: string | null },
+  ): RunnerJobListResponse['items'][number] {
+    return {
+      artifact: {
+        id: '00000000-0000-4000-8000-0000000000c3',
+        name: 'nightly',
+        filename: 'checkout.jar',
+        kind: 'gatling_jar',
+        simulationClass: 'example.BasicSimulation',
+        gatlingVersion: null,
+        sha256: 'sha',
+        bytes: 1,
+        createdAt,
+      },
+      job: {
+        id,
+        artifactId: '00000000-0000-4000-8000-0000000000c3',
+        runId: null,
+        status: 'complete',
+        requestedBy: 'token',
+        environment: null,
+        branch: null,
+        commitSha: null,
+        testSlug: null,
+        javaOptions: null,
+        systemProperties: {},
+        error: null,
+        createdAt,
+        updatedAt: createdAt,
+        ...package_,
+      },
+    };
+  }
+
+  /**
+   * THREE ANSWERS, AND TWO OF THEM LOOK ALIKE. A job's package is its name; or
+   * NULL once the package was deleted (the job stays, the package does not),
+   * which is a fact worth saying; or ABSENT when the API is a pod that predates
+   * packages, which says nothing and must not claim a deletion.
+   */
+  it('reads the package’s name, or that it was deleted, or nothing when the API did not say', async () => {
+    fetchRunnerJobsMock.mockResolvedValueOnce({
+      items: [
+        jobRow('00000000-0000-4000-8000-000000000d01', { packageId: CHECKOUT_ID, packageName: 'Checkout' }),
+        jobRow('00000000-0000-4000-8000-000000000d02', { packageId: null, packageName: null }),
+        jobRow('00000000-0000-4000-8000-000000000d03', {}),
+      ],
+    });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const router = createMemoryRouter(
+      [{ path: '/projects/:slug/run/new', element: <NewRunnerRun /> }],
+      { initialEntries: ['/projects/alpha/run/new'] },
+    );
+    render(
+      <QueryClientProvider client={client}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    );
+
+    const table = await screen.findByRole('table');
+    expect(within(table).getAllByRole('columnheader').map((h) => h.textContent)).toEqual([
+      'Created',
+      'Package',
+      'Artifact',
+      'Simulation',
+      'Status',
+      'Report',
+      'Actions',
+    ]);
+    const [, ...rows] = within(table).getAllByRole('row');
+    const packageCells = rows.map((row) => within(row).getAllByRole('cell')[1]?.textContent);
+    expect(packageCells).toEqual(['Checkout', 'Package deleted', '—']);
+    // The artifact column keeps the filename.
+    expect(within(rows[0] as HTMLElement).getAllByRole('cell')[2]?.textContent).toBe('checkout.jar');
   });
 });
