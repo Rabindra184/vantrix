@@ -517,4 +517,57 @@ describe('AppShell — a revealed fragment holds its place while the page settle
       vi.useRealTimers();
     }
   });
+
+  /** THE SILENCE WAS A BLOCKED THREAD, NOT A STILL PAGE. A task that moves the
+   *  layout and outlasts the idle window leaves the idle timer overdue, and
+   *  WebKit runs it before the rendering step that would have delivered the
+   *  observer's callback — measured on CI, where `#errors` was left at a
+   *  viewport ratio of 0.29. Here the target moves and the observer is never
+   *  told: only a timer that measures before it decides can see it. */
+  it('corrects a shift the observer never reported, and waits again rather than stop', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      renderRevealed();
+      await vi.waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
+      const observer = FakeResizeObserver.instances[0]!;
+
+      top = 784; // the blocked task's layout, with no callback delivered
+      vi.advanceTimersByTime(1_000);
+      expect(scrollIntoView).toHaveBeenCalledTimes(2);
+      expect(top).toBe(441);
+      // A drift at the idle window's end means the page was still moving.
+      expect(observer.disconnect).not.toHaveBeenCalled();
+
+      // And a window that ends with nothing moved does stop.
+      vi.advanceTimersByTime(1_000);
+      expect(observer.disconnect).toHaveBeenCalled();
+      expect(scrollIntoView).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /** The cap is final, but it decides on the same fresh measurement: a page
+   *  that moved under a blocked thread in its last second is corrected once,
+   *  and then left alone. */
+  it('makes one last correction at the cap before it stops', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      renderRevealed();
+      await vi.waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
+      const observer = FakeResizeObserver.instances[0]!;
+
+      for (let elapsed = 0; elapsed < 4_500; elapsed += 500) {
+        vi.advanceTimersByTime(500);
+        observer.fire();
+      }
+      top = 784; // unreported, in the cap's last half-second
+
+      vi.advanceTimersByTime(600); // past 5s from the reveal
+      expect(scrollIntoView).toHaveBeenCalledTimes(2);
+      expect(observer.disconnect).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

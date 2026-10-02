@@ -46,6 +46,21 @@ import { DEFAULT_ROUTE } from './routes/paths';
  * `SETTLE_IDLE_MS`, and never runs past `SETTLE_CAP_MS` from the reveal, so a
  * page that keeps changing (a live run) is not held for ever.
  *
+ * ═══ A SILENCE IS MEASURED, NEVER ASSUMED ═══
+ *
+ * "No callback for `SETTLE_IDLE_MS`" is not evidence the page is still when
+ * the main thread was blocked for that long. A task that changes the layout and
+ * outlasts the idle window leaves the idle timer OVERDUE, and WebKit ran that
+ * overdue timer before the rendering step that would have delivered the
+ * observer's callback — so a stop that trusted the silence disconnected the
+ * observer with the change unreported. Measured on CI WebKit: every response
+ * in by +50ms, then a two-second task, and `#errors` left at a viewport ratio
+ * of 0.29 with nothing to move it. So both timers MEASURE before they decide
+ * (`getBoundingClientRect` forces the layout the blocked task produced): the
+ * idle timer corrects a drift and waits again instead of stopping, and the cap
+ * makes its one last correction before it does. Neither can see a change made
+ * AFTER it has stopped; that is the honest limit of any settle window.
+ *
  * Scroll only: focus moved once at the reveal and is not taken back on every
  * correction. No `ResizeObserver` (jsdom) leaves the one-shot reveal exactly as
  * it was. Returns the teardown the effect's cleanup calls.
@@ -72,15 +87,27 @@ function keepInPlace(target: HTMLElement): () => void {
     for (const type of READER_INPUTS) document.removeEventListener(type, stop, { capture: true });
   };
 
-  observer = new ResizeObserver(() => {
-    window.clearTimeout(idle);
-    idle = window.setTimeout(stop, SETTLE_IDLE_MS);
+  /** Puts the target back if it has moved; says whether it had to. */
+  const correct = (): boolean => {
     // Sub-pixel noise is not drift; a real shift is tens of pixels.
-    if (Math.abs(target.getBoundingClientRect().top - top) < 1) return;
+    if (Math.abs(target.getBoundingClientRect().top - top) < 1) return false;
     target.scrollIntoView({ block: 'start' });
     // Re-read rather than assume: a clamped scroll lands short of the margin,
     // and the NEXT drift is measured from where the target actually is.
     top = target.getBoundingClientRect().top;
+    return true;
+  };
+  // The idle window's end: a drift found now means the page was still moving
+  // (behind a blocked thread), so wait again rather than stop.
+  const settle = (): void => {
+    if (correct()) idle = window.setTimeout(settle, SETTLE_IDLE_MS);
+    else stop();
+  };
+
+  observer = new ResizeObserver(() => {
+    window.clearTimeout(idle);
+    idle = window.setTimeout(settle, SETTLE_IDLE_MS);
+    correct();
   });
   observer.observe(document.documentElement);
   const main = document.getElementById('main');
@@ -89,8 +116,12 @@ function keepInPlace(target: HTMLElement): () => void {
   // `capture` so a handler that stops propagation cannot hide the reader's
   // input from us; `passive` because we never cancel it.
   for (const type of READER_INPUTS) document.addEventListener(type, stop, { capture: true, passive: true });
-  idle = window.setTimeout(stop, SETTLE_IDLE_MS);
-  cap = window.setTimeout(stop, SETTLE_CAP_MS);
+  idle = window.setTimeout(settle, SETTLE_IDLE_MS);
+  // The cap is final, but it too decides on a fresh measurement.
+  cap = window.setTimeout(() => {
+    correct();
+    stop();
+  }, SETTLE_CAP_MS);
   return stop;
 }
 
