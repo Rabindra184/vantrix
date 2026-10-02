@@ -643,8 +643,10 @@ on top: `pnpm build`, `typecheck` and `lint` exit 0; `test:unit` **188 / 2508**
 `test:integration` **173 / 2171, exit 0, zero failures** (172 / 2142 plus the
 runner branch's file and twenty-seven cases and the sweeper branch's two);
 `pnpm test:e2e` **180 passed, exit 0** — each total predicted before the run, on
-the same scratch stores. `run-summary-report.spec.ts` alone then passed **78 of
-78** across the three engines, twice each, with the keeper fixes in.
+the same scratch stores. Before that merge, on the tree with the keeper fixes
+and nothing from `main`, `run-summary-report.spec.ts` alone passed **78 of 78**
+across the three engines, twice each; the merge brought in no file under
+`apps/web`.
 
 **THE REAL RUN.** The developer database with the API, worker and on-prem
 runner from this worktree on Node 22 and their own Redis index (db 11), and a
