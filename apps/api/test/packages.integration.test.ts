@@ -623,6 +623,33 @@ describe('PUT /v1/projects/:slug/packages/:packageId/content', () => {
     expect(await filesOnDisk()).toEqual(before);
   });
 
+  /**
+   * The reverse of the case above: a JAR to a BUNDLE package. Refused before a
+   * byte of the body is read, so nothing is written — and the package goes on
+   * running what it ran. The package is given a version first, because "the
+   * current version is unchanged" says nothing about a package that never had
+   * one.
+   */
+  it('refuses a jar PUT to a bundle package, leaving no file and the current version as it was', async () => {
+    const pkg = await createPackage(asSession(), 'gatling_bundle', 'Load');
+    const first = await put(asSession(), pkg.id, Buffer.from('a runnable bundle, never examined'), 'load.zip');
+    expect(first.status, body(first)).toBe(200);
+    const current = PackageSchema.parse(first.body).current;
+    expect(current?.filename).toBe('load.zip');
+    const before = await filesOnDisk();
+    expect(before).toHaveLength(1);
+
+    const res = await put(asSession(), pkg.id, await readFile(await thinJar('example.A')), 'x.jar');
+
+    expect(res.status, body(res)).toBe(400);
+    expect(res.body.code).toBe('PACKAGE_KIND_MISMATCH');
+    expect(await filesOnDisk()).toEqual(before);
+    const listed = await request(ctx.app.getHttpServer()).get(PACKAGES).set(asSession());
+    expect(listed.status, body(listed)).toBe(200);
+    const after = (listed.body as { items: Package[] }).items.find((item) => item.id === pkg.id);
+    expect(after?.current).toEqual(current);
+  });
+
   it('refuses a file that is not a jar, and leaves no file', async () => {
     const pkg = await createPackage(asSession());
 
