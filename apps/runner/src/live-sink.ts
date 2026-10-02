@@ -248,11 +248,12 @@ export class RunnerLiveSink {
    * it there: the sweeper's `parsing` arm re-enqueues it, exactly as it
    * recovers `close()` past the same point, and the data survives.
    *
-   * IT DELIBERATELY DOES NOT MIRROR THE SWEEPER ON THAT LAST POINT. The
-   * sweeper's `#assembleAbandoned` has one `catch` around everything, so a
-   * `#reenqueue` that fails AFTER its sha UPDATE marks the run `incomplete`
-   * and discards a log it had already stored whole. This keeps the two apart
-   * at `finalizeLive`. The sweeper's own path still has that defect.
+   * THE SWEEPER FOLLOWS THE SAME RULE NOW, AND THIS IS WHERE IT STARTED. The
+   * sweeper's `#assembleAbandoned` had one `catch` around everything, so a
+   * `#reenqueue` that failed AFTER its sha UPDATE marked the run `incomplete`
+   * and discarded a log it had already stored whole; the
+   * sweeper-keeps-a-stored-log branch gave it the same `stored` boundary this
+   * keeps at `finalizeLive`.
    *
    * IT SAYS WHICH OF THE THREE THINGS HAPPENED (`AbandonedOutcome`), because
    * the caller's job message and the run's Logs ending must not claim the run

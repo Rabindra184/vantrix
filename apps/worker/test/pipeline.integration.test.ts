@@ -6,9 +6,10 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Readable } from 'node:stream';
 import { createPool, createPrisma, MetricReader } from '@perfportal/persistence';
+import { Queue } from 'bullmq';
 import { Redis } from 'ioredis';
 import { BlobStore, LiveChunkStore } from '@perfportal/storage';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { PipelineService, RUN_INGEST_LOCK_NAMESPACE } from '../src/pipeline/pipeline.service.js';
 import { isTransient } from '../src/pipeline/retry.js';
 import { loadWorkerConfig } from '../src/config.js';
@@ -631,6 +632,135 @@ describe('Sweeper', () => {
     // last record is half-written.
     expect(Number(rows[0]?.bundle_bytes)).toBeGreaterThan(0);
     expect(Number(rows[0]?.bundle_bytes)).toBeLessThan(half.length);
+  });
+
+  /**
+   * ═══ A STORED, HASHED LOG IS NOT THROWN AWAY BECAUSE THE QUEUE SAID NO ═══
+   *
+   * `#assembleAbandoned` kept its re-enqueue inside the same `try` as the
+   * assembly, so a Redis failure AFTER the whole-record log was stored and
+   * its sha written finalized the run `incomplete` with no statistics — over
+   * a valid log, at `parsing`, carrying `stream_abandoned_at`, which this
+   * sweeper's own `parsing` arm would have re-enqueued on a later tick. The
+   * on-prem runner's `closeAbandoned` already leaves such a run for the
+   * sweeper; this is the same rule in the place it came from.
+   *
+   * The queue is BullMQ's own, built inside the Sweeper, so the failure is
+   * injected where `#reenqueue` really calls it: `Queue.prototype.getJob`.
+   * The second half is the recovery the first half relies on — a later sweep
+   * re-enqueues the run, and the pipeline ends it `incomplete` WITH its
+   * statistics.
+   */
+  it('leaves a stored abandoned log for a later sweep when the re-enqueue fails', async () => {
+    const { Sweeper } = await import('../src/sweeper.js');
+    const ctx = await seedRun(bundle);
+    const { rows: keyRows } = await pool.query<{ bundle_key: string }>(
+      'SELECT bundle_key FROM run WHERE id = $1',
+      [ctx.runId],
+    );
+    await blobs.delete(keyRows[0]!.bundle_key);
+    // A LIVE run's key, which is how the pipeline knows the stored bytes are a
+    // raw simulation.log rather than a tarball (`seedLiveRun`'s docstring).
+    // `seedRun` writes an upload's `.tgz` key, which the sweep half of this
+    // case would not notice and the pipeline half reads as a gzip archive.
+    await pool.query(`UPDATE run SET bundle_key = $2 WHERE id = $1`, [
+      ctx.runId,
+      `runs/test/${ctx.runId}/simulation.log`,
+    ]);
+    const half = log.subarray(0, Math.floor(log.length / 2));
+    await chunks.put(ctx.runId, 0, half);
+    await pool.query(
+      `UPDATE run
+          SET status = 'running', stream_offset = $2,
+              stream_updated_at = now() - interval '30 minutes'
+        WHERE id = $1`,
+      [ctx.runId, half.length],
+    );
+
+    const sweeper = new Sweeper(
+      { ...config, staleAfterMs: 60_000, parsingStaleAfterMs: 60_000, runningStaleAfterMs: 60_000 },
+      pool,
+      chunks,
+      blobs,
+      redisPub,
+    );
+    const getJob = vi.spyOn(Queue.prototype, 'getJob').mockRejectedValue(new Error('redis unavailable'));
+    try {
+      expect(await sweeper.sweep()).toBe(1);
+      expect(getJob).toHaveBeenCalled();
+    } finally {
+      getJob.mockRestore();
+    }
+
+    const after = await pool.query<{
+      status: string;
+      stream_abandoned_at: Date | null;
+      bundle_sha256: string;
+      bundle_key: string;
+    }>('SELECT status, stream_abandoned_at, bundle_sha256, bundle_key FROM run WHERE id = $1', [ctx.runId]);
+    // Left for the sweeper, NOT finalized over its own data.
+    expect(after.rows[0]?.status).toBe('parsing');
+    expect(after.rows[0]?.stream_abandoned_at).not.toBeNull();
+    const stored = await blobs.get(after.rows[0]!.bundle_key);
+    expect(after.rows[0]?.bundle_sha256).toBe(createHash('sha256').update(stored).digest('hex'));
+
+    // THE RECOVERY: a later sweep finds it stale at `parsing` and re-enqueues
+    // it, and the pipeline then keeps what the stream sent.
+    await pool.query(
+      `UPDATE run SET parsing_started_at = now() - interval '30 minutes' WHERE id = $1`,
+      [ctx.runId],
+    );
+    try {
+      expect(await sweeper.sweep()).toBe(1);
+    } finally {
+      await sweeper.close();
+    }
+    await pipeline().process(ctx.runId, { queueWillRetry: false });
+    const done = await pool.query<{ status: string }>('SELECT status FROM run WHERE id = $1', [ctx.runId]);
+    expect(done.rows[0]?.status).toBe('incomplete');
+    const stats = await pool.query<{ n: string }>(
+      `SELECT count(*) AS n FROM run_stat WHERE run_id = $1`,
+      [ctx.runId],
+    );
+    expect(Number(stats.rows[0]?.n)).toBeGreaterThan(0);
+  });
+
+  /** The pair: a failure BEFORE the log is stored and hashed still ends the
+   *  run `incomplete`, because a later re-enqueue of a row with no valid
+   *  bundle would only fail it on a checksum. */
+  it('still finalizes an abandoned run incomplete when its log cannot be stored', async () => {
+    const { Sweeper } = await import('../src/sweeper.js');
+    const ctx = await seedRun(bundle);
+    const { rows: keyRows } = await pool.query<{ bundle_key: string }>(
+      'SELECT bundle_key FROM run WHERE id = $1',
+      [ctx.runId],
+    );
+    await blobs.delete(keyRows[0]!.bundle_key);
+    await chunks.put(ctx.runId, 0, log.subarray(0, Math.floor(log.length / 2)));
+    await pool.query(
+      `UPDATE run
+          SET status = 'running', stream_offset = $2,
+              stream_updated_at = now() - interval '30 minutes'
+        WHERE id = $1`,
+      [ctx.runId, Math.floor(log.length / 2)],
+    );
+
+    const sweeper = new Sweeper(
+      { ...config, staleAfterMs: 60_000, parsingStaleAfterMs: 60_000, runningStaleAfterMs: 60_000 },
+      pool,
+      chunks,
+      blobs,
+      redisPub,
+    );
+    const putStream = vi.spyOn(blobs, 'putStream').mockRejectedValue(new Error('bucket unavailable'));
+    try {
+      expect(await sweeper.sweep()).toBe(1);
+    } finally {
+      putStream.mockRestore();
+      await sweeper.close();
+    }
+    const { rows } = await pool.query<{ status: string }>('SELECT status FROM run WHERE id = $1', [ctx.runId]);
+    expect(rows[0]?.status).toBe('incomplete');
   });
 
   /**

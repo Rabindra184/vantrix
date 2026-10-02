@@ -146,6 +146,71 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The sweeper-keeps-a-stored-log branch added no unit FILE and no unit case —
+unit stays **181 / 2313** — and 2 cases to
+`apps/worker/test/pipeline.integration.test.ts`, from **170 / 2086 to
+170 / 2088**. **e2e stays 168.** It is the sibling of the runner-keeps-a-dying-run
+branch's defect, found by that branch's review.
+
+**AN ABANDONED RUN'S STORED LOG WAS THROWN AWAY WHEN THE QUEUE SAID NO.**
+`Sweeper#assembleAbandoned` re-enqueued inside the same `try` as the assembly,
+and its `catch` finalized the run `incomplete` with no statistics on ANY
+failure. So a Redis failure after the whole-record log was stored and its
+sha written discarded a valid log over a row that was already at `parsing`
+carrying `stream_abandoned_at` — exactly what this sweep's own `parsing` arm
+re-enqueues once `parsing_started_at` is stale. The method's docstring
+promised the change could "never strand a run at `parsing`", which was true
+and was the wrong goal: leaving a run for a known recovery is not stranding
+it.
+
+**PAST THE STORE, A FAILURE TO ENQUEUE LEAVES THE RUN FOR THE NEXT SWEEP.** A
+`stored` flag is set once the sha is written; the catch logs and returns
+for a stored run, and still finalizes `incomplete` for anything earlier —
+a bucket, the chunks, a log with no whole record — because a later
+re-enqueue of a row with no valid bundle would only fail it on a checksum.
+The on-prem runner's `closeAbandoned` follows the same rule, which is where
+it was first written.
+
+**THE FAILURE IS INJECTED WHERE `#reenqueue` REALLY CALLS IT.** The Sweeper
+builds its BullMQ `Queue` privately, so the case spies on
+`Queue.prototype.getJob` and makes it reject, then restores it. The same case
+then proves the recovery the fix relies on: the row aged, a second sweep
+re-enqueues it, and the pipeline ends it `incomplete` WITH statistics.
+
+**AND ITS FIRST GREEN RUN FAILED ON THE FIXTURE, NOT THE FIX.** `seedRun`
+writes an upload's `.tgz` bundle key, so the recovery half's pipeline read the
+stored simulation.log as a gzip archive ("The upload is not a gzipped tar
+archive"). The sweep half cannot see a key's shape; only a case that goes on
+to parse it can. The case gives the row a live run's `…/simulation.log` key,
+which is what a real abandoned stream carries.
+
+**RED-VERIFIED, EACH MUTATION ON ITS OWN CASE:**
+
+```
+  the stored-run guard removed   the re-enqueue case: 'incomplete', not 'parsing'
+  stored set before the store    the store-failure case: 'parsing', not 'incomplete'
+```
+
+**WHAT WAS RUN.** `typecheck` and `lint` exit 0 by their own exit codes;
+`test:unit` **181 / 2313**, unchanged as predicted, zero `Errors` lines;
+`pnpm test:e2e` **168 passed, exit 0**; `test:integration` COLLECTED
+**170 / 2088** — the prediction exactly — with ONE failure:
+`trends.integration.test.ts`'s "puts the asked-about run in its own cohort",
+a `ZodError` over a body with every field undefined, which is the non-2xx
+pressure shape this file records, in a run that STARTED at **3,622 free
+pages**. That file then passed **20 / 20, five times out of five**, at a load
+of 17. This branch touches the sweeper and its test file and nothing an API
+read reaches. Against a SCRATCH DATABASE (`perfportal_sweeperkeep`), a scratch
+Redis INDEX (db 13) and e2e port 4100.
+
+**RE-MEASURED AFTER MERGING `main`**, where the runner-keeps-a-dying-run
+branch had landed underneath it: `typecheck` and `lint` exit 0; `test:unit`
+**181 / 2333**, zero `Errors` lines; `test:integration` **171 / 2115, exit 0,
+zero failures** — the runner branch's 171 / 2113 plus this branch's two; `pnpm
+test:e2e` **168 passed, exit 0**. Every total predicted before the run, on the
+same scratch stores, and the trends case that failed once above passed with
+the rest.
+
 The runner-keeps-a-dying-run branch added no unit FILE and 20 unit cases — 9
 to `apps/runner/test/run-events.test.ts`, 2 to `artifact.test.ts` and 9 net in
 `executor-events.test.ts` — from **181 / 2313 to 181 / 2333**. Integration moves with those
@@ -215,7 +280,8 @@ where it deliberately parts from the sweeper**, whose `#assembleAbandoned` has
 ONE `catch` around everything: a `#reenqueue` that fails AFTER its sha UPDATE
 marks the run `incomplete` and discards a log it had stored whole. The first
 version of this entry, and of the code comment, said "step for step"; it is
-not, on exactly this point (KNOWN AND LEFT).
+not, on exactly this point (KNOWN AND LEFT). The sweeper-keeps-a-stored-log
+branch has since given the sweeper the same boundary.
 
 **THE REVIEW FOUND THE FIRST CUT CLAIMING MORE THAN IT KNEW, IN FOUR PLACES.**
 Each was a sentence — in a job, a log, a comment — stating something the code
@@ -379,7 +445,8 @@ the token revoked.
   - **The sweeper's own abandoned path still has the discarded-log defect**
     described above: its `catch` marks a run `incomplete` when `#reenqueue`
     fails after the log was stored whole. `Sweeper` is not touched here; it is
-    its own branch.
+    its own branch. Done by the sweeper-keeps-a-stored-log branch, which
+    merged after this one.
   - **A deliberate cancel discards data while a crash keeps it.** A run the
     operator cancels ends through `abortIncomplete` with no statistics, and one
     whose Gatling died ends with everything it measured. Whether a cancelled
