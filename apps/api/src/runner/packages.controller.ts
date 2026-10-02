@@ -24,7 +24,7 @@ import {
   type Package,
   type PackageListResponse,
 } from '@perfportal/contracts';
-import { IngestError, ingestError } from '@perfportal/core';
+import { IngestError } from '@perfportal/core';
 import {
   PackageNameTakenError,
   PackageRepository,
@@ -37,7 +37,7 @@ import { Scopes } from '../auth/scopes.decorator.js';
 import { SessionOnlyGuard } from '../auth/session-only.guard.js';
 import { badRequest, conflict, notFound, uuidParam } from '../common/validation.js';
 import type { AppConfig } from '../config.js';
-import { extensionFor, inspectArtifact, packageNotFound, sanitizeFilename } from './package-files.js';
+import { emptyFile, extensionFor, inspectArtifact, packageNotFound, sanitizeFilename } from './package-files.js';
 import { readRawUpload } from './raw-upload.js';
 import { readRunnerMultipart } from './runner.multipart.js';
 
@@ -120,9 +120,9 @@ export class PackagesController {
       let version: { filename: string; storagePath: string; gatlingVersion: string | null; simulations: string[] | null } | null =
         null;
       if (hasFile) {
-        if (upload.bytes === 0) throw emptyFile();
+        if (upload.bytes === 0) throw emptyFile('package-create');
         const filename = sanitizeFilename(upload.filename);
-        const ext = extensionFor(filename, metadata.kind);
+        const ext = extensionFor(filename, metadata.kind, 'package');
         const storagePath = path.join(orgId, project.id, `${artifactId}${ext}`);
         finalPath = path.resolve(this.config.runner.artifactDir, storagePath);
         await rename(tmpPath, finalPath);
@@ -206,7 +206,7 @@ export class PackagesController {
     );
     // THE KIND IS CHECKED BEFORE THE BODY IS READ. A refused kind must not cost
     // the caller a 500 MB upload, and must not leave that upload on disk.
-    const ext = extensionFor(filename, pkg.kind);
+    const ext = extensionFor(filename, pkg.kind, 'package');
 
     const artifactId = randomUUID();
     const storagePath = path.join(orgId, project.id, `${artifactId}${ext}`);
@@ -331,13 +331,6 @@ function notMultipart() {
     'A package is created with a multipart/form-data request, not a JSON body.',
     'POST multipart/form-data with a "metadata" part holding {"name":"Checkout","kind":"gatling_jar"} and, optionally, a file part named "artifact".',
   );
-}
-
-function emptyFile() {
-  return ingestError('BUNDLE_EMPTY', {
-    message: 'The package file was empty.',
-    remediation: 'Attach a non-empty Gatling jar or runnable bundle as the "artifact" part, or omit it to create the package with no version.',
-  });
 }
 
 function parseCreateMetadata(raw: string): { name: string; kind: 'gatling_jar' | 'gatling_bundle' } {

@@ -35,6 +35,7 @@ import { badRequest, conflict, notFound, uuidParam } from '../common/validation.
 import type { AppConfig } from '../config.js';
 import {
   assertSimulationListed,
+  emptyFile,
   extensionFor,
   inspectArtifact,
   packageNameFromFilename,
@@ -139,9 +140,14 @@ export class RunnerController {
     let finalPath: string | null = null;
     let filed: { metadata: RunnerStartMetadata; packageId: string; version: PackageVersionRecord; reused: boolean };
     try {
+      // First, inside the try so the empty file goes too: a bundle is never
+      // inspected, so an empty one would otherwise become a package's current
+      // version and fail on the runner minutes later.
+      if (upload.bytes === 0) throw emptyFile('runner-start');
       const metadata = parseStartMetadata(upload.metadataRaw);
       const filename = sanitizeFilename(upload.filename);
-      const ext = extensionFor(filename, metadata.artifactKind);
+      // 'request': the kind is this upload's own "artifactKind", not a package's.
+      const ext = extensionFor(filename, metadata.artifactKind, 'request');
       const storagePath = path.join(tenant.orgId, project.id, `${artifactId}${ext}`);
       finalPath = path.resolve(this.config.runner.artifactDir, storagePath);
       await rename(tmpPath, finalPath);

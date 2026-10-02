@@ -1,5 +1,5 @@
 import path from 'node:path';
-import type { GatlingJarFacts } from '@perfportal/core';
+import { ingestError, type GatlingJarFacts } from '@perfportal/core';
 import { readGatlingJar } from '@perfportal/storage';
 import { badRequest, notFound } from '../common/validation.js';
 
@@ -18,20 +18,70 @@ export function packageNameFromFilename(filename: string): string {
   return stem === '' ? 'package' : stem;
 }
 
-export function extensionFor(filename: string, kind: string): string {
+/**
+ * The stored extension for a file of `kind`, or PACKAGE_KIND_MISMATCH when the
+ * file's own extension does not suit it.
+ *
+ * `decidedBy` says WHAT chose the kind, because the refusal has to name it:
+ * `'package'` when an existing package's kind is fixed (the package create and
+ * PUT), `'request'` when the upload-and-start's own "artifactKind" chose it —
+ * defaulting to gatling_jar, so the likeliest caller there sent a .zip and
+ * forgot the field, and may have named no package at all. REQUIRED, with no
+ * default: a forgetting caller defaulted to `'package'` would tell that person
+ * about a package they never mentioned, and point them at a lever that does
+ * not change what the start reads.
+ */
+export function extensionFor(filename: string, kind: string, decidedBy: 'package' | 'request'): string {
   const lower = filename.toLowerCase();
   const ext = lower.endsWith('.tar.gz') ? '.tar.gz' : path.extname(lower);
-  const allowed = kind === 'gatling_jar' ? new Set(['.jar']) : new Set(['.zip', '.tgz', '.tar.gz']);
-  if (ext === '') return kind === 'gatling_jar' ? '.jar' : '.zip';
+  const jar = kind === 'gatling_jar';
+  const allowed = jar ? new Set(['.jar']) : new Set(['.zip', '.tgz', '.tar.gz']);
+  if (ext === '') return jar ? '.jar' : '.zip';
   if (allowed.has(ext)) return ext;
+  const what = jar ? 'Gatling jar' : 'runnable bundle';
+  if (decidedBy === 'request') {
+    throw badRequest(
+      'PACKAGE_KIND_MISMATCH',
+      `"${filename}" is not a ${what}, which is what "artifactKind" says this upload is.`,
+      jar
+        ? 'Upload a .jar, or set "artifactKind" to "gatling_bundle" in the metadata to upload an archive.'
+        : 'Upload a .zip, .tgz or .tar.gz, or set "artifactKind" to "gatling_jar" in the metadata to upload a jar.',
+    );
+  }
   throw badRequest(
     'PACKAGE_KIND_MISMATCH',
-    `"${filename}" is not a ${kind === 'gatling_jar' ? 'Gatling jar' : 'runnable bundle'}, which is what this package holds.`,
-    kind === 'gatling_jar'
+    `"${filename}" is not a ${what}, which is what this package holds.`,
+    jar
       ? 'Upload a .jar to this package, or create a runnable-bundle package for the archive.'
       : 'Upload a .zip, .tgz or .tar.gz to this package, or create a Gatling-jar package for the jar.',
   );
 }
+
+/**
+ * The one refusal for a file with no bytes, from each of the three writers that
+ * store a package version: a package create's "artifact" part, a package PUT's
+ * raw body, and an upload-and-start's "artifact" part. One definition, so none
+ * of them can quietly stop refusing: an empty bundle is never inspected, so
+ * without this it becomes a package's current version and a later start dies on
+ * the runner, minutes later, instead of here.
+ *
+ * `writer` picks the remediation, which has to name the lever THAT request has
+ * (an omitted part creates an empty package only on a create; a PUT has no part
+ * at all). Required, for the reason `extensionFor`'s `decidedBy` is.
+ */
+export function emptyFile(writer: 'package-create' | 'package-upload' | 'runner-start') {
+  return ingestError('BUNDLE_EMPTY', {
+    message: 'The uploaded file was empty.',
+    remediation: EMPTY_FILE_REMEDIATION[writer],
+  });
+}
+
+const EMPTY_FILE_REMEDIATION = {
+  'package-create':
+    'Attach a non-empty Gatling jar or runnable bundle as the "artifact" part, or omit it to create the package with no version.',
+  'package-upload': 'Send the package file as the raw request body.',
+  'runner-start': 'Attach a non-empty Gatling jar or runnable bundle as the "artifact" part.',
+} as const;
 
 /**
  * Reads what a version can tell us about itself. A jar must open as a zip; an

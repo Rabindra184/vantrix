@@ -536,7 +536,8 @@ const responses: Record<string, ResponseObject> = {
       'never when the manifest declares none, which means unknown), PACKAGE_KIND_MISMATCH (the ' +
       'file\'s extension does not suit "artifactKind", or the package the upload is filed in ' +
       'holds the other kind), UPLOAD_ABORTED (the client closed the connection before the ' +
-      'upload was read), or BUNDLE_NOT_ARCHIVE / BUNDLE_EMPTY. A refused upload leaves no file ' +
+      'upload was read), BUNDLE_EMPTY (no "artifact" part, or one with no bytes — an empty ' +
+      'bundle is never stored as a version), or BUNDLE_NOT_ARCHIVE. A refused upload leaves no file ' +
       'and no package behind. DELIBERATELY NOT the same response as an ingest 400: there is no ' +
       'run to persist the rejection on, so nothing here is ever readable from GET /v1/runs/{id} ' +
       'afterwards. Always application/problem+json with a required "remediation".',

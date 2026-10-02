@@ -393,6 +393,48 @@ describe('POST /v1/projects/:slug/runner/runs from a package', () => {
     expect(await ctx.prisma.runnerJob.count()).toBe(0);
   });
 
+  it("answers 404 for another project's package, in the same org", async () => {
+    const other = await ctx.prisma.project.create({ data: { orgId: ctx.orgId, slug: 'other', name: 'Other' } });
+    const packages = ctx.app.get(PackageRepository);
+    const withFile = await packages.create({
+      id: randomUUID(),
+      orgId: ctx.orgId,
+      projectId: other.id,
+      name: 'Elsewhere',
+      kind: 'gatling_jar',
+    });
+    const added = await packages.addVersion(ctx.orgId, other.id, withFile.id, {
+      artifactId: randomUUID(),
+      filename: 'elsewhere.jar',
+      gatlingVersion: '3.15.1',
+      sha256: createHash('sha256').update(randomUUID()).digest('hex'),
+      bytes: 1_024,
+      simulations: ['example.BasicSimulation'],
+      storagePath: path.join(ctx.orgId, other.id, `${randomUUID()}.jar`),
+    });
+    expect(added).not.toBeNull();
+    // THE EMPTY ONE IS THE HALF THAT PINS THE LOOKUP. A package with a file is
+    // also stopped by createQueued's own project predicate, so a lookup that
+    // forgot the project would still end in a 404; an empty one is answered by
+    // the lookup alone, and a lookup without the project would answer 409 —
+    // naming another project's package to this project's caller.
+    const empty = await packages.create({
+      id: randomUUID(),
+      orgId: ctx.orgId,
+      projectId: other.id,
+      name: 'Elsewhere, empty',
+      kind: 'gatling_jar',
+    });
+
+    for (const pkg of [withFile, empty]) {
+      const res = await startFromPackage({ packageId: pkg.id, simulationClass: 'example.BasicSimulation', name: 'nightly' });
+      expect(res.status, body(res)).toBe(404);
+      expect(res.body.detail).toBe(`No package ${pkg.id} in this project.`);
+      expect(body(res)).not.toContain('Elsewhere');
+    }
+    expect(await ctx.prisma.runnerJob.count()).toBe(0);
+  });
+
   it('files an upload-and-start in the package its metadata names, ignoring case and space', async () => {
     const checkout = await ctx.app.get(PackageRepository).create({
       id: randomUUID(),
@@ -460,6 +502,49 @@ describe('POST /v1/projects/:slug/runner/runs from a package', () => {
     expect(undeclared.body.code).toBe('SIMULATION_CLASS_NOT_IN_ARTIFACT');
     expect((await listPackages()).items).toEqual([]);
     expect(await filesOnDisk()).toEqual([]);
+  });
+
+  it('refuses an archive sent without artifactKind by naming the field, not a package', async () => {
+    // "artifactKind" defaults to gatling_jar, so this is the likeliest way to
+    // meet the refusal: a .zip and a forgotten field, and no package named.
+    const zip = path.join(jarDir, 'load.zip');
+    await writeFile(zip, 'PK-not-really-a-zip');
+
+    const res = await request(ctx.app.getHttpServer())
+      .post(RUNS)
+      .set('Authorization', `Bearer ${runnerToken}`)
+      .field('metadata', JSON.stringify({ name: 'load', simulationClass: 'example.BasicSimulation' }))
+      .attach('artifact', zip, 'load.zip');
+
+    expect(res.status, body(res)).toBe(400);
+    expect(res.body.code).toBe('PACKAGE_KIND_MISMATCH');
+    // The claim, not the sentence: the field that decided the kind is named,
+    // and no package — which this caller never mentioned — is.
+    expect(res.body.remediation).toContain('artifactKind');
+    expect(res.body.detail).not.toContain('this package');
+    expect(res.body.remediation).not.toContain('package');
+    expect((await listPackages()).items).toEqual([]);
+    expect(await filesOnDisk()).toEqual([]);
+  });
+
+  it('refuses an empty bundle, and makes no package of it', async () => {
+    // A bundle is never inspected, so nothing but a byte count stops an empty
+    // one becoming a package's current version — which a later start from the
+    // package would then run, and fail on the runner minutes later.
+    const res = await request(ctx.app.getHttpServer())
+      .post(RUNS)
+      .set('Authorization', `Bearer ${runnerToken}`)
+      .field(
+        'metadata',
+        JSON.stringify({ name: 'load', artifactKind: 'gatling_bundle', simulationClass: 'example.BasicSimulation' }),
+      )
+      .attach('artifact', Buffer.alloc(0), 'empty.zip');
+
+    expect(res.status, body(res)).toBe(400);
+    expect(res.body.code).toBe('BUNDLE_EMPTY');
+    expect((await listPackages()).items).toEqual([]);
+    expect(await filesOnDisk()).toEqual([]);
+    expect(await ctx.prisma.runnerArtifact.count()).toBe(0);
   });
 
   it('refuses an upload whose kind differs from the package it names', async () => {

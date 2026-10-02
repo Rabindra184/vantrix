@@ -6,6 +6,7 @@ import { pipeline } from 'node:stream/promises';
 import { ingestError } from '@perfportal/core';
 import type { Request } from 'express';
 import { badRequest } from '../common/validation.js';
+import { emptyFile } from './package-files.js';
 
 /**
  * Streams a raw request body to `targetPath`, hashing as it goes — the shape of
@@ -101,10 +102,7 @@ export async function readRawUpload(
   }
   if (bytes === 0) {
     await unlink(targetPath).catch(() => undefined);
-    throw ingestError('BUNDLE_EMPTY', {
-      message: 'The request carried no file.',
-      remediation: 'Send the package file as the raw request body.',
-    });
+    throw emptyFile('package-upload');
   }
   return { sha256: hash.digest('hex'), bytes };
 }
