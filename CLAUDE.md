@@ -203,6 +203,14 @@ of 17. This branch touches the sweeper and its test file and nothing an API
 read reaches. Against a SCRATCH DATABASE (`perfportal_sweeperkeep`), a scratch
 Redis INDEX (db 13) and e2e port 4100.
 
+**RE-MEASURED AFTER MERGING `main`**, where the runner-keeps-a-dying-run
+branch had landed underneath it: `typecheck` and `lint` exit 0; `test:unit`
+**181 / 2333**, zero `Errors` lines; `test:integration` **171 / 2115, exit 0,
+zero failures** — the runner branch's 171 / 2113 plus this branch's two; `pnpm
+test:e2e` **168 passed, exit 0**. Every total predicted before the run, on the
+same scratch stores, and the trends case that failed once above passed with
+the rest.
+
 The runner-keeps-a-dying-run branch added no unit FILE and 20 unit cases — 9
 to `apps/runner/test/run-events.test.ts`, 2 to `artifact.test.ts` and 9 net in
 `executor-events.test.ts` — from **181 / 2313 to 181 / 2333**. Integration moves with those
