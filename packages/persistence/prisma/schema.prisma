@@ -37,6 +37,7 @@ model Project {
   slaRules        SlaRule[]
   runnerArtifacts RunnerArtifact[]
   runnerJobs      RunnerJob[]
+  packages        Package[]
 
   @@unique([id, orgId])
   @@unique([orgId, slug])
@@ -145,22 +146,61 @@ model RunnerArtifact {
   id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   orgId           String   @map("org_id") @db.Uuid
   projectId       String   @map("project_id") @db.Uuid
-  name            String
+  name            String?
   filename        String
   kind            String
-  simulationClass String   @map("simulation_class")
+  simulationClass String?  @map("simulation_class")
   gatlingVersion  String?  @map("gatling_version")
   sha256          String
   bytes           BigInt
   storagePath     String   @map("storage_path")
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  /// The package this is a version of; null once that package was deleted, the
+  /// row staying as the record of what its jobs ran until retention removes it.
+  packageId   String?   @map("package_id") @db.Uuid
+  /// The jar manifest's Gatling-Simulations, read at upload. Null when unknown:
+  /// a runnable bundle, a jar with no such header, every backfilled row.
+  simulations Json?
 
-  project Project     @relation(fields: [projectId, orgId], references: [id, orgId], onDelete: Cascade, onUpdate: NoAction, map: "runner_artifact_project_tenant_fk")
-  jobs    RunnerJob[]
+  project   Project     @relation(fields: [projectId, orgId], references: [id, orgId], onDelete: Cascade, onUpdate: NoAction, map: "runner_artifact_project_tenant_fk")
+  jobs      RunnerJob[]
+  package   Package?    @relation("PackageVersions", fields: [packageId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "runner_artifact_package_fk")
+  currentOf Package[]   @relation("PackageCurrent")
 
   @@unique([id, orgId, projectId], map: "runner_artifact_id_org_project_key")
   @@index([projectId, createdAt(sort: Desc)], map: "runner_artifact_project_created_at_idx")
+  @@index([packageId])
   @@map("runner_artifact")
+}
+
+/// A project's named, reusable Gatling artifact (docs/superpowers/specs/2026-10-02-packages-design.md).
+///
+/// Its VERSIONS are `runner_artifact` rows; `current_artifact_id` is the one a
+/// run starts from, null for a package created with no file. The kind is fixed
+/// at creation, as Gatling Enterprise fixes a package's format.
+///
+/// NO `@@unique` ON THE NAME, AND THE RULE EXISTS. A name is unique per project
+/// IGNORING CASE, which is the expression index
+/// `package_project_name_lower_key ON package (project_id, lower(name))` in the
+/// migration — Prisma 6 cannot declare an expression index and does not
+/// introspect one, the same reason `runner_job_run_id_idx` is undeclared below.
+model Package {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId             String   @map("org_id") @db.Uuid
+  projectId         String   @map("project_id") @db.Uuid
+  name              String
+  kind              String
+  currentArtifactId String?  @map("current_artifact_id") @db.Uuid
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime @default(now()) @map("updated_at") @db.Timestamptz(3)
+
+  project  Project          @relation(fields: [projectId, orgId], references: [id, orgId], onDelete: Cascade, onUpdate: NoAction, map: "package_project_tenant_fk")
+  current  RunnerArtifact?  @relation("PackageCurrent", fields: [currentArtifactId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "package_current_artifact_fk")
+  versions RunnerArtifact[] @relation("PackageVersions")
+  runs     Run[]
+
+  @@index([projectId, updatedAt(sort: Desc)], map: "package_project_updated_at_idx")
+  @@map("package")
 }
 
 model RunnerJob {
@@ -186,6 +226,11 @@ model RunnerJob {
   /// either — the `Test` row it names need not exist yet. It BECOMES
   /// `Run.declaredTestSlug` when the runner opens the live run.
   testSlug         String?  @map("test_slug")
+  /// The RUN name from the form. Lived on the artifact until packages made one
+  /// version serve many jobs.
+  name             String
+  /// The class this job runs (`-s`). Moved from the artifact for the same reason.
+  simulationClass  String   @map("simulation_class")
   javaOptions      String?  @map("java_options")
   systemProperties Json     @default("{}") @map("system_properties")
   logPath          String?  @map("log_path")
@@ -460,8 +505,10 @@ model Run {
   /// never joined — so they belong beside `engine_options` for the same reason
   /// it is a column: they describe the run, they are not entities of their own.
   toolAssertions   Json?     @map("tool_assertions")
+  packageId        String?   @map("package_id") @db.Uuid
 
   project    Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  package    Package?       @relation(fields: [packageId], references: [id], onDelete: SetNull, onUpdate: NoAction)
   test       Test?          @relation(fields: [testId], references: [id], onDelete: SetNull)
   assertions RunAssertion[]
   runnerJobs RunnerJob[]
@@ -476,6 +523,7 @@ model Run {
   @@index([testId, createdAt(sort: Desc)])
   @@index([projectId, startedAt(sort: Desc)])
   @@index([status, createdAt])
+  @@index([packageId])
   // The other six columns of the run list's `?q=` search. See the pair on
   // `Project` above for why every one of them needs its own index.
   @@index([simulation(ops: raw("gin_trgm_ops"))], type: Gin, map: "run_simulation_trgm")
