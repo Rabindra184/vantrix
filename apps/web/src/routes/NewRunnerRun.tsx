@@ -1371,15 +1371,35 @@ function RecentJobs({ slug, query }: { readonly slug: string; readonly query: Us
                   )}
                 </td>
                 <td className={TD}>
-                  <RunnerJobActions
-                    job={job}
-                    cancelling={cancelMutation.isPending && cancelMutation.variables === job.id}
-                    retrying={retryMutation.isPending && retryMutation.variables === job.id}
-                    logsSelected={selectedLogJobId === job.id}
-                    onCancel={() => cancelMutation.mutate(job.id)}
-                    onRetry={() => retryMutation.mutate(job.id)}
-                    onLogs={() => setSelectedLogJobId((current) => current === job.id ? null : job.id)}
-                  />
+                  {/* `items-start`: a column flex box stretches its children,
+                      and the lone Logs button of a finished job would become
+                      the cell's whole width. */}
+                  <div className="flex flex-col items-start gap-1.5">
+                    <RunnerJobActions
+                      job={job}
+                      cancelling={cancelMutation.isPending && cancelMutation.variables === job.id}
+                      retrying={retryMutation.isPending && retryMutation.variables === job.id}
+                      logsSelected={selectedLogJobId === job.id}
+                      onCancel={() => cancelMutation.mutate(job.id)}
+                      onRetry={() => retryMutation.mutate(job.id)}
+                      onLogs={() => setSelectedLogJobId((current) => current === job.id ? null : job.id)}
+                    />
+                    {/* ═══ A REFUSED RETRY OR CANCEL SAYS SO, ON ITS OWN ROW ═══
+                        Both answered in silence: a click that came back 409
+                        left the row exactly as it was, with nothing on screen
+                        saying the server had refused. The answer is drawn
+                        under the button that asked, so it names its job by
+                        where it is. An alert EXISTS only while there is one —
+                        a table of N jobs must not carry N empty live regions,
+                        the rule `ChartActions` records for a component drawn
+                        many times on one page. */}
+                    {retryMutation.isError && retryMutation.variables === job.id && (
+                      <JobActionProblem action="retry" error={retryMutation.error} />
+                    )}
+                    {cancelMutation.isError && cancelMutation.variables === job.id && (
+                      <JobActionProblem action="cancel" error={cancelMutation.error} />
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}
@@ -1428,7 +1448,13 @@ function RunnerJobActions({
       </div>
     );
   }
-  if (job.status === 'failed' || job.status === 'cancelled') {
+  /* ═══ NO RETRY FOR A JOB WHOSE PACKAGE WAS DELETED ═══
+     A retry re-runs the job's own version, and the server refuses one whose
+     package is gone (409 PACKAGE_DELETED) — so the button could only ever be
+     refused. The row's own "Package deleted" cell is the reason, one column
+     over. STRICTLY `null`: `undefined` is an API pod that predates packages
+     and says nothing about them, and such a job keeps its Retry. */
+  if ((job.status === 'failed' || job.status === 'cancelled') && job.packageId !== null) {
     return (
       <div className="flex flex-wrap items-center gap-1.5">
         {logsButton}
@@ -1440,6 +1466,40 @@ function RunnerJobActions({
     );
   }
   return logsButton;
+}
+
+/**
+ * A refused retry or cancel, in the server's own words — its `detail` and its
+ * `remediation`, as the refused start above the table shows them. The first
+ * line says which act it answers, because the alert sits under both kinds of
+ * button and a 409 detail does not always name the verb.
+ *
+ * `max-w` because this lives in a table cell: an auto-layout column grows to
+ * its content's widest line, and a sentence that never wrapped would push the
+ * whole jobs table sideways.
+ */
+function JobActionProblem({
+  action,
+  error,
+}: {
+  readonly action: 'retry' | 'cancel';
+  readonly error: Error;
+}) {
+  const problem = error instanceof ProblemError ? error : null;
+  return (
+    <div
+      role="alert"
+      className="max-w-[18rem] rounded-lg border border-default bg-sunken p-2 text-[0.75rem] leading-snug text-primary"
+    >
+      <p className="font-medium">
+        {action === 'retry' ? 'This job could not be retried.' : 'This job could not be cancelled.'}
+      </p>
+      <p>{problem?.detail ?? error.message}</p>
+      {problem !== null && problem.remediation !== '' && (
+        <p className="mt-1 text-muted">{problem.remediation}</p>
+      )}
+    </div>
+  );
 }
 
 function RunnerLogsPanel({

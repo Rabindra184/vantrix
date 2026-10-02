@@ -13,7 +13,13 @@ import {
 import { ProblemError } from '../src/api/fetch.js';
 import { fetchPackages, packagesQueryKey } from '../src/api/packages.js';
 import { fetchProjects } from '../src/api/projects.js';
-import { fetchRunnerJobs, startRunnerRun, startRunnerRunFromPackage } from '../src/api/runner.js';
+import {
+  cancelRunnerJob,
+  fetchRunnerJobs,
+  retryRunnerJob,
+  startRunnerRun,
+  startRunnerRunFromPackage,
+} from '../src/api/runner.js';
 import { fetchProjectTests } from '../src/api/tests.js';
 import NewRunnerRun from '../src/routes/NewRunnerRun.js';
 
@@ -30,6 +36,10 @@ vi.mock('../src/api/projects.js', async (importOriginal) => ({
 vi.mock('../src/api/runner.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../src/api/runner.js')>()),
   fetchRunnerJobs: vi.fn(async () => ({ items: [] })),
+  // The jobs table's two actions. Each case that clicks one says what it
+  // answers; left unconfigured they resolve to nothing, which no case reads.
+  retryRunnerJob: vi.fn(),
+  cancelRunnerJob: vi.fn(),
   startRunnerRun: vi.fn(async ({ metadata }) => ({
     artifact: {
       id: '00000000-0000-4000-8000-0000000000c3',
@@ -189,6 +199,8 @@ const fetchProjectTestsMock = vi.mocked(fetchProjectTests);
 const fetchRunnerJobsMock = vi.mocked(fetchRunnerJobs);
 const startRunnerRunMock = vi.mocked(startRunnerRun);
 const startRunnerRunFromPackageMock = vi.mocked(startRunnerRunFromPackage);
+const retryRunnerJobMock = vi.mocked(retryRunnerJob);
+const cancelRunnerJobMock = vi.mocked(cancelRunnerJob);
 
 /** The project's packages for the next mount. */
 const servePackages = (...items: readonly Package[]) =>
@@ -205,6 +217,8 @@ beforeEach(() => {
   fetchRunnerJobsMock.mockReset();
   startRunnerRunMock.mockReset();
   startRunnerRunFromPackageMock.mockReset();
+  retryRunnerJobMock.mockReset();
+  cancelRunnerJobMock.mockReset();
   servePackages(CHECKOUT, EMPTY);
 });
 
@@ -1482,5 +1496,125 @@ describe('NewRunnerRun — the jobs table names each job’s package', () => {
     expect(packageCells).toEqual(['Checkout', 'Package deleted', '—']);
     // The artifact column keeps the filename.
     expect(within(rows[0] as HTMLElement).getAllByRole('cell')[2]?.textContent).toBe('checkout.jar');
+  });
+
+  /** `jobRow` with a status of its own — the actions a row offers follow it. */
+  function jobIn(
+    status: RunnerJobListResponse['items'][number]['job']['status'],
+    id: string,
+    package_: { readonly packageId?: string | null; readonly packageName?: string | null },
+  ): RunnerJobListResponse['items'][number] {
+    const row = jobRow(id, package_);
+    return { ...row, job: { ...row.job, status } };
+  }
+
+  /** Draws the page with `items` as the jobs list — persistently, not once: an
+   *  active job makes the table poll, and a second answer of "no jobs" would
+   *  take the row, and anything drawn in it, off the screen mid-case. */
+  async function mountJobs(items: RunnerJobListResponse['items']): Promise<HTMLElement[]> {
+    fetchRunnerJobsMock.mockResolvedValue({ items });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const router = createMemoryRouter(
+      [{ path: '/projects/:slug/run/new', element: <NewRunnerRun /> }],
+      { initialEntries: ['/projects/alpha/run/new'] },
+    );
+    render(
+      <QueryClientProvider client={client}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    );
+    const table = await screen.findByRole('table');
+    const [, ...rows] = within(table).getAllByRole('row');
+    return rows;
+  }
+
+  const ACTIONS = 6;
+  const actionsOf = (row: HTMLElement): HTMLElement => {
+    const cell = within(row).getAllByRole('cell')[ACTIONS];
+    if (cell === undefined) throw new Error('the row has no Actions cell');
+    return cell;
+  };
+
+  /**
+   * ═══ RETRY ON A JOB WHOSE PACKAGE WAS DELETED COULD ONLY BE REFUSED ═══
+   *
+   * The server answers 409 PACKAGE_DELETED for it, every time, and the row
+   * already says why one column over. So the button is not drawn — and only for
+   * a STRICT null: a job from a pod that predates packages carries no
+   * `packageId` at all, which says nothing about a deletion, and keeps its
+   * Retry. Three rows, so a loose `!= null` (which would take that third Retry
+   * too) fails here as surely as an unconditional button does.
+   */
+  it('offers no Retry for a job whose package was deleted, and keeps it otherwise', async () => {
+    const rows = await mountJobs([
+      jobIn('failed', '00000000-0000-4000-8000-000000000e01', { packageId: null, packageName: null }),
+      jobIn('failed', '00000000-0000-4000-8000-000000000e02', { packageId: CHECKOUT_ID, packageName: 'Checkout' }),
+      jobIn('cancelled', '00000000-0000-4000-8000-000000000e03', {}),
+    ]);
+
+    const [deleted, kept, older] = rows.map(actionsOf);
+    expect(within(rows[0] as HTMLElement).getAllByRole('cell')[1]?.textContent).toBe('Package deleted');
+    expect(within(deleted as HTMLElement).queryByRole('button', { name: /retry/i })).toBeNull();
+    // Still a row with an action: its logs are as readable as any other's.
+    expect(within(deleted as HTMLElement).getByRole('button', { name: 'Logs' })).toBeDefined();
+    expect(within(kept as HTMLElement).getByRole('button', { name: /retry/i })).toBeDefined();
+    expect(within(older as HTMLElement).getByRole('button', { name: /retry/i })).toBeDefined();
+    // Nothing has been refused, so nothing is announced: a table of N jobs
+    // carries no live region until there is something to say.
+    expect(screen.queryAllByRole('alert')).toHaveLength(0);
+  });
+
+  it('shows a refused retry in the API’s words, on the row it was asked for', async () => {
+    retryRunnerJobMock.mockRejectedValue(
+      new ProblemError(409, {
+        code: 'PACKAGE_DELETED',
+        detail: 'The package this job ran was deleted, so it cannot run again.',
+        remediation: 'Start a new run from a package with POST /v1/projects/{slug}/runner/runs.',
+      }),
+    );
+    const rows = await mountJobs([
+      jobIn('failed', '00000000-0000-4000-8000-000000000e11', { packageId: CHECKOUT_ID, packageName: 'Checkout' }),
+      jobIn('failed', '00000000-0000-4000-8000-000000000e12', { packageId: SEARCH_ID, packageName: 'Search' }),
+    ]);
+    const [first, second] = rows.map(actionsOf) as [HTMLElement, HTMLElement];
+
+    fireEvent.click(within(second).getByRole('button', { name: /retry/i }));
+
+    const alert = await within(second).findByRole('alert');
+    expect(retryRunnerJobMock).toHaveBeenCalledWith('alpha', '00000000-0000-4000-8000-000000000e12');
+    expect(alert.textContent).toContain('This job could not be retried.');
+    expect(alert.textContent).toContain('The package this job ran was deleted, so it cannot run again.');
+    expect(alert.textContent).toContain('Start a new run from a package with POST /v1/projects/{slug}/runner/runs.');
+    // On the row that asked, and no other: one refusal, one alert.
+    expect(within(first).queryByRole('alert')).toBeNull();
+    expect(screen.getAllByRole('alert')).toHaveLength(1);
+  });
+
+  it('shows a refused cancel in the API’s words, on the row it was asked for', async () => {
+    cancelRunnerJobMock.mockRejectedValue(
+      new ProblemError(404, {
+        code: 'NOT_FOUND',
+        detail: 'No cancellable runner job 00000000-0000-4000-8000-000000000e22 in this project.',
+        remediation:
+          'Only a queued or running job can be cancelled. GET /v1/projects/{slug}/runner/runs lists this project’s jobs with their status.',
+      }),
+    );
+    const rows = await mountJobs([
+      jobIn('running', '00000000-0000-4000-8000-000000000e21', { packageId: CHECKOUT_ID, packageName: 'Checkout' }),
+      jobIn('queued', '00000000-0000-4000-8000-000000000e22', { packageId: CHECKOUT_ID, packageName: 'Checkout' }),
+    ]);
+    const [first, second] = rows.map(actionsOf) as [HTMLElement, HTMLElement];
+
+    fireEvent.click(within(second).getByRole('button', { name: /cancel/i }));
+
+    const alert = await within(second).findByRole('alert');
+    expect(cancelRunnerJobMock).toHaveBeenCalledWith('alpha', '00000000-0000-4000-8000-000000000e22');
+    expect(alert.textContent).toContain('This job could not be cancelled.');
+    expect(alert.textContent).toContain('No cancellable runner job 00000000-0000-4000-8000-000000000e22 in this project.');
+    expect(alert.textContent).toContain('Only a queued or running job can be cancelled.');
+    expect(within(first).queryByRole('alert')).toBeNull();
+    expect(screen.getAllByRole('alert')).toHaveLength(1);
   });
 });
