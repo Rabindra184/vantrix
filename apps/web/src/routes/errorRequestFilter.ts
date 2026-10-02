@@ -1,7 +1,8 @@
 import type { StatsResponse } from '@perfportal/contracts';
 
 /**
- * The requests worth offering in the Errors tab's filter (review 09-13 M15).
+ * The requests worth offering in the Summary's errors-table filter (review
+ * 09-13 M15, written for the Errors tab that table used to sit on).
  *
  * ═══ ONLY THE ONES THAT ACTUALLY FAILED ═══
  *

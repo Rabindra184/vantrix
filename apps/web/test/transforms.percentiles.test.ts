@@ -1,5 +1,6 @@
 import type { SeriesResponse } from '@perfportal/contracts';
 import { describe, expect, it } from 'vitest';
+import { expectAboutTheRun, expectAboutTheWindow } from './support/emptySentence';
 import { BANDS, toPercentiles } from '../src/charts/transforms/percentiles';
 import fixture from './fixtures/reference-run.json';
 
@@ -13,7 +14,7 @@ const LABEL: Record<string, string> = {
 
 describe('toPercentiles — the band set (D-7)', () => {
   it('draws exactly the ten bands Gatling draws', () => {
-    const d = toPercentiles(series);
+    const d = toPercentiles(series, { windowSelected: false });
     expect(d.series.map((s) => s.name)).toEqual(BANDS.map((b) => LABEL[b]));
     // The PRD names a 98th and a 99.9th. Neither is emitted by the engine and
     // neither appears in the real report.
@@ -24,7 +25,7 @@ describe('toPercentiles — the band set (D-7)', () => {
   it('carries real data in every band, not just the right names', () => {
     // The name assertion above passes against a transform that produces ten
     // correctly-named series of nulls. This is what makes it mean something.
-    const d = toPercentiles(series);
+    const d = toPercentiles(series, { windowSelected: false });
     for (const s of d.series) {
       const values = s.data as readonly (number | null)[];
       expect(values).toHaveLength(series.buckets.length);
@@ -33,7 +34,7 @@ describe('toPercentiles — the band set (D-7)', () => {
   });
 
   it('orders bands by BANDS, not by the caller`s argument order', () => {
-    const d = toPercentiles(series, ['p95', 'min', 'p50']);
+    const d = toPercentiles(series, { bands: ['p95', 'min', 'p50'], windowSelected: false });
     expect(d.series.map((s) => s.name)).toEqual(['min', '50%', '95%']);
   });
 });
@@ -57,7 +58,7 @@ describe('toPercentiles — OK-only (G-22)', () => {
   });
 
   it('reads percentilesOk, never the combined set', () => {
-    const d = toPercentiles(series);
+    const d = toPercentiles(series, { windowSelected: false });
     const p50 = d.series.find((s) => s.name === '50%')!.data;
     expect(p50).toEqual(series.buckets.map((b) => b.percentilesOk.p50 ?? null));
     expect(p50).not.toEqual(series.buckets.map((b) => b.percentiles.p50 ?? null));
@@ -68,7 +69,7 @@ describe('toPercentiles — OK-only (G-22)', () => {
       ...series,
       buckets: series.buckets.map((b) => ({ ...b, percentilesKo: { p50: 99_999 } })),
     };
-    expect(toPercentiles(koified).series).toEqual(toPercentiles(series).series);
+    expect(toPercentiles(koified, { windowSelected: false }).series).toEqual(toPercentiles(series, { windowSelected: false }).series);
   });
 });
 
@@ -90,7 +91,7 @@ describe('toPercentiles — a second with no successful response', () => {
   });
 
   it('leaves the point absent rather than plotting zero', () => {
-    const d = toPercentiles(series);
+    const d = toPercentiles(series, { windowSelected: false });
     for (const s of d.series) {
       // Zero would draw every band plunging to the axis for that second,
       // which reads as "every response was instant" rather than "nothing
@@ -100,7 +101,7 @@ describe('toPercentiles — a second with no successful response', () => {
   });
 
   it('says so, rather than letting the gap pass without comment', () => {
-    expect(toPercentiles(series).limitation).toMatch(/absent rather than zero/i);
+    expect(toPercentiles(series, { windowSelected: false }).limitation).toMatch(/absent rather than zero/i);
   });
 
   it('drops the absent-points note when every second measured something', () => {
@@ -108,19 +109,19 @@ describe('toPercentiles — a second with no successful response', () => {
       ...series,
       buckets: series.buckets.filter((b) => Object.keys(b.percentilesOk).length > 0),
     };
-    expect(toPercentiles(full).limitation).not.toMatch(/absent rather than zero/i);
+    expect(toPercentiles(full, { windowSelected: false }).limitation).not.toMatch(/absent rather than zero/i);
   });
 
   it('always says min and max are the combined extremes, not OK-only', () => {
     // Eight of the ten bands are OK-only and two are not; presenting them as
     // one set without saying so is the quiet kind of parity error.
-    expect(toPercentiles(series).limitation).toMatch(/combined OK\+KO extremes/i);
+    expect(toPercentiles(series, { windowSelected: false }).limitation).toMatch(/combined OK\+KO extremes/i);
   });
 });
 
 describe('toPercentiles — the data table', () => {
   it('carries one row per bucket, headed by elapsed seconds', () => {
-    const d = toPercentiles(series);
+    const d = toPercentiles(series, { windowSelected: false });
     expect(d.rows).toHaveLength(series.buckets.length);
     expect(d.columns[0]).toBe('Elapsed (s)');
     expect(d.columns).toHaveLength(BANDS.length + 1);
@@ -128,7 +129,7 @@ describe('toPercentiles — the data table', () => {
   });
 
   it('shows the same values it plots, band by band', () => {
-    const d = toPercentiles(series);
+    const d = toPercentiles(series, { windowSelected: false });
     const bucket = series.buckets[0]!;
     expect(d.rows[0]!.values).toEqual([
       bucket.minMs,
@@ -154,7 +155,7 @@ describe('toPercentiles — the data table', () => {
    * decision made about how many lines fit legibly on one axis.
    */
   it('carries all ten bands however few are drawn', () => {
-    const d = toPercentiles(series, ['p50']);
+    const d = toPercentiles(series, { bands: ['p50'], windowSelected: false });
 
     expect(d.series.map((s) => s.name)).toEqual(['50%']);
     expect(d.columns).toEqual(['Elapsed (s)', ...BANDS.map((b) => LABEL[b])]);
@@ -164,13 +165,13 @@ describe('toPercentiles — the data table', () => {
 
     // And the numbers are the same numbers, not merely the right count of
     // columns: narrowing the drawing must not shift which band a column holds.
-    expect(d.rows.map((r) => r.values)).toEqual(toPercentiles(series).rows.map((r) => r.values));
+    expect(d.rows.map((r) => r.values)).toEqual(toPercentiles(series, { windowSelected: false }).rows.map((r) => r.values));
   });
 });
 
 describe('toPercentiles — nothing to draw', () => {
   it('explains itself instead of rendering empty axes', () => {
-    const d = toPercentiles({ ...series, buckets: [] });
+    const d = toPercentiles({ ...series, buckets: [] }, { windowSelected: false });
     expect(d.series).toHaveLength(0);
     expect(d.empty).toMatch(/no response times/i);
   });
@@ -183,7 +184,7 @@ describe('toPercentiles — nothing to draw', () => {
    * measured and there was nothing here", for data that is entirely intact.
    */
   it('says the selection is empty rather than drawing a grid with no marks', () => {
-    const d = toPercentiles(series, []);
+    const d = toPercentiles(series, { bands: [], windowSelected: false });
 
     expect(d.series).toHaveLength(0);
     expect(d.empty).toBeDefined();
@@ -196,7 +197,7 @@ describe('toPercentiles — nothing to draw', () => {
   it('keeps the whole table while the drawing is switched off', () => {
     // The selection governs the DRAWING. Turning it off must not also take
     // away the parity surface and the screen-reader route to the data.
-    const d = toPercentiles(series, []);
+    const d = toPercentiles(series, { bands: [], windowSelected: false });
     expect(d.rows).toHaveLength(series.buckets.length);
     expect(d.columns).toHaveLength(BANDS.length + 1);
   });
@@ -204,8 +205,8 @@ describe('toPercentiles — nothing to draw', () => {
   it('is not empty while any band is selected', () => {
     // The other side of the guard: it must key on the SELECTION being empty,
     // not merely on it being smaller than BANDS.
-    expect(toPercentiles(series, ['min']).empty).toBeUndefined();
-    expect(toPercentiles(series).empty).toBeUndefined();
+    expect(toPercentiles(series, { bands: ['min'], windowSelected: false }).empty).toBeUndefined();
+    expect(toPercentiles(series, { windowSelected: false }).empty).toBeUndefined();
   });
 });
 
@@ -225,14 +226,14 @@ describe('toPercentiles — nothing to draw', () => {
  */
 describe('toPercentiles — outcome selection', () => {
   it('defaults to OK, so existing callers are unchanged', () => {
-    expect(toPercentiles(series)).toEqual(toPercentiles(series, BANDS, 'ok'));
+    expect(toPercentiles(series, { windowSelected: false })).toEqual(toPercentiles(series, { bands: BANDS, outcome: 'ok', windowSelected: false }));
   });
 
   it('reads percentilesKo when KO is selected', () => {
     const i = series.buckets.findIndex((b) => Object.keys(b.percentilesKo).length > 0);
     expect(i).toBeGreaterThanOrEqual(0); // the fixture must contain failures
 
-    const drawn = toPercentiles(series, ['p95'], 'ko').series[0]!.data as readonly (
+    const drawn = toPercentiles(series, { bands: ['p95'], outcome: 'ko', windowSelected: false }).series[0]!.data as readonly (
       | number
       | null
     )[];
@@ -243,7 +244,7 @@ describe('toPercentiles — outcome selection', () => {
     const i = series.buckets.findIndex((b) => Object.keys(b.percentilesKo).length === 0);
     expect(i).toBeGreaterThanOrEqual(0);
 
-    const drawn = toPercentiles(series, ['p95'], 'ko').series[0]!.data as readonly (
+    const drawn = toPercentiles(series, { bands: ['p95'], outcome: 'ko', windowSelected: false }).series[0]!.data as readonly (
       | number
       | null
     )[];
@@ -258,15 +259,15 @@ describe('toPercentiles — outcome selection', () => {
     );
     expect(i).toBeGreaterThanOrEqual(0);
 
-    const ok = toPercentiles(series, ['p95'], 'ok').series[0]!.data as readonly (number | null)[];
-    const ko = toPercentiles(series, ['p95'], 'ko').series[0]!.data as readonly (number | null)[];
+    const ok = toPercentiles(series, { bands: ['p95'], outcome: 'ok', windowSelected: false }).series[0]!.data as readonly (number | null)[];
+    const ko = toPercentiles(series, { bands: ['p95'], outcome: 'ko', windowSelected: false }).series[0]!.data as readonly (number | null)[];
     expect(ok[i]).not.toBeNull();
     expect(ko[i]).toBeNull();
   });
 
   it('reads the combined map when all is selected', () => {
     const i = series.buckets.findIndex((b) => Object.keys(b.percentiles).length > 0);
-    const drawn = toPercentiles(series, ['p95'], 'all').series[0]!.data as readonly (
+    const drawn = toPercentiles(series, { bands: ['p95'], outcome: 'all', windowSelected: false }).series[0]!.data as readonly (
       | number
       | null
     )[];
@@ -274,9 +275,9 @@ describe('toPercentiles — outcome selection', () => {
   });
 
   it('names the selected outcome in the deviation note', () => {
-    expect(toPercentiles(series, BANDS, 'ok').limitation).toContain('OK-only');
-    expect(toPercentiles(series, BANDS, 'ko').limitation).toContain('KO-only');
-    expect(toPercentiles(series, BANDS, 'all').limitation).not.toContain('-only');
+    expect(toPercentiles(series, { bands: BANDS, outcome: 'ok', windowSelected: false }).limitation).toContain('OK-only');
+    expect(toPercentiles(series, { bands: BANDS, outcome: 'ko', windowSelected: false }).limitation).toContain('KO-only');
+    expect(toPercentiles(series, { bands: BANDS, outcome: 'all', windowSelected: false }).limitation).not.toContain('-only');
   });
 
   it('counts unmeasured seconds against the SELECTED outcome', () => {
@@ -286,12 +287,12 @@ describe('toPercentiles — outcome selection', () => {
     const koGaps = series.buckets.filter((b) => Object.keys(b.percentilesKo).length === 0).length;
     expect(koGaps).not.toBe(okGaps);
 
-    expect(toPercentiles(series, BANDS, 'ko').limitation).toContain(String(koGaps));
+    expect(toPercentiles(series, { bands: BANDS, outcome: 'ko', windowSelected: false }).limitation).toContain(String(koGaps));
   });
 
   it('still carries all ten bands in the table whatever the outcome', () => {
     // The drawing has a legibility budget; the parity surface does not.
-    const d = toPercentiles(series, ['p95'], 'ko');
+    const d = toPercentiles(series, { bands: ['p95'], outcome: 'ko', windowSelected: false });
     expect(d.columns).toHaveLength(BANDS.length + 1);
     expect(d.rows).toHaveLength(series.buckets.length);
   });
@@ -320,7 +321,7 @@ describe('toPercentiles — min and max under outcome selection', () => {
   const withKo = series.buckets.findIndex((b) => Object.keys(b.percentilesKo).length > 0);
 
   it('omits min and max on the KO view, because the payload has no KO extrema', () => {
-    const d = toPercentiles(series, ['min', 'max'], 'ko');
+    const d = toPercentiles(series, { bands: ['min', 'max'], outcome: 'ko', windowSelected: false });
     for (const drawn of d.series) {
       expect(drawn.data.every((value) => value === null)).toBe(true);
     }
@@ -333,7 +334,7 @@ describe('toPercentiles — min and max under outcome selection', () => {
   });
 
   it('renders those cells as dashes in the table rather than a borrowed number', () => {
-    const d = toPercentiles(series, ['min', 'max'], 'ko');
+    const d = toPercentiles(series, { bands: ['min', 'max'], outcome: 'ko', windowSelected: false });
     const minColumn = BANDS.indexOf('min');
     const maxColumn = BANDS.indexOf('max');
     expect(d.rows[withKo]!.values[minColumn]).toBe('—');
@@ -341,7 +342,7 @@ describe('toPercentiles — min and max under outcome selection', () => {
   });
 
   it('keeps them on the All view, where the combined extrema are exactly right', () => {
-    const d = toPercentiles(series, ['min', 'max'], 'all');
+    const d = toPercentiles(series, { bands: ['min', 'max'], outcome: 'all', windowSelected: false });
     const drawn = d.series[0]!.data as readonly (number | null)[];
     expect(drawn[withKo]).toBe(series.buckets[withKo]!.minMs);
   });
@@ -350,12 +351,36 @@ describe('toPercentiles — min and max under outcome selection', () => {
     // Unchanged deliberately: `DEFAULT_BANDS` draws min and max, this is the
     // default view, and G-22 parity was established against it. The same
     // approximation applies and the note names it.
-    const d = toPercentiles(series, ['min'], 'ok');
+    const d = toPercentiles(series, { bands: ['min'], outcome: 'ok', windowSelected: false });
     const drawn = d.series[0]!.data as readonly (number | null)[];
     expect(drawn[withKo]).toBe(series.buckets[withKo]!.minMs);
   });
 
   it('says which bands the KO view is actually showing', () => {
-    expect(toPercentiles(series, BANDS, 'ko').limitation).toContain('min and max are not shown');
+    expect(toPercentiles(series, { bands: BANDS, outcome: 'ko', windowSelected: false }).limitation).toContain('min and max are not shown');
+  });
+});
+
+/**
+ * A WINDOW THAT SELECTS NO RESPONSES IS NOT A RUN THAT RECORDED NONE. The empty
+ * payload is the same either way, so an exclusive pair. The "no percentile
+ * bands are selected" sentence is about the reader's own control, not about the
+ * run or the window, and reads the same under either flag.
+ */
+describe('toPercentiles — a window that selects no responses', () => {
+  const none = { ...series, buckets: [] };
+
+  it('names the window, not the run', () => {
+    expectAboutTheWindow(toPercentiles(none, { windowSelected: true }).empty);
+  });
+
+  it('still names the run when no window is selected', () => {
+    expectAboutTheRun(toPercentiles(none, { windowSelected: false }).empty);
+  });
+
+  it.each([true, false])('says the SELECTION is empty the same way under either flag (windowSelected=%s)', (windowSelected) => {
+    const d = toPercentiles(series, { bands: [], windowSelected });
+    expect(d.empty).toMatch(/no percentile bands are selected/i);
+    expect(d.empty).not.toMatch(/window|this run/i);
   });
 });

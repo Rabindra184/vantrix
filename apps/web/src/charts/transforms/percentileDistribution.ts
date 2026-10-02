@@ -11,7 +11,7 @@ import type { Outcome } from './percentiles';
  * accumulating the counts answers "what share of observations came in at or
  * below this response time" — which is the definition of a percentile. So this
  * chart costs no endpoint, no query and no cache key: it reads the payload the
- * Charts tab is already holding for the histogram beside it.
+ * Report's Requests section is already holding for the histogram beside it.
  *
  * IT EARNS ITS PLACE BESIDE THAT HISTOGRAM rather than replacing it. The
  * histogram shows where the mass is; this shows THE SHAPE OF THE TAIL, which
@@ -100,6 +100,8 @@ function overflowNote(count: number, outcome: Outcome): string {
 export function toPercentileDistribution(
   d: DistributionResponse,
   outcome: Outcome,
+  /** REQUIRED, no default — see `toDistribution`. */
+  opts: { readonly windowSelected: boolean },
 ): ChartData {
   const columns = [PERCENTILE_COLUMN, labelColumn(d.exactValues), 'Requests at or below'];
   // Emitted in the empty branch too: "everything overflowed" is exactly the
@@ -157,8 +159,16 @@ export function toPercentileDistribution(
       // differently: nothing was measured at all, versus this run genuinely
       // had none of what you asked to see. Neither is a flat line at zero,
       // which would read as "every response was instant".
-      empty:
-        d.labels.length === 0
+      //
+      // BOTH switch under a window: each says "this run" about something a
+      // window can leave empty while the run is not. The outcome wording is
+      // the same `NOTHING_RECORDED` noun phrase in both, so the two sentences
+      // differ only in WHAT they are about.
+      empty: opts.windowSelected
+        ? d.labels.length === 0
+          ? 'No response times fall in the selected window, so there is no curve to draw.'
+          : `The selected window holds ${NOTHING_RECORDED[outcome]}, so there is no curve to draw.`
+        : d.labels.length === 0
           ? 'No response times were recorded for this run, so there is no distribution to show.'
           : `This run recorded ${NOTHING_RECORDED[outcome]}, so there is no curve to draw.`,
       limitation,

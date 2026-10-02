@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { describeSlaOutcome } from '@perfportal/contracts';
 import type { Assertion, RunIdentity, RunResponse } from '@perfportal/contracts';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import Badge from '../components/Badge';
 import { CompareTabIcon, DownloadIcon } from '../components/icons';
 import Button, { linkButtonClasses } from '../components/Button';
@@ -76,6 +76,14 @@ export default function RunDecisionBand({
    */
   readonly toolAssertions?: RunResponse['toolAssertions'];
 }) {
+  /* THE CURRENT SEARCH TRAVELS WITH THE ASSERTIONS LINK. It is a move within
+     this page (`#simulation-assertions`), and a `to` built from the bare path
+     replaced the query string with nothing: a reader who had landed on
+     `?request=Place%20Order#errors` and followed this link got the errors
+     table's filter reset to every request, and a `from`/`to` they carried was
+     gone from the tab links. The hash is the only thing this link means to
+     change. */
+  const { search } = useLocation();
   /**
    * ═══ THE DISTINCTION `gatesText` ALREADY MADE, NOW MADE EVERYWHERE
    * (review 09-13 C01) ═══
@@ -186,16 +194,16 @@ export default function RunDecisionBand({
       <div className="grid grid-cols-1 gap-0 @4xl:grid-cols-[minmax(9rem,auto)_minmax(14rem,1fr)_minmax(18rem,auto)]">
         {/* THE VERDICT WORD — the redesign's signature, and NOT AN `<h2>`,
             though it is the largest text on the page. This band is SHELL
-            CHROME — `RunShell` renders it above the `<Outlet/>`, so it is on
-            all five tabs — and every `<h2>` on this page belongs to the tab
-            CONTENT's own sections (`run-tables.spec.ts` asserts the Overview
-            tab's outline is exactly Assertions / Simulation assertions /
-            Statistics, and the Errors tab's is exactly Errors). Its two
-            neighbours in the shell, `SlaBanner` and `LiveStatusStrip`,
-            contribute no heading for the same reason; `RunHeader` owns the
-            one `<h1>`. It would also be the only heading whose WORDS change
-            per run. The section stays reachable through
-            `aria-label="Release decision"`, like both neighbours.
+            CHROME — `RunShell` renders it above the `<Outlet/>`, ahead of the
+            Summary's own content — and every `<h2>` on this page belongs to a
+            section's own content: the Summary's outline is an exact list
+            (Platform gates, Simulation assertions, Over time, Errors), and a
+            verdict heading would be a fifth rung in it. Its two neighbours in
+            the shell, `SlaBanner` and `LiveStatusStrip`, contribute no heading
+            for the same reason; `RunHeader` owns the one `<h1>`. It would also
+            be the only heading whose WORDS change per run. The section stays
+            reachable through `aria-label="Release decision"`, like both
+            neighbours.
 
             The word's colour is the decision mark's TEXT colour — the
             4.5:1-gated palette, as inline style from mark data, the same
@@ -374,7 +382,7 @@ export default function RunDecisionBand({
               action={
                 simulation.failedExpression === null ? null : (
                   <Link
-                    to={`${runPath(identity.id)}#simulation-assertions`}
+                    to={{ pathname: runPath(identity.id), search, hash: '#simulation-assertions' }}
                     className="transition-ui font-medium text-accent hover:underline hover:underline-offset-2"
                   >
                     {simulation.failedCount === 1

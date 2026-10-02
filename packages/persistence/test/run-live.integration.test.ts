@@ -212,15 +212,37 @@ describe('RunRepository live runs', () => {
     const repo = new RunRepository(prisma);
     const run = await repo.createLive(liveInput(orgId, projectId));
 
-    expect(await repo.claimForClose(run.id)).toBe(true);
+    expect(await repo.claimForClose(run.id, { abandoned: false })).toBe(true);
     const row = await prisma.run.findUniqueOrThrow({ where: { id: run.id } });
     expect(row.status).toBe('parsing');
     expect(row.parsingStartedAt).not.toBeNull();
+    // A healthy close is not an abandoned one: the pipeline reads this column
+    // to choose `incomplete` over `complete`.
+    expect(row.streamAbandonedAt).toBeNull();
 
     // A second claim on the same (now 'parsing') row must not match --
     // this is what makes two concurrent close() calls resolve to exactly
     // one winner.
-    expect(await repo.claimForClose(run.id)).toBe(false);
+    expect(await repo.claimForClose(run.id, { abandoned: false })).toBe(false);
+  });
+
+  /**
+   * A PRODUCER THAT DIED IS AN ABANDONED STREAM, AND THE CLAIM SAYS SO IN ONE
+   * STATEMENT. The runner closes a run whose Gatling ended early this way. A
+   * row at `parsing` without `stream_abandoned_at` is indistinguishable from
+   * a healthy close, so the pipeline would finish it `complete` — the
+   * sweeper's own claim stamps both together for the same reason.
+   */
+  it('claimForClose marks an abandoned stream in the same claim', async () => {
+    const { orgId, projectId } = await seedProject();
+    const repo = new RunRepository(prisma);
+    const run = await repo.createLive(liveInput(orgId, projectId));
+
+    expect(await repo.claimForClose(run.id, { abandoned: true })).toBe(true);
+    const row = await prisma.run.findUniqueOrThrow({ where: { id: run.id } });
+    expect(row.status).toBe('parsing');
+    expect(row.parsingStartedAt).not.toBeNull();
+    expect(row.streamAbandonedAt).not.toBeNull();
   });
 
   it('releaseClose undoes claimForClose, and only claimForClose can then re-claim it', async () => {
@@ -234,7 +256,7 @@ describe('RunRepository live runs', () => {
     const run = await repo.createLive(liveInput(orgId, projectId));
     await repo.advanceOffset(run.id, 0, 2048);
 
-    expect(await repo.claimForClose(run.id)).toBe(true);
+    expect(await repo.claimForClose(run.id, { abandoned: false })).toBe(true);
     await repo.releaseClose(run.id);
 
     const row = await prisma.run.findUniqueOrThrow({ where: { id: run.id } });
@@ -245,14 +267,14 @@ describe('RunRepository live runs', () => {
     expect(row.streamOffset).toBe(2048n);
 
     // The actual proof of retryability: claimForClose can win again.
-    expect(await repo.claimForClose(run.id)).toBe(true);
+    expect(await repo.claimForClose(run.id, { abandoned: false })).toBe(true);
   });
 
   it('releaseClose cannot resurrect a run a real ingest job already decided', async () => {
     const { orgId, projectId } = await seedProject();
     const repo = new RunRepository(prisma);
     const run = await repo.createLive(liveInput(orgId, projectId));
-    await repo.claimForClose(run.id);
+    await repo.claimForClose(run.id, { abandoned: false });
     // A real ingest job raced in and completed the run while it was still
     // 'parsing' -- releaseClose must not undo a decision that already
     // happened through a different path.

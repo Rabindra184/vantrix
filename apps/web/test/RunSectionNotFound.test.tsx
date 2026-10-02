@@ -26,7 +26,7 @@ describe('RunSectionNotFound', () => {
     // The way back is the RUN, not the run list: this renders inside
     // `RunShell`'s outlet, so the reader has not lost the run and must not be
     // offered an exit that implies they have.
-    expect(screen.getByRole('link', { name: 'Back to the overview' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Back to the summary' })).toHaveAttribute(
       'href',
       `/runs/${RUN_ID}`,
     );
@@ -41,7 +41,7 @@ describe('RunSectionNotFound', () => {
   it('does not restate the list of sections', () => {
     renderAt(`/runs/${RUN_ID}/telemetry`);
     const body = document.body.textContent ?? '';
-    for (const tab of ['Overview', 'Charts', 'Load generators', 'Errors', 'Trends', 'Compare']) {
+    for (const tab of ['Summary', 'Report', 'Logs', 'Trends', 'Compare']) {
       expect(body).not.toContain(tab);
     }
   });

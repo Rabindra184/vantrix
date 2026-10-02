@@ -1,7 +1,7 @@
 import { expect, test, type Download, type Page } from '@playwright/test';
 import { seedAdmin, seedRunWithData } from './fixtures.js';
 import { signIn } from './helpers.js';
-import { runPath } from '../src/routes/paths.js';
+import { runPath, runReportPath } from '../src/routes/paths.js';
 
 /**
  * THE TWO FILES THIS PRODUCT HANDS A READER, SAVED BY A REAL BROWSER.
@@ -50,15 +50,25 @@ async function downloadFrom(page: Page, name: string | RegExp): Promise<Download
   return pending;
 }
 
-async function openRun(page: Page): Promise<void> {
+/**
+ * A run's page, signed in: the Summary, which is where the SLA summary export
+ * sits, or the Report with its Requests table open, which is where the
+ * statistics table — and so its CSV — sits (backlog #7).
+ */
+async function openRun(page: Page, where: 'summary' | 'statistics' = 'summary'): Promise<void> {
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(runPath(runId));
+  if (where === 'summary') {
+    await page.goto(runPath(runId));
+    return;
+  }
+  await page.goto(runReportPath(runId));
+  await page.locator('section#requests').getByRole('button', { name: 'Table', exact: true }).click();
 }
 
 test('the statistics CSV reaches the disk, with its rows in it', async ({ page }) => {
-  await openRun(page);
+  await openRun(page, 'statistics');
   await expect(page.getByRole('button', { name: 'Download CSV' })).toBeVisible();
 
   const download = await downloadFrom(page, 'Download CSV');

@@ -369,25 +369,41 @@ export async function openAccountMenu(page: Page): Promise<void> {
 }
 
 /**
- * Opens the time-window control if it is closed.
+ * Waits for the Report's time window, which is ALWAYS open now (backlog #7).
  *
- * Review M01 collapsed it: measured at 1440x900 it ran 332px and pushed the
- * run's own totals to y937, eighty pixels below the fold on the page a reader
- * opens to read four numbers. It is 85px closed (its range line and mode stay
- * visible), and it OPENS ITSELF whenever a window is applied — so a spec
- * arriving at a narrowed URL needs nothing, while one that means to narrow a
- * fresh run has to open it first, exactly as a reader does.
+ * It used to be a disclosure — review M01 collapsed it to 85px closed because
+ * at 1440x900 it pushed the run's totals to y937 — and this helper opened it
+ * only if it was shut, because the control opened itself whenever a window was
+ * applied. Gatling Enterprise's own window is never hidden, and the Summary
+ * (where the totals live) draws none, so the collapse has nothing left to buy
+ * and is gone.
  *
- * Checks before clicking rather than toggling blindly: a spec that applies a
- * window, navigates, and comes back would otherwise CLOSE the control the
- * product had deliberately opened.
+ * It stays a helper rather than twenty bare `expect`s so a spec that reaches
+ * for the window says so by name, and so the one thing it asserts is stated in
+ * one place: THE CALLER MUST BE ON THE REPORT. The window is drawn nowhere
+ * else, so a spec still on the Summary, Trends, Compare or Logs fails here, on
+ * this line, rather than on a later `fill` timing out for an unnamed reason.
  */
 export async function openTimeWindow(page: Page): Promise<void> {
-  const details = page.locator('[data-testid="time-brush"] details');
-  await details.waitFor();
-  const open = await details.evaluate((d) => (d as HTMLDetailsElement).open);
-  if (!open) await page.getByTestId('time-window-toggle').click();
   await expect(page.getByTestId('window-from')).toBeVisible();
+}
+
+/**
+ * Opens a Report section — or a Summary assertion bar — by its id, if it is
+ * shut.
+ *
+ * CHECKS BEFORE CLICKING, never toggles blindly: `CollapsibleSection` opens
+ * itself when the URL's fragment names it, and a Summary bar holding a failure
+ * is open on arrival, so a spec that has already arrived at an open one would
+ * otherwise SHUT the control the product opened. The button is found by its
+ * exact title because Playwright's `name` is a case-insensitive substring and
+ * "Requests" would also match a chart's own heading inside the section.
+ */
+export async function openSection(page: Page, id: string, title: string): Promise<void> {
+  const button = page.locator(`section#${id}`).getByRole('button', { name: title, exact: true });
+  await expect(button).toBeVisible();
+  if ((await button.getAttribute('aria-expanded')) !== 'true') await button.click();
+  await expect(button).toHaveAttribute('aria-expanded', 'true');
 }
 
 /**

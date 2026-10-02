@@ -207,7 +207,7 @@ export default function ErrorsTable({
           body={
             scopeLabel === undefined
               ? 'Every request this run made came back OK.'
-              : `Every request recorded under ${scopeLabel} came back OK. The run as a whole may still have failures — the run's Errors tab is the place that answers that.`
+              : `Every request recorded under ${scopeLabel} came back OK. The run as a whole may still have failures — the run's Summary answers that.`
           }
         />
         {windowNote}

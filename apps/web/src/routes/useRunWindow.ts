@@ -134,8 +134,8 @@ export const useLiveFromShell = (): LiveRunState | null =>
  * instead.
  *
  * NOT ALSO A `status` FIELD, deliberately. A caller that needs the run's own
- * `RunProcessing['status']` (`WaitingPanel`'s prop, or `LiveSummary`'s
- * `frozen`) reads it off `detail.data.run.status` after its own
+ * `RunProcessing['status']` (`WaitingPanel`'s prop) reads it off
+ * `detail.data.run.status` after its own
  * `detail.data.state === 'processing'` check — the same discriminated-union
  * narrowing every one of those callers already needs for its OWN fields
  * (`run.assertions`, `run.toolAssertions`, …), so a second, separately
@@ -161,38 +161,47 @@ export function useRunTerminal(
 /**
  * `[0, durationMs]` — the domain a run without a narrowed window shares while
  * its span is still growing (or has just finished growing), factored out of
- * `useTimeDomainFromShell` below into its own named function rather than
- * inlined at that hook's one call to it.
+ * the domain hooks below into its own named function rather than inlined at
+ * their one call to it.
  *
- * `useTimeDomainFromShell` IS THIS FUNCTION'S ONLY PRODUCTION CALLER NOW.
- * TASK 9 C4 split this out for a SECOND site that could not reach that hook
- * at all: the standalone `Live` component `RunDetail.tsx` used to render for
- * a still-processing run computed this exact tuple directly, because it
- * mounted no `<Outlet/>` — a still-processing run rendered no `RunShell` at
- * all back then — and so had no `RunWindowContext` to read. `Live` is gone;
- * `RunShell` now mounts for EVERY run status, processing included, so there
- * is no longer a code path that needs this arithmetic and cannot reach the
- * hook.
+ * `useWholeRunDomainFromShell` IS THIS FUNCTION'S ONLY PRODUCTION CALLER, and
+ * `useTimeDomainFromShell` reaches it through that hook. TASK 9 C4 split this
+ * out for a SECOND site that could not reach a hook at all: the standalone
+ * `Live` component `RunDetail.tsx` used to render for a still-processing run
+ * computed this exact tuple directly, because it mounted no `<Outlet/>` — a
+ * still-processing run rendered no `RunShell` at all back then — and so had no
+ * `RunWindowContext` to read. `Live` is gone; `RunShell` now mounts for EVERY
+ * run status, processing included, so there is no longer a code path that
+ * needs this arithmetic and cannot reach the hook.
  *
  * The export survives that second call site's deletion anyway:
  * `timeAxis.test.ts`'s "growingDomainMs and useTimeDomainFromShell agree on
  * the growing-run domain formula" case imports this function and calls it
  * directly, rather than hand-writing `[0, durationMs]` a second time as a
  * literal the hook's own implementation could silently drift from. Inlining
- * this back into `useTimeDomainFromShell` would leave that test pinning
- * nothing but its own copy of the arithmetic.
+ * this back into the hooks would leave that test pinning nothing but its own
+ * copy of the arithmetic.
  */
 export function growingDomainMs(durationMs: number): readonly [number, number] {
   return [0, durationMs];
 }
 
 /**
- * The domain every time chart on the page shares, in elapsed milliseconds —
- * §22.5's "one time axis".
+ * The run's warm-up window, as `RunShell` read it off the run.
  *
- * THE WINDOW WINS WHEN THERE IS ONE. A narrowed page shows only the selected
- * span, and pinning those charts to the whole run instead would draw every one
- * of them as a sliver against 90% empty axis.
+ * AC-STAT-4: summary statistics exclude the ramp and the time series keep it,
+ * so a reader comparing the two needs to see where it ended. `LiveEngine.add`
+ * is explicit about that split ("this is a series, and series include
+ * warm-up"), which is only legible on screen if something draws the boundary.
+ */
+export const useWarmupFromShell = (): number | null =>
+  useOutletContext<RunWindowContext>().warmupMs;
+
+/**
+ * The run's own span, IGNORING any window — the Summary's axis. GE's Summary
+ * stayed the whole run with a 30-second window in its URL (measured), and so
+ * does this one; `useTimeDomainFromShell` narrows to the window, which is
+ * right for the Report and wrong here.
  *
  * `undefined` when the run reports no duration — a run still parsing, or one
  * that never completed. Each chart then auto-scales as it did before, which is
@@ -205,24 +214,30 @@ export function growingDomainMs(durationMs: number): readonly [number, number] {
  * deciding this domain would be two answers to "what instant is the shared
  * crosshair on" — one for a finished run, a different one for a live one —
  * which is exactly the failure mode this file's own axis-pointer rule exists
- * to rule out.
+ * to rule out. It is also why the windowed hook below is built ON this one
+ * rather than repeating the fallback: a second copy of "`durationMs` else the
+ * live span" is a second place for the two pages' axes to disagree.
  */
-/**
- * The run's warm-up window, as `RunShell` read it off the run.
- *
- * AC-STAT-4: summary statistics exclude the ramp and the time series keep it,
- * so a reader comparing the two needs to see where it ended. `LiveEngine.add`
- * is explicit about that split ("this is a series, and series include
- * warm-up"), which is only legible on screen if something draws the boundary.
- */
-export const useWarmupFromShell = (): number | null =>
-  useOutletContext<RunWindowContext>().warmupMs;
-
-export function useTimeDomainFromShell(): readonly [number, number] | undefined {
-  const { window, durationMs, liveDurationMs } = useOutletContext<RunWindowContext>();
-  if (window !== null) return [window.fromMs, window.toMs];
+export function useWholeRunDomainFromShell(): readonly [number, number] | undefined {
+  const { durationMs, liveDurationMs } = useOutletContext<RunWindowContext>();
   const span = durationMs ?? liveDurationMs;
   return span === null ? undefined : growingDomainMs(span);
+}
+
+/**
+ * The domain every time chart on the Report shares, in elapsed milliseconds —
+ * §22.5's "one time axis".
+ *
+ * THE WINDOW WINS WHEN THERE IS ONE. A narrowed page shows only the selected
+ * span, and pinning those charts to the whole run instead would draw every one
+ * of them as a sliver against 90% empty axis. With none, it IS the whole-run
+ * domain, read from `useWholeRunDomainFromShell` — called unconditionally, so
+ * the hook order does not depend on whether a window is set.
+ */
+export function useTimeDomainFromShell(): readonly [number, number] | undefined {
+  const { window } = useOutletContext<RunWindowContext>();
+  const whole = useWholeRunDomainFromShell();
+  return window === null ? whole : [window.fromMs, window.toMs];
 }
 
 /**

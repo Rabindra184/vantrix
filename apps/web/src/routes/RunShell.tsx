@@ -6,12 +6,11 @@ import { useQuery } from '@tanstack/react-query';
 import TimeBrush from '../charts/TimeBrush';
 import { TimeAxisProvider } from '../charts/TimeAxisContext';
 import { useRunWindow, type RunWindowContext } from './useRunWindow';
-import { runComparePath, runLogsPath, runTrendsPath } from './paths';
+import { runPath, runReportPath } from './paths';
 import type { Assertion, RunProcessing, RunResponse } from '@perfportal/contracts';
-import { errorsQuery, usersQuery } from '../api/metrics';
+import { usersQuery } from '../api/metrics';
 import RunHeader from './RunHeader';
 import RunNote from './RunNote';
-import { peakConcurrentUsers } from './runUsers';
 import RunTabs from './RunTabs';
 import LiveStatusStrip from './LiveStatusStrip';
 import SlaBanner from './SlaBanner';
@@ -41,9 +40,12 @@ import { runName } from '../runNumber';
  * all (`GET /v1/runs/:id` answers 202 for anything short of `complete`).
  */
 
-/** The live Load test's span, off the socket's latest delta — the "Duration so
- *  far" tile's own `activityMs ?? durationMs` (`RunDetail`), so the strip and
- *  the tile say one number. Null without a delta. */
+/** The live Load test's span, off the socket's latest delta: `activityMs ??
+ *  durationMs`, the expression `RunHeader`'s Duration chip computes once the
+ *  run finishes — so the strip's figure is the one the finished run keeps
+ *  rather than one that jumps when it ends. (The live Summary's four tiles
+ *  carry no duration; this strip is where a running run's span is read.) Null
+ *  without a delta. */
 function liveSpanOf(live: LiveRunState | null): number | null {
   const summary = live?.lastDelta?.summary;
   return summary === undefined ? null : (summary.activityMs ?? summary.durationMs);
@@ -78,9 +80,10 @@ export default function RunShell({
    * — an allowlist that silently falls through to "not terminal" for any
    * status it does not name, which is precisely the `statusFor` trap
    * `CLAUDE.md` records: a future terminal status added to `RunStatusSchema`
-   * without a matching branch HERE would render terminal tab content (the
-   * metric queries below fire on `terminal`) under a live status strip and a
-   * still-disabled socket, with nothing failing loudly. `RunDetail.tsx`
+   * without a matching branch HERE would render terminal section content
+   * (this shell's `/users` query and every section's own queries fire on
+   * `terminal`) under a live status strip and a still-disabled socket, with
+   * nothing failing loudly. `RunDetail.tsx`
    * already computes this exact boolean two lines from its call here
    * (`detail.state === 'ready'`, the SAME discriminant `useRunTerminal` uses
    * for every tab) — passing it through means there is exactly one place in
@@ -120,21 +123,12 @@ export default function RunShell({
 
   // TERMINAL IS THE ONE GATE ON FETCHING, and it is now a PROP (see its own
   // docstring, IMPORTANT 3) rather than derived from `status` here. While a
-  // run streams, `useLiveRun`'s `applyDelta` already writes both of these
+  // run streams, `useLiveRun`'s `applyDelta` already writes the shared metric
   // keys directly; a REST fetch answers emptier for a run whose rows do not
   // exist yet, and TanStack applies whichever write resolves last. A pending
   // run has neither rows nor a socket, so `false` is right there too.
 
-  // The Errors tab's own count, not the statistics row's `koCount`: that
-  // figure is failed REQUESTS, a different number from the DISTINCT error
-  // MESSAGES this tab is named after (24 vs 2 on the reference run). Reusing
-  // the same `errorsQuery(identity.id)` key `RunErrorsTab` fetches means this
-  // resolves from cache once that tab has ever been visited, and otherwise
-  // fires the one request the count needs on its own — for a terminal run
-  // only; see `terminal` above.
-  const errors = useQuery({ ...errorsQuery(identity.id), enabled: terminal });
-
-  // Read here and written here, so every tab below shares one window — and
+  // Read here and written here, so every section below shares one window — and
   // declared BEFORE the fetches that key on it.
   const { window, setWindow } = useRunWindow(identity.durationMs ?? Number.MAX_SAFE_INTEGER);
   // §22.6's one JS breakpoint, read here because the brush below is a drag
@@ -142,109 +136,116 @@ export default function RunShell({
   // 394px ECharts instance in order not to show it.
   const compact = useIsCompact();
 
+  /* ═══ WHICH PAGE THIS IS, DECIDED ONCE ═══
+   *
+   * Gatling Enterprise's Summary and Report are two pages with two jobs, and
+   * the shell draws around them what belongs to each: the lifecycle strip and
+   * the verdict band on the Summary, the time window on the Report. Both are
+   * read off the one pathname here, so what the tab strip says is current and
+   * what the shell draws cannot disagree.
+   *
+   * THE TRAILING SLASH IS STRIPPED, AND CASE IS IGNORED, because the router
+   * and `NavLink` do both: `/runs/:id/` and `/runs/:id` are the same page to
+   * them, and so are `/runs/<ID>` and `/runs/<id>` (route matching is case
+   * insensitive unless asked otherwise). A hand-typed upper-case UUID, or a
+   * `/Report`, would otherwise be the Summary to the tab strip and to the
+   * router and neither page to this comparison — the page would draw no
+   * strip, no band and no brush and look like a section with nothing on it.
+   * The run's own id comes back from the API in lower case; the URL has no
+   * such guarantee. The window parameters live in the SEARCH, which `pathname`
+   * does not carry, so a narrowed link still reads as the page it names. */
+  const { pathname } = useLocation();
+  const here = pathname.replace(/\/$/, '').toLowerCase();
+  const onSummary = here === runPath(identity.id).toLowerCase();
+  const onReport = here === runReportPath(identity.id).toLowerCase();
+
   /* ═══ THE BRUSH ONLY WHERE A WINDOW MEANS SOMETHING ═══
    *
-   * The brush lives in the shell so one selection serves every tab — which
-   * also put it above the tabs that cannot honour it. Trends' cohort query
-   * is historical and takes no window; Compare's is the same; Logs reads a
-   * run's events whole. The control
-   * accepted 10–30s there, announced that window, and changed nothing, so a
-   * reader had no way to tell a trend line still covered the whole run.
+   * The window applies on the Report, where Gatling Enterprise puts it, and
+   * nowhere else. Every other section answers a whole-run question — the
+   * Summary never sends a window, Trends' and Compare's cohort queries are
+   * historical, and Logs reads a run's events whole (`GET /v1/runs/{id}/events`
+   * takes no `from`/`to`) — so a control over one of them would accept 10–30s,
+   * announce that window, and change nothing: a claim about a page that
+   * ignores it (review C03). This used to be a list of the sections that
+   * ignored a window, and a hand-written list is how a new section gets missed;
+   * a section now has to be NAMED here to be offered one.
    *
    * Withheld rather than disabled: a disabled control still asserts that a
    * window is a property of this page, which is the misreading.
    *
    * The PARAMETERS are untouched — `RunTabs` carries `from`/`to` across every
-   * tab — so this hides the control without discarding the selection, and
-   * Overview restores it on return. */
-  const { pathname } = useLocation();
-  // A NAMED SET, not a third `&&` clause: Logs is the third section to ignore
-  // a window (`GET /v1/runs/{id}/events` takes no `from`/`to`, and the panel
-  // says nothing else is on the tab), and a hand-written two-member list
-  // is exactly how the third caller gets missed. A new window-free section
-  // joins by being named here.
-  const windowFreeSections = [
-    runTrendsPath(identity.id),
-    runComparePath(identity.id),
-    runLogsPath(identity.id),
-  ];
-  const windowApplies = !windowFreeSections.includes(pathname);
+   * tab — so this hides the control without discarding the selection, and the
+   * Report restores it on return. */
 
-  // THE ONE FETCH OVERVIEW MAKES WHOSE ONLY CONSUMER HERE IS A LINE OF
-  // HEADER TEXT. `/users` exists for the two charts on the Charts tab
-  // (design §4b); asking for it here so the header can state a peak means
-  // Overview's first paint makes one request it otherwise would not. It is
-  // cached and shared under the same `usersQuery(identity.id)` key
-  // `RunChartsTab` uses, and `usersQuery`'s `staleTime: Infinity`
-  // (`api/metrics.ts`) is what actually makes opening Charts afterward cost
-  // nothing: a completed run's `/users` payload never changes, so once this
-  // fetch has resolved a later mount of the same key is never stale enough to
-  // refetch — for a terminal run only; see `terminal` above.
-  const users = useQuery({ ...usersQuery(identity.id, window), enabled: terminal });
+  /* ═══ WHO IS OFFERED THE WINDOW, DECIDED ONCE ═══
+   *
+   * `windowOffered` is every reason a Report has a window control at all: the
+   * run can honour one (`windowable`, which a server predating the field leaves
+   * absent and so reads as unable), it knows how long it was, and the reader
+   * is on the Report. `brushOffered` adds the one thing that decides WHICH
+   * control: a phone gets the notice, never the drag control (review M18).
+   *
+   * ONE VALUE FEEDS BOTH THE RENDER AND THE FETCH BELOW, because the fetch
+   * exists only to serve the brush. The gate was `terminal && onReport` first,
+   * which is wider than the brush it serves: a phone on the Report, or a run
+   * ingested before per-bucket histograms, still asked for `/users` — and a
+   * non-windowable run opened on a link carrying `?from=` asked for a WINDOWED
+   * one, which the API answers 400 WINDOW_UNAVAILABLE. Two expressions deciding
+   * one thing drift; this is one. */
+  const durationMs = identity.durationMs;
+  const windowOffered = windowable === true && durationMs != null && onReport;
+  const brushOffered = windowOffered && !compact;
+
+  // THE ONE FETCH THE SHELL MAKES, AND ITS ONLY CONSUMER IS THE BRUSH.
+  // `/users` is asked for here to learn the SNAPPED window a response reports,
+  // which the brush states as "Showing …" — every windowed response carries
+  // the same snapped range, so any one of them will do. It shares its key with
+  // the Report's Virtual users section, so while that section is open the two
+  // are one request; the Report opens only Requests by default, so usually
+  // this is the one. Every other page, and every Report with no brush, has no
+  // use for it: the Summary sends no window and fetches its own unwindowed
+  // `/users` for its Peak users tile, and a request from here would be paid
+  // for by every reader who is not looking at a brush. `enabled` carries the
+  // gate and the hook stays unconditional — a conditional call would change
+  // the hook order on the very navigation between sections this shell exists
+  // to survive. For a terminal run only; see `terminal` above.
+  const users = useQuery({ ...usersQuery(identity.id, window), enabled: terminal && brushOffered });
 
   return (
-    // THE RUN'S CLOCK, for every tab and for the time window above them: the
-    // anchor comes off the identity this shell already holds, so nothing
-    // reads the run a second time to learn when it started.
+    // THE RUN'S CLOCK, for every section and for the time window: the anchor
+    // comes off the identity this shell already holds, so nothing reads the
+    // run a second time to learn when it started.
     <TimeAxisProvider anchor={identity.toolStartedAt}>
     <div className="flex flex-col gap-6">
-      {/* THE RUN'S JOURNEY, UNDER ITS NAME, the way Gatling Enterprise sets its
-          strip directly under a run's title: the band below keeps the release
-          decision and its evidence, the strip says how the run got there
-          (docs/superpowers/specs/2026-09-26-run-lifecycle-strip-design.md).
-          Grouped with the header rather than given the shell's 24 px gap:
-          MEASURED at 375x812 the run's first total sat at y=802 of 812, and a
-          carded row in that gap would have cost ~70 px. */}
-      <div className={compact ? 'flex flex-col gap-2' : 'flex flex-col gap-3'}>
-        <RunHeader
-          identity={identity}
-          status={status}
-          verdict={verdict}
-          peakUsers={users.data ? peakConcurrentUsers(users.data) : null}
-          /* THE SAME `compact` THE BRUSH BELOW READS, spent a second time —
-             review M02 folds the header's secondary metadata behind a
-             disclosure on a phone, and a `<details>`'s open state is the one
-             thing a media query cannot set. See `RunHeader`'s own note. */
-          compact={compact}
-          /* `key={identity.id}`, NOT a reset-during-render inside RunNote:
-             the `/runs/:runId` route is not keyed and this shell does not
-             remount between runs, so without it a still-open editor's
-             `editing`/`draft` state — AND an in-flight save's `useMutation`
-             closure, still pointed at the OLD run id's `onSuccess` — would
-             survive navigating from one run to another (Back, or the
-             baseline note's "vs previous" link). A same-instance reset can
-             clear the draft but cannot re-point a save already in flight;
-             the key forces a fresh instance instead, so a stale save's
-             `onSuccess` writes into a component that is no longer mounted. */
-          note={<RunNote key={identity.id} runId={identity.id} note={identity.note} />}
-        />
-        <RunLifecycle
-          steps={lifecycleSteps({ identity, status, verdict, assertions, liveSpanMs: liveSpanOf(live) })}
-          compact={compact}
-        />
-      </div>
-      <RunDecisionBand
+      <RunHeader
         identity={identity}
         status={status}
         verdict={verdict}
-        assertions={assertions}
-        toolAssertions={toolAssertions}
+        /* THE SAME `compact` THE BRUSH BELOW READS, spent a second time —
+           review M02 folds the header's secondary metadata behind a
+           disclosure on a phone, and a `<details>`'s open state is the one
+           thing a media query cannot set. See `RunHeader`'s own note. */
+        compact={compact}
+        /* `key={identity.id}`, NOT a reset-during-render inside RunNote:
+           the `/runs/:runId` route is not keyed and this shell does not
+           remount between runs, so without it a still-open editor's
+           `editing`/`draft` state — AND an in-flight save's `useMutation`
+           closure, still pointed at the OLD run id's `onSuccess` — would
+           survive navigating from one run to another (Back, or the
+           baseline note's "vs previous" link). A same-instance reset can
+           clear the draft but cannot re-point a save already in flight;
+           the key forces a fresh instance instead, so a stale save's
+           `onSuccess` writes into a component that is no longer mounted. */
+        note={<RunNote key={identity.id} runId={identity.id} note={identity.note} />}
       />
-      {/* `null`, not `0`, until the errors payload has actually resolved —
-          the same "zero is a measurement" rule `peakUsers` above already
-          follows (`runUsers.ts`). `errors.data?.errors.length ?? 0` used to
-          sit here, reading "Errors (0)" for a count that had not arrived yet,
-          and reading it forever if the fetch failed while the panel beneath
-          it rendered `role="alert"` (`payload.tsx`'s `TableSection`) — a
-          confident zero over a stated failure. */}
       <RunTabs
         runId={identity.id}
-        errorCount={errors.data ? errors.data.errors.length : null}
         hasLogs={identity.runnerJobId !== null && identity.runnerJobId !== undefined}
       />
 
-      {/* WHAT THE PAGE IS DOING, above the tab content and below the strip
-          that selects it, so it is on screen whichever tab is open. Rendered
+      {/* WHAT THE PAGE IS DOING, above the section's content and below the strip
+          that selects it, so it is on screen whichever section is open. Rendered
           only while the run is not terminal — a terminal run should never
           even be asked — but `LiveStatusStrip` does NOT always have
           something to say for a non-terminal one: a `running` run with no
@@ -255,7 +256,7 @@ export default function RunShell({
           before the socket has opened once. Mounting the strip unconditionally
           for every non-terminal status is still right regardless — `partial`
           and the capped/finalizing states need to appear the moment they
-          become true, whichever tab is open. `streamed` is EVIDENCE, not a
+          become true, whichever section is open. `streamed` is EVIDENCE, not a
           derivation from `status`: `live?.lastDelta != null` is the same "a
           delta arrived this session, and that fact is never cleared" contract
           `useLiveRun` already documents elsewhere, and it is what stops a
@@ -273,11 +274,11 @@ export default function RunShell({
       )}
 
       {/* WHAT THE NUMBERS SAY, where the strip above says what the CONNECTION
-          is doing. At shell level rather than on Overview: a rule breaching
-          right now is a fact about the RUN, not about the tab in front of the
-          reader, and someone watching Charts needs it as much as someone on
-          Overview — which is the whole reason it moved here when `Live`, the
-          standalone page it used to sit inside, stopped existing.
+          is doing. At shell level rather than on the Summary: a rule breaching
+          right now is a fact about the RUN, not about the section in front of
+          the reader, and someone watching the Report needs it as much as
+          someone on the Summary — which is the whole reason it moved here when
+          `Live`, the standalone page it used to sit inside, stopped existing.
 
           NEVER VIEWPORT-GATED, the same call `LiveSummary` makes one component
           over: this is a few strings off a delta already in hand, not a chart,
@@ -289,17 +290,64 @@ export default function RunShell({
           (`RunDetail`'s own `detail.state === 'processing' ? live : null`), so
           this needs no `terminal` gate of its own: a completed run has the
           finished report's assertions instead, and this disappears with the
-          socket state that fed it. `frozen` is the same `status !== 'running'`
-          flag `LiveSummary`'s Duration tile reads, and the two must never
-          disagree about whether the run is still live on one render. */}
+          socket state that fed it. `frozen` is `status !== 'running'`: a run
+          that has stopped streaming keeps its last delta, but nothing will
+          re-evaluate its rules, so the banner must not claim a live
+          evaluation. */}
       {live?.lastDelta != null && (
         <SlaBanner sla={live.lastDelta.sla} frozen={status !== 'running'} />
       )}
 
-      {/* ABOVE THE TABS' CONTENT, in the shell rather than in any one tab, so
-          a window survives moving between them: a reader who narrows the
-          charts and then opens the statistics table is still looking at the
-          stretch they selected.
+      {/* THE RUN'S JOURNEY AND ITS DECISION, ON THE SUMMARY ONLY, and BELOW the
+          tab strip. Gatling Enterprise draws its strip on the Summary alone,
+          under the run's title and the page's buttons; here it sits under the
+          tab strip instead, so the strip stays in one place on every page
+          rather than moving down by a card on one of them. The band keeps the
+          release decision and its evidence; the strip says how the run got
+          there (docs/superpowers/specs/2026-09-26-run-lifecycle-strip-design.md).
+
+          A reader on the Report, Trends, Compare or Logs asked a different
+          question — what the load looked like, how it compares, what the
+          runner did — and a release verdict above each of them answered one
+          they had not asked.
+
+          ONE WRAPPER, NOT TWO SIBLINGS IN THE SHELL'S gap-6, AND THE PHONE IS
+          WHY. The strip is the journey TO the verdict under it, so the pair is
+          grouped: a phone's one bare line sits 8px over its band (`gap-2`, the
+          lifecycle-strip design's "one bare line grouped 8px") and a desktop's
+          card 12px over it (`gap-3`, which the header's own wrapper used to
+          give it). As two siblings the strip took the shell's 24px above the
+          band — 16px more on a phone, 12px more on a desktop than the grouping
+          — and that is what pushed `mobile.spec.ts`'s run-totals bound over the
+          812px viewport, which IS the bound and does not move.
+          MEASURED at 375x812 on the reference run, the first tile's top:
+          820 as two siblings, 804.4 grouped. At 1440x900 the totals section
+          went from 656 to 643.8. The strip still sits in the shell's 24px
+          UNDER the tab strip, because it is still below it. Both widths read
+          `compact` from the one `useIsCompact` call this shell already makes,
+          the same decision the strip's own markup keys on. */}
+      {onSummary && (
+        <div className={compact ? 'flex flex-col gap-2' : 'flex flex-col gap-3'}>
+          <RunLifecycle
+            steps={lifecycleSteps({ identity, status, verdict, assertions, liveSpanMs: liveSpanOf(live) })}
+            compact={compact}
+          />
+          <RunDecisionBand
+            identity={identity}
+            status={status}
+            verdict={verdict}
+            assertions={assertions}
+            toolAssertions={toolAssertions}
+          />
+        </div>
+      )}
+
+      {/* THE TIME WINDOW, ON THE REPORT ONLY (`onReport`, above), and in the
+          shell rather than inside the Report: the window is parsed once here
+          and travels down in the outlet context, so the control that writes it
+          and every chart that reads it hold the same object — and a window
+          survives a trip to another section and back, because the parameters
+          stay in the URL while the shell stays mounted.
 
           OFFERED ONLY WHEN THE RUN CAN HONOUR IT. A run ingested before
           per-bucket histograms returns 400 WINDOW_UNAVAILABLE for every
@@ -320,28 +368,28 @@ export default function RunShell({
        * WITHHOLDING THE CONTROL IS NOT THE SAME AS IGNORING THE WINDOW. A
        * link carrying `?from=&to=` is exactly the link most likely to be
        * opened on a phone — somebody pasted it into a chat because of what it
-       * shows — so the data stays narrowed and every tab keeps reading the
+       * shows — so the data stays narrowed and the Report keeps reading the
        * same range. What a compact reader loses is only the ability to DRAG a
        * new one, and dropping the control without saying so would leave them
        * reading a tenth of a run with nothing on screen admitting it. The
        * notice is one line and carries the one action that cannot be
        * reconstructed: widen back to the whole run. */}
-      {windowable === true && identity.durationMs != null && windowApplies &&
-        (compact ? (
-          <CompactWindowNotice window={window} onClear={() => setWindow(null)} />
-        ) : (
+      {windowOffered &&
+        (brushOffered ? (
           <TimeBrush
             runId={identity.id}
-            runDurationMs={identity.durationMs}
+            runDurationMs={durationMs}
             runActivityMs={identity.activityMs}
             window={window}
             // THE SNAPPED WINDOW A RESPONSE REPORTED, not the one that was
-            // typed. Taken from `/users`, which this shell already fetches for
-            // the header's peak-users figure — every windowed response carries
+            // typed. Taken from `/users`, the one request this shell makes on
+            // the Report (`users`, above) — every windowed response carries
             // the same snapped range, so this needs no request of its own.
             applied={users.data?.window ?? null}
             onChange={setWindow}
           />
+        ) : (
+          <CompactWindowNotice window={window} onClear={() => setWindow(null)} />
         ))}
 
       {/* THE WINDOW TRAVELS DOWN, it is not re-parsed per tab.
@@ -350,13 +398,13 @@ export default function RunShell({
           than here — different query keys, so `/users` was fetched twice and
           the "one window for the whole page" this shell promises was not true.
           One parse, one object, one key. */}
-      {/* The five tabs are five lazy chunks. Without a boundary here the
-          nearest one is AppShell's, so the first click on Charts would
-          replace the run header, the decision band and the tab strip with a
-          loading line — losing the reader's place in the run they opened. */}
-      {/* Innermost of the three: a failed TAB chunk keeps the run header,
-          the decision band and the tab strip, so the reader can pick another
-          tab rather than losing the run. */}
+      {/* Each run section is a lazy chunk. Without a boundary here the nearest
+          one is AppShell's, so the first click on the Report would replace the
+          run header and the tab strip with a loading line — losing the
+          reader's place in the run they opened. */}
+      {/* Innermost of the three: a failed SECTION chunk keeps the run header
+          and the tab strip, so the reader can pick another section rather
+          than losing the run. */}
       <RouteErrorBoundary>
       <Suspense fallback={<RouteFallback />}>
         <Outlet

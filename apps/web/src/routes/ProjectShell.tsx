@@ -57,9 +57,9 @@ import {
  *
  * This is the shape `RunShell` already uses one rung down: `RunHeader` owns
  * the single `<h1>` (the simulation), `RunTabs` names the section, and no tab
- * repeats its own name as a heading — the Overview tab's outline is
- * `Assertions / Simulation assertions / Statistics`, not `Overview` followed
- * by them.
+ * repeats its own name as a heading — the Summary's outline is
+ * `Platform gates / Simulation assertions / Over time / Errors`, not `Summary`
+ * followed by them.
  *
  * The three configuration pages used to take the section name AS their `<h1>`
  * ("Add results", "SLA rules", "API tokens") with the project demoted to a

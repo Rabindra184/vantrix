@@ -577,10 +577,12 @@ export default function ProjectRules({
   /* ═══ THE AUTHOR TYPES A PERCENTAGE; THE WIRE CARRIES A FRACTION ═══
    *
    * `error_rate` is `koCount / count`, so the evaluator compares 0.0268 while
-   * the tiles, the statistics table and the errors tab all render that same
-   * number as 2.68%. Asking the author to be the one place that converts is
-   * what produced the trap this form already warned about: `1` meaning "one
-   * percent" is a legal, resolvable, permanently PASSING gate of ≤ 100%.
+   * the Summary's tiles and the Report's statistics table both render that
+   * same number as 2.68%. (Not the errors table: it shows each message's share
+   * of the recorded errors, never of the requests made.) Asking the author to be the one
+   * place that converts is what produced the trap this form already warned
+   * about: `1` meaning "one percent" is a legal, resolvable, permanently
+   * PASSING gate of ≤ 100%.
    *
    * So the FIELD takes a percentage and `percentToFraction` stores a fraction.
    * Nothing about the contract, the wire or the evaluator changes, and rules

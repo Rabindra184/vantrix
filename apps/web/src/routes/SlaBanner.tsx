@@ -143,9 +143,10 @@ function breachLine(breach: LiveBreach): string {
  * governs one word, not the whole banner: once streaming stops the fold
  * owner released this run and nothing evaluates it again, so "currently
  * breaching" is no longer quite true — it is the LAST known state, not a
- * live one. `LiveSummary`'s Duration tile already makes this exact
- * distinction ("still streaming" vs. "when streaming stopped") for the same
- * reason, and the two must never disagree about whether the run is live on
+ * live one. `LiveStatusStrip` already makes this exact distinction
+ * (streaming vs. streaming stopped) for the same reason — `LiveSummary`'s
+ * Duration tile did too, until the live row was cut to GE's four — and the
+ * two must never disagree about whether the run is live on
  * the same render. Optional and defaulted to `false` rather than required,
  * so a caller that genuinely has no notion of frozen (this component's own
  * unit tests, which assert the CONDITION-vs-EVENT behaviour and do not care

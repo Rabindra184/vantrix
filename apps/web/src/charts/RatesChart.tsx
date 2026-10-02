@@ -1,7 +1,14 @@
 import type { SeriesResponse } from '@perfportal/contracts';
 import { useMemo } from 'react';
 import Chart from './Chart';
-import { RATE_ROLES, toRequestRate, toResponseRate } from './transforms/rates';
+import { RUN_TIME_GROUP } from './crosshair';
+import {
+  RATE_ROLES,
+  REQUESTS_AND_RESPONSES_ROLES,
+  toRequestRate,
+  toRequestsAndResponses,
+  toResponseRate,
+} from './transforms/rates';
 import type { ChartData, TimeDomainMs } from './types';
 
 /**
@@ -72,7 +79,7 @@ function RateChart({ id, title, yName, data, domainMs, warmupMs, compact }: {
       // This is the linkage that replaces Gatling's dual axis: active users is
       // its own chart directly above rather than an overlay on this one, and
       // the shared pointer is what recovers "read these two together".
-      group="run-time"
+      group={RUN_TIME_GROUP}
     />
   );
 }
@@ -133,4 +140,46 @@ export function ResponseRateChart({
 }) {
   const data = useMemo(() => toResponseRate(series, { x: 'ms' }), [series]);
   return <RateChart id="responses-per-second" title={title} yName="Responses/s" data={data} domainMs={domainMs} warmupMs={warmupMs} compact={compact} />;
+}
+
+/** GE's combined chart — see `toRequestsAndResponses`. `Count/s` is GE's own
+ *  axis name for it: the four lines are not all requests. */
+export function RequestsAndResponsesChart({
+  series,
+  domainMs,
+  warmupMs,
+  windowSelected,
+}: {
+  readonly series: SeriesResponse;
+  readonly domainMs?: TimeDomainMs;
+  readonly warmupMs?: number;
+  /**
+   * Did the reader narrow the Report to a time window? REQUIRED, no default: a
+   * window that selects nothing and a run that recorded nothing draw the same
+   * empty payload, and the sentence under the figure must not claim a fact about
+   * the RUN when the reader asked about a WINDOW. The Report passes
+   * `window !== null`; the Summary and the drill-downs pass `false`.
+   */
+  readonly windowSelected: boolean;
+}) {
+  const data = useMemo(() => toRequestsAndResponses(series, { windowSelected }), [series, windowSelected]);
+  return (
+    <Chart
+      id="requests-and-responses"
+      title="Requests and responses per second over time"
+      data={data}
+      // Lines, not stacked: Total is already OK + KO, as in `RateChart`.
+      kind="line"
+      // Per series, in `COMBINED_LINES` order — omitting it draws KO in a
+      // categorical hue (`RatesChart.combined.test.tsx`).
+      roles={REQUESTS_AND_RESPONSES_ROLES}
+      yAxis={{ name: 'Count/s' }}
+      // A value axis in ms for the reason `RateChart` gives: this chart shares
+      // the `run-time` crosshair, which a category axis would sync by index.
+      pairValue="y"
+      xAxis={{ type: 'value', tickUnit: 'ms-as-s', min: domainMs?.[0], max: domainMs?.[1], warmupMs }}
+      unit="/s"
+      group={RUN_TIME_GROUP}
+    />
+  );
 }

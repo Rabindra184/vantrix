@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { seedAdmin, seedRunWithData } from './fixtures.js';
-import { apiJson, openTimeWindow, plot, signIn } from './helpers.js';
-import { runChartsPath, runComparePath } from '../src/routes/paths.js';
+import { apiJson, openSection, openTimeWindow, plot, signIn } from './helpers.js';
+import { runComparePath, runReportPath } from '../src/routes/paths.js';
 
 /**
  * ═══ GATLING ENTERPRISE'S TIME CONTROLS, IN A BROWSER ═══
@@ -51,7 +51,7 @@ test('Datetime relabels the charts to the wall clock, survives a reload, and nev
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(runChartsPath(runId));
+  await page.goto(runReportPath(runId));
   await zonePinned(page);
 
   const run = await apiJson<{ toolStartedAt: string }>(page, `/v1/runs/${runId}`);
@@ -87,7 +87,7 @@ test('the zoom buttons step by Gatling’s fractions, and zooming out returns to
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(runChartsPath(runId));
+  await page.goto(runReportPath(runId));
   await openTimeWindow(page);
 
   // An independent oracle: the spec asks the API, never the app's own builder.
@@ -136,7 +136,7 @@ test('a preset longer than the run returns it to the whole run', async ({ page }
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(runChartsPath(runId));
+  await page.goto(runReportPath(runId));
   await openTimeWindow(page);
 
   const run = await apiJson<{ durationMs: number }>(page, `/v1/runs/${runId}`);
@@ -155,7 +155,7 @@ test('a request’s own page reads the clock the reader chose', async ({ page })
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(runChartsPath(runId));
+  await page.goto(runReportPath(runId));
   await zonePinned(page);
   await page.getByTestId('time-axis-mode').selectOption('datetime');
   await expect.poll(() => drawnText(page, 'chart-percentiles')).toContain('Time (GMT+5:30)');
@@ -171,17 +171,30 @@ test('a request’s own page reads the clock the reader chose', async ({ page })
 });
 
 /**
- * The run page's five time figures, which share one pinned domain. Not the
- * navigator: its slider handles are HH:MM:SS labels too, and they may repeat
- * a tick's text legitimately.
+ * The Report's time figures, which share one pinned domain: Requests' combined
+ * chart and its percentiles, and Virtual users' three (the section is shut on
+ * arrival and has to be opened — `openTimeCharts` below). Not the navigator:
+ * its slider handles are HH:MM:SS labels too, and they may repeat a tick's text
+ * legitimately.
+ *
+ * Errors per second is a time chart on this page too (it joined Requests with
+ * the Report) and is left out on purpose: this case is about how the AXIS
+ * labels its grid, and the five here already draw it from one shared function;
+ * a sixth copy of the same assertion buys nothing and costs a redraw per window.
  */
 const TIME_CHARTS = [
-  'chart-concurrent-users',
-  'chart-user-start-rate',
-  'chart-requests-per-second',
-  'chart-responses-per-second',
+  'chart-requests-and-responses',
   'chart-percentiles',
+  'chart-user-start-rate',
+  'chart-user-end-rate',
+  'chart-concurrent-users',
 ] as const;
+
+/** Virtual users is shut on arrival, and a shut section draws nothing. */
+async function openTimeCharts(page: Page): Promise<void> {
+  await openSection(page, 'virtual-users', 'Virtual users');
+  for (const id of TIME_CHARTS) await expect(plot(page.getByTestId(id))).toHaveCount(1);
+}
 
 /** A chart's HH:MM:SS labels as drawn: the text, and the centre it sits at. */
 async function drawnTicks(page: Page, testId: string): Promise<{ text: string; centre: number }[]> {
@@ -232,8 +245,9 @@ test('an elapsed axis never repeats or crowds its last tick, in either mode', as
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(runChartsPath(runId));
+  await page.goto(runReportPath(runId));
   await zonePinned(page);
+  await openTimeCharts(page);
 
   /** Waits for each chart to draw `settled`, a string only the new stretch
    *  or mode draws, then checks its labels. */
@@ -272,7 +286,7 @@ test('Compare stays elapsed while the reader reads wall-clock time elsewhere', a
   await seedRunWithData(admin.orgId);
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(runChartsPath(runId));
+  await page.goto(runReportPath(runId));
   await zonePinned(page);
   await page.getByTestId('time-axis-mode').selectOption('datetime');
   // A positive control: the mode really took on this page.

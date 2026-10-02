@@ -67,6 +67,27 @@ describe('TableSection', () => {
     expect(screen.queryByText('rows')).not.toBeInTheDocument();
   });
 
+  /** The Report's Statistics sits under its Requests section, so its heading
+   *  is one level down there; everywhere else it is the page's own section. */
+  it.each([
+    ['pending', pending],
+    ['failed', failed],
+  ])('names its heading a section by default and one level under one when told to (%s)', (_state, query) => {
+    const { unmount } = render(
+      <TableSection title="Statistics" query={query} columns={9}>
+        {() => <p>rows</p>}
+      </TableSection>,
+    );
+    expect(screen.getByRole('heading', { level: 2, name: 'Statistics' })).toBeInTheDocument();
+    unmount();
+    render(
+      <TableSection title="Statistics" headingLevel={3} query={query} columns={9}>
+        {() => <p>rows</p>}
+      </TableSection>,
+    );
+    expect(screen.getByRole('heading', { level: 3, name: 'Statistics' })).toBeInTheDocument();
+  });
+
   /**
    * ═══ THE PLACEHOLDER HAS THE SHAPE OF THE TABLE IT STANDS IN FOR ═══
    *

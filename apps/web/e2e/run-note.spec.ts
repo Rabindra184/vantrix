@@ -358,9 +358,9 @@ test('a long note on the run page is three lines until asked, and the figures st
   await expect(toggle).toHaveText('Show all');
 
   // THE FIGURES STAY ON THE FIRST SCREEN — the same selector `mobile.spec.ts`
-  // uses for the run's own totals: `dd[...]`, not `[data-testid^="stat-"]`
-  // alone, because the empty-window branch names its own section
-  // `stats-empty-window`, which that prefix also matches.
+  // uses for the run's own totals: the first tile's `dd`, asked of the DOM
+  // rather than named, so it follows the tile order (it is `stat-error-rate`
+  // on the Summary).
   const firstTile = 'section[aria-label="Run totals"] dd[data-testid^="stat-"]';
   const box = await page.locator(firstTile).first().boundingBox();
   expect(box, 'the run’s own totals render').not.toBeNull();

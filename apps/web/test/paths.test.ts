@@ -7,6 +7,8 @@ import {
   projectPath,
   projectRunsPath,
   projectTestPath,
+  runPath,
+  runReportPath,
   safeNext,
 } from '../src/routes/paths.js';
 
@@ -71,6 +73,22 @@ describe('safeNext', () => {
       expect(new URL(safeNext(next), ORIGIN).origin).toBe(ORIGIN);
     },
   );
+});
+
+/**
+ * A run's two pages, as paths. The Report is a child of the run's own path —
+ * not a sibling route — because `RunShell` is a layout route mounted at
+ * `/runs/:runId` and only its outlet swaps: the Summary is the index, and the
+ * Report is one segment under it. The old `/charts`, `/load-generators` and
+ * `/errors` URLs have no helper any more: they still resolve, as redirects
+ * `App.tsx` declares (`RunSectionRedirect`, covered by the route scan below),
+ * but nothing in the app links to them.
+ */
+describe('a run’s Summary and Report, as paths', () => {
+  it('puts the Report one segment under the run, and the Summary at the run itself', () => {
+    expect(runPath('r1')).toBe('/runs/r1');
+    expect(runReportPath('r1')).toBe('/runs/r1/report');
+  });
 });
 
 /**
@@ -146,9 +164,37 @@ describe('static routes cannot shadow a project slug', () => {
     );
     // Guard: the slice really found the run route block, so the assertion
     // below is about its contents rather than about an empty string.
-    expect(runBlock).toContain('RunOverviewTab');
+    expect(runBlock).toContain('RunSummary');
     expect(runBlock).toContain('path="*"');
     expect(runBlock).toContain('RunSectionNotFound');
+  });
+
+  /**
+   * THE OLD TAB URLS STILL RESOLVE, TO THEIR NEW PLACE. `/charts`,
+   * `/load-generators` and `/errors` are in bookmarks and ticket links; with the
+   * routes gone they would fall into the run's not-found section, and with them
+   * pointing anywhere but where their content went they would land on the wrong
+   * content. The first two go to the Report; `/errors` goes to the Summary's
+   * errors table, because that table moved there when the Errors tab folded in.
+   * Read out of `App.tsx` for the reason the case above is: the failure is
+   * somebody deleting or re-pointing a route later, which a component test
+   * cannot see. `RunSectionRedirect.test.tsx` owns what the redirect DOES to the
+   * URL.
+   */
+  it('sends the old Charts, Load generators and Errors URLs to where their content lives', () => {
+    const runBlock = APP.slice(
+      APP.indexOf('<Route path="/runs/:runId"'),
+      APP.indexOf('<Route path="/runs/:runId/requests/'),
+    );
+    expect(runBlock).toMatch(/<Route\s+index\s+element=\{<RunSummary\s*\/>\}/);
+    expect(runBlock).toMatch(/path="report"\s+element=\{<RunReport\s*\/>\}/);
+    expect(runBlock).toMatch(/path="charts"\s+element=\{<RunSectionRedirect\s+to="report"\s*\/>\}/);
+    expect(runBlock).toMatch(
+      /path="load-generators"\s+element=\{<RunSectionRedirect\s+to="report"\s+hash="load-generators"\s*\/>\}/,
+    );
+    expect(runBlock).toMatch(
+      /path="errors"\s+element=\{<RunSectionRedirect\s+to="summary"\s+hash="errors"\s*\/>\}/,
+    );
   });
 
   it('declares at least one project route, so the scan below is not vacuous', () => {

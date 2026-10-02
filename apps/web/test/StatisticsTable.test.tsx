@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import type { StatRow, StatsResponse } from '@perfportal/contracts';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
@@ -116,7 +118,7 @@ const ALL_PATHS = [
 function renderTable(payload: StatsResponse = stats) {
   return render(
     <MemoryRouter>
-      <StatisticsTable stats={payload} runId={RUN_ID} />
+      <StatisticsTable stats={payload} runId={RUN_ID} windowSelected={false} />
     </MemoryRouter>,
   );
 }
@@ -355,7 +357,7 @@ describe('StatisticsTable — the columns (G-12, §9 checkpoint 6)', () => {
     };
     render(
       <MemoryRouter>
-        <StatisticsTable stats={odd} runId={RUN_ID} />
+        <StatisticsTable stats={odd} runId={RUN_ID} windowSelected={false} />
       </MemoryRouter>,
     );
     expect(screen.getByRole('columnheader', { name: /99\.9/ })).toBeTruthy();
@@ -538,7 +540,7 @@ describe('StatisticsTable — expand and collapse (G-13, §9 checkpoint 4)', () 
   it('starts with groups collapsed', () => {
     render(
       <MemoryRouter>
-        <StatisticsTable stats={stats} runId={RUN_ID} />
+        <StatisticsTable stats={stats} runId={RUN_ID} windowSelected={false} />
       </MemoryRouter>,
     );
     expect(screen.queryByText('Recommendations')).toBeNull();
@@ -667,7 +669,7 @@ describe('StatisticsTable — the row links (G-16)', () => {
   it('links each row to its detail page (G-16)', () => {
     render(
       <MemoryRouter>
-        <StatisticsTable stats={stats} runId={RUN_ID} />
+        <StatisticsTable stats={stats} runId={RUN_ID} windowSelected={false} />
       </MemoryRouter>,
     );
     // `List Products` is `Catalog/List Products` post-D-10, nested under a
@@ -998,7 +1000,7 @@ describe('StatisticsTable — sortable columns (G-15, §9 checkpoint 3)', () => 
   it('opens worst-first, not alphabetically', () => {
     render(
       <MemoryRouter>
-        <StatisticsTable stats={stats} runId={RUN_ID} />
+        <StatisticsTable stats={stats} runId={RUN_ID} windowSelected={false} />
       </MemoryRouter>,
     );
     const first = screen.getAllByTestId('stat-row')[0]!;
@@ -1010,7 +1012,7 @@ describe('StatisticsTable — sortable columns (G-15, §9 checkpoint 3)', () => 
   it('toggles direction when the same column is clicked twice', () => {
     render(
       <MemoryRouter>
-        <StatisticsTable stats={stats} runId={RUN_ID} />
+        <StatisticsTable stats={stats} runId={RUN_ID} windowSelected={false} />
       </MemoryRouter>,
     );
     const header = screen.getByRole('button', { name: /sort by 95th/i });
@@ -1263,7 +1265,7 @@ describe('StatisticsTable — the name filter (G-14)', () => {
   it('filters as you type, keeping ancestors', () => {
     render(
       <MemoryRouter>
-        <StatisticsTable stats={stats} runId={RUN_ID} />
+        <StatisticsTable stats={stats} runId={RUN_ID} windowSelected={false} />
       </MemoryRouter>,
     );
     fireEvent.change(screen.getByLabelText(/filter/i), { target: { value: 'Recommend' } });
@@ -1416,7 +1418,7 @@ describe('StatisticsTable — why it is empty, when it is', () => {
   it('says statistics were not RETAINED when the stream stopped early', () => {
     render(
       <MemoryRouter>
-        <StatisticsTable stats={empty} runId={RUN_ID} runStatus="incomplete" />
+        <StatisticsTable stats={empty} runId={RUN_ID} windowSelected={false} runStatus="incomplete" />
       </MemoryRouter>,
     );
     expect(screen.getByText(/no statistics were retained/i)).toBeTruthy();
@@ -1426,7 +1428,7 @@ describe('StatisticsTable — why it is empty, when it is', () => {
   it('keeps "recorded" for a completed run that measured nothing', () => {
     render(
       <MemoryRouter>
-        <StatisticsTable stats={empty} runId={RUN_ID} runStatus="complete" />
+        <StatisticsTable stats={empty} runId={RUN_ID} windowSelected={false} runStatus="complete" />
       </MemoryRouter>,
     );
     expect(screen.getByText(/no statistics were recorded/i)).toBeTruthy();
@@ -1438,6 +1440,46 @@ describe('StatisticsTable — why it is empty, when it is', () => {
   it('falls back to "recorded" when nobody says what happened', () => {
     renderTable(empty);
     expect(screen.getByText(/no statistics were recorded/i)).toBeTruthy();
+  });
+
+  /**
+   * ═══ A WINDOW THAT SELECTS NOTHING IS NOT A RUN THAT RECORDED NOTHING ═══
+   *
+   * The Report's table, read through `?from=62000&to=63000` — a real second of
+   * the reference run with no requests in it — is as empty as a run's that
+   * measured nothing, and said "No statistics were recorded for this run" about
+   * a run that recorded 895 requests. `GroupsList` already says the right thing
+   * for the same state; this is its sentence for the table.
+   *
+   * ASSERTED AS AN EXCLUSIVE PAIR, AND OVER THE SAME PAYLOAD. "Says the window
+   * sentence" alone passes against a table that says it for EVERY empty run —
+   * which would tell the Summary's reader, who has no window, that one was
+   * selected; "says recorded" alone passes against the defect. Each case also
+   * pins the half the other cannot: with a window the run's status is beside
+   * the point (the window branch comes first, so an INCOMPLETE run does not
+   * stack "retained" on top of a window), and without one the window sentence
+   * must not appear.
+   */
+  it('says the window selected nothing, and not that nothing was recorded', () => {
+    render(
+      <MemoryRouter>
+        <StatisticsTable stats={empty} runId={RUN_ID} windowSelected runStatus="incomplete" />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText(/no requests ran in the selected window/i)).toBeTruthy();
+    expect(screen.getByText(/always covers the whole run/i)).toBeTruthy();
+    expect(screen.queryByText(/recorded for this run/i)).toBeNull();
+    expect(screen.queryByText(/retained for this run/i)).toBeNull();
+  });
+
+  it('says "recorded" and never the window sentence when no window is selected', () => {
+    render(
+      <MemoryRouter>
+        <StatisticsTable stats={empty} runId={RUN_ID} windowSelected={false} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText(/recorded for this run/i)).toBeTruthy();
+    expect(screen.queryByText(/no requests ran in the selected window/i)).toBeNull();
   });
 });
 
@@ -1872,7 +1914,7 @@ describe('StatisticsTable — a shared link carries the question', () => {
   const at = (search: string) =>
     render(
       <MemoryRouter initialEntries={[`/runs/${RUN_ID}${search}`]}>
-        <StatisticsTable stats={stats} runId={RUN_ID} />
+        <StatisticsTable stats={stats} runId={RUN_ID} windowSelected={false} />
         <Where />
       </MemoryRouter>,
     );
@@ -1931,5 +1973,90 @@ describe('StatisticsTable — a shared link carries the question', () => {
     cleanup();
     at('');
     expect(junk, 'an unknown column must render the default view').toBe(firstBodyPath());
+  });
+});
+
+describe('StatisticsTable — its heading level', () => {
+  /**
+   * The Report puts this table inside its Requests section, which has an
+   * `<h2>`; the table's own heading is the `<h3>` under it. There are TWO
+   * places the table draws that heading (a run with rows, and one with none),
+   * so both are asserted — passing the level to one and forgetting the other
+   * leaves an outline that is right until a run records nothing.
+   */
+  it.each([
+    ['with rows', stats],
+    ['with none', { ...stats, stats: [] } as StatsResponse],
+  ])('is a section heading by default and one level down when told to (%s)', (_state, payload) => {
+    render(
+      <MemoryRouter>
+        <StatisticsTable stats={payload} runId={RUN_ID} windowSelected={false} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole('heading', { level: 2, name: 'Statistics' })).toBeDefined();
+    cleanup();
+    render(
+      <MemoryRouter>
+        <StatisticsTable stats={payload} runId={RUN_ID} windowSelected={false} headingLevel={3} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole('heading', { level: 3, name: 'Statistics' })).toBeDefined();
+  });
+});
+
+/** A repo-root-relative path, wherever the runner was invoked from. */
+function fromRepo(rel: string): string {
+  let dir = process.cwd();
+  for (let i = 0; i < 6; i += 1) {
+    if (existsSync(resolve(dir, rel))) return resolve(dir, rel);
+    dir = resolve(dir, '..');
+  }
+  throw new Error(`could not find ${rel} from ${process.cwd()}`);
+}
+
+describe('StatisticsTable — the Count/s bridge', () => {
+  /**
+   * ═══ A BRIDGE NAMES THE OTHER END, SO IT BREAKS WHEN THAT END MOVES ═══
+   *
+   * The `Cnt/s` column keeps Gatling's spelling and carries a hint pointing at
+   * the Summary's combined chart — "the same measurement the requests-and-
+   * responses chart plots as X" — so a reader does not have to guess that two
+   * labels are one number. It used to point at a totals tile, and that tile was
+   * renamed and then deleted while the hint went on naming the old word: a
+   * cross-reference to a surface by a spelling that surface no longer uses, the
+   * same defect as "Mint one under Access", one file over, reintroduced within
+   * the hour of fixing it.
+   *
+   * READS BOTH SOURCES, which is the only way to see it — the two files share
+   * no symbol, so nothing in the type system or in either file's own suite
+   * connects them. `paths.test.ts` reads `App.tsx` and `tokens.test.ts` reads
+   * the emitted CSS for the same reason: some agreements exist only between
+   * files, and the alternative is prose that is wrong for a release.
+   */
+  it('keeps its Count/s bridge pointing at an axis the combined chart draws', () => {
+    /* NOT `new URL(..., import.meta.url)`, which `paths.test.ts` uses one
+       project over: that file runs under the NODE environment, where
+       `import.meta.url` is a `file:` URL. This suite is jsdom, where it is an
+       `http:` one, and `readFileSync` rejects it. Resolved from the repo root
+       instead, found by walking up from the working directory so the suite does
+       not care where it is invoked from. */
+    const table = readFileSync(fromRepo('apps/web/src/tables/StatisticsTable.tsx'), 'utf8');
+
+    /* ANCHORED TO THE `hint:` PROPERTY, not to the phrase. The first version of
+       this guard matched the phrase anywhere and found it inside the COMMENT
+       that explains this very defect — which quotes the old spelling on purpose
+       — so it read the documentation instead of the product and failed against
+       a string nobody ships. */
+    const bridge = /hint:\s*'[^']*plots as ([^']+)'/.exec(table);
+    expect(bridge, 'StatisticsTable no longer bridges to the combined chart').not.toBeNull();
+
+    /* `?.[1] ?? ''`, not `bridge![1]`: under `noUncheckedIndexedAccess` a
+       capture group is `string | undefined`, and widening the guard to cover
+       both means a bridge that matched but captured nothing fails on the next
+       line with its own message instead of throwing. */
+    const named = (bridge?.[1] ?? '').trim();
+    expect(named, 'the bridge names no axis at all').not.toBe('');
+    // The word the hint promises must be an axis the chart actually names.
+    expect(readFileSync(fromRepo('apps/web/src/charts/RatesChart.tsx'), 'utf8')).toContain(`name: '${named}'`);
   });
 });

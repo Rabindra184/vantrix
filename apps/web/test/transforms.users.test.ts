@@ -1,7 +1,8 @@
 import type { UsersResponse } from '@perfportal/contracts';
 import { describe, expect, it } from 'vitest';
+import { expectAboutTheRun, expectAboutTheWindow } from './support/emptySentence';
 import { assignPalette } from '../src/charts/theme.js';
-import { toConcurrentUsers, toUserStartRate } from '../src/charts/transforms/users.js';
+import { toConcurrentUsers, toUserEndRate, toUserStartRate } from '../src/charts/transforms/users.js';
 import type { ChartData } from '../src/charts/types.js';
 import fixture from './fixtures/reference-run.json';
 
@@ -108,8 +109,8 @@ describe('toConcurrentUsers ⑦ / toUserStartRate ⑦ᵇ — the fields they rea
   // The brief's Step 1 tests, kept verbatim.
   it('plots concurrency and arrival rate from DIFFERENT fields', () => {
     const u = users;
-    const conc = toConcurrentUsers(u);
-    const rate = toUserStartRate(u);
+    const conc = toConcurrentUsers(u, { windowSelected: false });
+    const rate = toUserStartRate(u, { windowSelected: false });
     // Not merely "not deepEqual": these must come from maxConcurrent and
     // started respectively, and the fixture has buckets where those differ.
     expect(total(conc)).toEqual(u.total.map((b) => b.maxConcurrent));
@@ -120,14 +121,14 @@ describe('toConcurrentUsers ⑦ / toUserStartRate ⑦ᵇ — the fields they rea
   it('uses the API total rather than recomputing it', () => {
     // Gatling's own "All users" series is the SUM of per-scenario maxima,
     // verified across all 63 fixture buckets — even though max(a+b) != max(a)+max(b).
-    expect(toConcurrentUsers(users).series.at(-1)!.data).toEqual(
+    expect(toConcurrentUsers(users, { windowSelected: false }).series.at(-1)!.data).toEqual(
       users.total.map((b) => b.maxConcurrent),
     );
   });
 
   it('draws one series per scenario plus the total', () => {
-    expect(toConcurrentUsers(users).series).toHaveLength(users.scenarios.length + 1);
-    expect(toUserStartRate(users).series).toHaveLength(users.scenarios.length + 1);
+    expect(toConcurrentUsers(users, { windowSelected: false }).series).toHaveLength(users.scenarios.length + 1);
+    expect(toUserStartRate(users, { windowSelected: false }).series).toHaveLength(users.scenarios.length + 1);
   });
 
   /**
@@ -148,12 +149,12 @@ describe('toConcurrentUsers ⑦ / toUserStartRate ⑦ᵇ — the fields they rea
       ...users,
       total: users.total.map((b) => ({ ...b, maxConcurrent: 99, started: 42 })),
     };
-    expect(total(toConcurrentUsers(moved))).toEqual(users.total.map(() => 99));
-    expect(total(toUserStartRate(moved))).toEqual(users.total.map(() => 42));
+    expect(total(toConcurrentUsers(moved, { windowSelected: false }))).toEqual(users.total.map(() => 99));
+    expect(total(toUserStartRate(moved, { windowSelected: false }))).toEqual(users.total.map(() => 42));
   });
 
   it('names the scenarios, then Gatling’s own "All users"', () => {
-    for (const d of [toConcurrentUsers(users), toUserStartRate(users)]) {
+    for (const d of [toConcurrentUsers(users, { windowSelected: false }), toUserStartRate(users, { windowSelected: false })]) {
       expect(d.series.map((s) => s.name)).toEqual(['Browse', 'Checkout', 'All users']);
     }
   });
@@ -164,7 +165,7 @@ describe('toConcurrentUsers ⑦ / toUserStartRate ⑦ᵇ — the fields they rea
  * ------------------------------------------------------------------ */
 
 describe('toConcurrentUsers ⑦ — the per-scenario series (G-18)', () => {
-  const d = toConcurrentUsers(users);
+  const d = toConcurrentUsers(users, { windowSelected: false });
   const checkout = users.scenarios[1]!;
 
   /**
@@ -209,7 +210,7 @@ describe('toConcurrentUsers ⑦ — the per-scenario series (G-18)', () => {
     ['concurrency', toConcurrentUsers],
     ['arrival rate', toUserStartRate],
   ] as const)('sums the scenario lines to the total line at every bucket (%s)', (_label, transform) => {
-    const chart = transform(users);
+    const chart = transform(users, { windowSelected: false });
     const lines = chart.series.slice(0, -1).map((s) => s.data as readonly number[]);
     const totals = total(chart);
     for (let i = 0; i < totals.length; i++) {
@@ -223,8 +224,8 @@ describe('toConcurrentUsers ⑦ — the per-scenario series (G-18)', () => {
  * ------------------------------------------------------------------ */
 
 describe('the data table both charts expose', () => {
-  const conc = toConcurrentUsers(users);
-  const rate = toUserStartRate(users);
+  const conc = toConcurrentUsers(users, { windowSelected: false });
+  const rate = toUserStartRate(users, { windowSelected: false });
 
   it('heads one column per series, after the time column', () => {
     expect(conc.columns).toEqual(['Elapsed (s)', 'Browse', 'Checkout', 'All users']);
@@ -305,7 +306,7 @@ describe('toUserStartRate ⑦ᵇ — per SECOND, whatever the bucket width is', 
   });
 
   it('divides the count by the bucket width, rather than assuming one second', () => {
-    const d = toUserStartRate(wide());
+    const d = toUserStartRate(wide(), { windowSelected: false });
     expect(total(d)).toEqual([3, 2, 0]);
     expect(d.rows.map((r) => r.values)).toEqual([
       [3, 3],
@@ -315,7 +316,17 @@ describe('toUserStartRate ⑦ᵇ — per SECOND, whatever the bucket width is', 
   });
 
   it('says so beside the chart, because "per second" is then an average over a wider window', () => {
-    expect(toUserStartRate(wide()).limitation).toMatch(/2000 ms/);
+    expect(toUserStartRate(wide(), { windowSelected: false }).limitation).toMatch(/2000 ms/);
+  });
+
+  // The reverse of `toUserEndRate`'s note: the sentence follows the chart, so
+  // the arrival rate must keep saying STARTED once the termination rate says
+  // ended. A note that was changed to say "ended" everywhere would pass the
+  // end-rate case and mislabel this chart.
+  it('keeps saying STARTED in that note, where the termination rate’s says ended', () => {
+    const note = toUserStartRate(wide(), { windowSelected: false }).limitation;
+    expect(note).toMatch(/users started per second/);
+    expect(note).not.toMatch(/ended/);
   });
 
   /**
@@ -326,20 +337,20 @@ describe('toUserStartRate ⑦ᵇ — per SECOND, whatever the bucket width is', 
    * not a quantity.
    */
   it('leaves concurrency alone, because a level is not a count', () => {
-    expect(total(toConcurrentUsers(wide()))).toEqual([6, 8, 8]);
+    expect(total(toConcurrentUsers(wide(), { windowSelected: false }))).toEqual([6, 8, 8]);
   });
 
   it('leaves a one-second run’s counts untouched', () => {
     // The reference run's buckets are 1000 ms, so the divisor is exactly 1 and
     // G-26's "exact per bucket" parity holds byte-for-byte.
-    expect(total(toUserStartRate(users))).toEqual(users.total.map((b) => b.started));
+    expect(total(toUserStartRate(users, { windowSelected: false }))).toEqual(users.total.map((b) => b.started));
   });
 
   it('keeps the axis in elapsed seconds even when a bucket is not a second wide', () => {
     // 0, 2, 4 — the offsets in seconds, not bucket indices. An axis numbered
     // 0,1,2 would put the run's 4-second mark at t=2.
-    expect(toUserStartRate(wide()).axisLabels).toEqual([0, 2, 4]);
-    expect(toUserStartRate(wide()).rows.map((r) => r.label)).toEqual(['0', '2', '4']);
+    expect(toUserStartRate(wide(), { windowSelected: false }).axisLabels).toEqual([0, 2, 4]);
+    expect(toUserStartRate(wide(), { windowSelected: false }).rows.map((r) => r.label)).toEqual(['0', '2', '4']);
   });
 });
 
@@ -375,7 +386,7 @@ describe('a run with more scenarios than the palette has hues', () => {
     ['concurrent users', toConcurrentUsers],
     ['user start rate', toUserStartRate],
   ] as const)('still draws the total, and still draws it last (%s)', (_label, transform) => {
-    const d = transform(many);
+    const d = transform(many, { windowSelected: false });
     expect(d.series).toHaveLength(8);
     expect(d.series.at(-1)!.name).toBe('All users');
 
@@ -393,7 +404,7 @@ describe('a run with more scenarios than the palette has hues', () => {
   });
 
   it('marks the total, and only the total, as essential', () => {
-    const d = toConcurrentUsers(many);
+    const d = toConcurrentUsers(many, { windowSelected: false });
     expect(d.series.filter((s) => s.essential === true).map((s) => s.name)).toEqual(['All users']);
   });
 
@@ -403,7 +414,7 @@ describe('a run with more scenarios than the palette has hues', () => {
    * these lines are the same colour".
    */
   it('keeps every scenario in the data table, drawn or not', () => {
-    const d = toConcurrentUsers(many);
+    const d = toConcurrentUsers(many, { windowSelected: false });
     expect(d.columns).toEqual([
       'Elapsed (s)',
       'S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7',
@@ -424,7 +435,7 @@ describe('a run with no recorded users', () => {
     ['concurrent users', toConcurrentUsers],
     ['user start rate', toUserStartRate],
   ] as const)('explains itself instead of drawing empty axes (%s)', (_label, transform) => {
-    const d = transform(nothing);
+    const d = transform(nothing, { windowSelected: false });
     expect(d.empty).toBeDefined();
     expect(d.series).toEqual([]);
     expect(d.rows).toEqual([]);
@@ -433,5 +444,65 @@ describe('a run with no recorded users', () => {
     // scenarios is the time column and the total.
     expect(d.columns).toEqual(['Elapsed (s)', 'All users']);
     expect(JSON.stringify(d)).not.toMatch(/NaN|Infinity/);
+  });
+});
+
+describe('toUserEndRate — GE’s "Users Termination Rate"', () => {
+  it('has a bucket where users started and ended differently, or this proves nothing', () => {
+    expect(users.total.some((b) => b.started !== b.ended)).toBe(true);
+  });
+
+  it('plots users ENDED per second, totalled across scenarios', () => {
+    const data = toUserEndRate(users, { windowSelected: false, x: 'ms' });
+    const total = data.series.find((s) => s.name === 'All users');
+    const widthS = (users.total[1]!.startOffsetMs - users.total[0]!.startOffsetMs) / 1000;
+    expect(total!.data).toEqual(users.total.map((b) => [b.startOffsetMs, b.ended / widthS]));
+  });
+
+  it('names ENDED in its resolution note, because the arrival rate’s sentence says "started"', () => {
+    // 2000 ms buckets: `UserSeries` halved its resolution, as `toUserStartRate ⑦ᵇ` above.
+    const wide: UsersResponse = {
+      ...users,
+      scenarios: [],
+      total: [
+        { startOffsetMs: 0, started: 6, ended: 0, maxConcurrent: 6 },
+        { startOffsetMs: 2000, started: 4, ended: 8, maxConcurrent: 2 },
+      ],
+    };
+    const note = toUserEndRate(wide, { windowSelected: false }).limitation;
+    expect(note).toMatch(/2000 ms/);
+    expect(note).toMatch(/users ended per second/);
+    expect(note).not.toMatch(/started/);
+    // The recorded fact and its consequence, not a guess at why the run needed
+    // that width: a bucket width says nothing about how long the run was.
+    expect(note).not.toMatch(/run is long/i);
+    // Divided by the 2 s width, like the arrival rate: 8 ended in the second bucket is 4/s.
+    expect(toUserEndRate(wide, { windowSelected: false }).series.at(-1)!.data).toEqual([0, 4]);
+  });
+});
+
+/**
+ * A WINDOW THAT SELECTS NO USER ACTIVITY IS NOT A RUN THAT HAD NONE. All three
+ * charts read the same `usersChart` builder and each carries its own two
+ * sentences, so the pair runs over all three — a transform whose window
+ * sentence was dropped would otherwise hide behind the other two.
+ */
+describe('a window that selects no user activity', () => {
+  const nothing: UsersResponse = { runId: users.runId, window: null, scenarios: [], total: [] };
+
+  it.each([
+    ['concurrent users', toConcurrentUsers, /no concurrent users to show/i],
+    ['arrival rate', toUserStartRate, /no arrival rate to show/i],
+    ['termination rate', toUserEndRate, /no termination rate to show/i],
+  ] as const)('names the window, not the run, and keeps the tail (%s)', (_label, transform, tail) => {
+    expectAboutTheWindow(transform(nothing, { windowSelected: true }).empty, tail);
+  });
+
+  it.each([
+    ['concurrent users', toConcurrentUsers, /no concurrent users to show/i],
+    ['arrival rate', toUserStartRate, /no arrival rate to show/i],
+    ['termination rate', toUserEndRate, /no termination rate to show/i],
+  ] as const)('still names the run when no window is selected (%s)', (_label, transform, tail) => {
+    expectAboutTheRun(transform(nothing, { windowSelected: false }).empty, tail);
   });
 });

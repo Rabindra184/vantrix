@@ -128,7 +128,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **181 files / 2331 tests**, it
+`nvm use` first, and if a run reports fewer than **188 files / 2526 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -312,9 +312,6 @@ run did not contain, and it was not repeated.
 
 **KNOWN AND LEFT.**
 
-  - The open summary-report branch also calls `formatSlaValue` (its
-    `AssertionBars.tsx`). Whichever of the two merges second must re-point
-    those calls to `formatSlaBound` or `formatSlaMeasured`; `tsc` will say so.
   - A bound with more than fifteen significant digits is not read back whole.
     No form a person types into produces one.
 
@@ -330,6 +327,842 @@ was not quiet — another worktree's integration suite ran beside this one on
 its own stores, free pages stood at 3,669 to 4,131 and the 1-minute load at
 6.8 to 7.6 at each start — and every suite passed, which this file counts as a
 pass: pressure manufactures failures, never a clean result.
+
+The summary-report branch added TEN unit files —
+`apps/web/test/CollapsibleSection.test.tsx`, `AssertionBars.test.tsx`,
+`RatesChart.combined.test.tsx`, `RunReport.test.tsx`,
+`RunSectionRedirect.test.tsx`, `RunSummary.test.tsx`,
+`RunSummary.live.test.tsx` and `groupRows.test.ts`, then, in its last two
+items, `ChartWindowSelected.test.tsx` and `distributionQuery.windowed.test.ts`
+— and DELETED three
+(`RunErrorsTab.live`, `RunOverviewTab.live`, `ToolAssertions`, whose claims
+moved into the new files), renaming two more, plus one case to
+`DesktopOnly.test.tsx`, from **181 / 2313 to 188 / 2488**. Integration moves with the two new `.ts` files and the `.ts`
+cases (`paths`, `transforms.rates`, `transforms.users`, and the empty-window
+pairs in the seven `transforms.*` files), from **170 / 2086 to
+172 / 2142**, and **e2e rises to 180**: 168, minus 2 cases deleted, plus 1
+(`run-tables.spec.ts`' heading outline split in two), plus the thirteen cases of the
+new `apps/web/e2e/run-summary-report.spec.ts` (ten more specs were moved onto
+the new pages without changing their count). It measured
+186 / 2401, 171 / 2103 and 176 before the final review's fix wave,
+186 / 2412, 171 / 2103 and 177 after it, before its last two items, and
+188 / 2484, 172 / 2142 and 179 before the cross-browser run's two keeper
+fixes (four unit cases and one browser case). It is
+backlog item #7 of the Gatling Enterprise comparison: the run page becomes
+GE's two pages, a **Summary** that is always the whole run and a **Report**
+that carries the time window and the charts in collapsible sections. Seven
+tabs become five — Summary · Report · Logs · Trends · Compare — and no API,
+contract or database changed: every number on both pages was already served.
+
+**MEASURED ON GATLING ENTERPRISE FIRST, READ-ONLY, ON BOTH OF THE ACCOUNT'S
+RUNS.** The Summary ignores a window entirely — opened with a 30-second
+`from`/`to` it still read the whole run's 900 requests and drew no timeline —
+and carries four headline numbers (error ratio, total requests, max concurrent
+users, p95), an assertions bar collapsed until clicked EVEN WHEN IT HOLDS A
+FAILURE, two charts and the errors table. The Report carries the window bar
+alone, then Requests (open), Groups, Virtual users, Connections, DNS and Load
+Generators (shut). Sections open independently and **their state is kept
+nowhere** — not the URL, not `localStorage`, gone on reload. Every page link
+carries the whole query string; only the Report applies it. GE's MARKUP is
+thin — section headers are clickable `div`s with no button role and no
+`aria-expanded`, and no section has a heading — so the layout and behaviour
+are copied and the markup is not.
+
+**THREE DEVIATIONS, EACH A DECISION:**
+
+```
+  a bar holding a failure opens itself    GE keeps it shut; a failed check here is never a click away
+  /report, not GE's /details              every other tab's path here is its own label
+  a URL carrying sort or q opens Table    AC-DASH-4: a shared sorted link lands on what it shared
+```
+
+**A SECTION IS A HEADING HOLDING A BUTTON, AND A CLOSED ONE MOUNTS NOTHING.**
+`<details>` was declined for three recorded reasons — it keeps closed content
+mounted, so every chart in every shut section would query and draw into a
+0x0 box; a heading inside a `<summary>` leaves the outline; and nested
+disclosures have already broken a WebKit case here. `CollapsibleSection`
+opens on a URL fragment naming it, which is how the `/load-generators`
+redirect lands on its content and how the band's "See the failed simulation
+assertion" opens the bar it points into.
+
+**`useState(defaultOpen || named)` IS LOAD-BEARING, AND TESTING LIBRARY
+HIDES WHY.** The brief's own fragment case passed with the fragment read
+removed from the initial state, because `render()` flushes effects and the
+effect opened the section before the DOM was read. What the initial state
+buys is the FIRST paint — a section that opens a frame later has already
+drawn shut and jumped. Only a `renderToString` case can see it, so one does,
+and a second case navigates to the fragment after mount for the effect's
+half. **A `render()`-based test cannot tell first paint from first effect.**
+
+**THE OLD PATHS REDIRECT, KEEPING THEIR QUERY.** `/charts` → `/report`,
+`/load-generators` → `/report#load-generators`, `/errors` →
+`/runs/:id#errors`, each with `replace` so Back does not return to a page
+that only redirects. Dropping `${search}` from `RunSectionRedirect` failed
+three e2e cases and a fourth's redirect loop.
+
+**WHAT DIED WITH THE SPLIT, AND WHERE EACH CLAIM WENT:**
+
+```
+  the Errors tab's count            no tab; the table is on the Summary under #errors
+  the header's Peak users chip      a Summary tile now; a value shown twice says nothing new
+  Requests/s, p99 and Mean tiles    GE's four headline numbers; the three are in Report › Table
+  FinalizedVerdictNotice            the Summary never takes a window, so nothing to disclaim
+  the M01 collapsed time window     the Report carries no totals, and GE's bar is always shown
+  runCharts/Errors/TelemetryPath    nothing links to a section that is now a redirect
+```
+
+**THE PHONE'S 812 BOUND FAILED, AND THE PRODUCT MOVED RATHER THAN THE
+BOUND.** Task 6 lifted the lifecycle line out of the header's 8px group and
+into the shell's 24px gap, above AND below — and the run's first tile went
+from 804.4 (where the lifecycle-strip branch had left `main`) to **820**
+against an 812 viewport. Grouping the line with the band it summarises (8px on
+a phone, 12px on a desktop) put it back at **804.4**, so the branch's net
+change to that number is ZERO — an earlier draft of this table called 802 the
+"before", which is where M02 left it a branch earlier. A sibling in a flex gap
+pays the gap on both sides; a change that only MOVES an element can still cost
+the fold.
+
+**AN EMPTY WINDOW HAD LOST ITS SENTENCE.** The old Overview said so when a
+window selected nothing; that sentence lived in `RunStats`, which moved to
+the always-whole-run Summary. So the Report's Requests › Table, under
+`?from=62000&to=63000`, said "No statistics were recorded for this run" — a
+false claim about the run. `StatisticsTable` and `StatisticsEmpty` take a
+REQUIRED `windowSelected`, the window branch first. Required, because a
+default would have let the Summary and Report disagree silently; `tsc` then
+found all twelve test renders. **When a component moves pages, the sentences
+that answered for its absence have to move with it.**
+
+**`Payload` DRAWS PLACEHOLDER FIGURES WITH THE FINAL IDS FROM FIRST PAINT,
+WHICH TWO CASES LEANED ON WITHOUT KNOWING.** A unit case asserting the
+Summary's two charts passed with the percentiles chart deleted, because it
+read the ids while both were "Loading…" placeholders — found by its
+red-verify, and it waits for the region to settle now. The run-telemetry e2e
+case read which section held which figure by `evaluateAll` before awaiting
+the figure count, safe only for the same reason; the final review moved the
+wait above the read. **An id that exists from first paint is not evidence
+the thing it names drew.**
+
+**A GEOMETRY RED-VERIFY PASSED TWICE AND FAILED ONCE WITH ONE MUTATION.** The
+Report's first-chart bound measured before the window strip and the chart
+had drawn, so a 40px spacer was sometimes still unpainted. It waits for both
+plots now and fails 3 of 3. A mutation that passes intermittently is a race
+in the test, not evidence the bound works.
+
+**GEOMETRY, MEASURED BEFORE AND AFTER:**
+
+```
+                                 before      after
+  375x812 Summary, first tile     804.4      804.4   (820 before the grouping fix; net zero)
+  1440x900 Summary totals top     690        643.8   tile bottoms 718.8 / 722.8
+  1440x900 Report window          85 (shut)  338-751, 413px, always open
+  1440x900 Report first chart      —         886.5 top, 1256.5 bottom
+```
+
+**RED-VERIFIED LAYER BY LAYER**, every mutation after a checkpoint commit
+with its replacement count asserted:
+
+```
+  section     closed section builds its content       the starts-shut case
+              aria-expanded dropped                   six cases that assert it
+              fragment read only in the effect        the renderToString first-paint case
+              the fragment effect deleted             the navigate-after-mount case
+              open state persisted to sessionStorage  the e2e reload case
+  charts      OK line reads the started counter       the split-by-outcome case
+              per-second divides by 1                 the bucket-width case
+              users ended -> started                  the termination-rate case
+              RATE roles dropped                      the colour case (KO in a categorical hue)
+              the crosshair group renamed             the shared-crosshair case
+  report      Requests not open by default            the sections case
+              initial view always Charts              both sort/q Table cases
+              a windowed query passed null            the narrows-to-the-window cases, each alone
+  bars        a failing bar not open                  the open-on-arrival case
+              live -> finished keys removed           the finishes-with-a-failed-gate case
+              failures not first                      the failures-first case
+  summary     stats read the window                   the asks-for-nothing-narrowed case
+              Peak users and Requests swapped         GE's order, live and finished
+              the axis follows the window             the hands-its-charts-the-whole-span case
+                                                      (the page rendered under a window; the
+                                                      hook-only Probe case stays green)
+              a failed /stats renders nothing         the Run totals error-state case
+  shell       strip and band on every page            the it.each over report/logs/trends/compare
+              tabs after the band                     the below-the-tabs order case
+              brush on every page                     the Report-and-nowhere-else case
+              Trends before Report                    GE's tab order case
+  stats       windowSelected ignored                  the empty-window case alone
+  browser     the Summary reads the window            Expected "895" Received "31"
+              redirects drop the query                three old-URL cases + a redirect loop
+              a failing simulation bar shut           open-on-arrival + two run-tables cases
+              the Report passes windowSelected false  the empty-window e2e case alone
+```
+
+**KNOWN AND LEFT, EACH A DECISION RATHER THAN AN OVERSIGHT:**
+
+  - GE's Scenario, Group and Request pickers are their own item — Errors
+    per second cannot be narrowed by its endpoint, and the engine files no
+    scenario statistics.
+  - GE's "AI run analysis" card is backlog #11; its button starts a
+    generation, so it was not clicked.
+  - A populated Groups section was never measured on GE: neither of the
+    account's runs had a group, and running one needs credits it no longer
+    has. Groups is built to this product's own data.
+  - DNS, GC, TCP-connect and TLS-handshake charts are OMITTED, never drawn
+    empty: nothing here collects them.
+  - "Back to this run" on a request or group page lands on the Summary. The
+    URL keeps `from`/`to` and the Report tab restores the window, so the
+    window travels as the spec says; a reader who drilled down from a
+    windowed table is one click further from it.
+  - The Report's always-open window is 413px at 1440x900, so its first chart
+    starts 13.5px inside the fold and ends 356.5px below it.
+  - A phone's first tile has 7.6px of headroom against 812 — on the fixture
+    run, which no rule judges. A real run that FAILED both systems draws its
+    first tile at **967.8** at 375px, because the band carries the failing
+    gate's sentence and the failed simulation assertion's. The band's layout
+    did not change on this branch (its link's `to` did, below), so that is the
+    M02 shape rather than a new one, and it is measured rather than bound.
+  - A second click on the band's "See the failed simulation assertion" after
+    the reader has shut the bar leaves it shut: the fragment is already the
+    URL's, so nothing re-opens it. And the live Platform gates bar's wording is
+    as the final review found it.
+  - `keepInPlace` holds a revealed fragment only while the layout keeps
+    changing: 1s without a change ends it, and 5s from the reveal is the cap. A
+    Summary whose `/stats` takes longer than a second to answer after the reveal
+    is not held, and the reveal lands where the one-shot always did. The 1s was
+    measured against a ~75ms settle on a local API, not against a slow one. A
+    change made INSIDE a long task is no longer missed (see above); one made
+    after a full second of genuine stillness still is, which is the limit of
+    any settle window.
+  - A scroll that raises none of `keepInPlace`'s four inputs — a scrollbar
+    drag in Firefox fires no pointerdown on the content, and assistive
+    technology scrolls without one — can be read as drift and pulled back if a
+    layout change lands inside the window. Bounded by the same 1s idle and 5s
+    cap; the scoped re-review found it and it is recorded rather than chased.
+  - The reader-wins e2e catches a missing cancel only when the wheel lands
+    inside that 1s window of the reveal; on a machine slow enough to miss it,
+    the mutation would pass rather than the product fail.
+  - `/distribution` still answers 404 for a windowed read that selects no
+    buckets; the client now reads that as an empty window rather than the
+    handler answering 200 with an empty distribution, which is a contract change
+    and was not made.
+
+**THE REAL RUN FOUND ONE MORE, AND IT WAS A SENTENCE THIS BRANCH MADE FALSE.**
+`DesktopOnly`'s phone placeholder ends "The summary above carries the verdict
+and the headline numbers" — true while the verdict band drew above every run
+section, and false on every page that renders it once the band went
+Summary-only: its callers are the Report, Trends, Compare and the telemetry
+views. It names the run's Summary now, with a pair that fails on either the old
+sentence or "Summary above". No suite could see it: no test asserted that
+paragraph, and only reading the Report on a phone showed it.
+
+**AND `pkill -f <job id>` KILLED GATLING, WHICH FOUND A DEFECT THAT IS ITS OWN
+TASK.** The first real job's id was in a poller's command line AND in
+Gatling's, whose `-cp` carries the job's work directory, so stopping the poller
+SIGTERMed the load test 25 seconds in. The runner then kept the run ("Gatling
+exited with code 143; keeping the run because simulation.log was produced"),
+marked the job `complete`, and the pipeline failed the run `LOG_MALFORMED` on
+its truncated log, with a remediation about archiving that no reader did. The
+sweeper's abandoned-stream path already truncates to whole records
+(`truncateToWholeRecords`); this path never reaches it. Taken as its own
+branch, the runner-keeps-a-dying-run entry below, which merged before this one.
+**Kill by PID, never by a pattern that a child's command line can share.**
+
+**THE FINAL WHOLE-BRANCH REVIEW FOUND A FALSE SENTENCE, A SCROLL BUG THAT
+ONLY A REDIRECT REACHES, AND A TEST THAT PINNED A HOOK INSTEAD OF A PAGE.**
+
+  - **`ErrorsTable`'S SCOPED EMPTY BODY SENT THE READER TO AN ERRORS TAB THAT
+    NO LONGER EXISTS.** It renders on every request page whose request recorded
+    no errors — five of the reference run's seven — so it was the most-read false
+    sentence on the branch, and the same shape as the phone placeholder above: a
+    pointer written when a page existed. The retired-string greps had been
+    reading test names and comments; this was prose inside a component. It names
+    the Summary now, and the case is an exclusive pair (the Summary is named, the
+    tab is not), red-verified against the old sentence AND against a sentence
+    naming both.
+  - **CLEARING A FRAGMENT SCROLLED THE PAGE TO THE TOP.** `useSearchParams`'
+    setter navigates to `"?" + params`, which drops the hash, and `AppShell`'s
+    scroll-to-top effect read that same-path, empty-hash navigation as a new page.
+    An old `/errors?request=Place%20Order` link lands at `#errors`; changing the
+    Investigate select then threw the reader ~1,500px away from the table they
+    were filtering, and the band's `#simulation-assertions` link and the
+    `/load-generators` redirect followed by a sort did the same. The effect holds
+    the previous pathname in a ref and only a DIFFERENT path scrolls — "a new
+    query is the same page asked again" was already this file's rule, written
+    about the query string and not about the hash. Four unit cases and a browser
+    case, each red against the old effect.
+  - **A REDIRECT'S TARGET WAS NEVER ASSERTED TO BE ON SCREEN.** The three
+    old-URL cases read the URL and the section's open state, and the reveal that
+    actually brings the reader to the fragment is exercised by none of those
+    lines. Asserting it found the landing numbers recorded in the paragraph
+    below, which the branch's last item then fixed. **A test that follows a link
+    and checks the address has proved the link, not the arrival.**
+  - **`useWholeRunDomainFromShell` WAS PINNED THROUGH A PROBE, NOT THROUGH THE
+    PAGE.** The case read the hook directly, so switching `RunSummary` itself to
+    the Report's windowed hook left every unit case green. The file wraps the real
+    ECharts to keep each `setOption`, and a case renders the page under a window
+    and reads both charts' x-axis bounds; the Probe case stays green under that
+    mutation, which is the gap.
+  - **THE REST WERE ONE MISTAKE EACH.** The Report's group links and the Summary's
+    assertion-target links dropped the window the statistics table's rows carry,
+    and the band's `#simulation-assertions` link replaced the whole query string
+    (it would reset the errors filter it had just been landed on); the Report's
+    four phone gates shared two accessible names between them; a section's bar
+    counts sat beside the heading but were not announced with the button
+    (`aria-describedby`, only when a summary renders); and a dozen comments still
+    named the Charts and Errors tabs and a "Duration so far" tile this branch
+    removed — the legend comment on the navigator was the one that had become
+    false rather than stale, since the chart below no longer names its lines.
+
+**THE LAST TWO ITEMS TOOK WHAT THE FINAL REVIEW LEFT, AND ONE OF THEM HID A
+SECOND DEFECT BEHIND ITS OWN ASSERTION.**
+
+**I6: A REVEAL THAT HOLDS ITS TARGET WHILE THE PAGE ABOVE IT SETTLES.** The
+reveal scrolled `#errors` into view once, the frame it existed, and the
+Summary's tiles, bars and charts then arrived over ~75ms and pushed it back.
+`keepInPlace` in `AppShell.tsx` re-runs the SAME `scrollIntoView` (so
+`scroll-margin-top` still applies) from a `ResizeObserver` on the root element
+and `<main>` whenever the target has moved, measuring each shift from where the
+last correction left it. Measured per frame on the reference run, with the fix:
+
+```
+                 reveal                          after the page settles
+  1280x720       207ms scrollY 1447 top 441      doc 2544, scrollY 1824, top 407 (bottom 697)
+  1440x900       143ms scrollY 1210 top 621      doc 2410, scrollY 1510, top 586 (bottom 876)
+```
+
+Without it the same two runs ended at top 784 of 720 and 891 of 900. The
+observer fires on the root element and on `<main>` at identical instants on this
+page; both are kept because `<main>` grows even where a taller rail keeps the
+root's height unchanged. It stops for good at the reader's first `wheel`,
+`touchstart`, `keydown` or `pointerdown` (programmatic scrolls raise none of
+them, so its own corrections never cancel it), after 1s without a layout change,
+at a 5s cap, and with the effect; it scrolls and never re-focuses; and without a
+`ResizeObserver` the one-shot reveal is as it was.
+
+**AND THE CROSS-BROWSER RUN FOUND TWO HOLES IN IT, NEITHER OF WHICH A FAST
+MACHINE CAN SHOW.** Dispatched on `57c58a7`, it collected 537 and passed 531,
+with 5 skipped and ONE FLAKY: WebKit's `/errors` landing at 1280x720, `#errors`
+at a viewport ratio of 0.29, green on retry. The first fix written for it raised
+the idle window from 1s to 3s, and it was wrong; the trace said why. Every
+response was in by +50ms, and Playwright's own first look at `#errors` came
+**two seconds** after it asked — the page had run a two-second TASK. A task that
+moves the layout and outlasts `SETTLE_IDLE_MS` leaves the idle timer OVERDUE,
+and WebKit runs that timer before the rendering step that would have delivered
+the `ResizeObserver` callback, so `stop()` disconnected the observer with the
+shift unreported. A longer window only narrows that race. **A SILENCE MEASURED
+ACROSS A BLOCKED THREAD IS NOT STILLNESS**: both timers now MEASURE before they
+decide (`getBoundingClientRect` forces the layout the task produced), the idle
+timer corrects a drift and waits again instead of stopping, and the cap makes
+one last correction. Chromium cannot reproduce it at all — after a long task its
+scheduler renders before it runs an overdue timer.
+
+**SO THE RACE IS MADE ON DEMAND, AND THAT EXPOSED THE SECOND HOLE.** The new
+browser case grows the column above the target 400px inside a 1.5s task, 600ms
+after the reveal — inside the idle window, so the shift's timer is due before
+any idle deadline, and the hold leaves the idle timer overdue however slow the
+machine. Against the old keeper WebKit left `#errors` at **top 789 of 720**; the
+same shift with no hold was corrected. The first version made the shift in the
+reveal's very next task, and with the race fixed it still failed ONCE IN NINE,
+on Firefox, at a ratio of **0.96**: `#errors` is the last thing on the Summary,
+so the reveal stops at the page bottom with the target short of its rest, and
+when its rows arrive the section grows DOWNWARD — its top never moves, so a
+keeper watching only the top let its bottom slide past the fold. A scroll the
+page bottom clamped is now followed when the page grows; growth under an
+UNCLAMPED target (a table below it) is still left alone, and that pair is
+asserted both ways. The browser case waits 600ms so that a failure there is the
+race and not this, which `AppShell.test.tsx` pins directly.
+
+**THE LANDING IS ASSERTED AS "FULLY IN VIEW", NOT "IN THE UPPER HALF", AND THE
+REASON IS THE PAGE.** The errors section is the last thing on the Summary, so
+the page bottom clamps the scroll before the section can reach the top: top 407
+of 720 and 586 of 900 are the best any implementation can do. `ratio: 1` is also
+the stricter bound, because the 1440x900 miss was nine pixels visible
+(`ratio 0.0298`), which a bare `toBeInViewport()` passes.
+
+**THE READER-WINS CASE HOLDS ITS TIMING AT THE NETWORK, WITH NO SLEEPS.** The
+window between the reveal and the growth is ~75ms, too short to land a wheel in
+by luck, so the four requests that grow the page (`/stats`, `/trends`, `/users`,
+`/series`) wait on one deferred promise: reveal (`waitForFunction`, rAF polling),
+`mouse.wheel(0, -600)`, release, wait for the tiles and plots, two frames, then
+assert. Its guards against a vacuous pass are that the reveal scrolled the page
+(1447), the document grew after the release (2167 to 2544), and the reader's
+position (842) is below where the reveal left it; and the table is not in view.
+It needs the release inside the keeper's 1s idle window, which the sequence
+meets by a wide margin (it fails 6 of 6 against the mutation and the three
+`/errors` cases passed 30 of 30), so on a machine slow enough to exceed it the
+mutation would pass rather than the product fail. The filter-after-redirect
+case no longer scrolls the table into view itself: it relies on the landing.
+
+**TWO UNIT GAPS WERE FOUND BY THE RED-VERIFY, NOT BY READING.** The first
+unmount case compared listener TYPES, and removing `{ capture: true }` from the
+`removeEventListener` call (which removes nothing, since capture is part of a
+listener's identity) passed it; it compares the listener and the flag now. And
+adding a second `target.focus()` to every correction passed all twenty cases,
+because nothing asserted focus moves once; a case does.
+
+**THE REPORT'S CHARTS NAME THE WINDOW WHEN IT SELECTS NOTHING.** Under
+`?from=62000&to=63000` (a real, in-range second of the reference run holding no
+requests) the Requests charts said "No requests failed in this run." on a run
+with 24 failures, and the rest in kind, while the Table and Groups already said
+"in the selected window". Each of the ten charts takes a REQUIRED
+`windowSelected` and passes it to its transform as a field of an options object;
+the repo's rule is that a parameter whose wrong value is silent gets no default,
+so `tsc` found every caller (about 115 test sites among them). The rule per
+branch is that the sentence which says "nothing in this run" flips to one naming
+the window, and a sentence about the run's INGESTION or STORAGE stays, because a
+window cannot make it false:
+
+```
+  flips   no failures, no bands, no counts, no distribution, no curve (both
+          branches of each), no percentiles, no rates, no user activity
+  stays   "ingested before failures were recorded over time", the fixed-bands
+          and overflow notes, "no percentile bands are selected" (a control),
+          the data-resolution notes
+  never   the request- and group-scoped indicator sentences: the drill-downs
+          are never windowed, and `toRowIndicators` takes no flag
+```
+
+`toDistribution`'s second branch flips too ("No response time in this run fell
+inside the recorded range"): the window may hold only the responses that
+overflowed, so "in this run" is false of it. `toPercentiles` took its options as
+the SECOND argument, with `bands` and `outcome` inside the bag, because a
+required fourth behind two defaults would have meant `undefined, undefined, {...}`
+at every call.
+
+**THE ASSERTION THE BRIEF ASKED FOR COULD NOT HOLD, BECAUSE TWO CHARTS WERE NOT
+SAYING ANY OF THIS.** A probe printed every figure's sentence before the e2e was
+written, and the two distribution charts read `No response_time histogram for run
+"" in run <id>. … which lists every row this run recorded.`: `/distribution`
+answers 404 for a windowed read that selects no buckets (the handler cannot tell
+a name that never existed from a quiet window), and `Payload` relays a failed
+query's own text. That contains "this run", and it meant the two transforms'
+window sentences were unreachable on the page. `distributionQuery` now reads a
+404 on a WINDOWED read, and only that, as the empty payload the transforms
+explain; an unwindowed 404 (a run with no histogram) is still relayed and any
+other status still throws. The endpoint was not changed: answering 200 with an
+empty distribution is the alternative, and is a contract change.
+
+**A COMPONENT THAT IS HANDED A FLAG CAN STILL DROP IT, SO A SEAM FILE RENDERS
+ALL TEN.** The transform pairs prove each sentence when given the flag, and say
+nothing about whether the component above passes the one it received; a chart
+that calls its transform with `windowSelected: false` passes all of them.
+`ChartWindowSelected.test.tsx` renders every chart under both flags with an empty
+payload (an empty chart creates no ECharts instance, so nothing is mocked) and
+reads the `role="status"` sentence. The browser case proves the page derives the
+flag from the URL, on the default Charts view, and pairs "no chart says 'this
+run'" with seven sentences collected so it cannot pass against figures that did
+not draw. Claims are asserted, not wording (`expectAboutTheWindow` /
+`expectAboutTheRun`), each case an exclusive pair.
+
+**RED-VERIFIED, EVERY MUTATION AFTER A CHECKPOINT COMMIT WITH ITS REPLACEMENT
+COUNT ASSERTED:**
+
+```
+  I6 unit      no re-scroll on drift                     the re-scroll case + next-shift case
+               drift threshold removed                   the leaves-alone case + next-shift case
+               threshold < 1 -> < 0.0001                 the leaves-alone case alone (sub-pixel)
+               top not re-read after a correction        the next-shift case alone
+               each of wheel / touchstart / keydown /    that input's stop case (wheel and
+               pointerdown dropped                       touchstart also the unmount case)
+               stopKeeping removed from cleanup          the unmount case
+               removeEventListener without capture       the unmount case (passed it before the
+                                                         case compared listener and flag)
+               idle stop / hard cap removed              the idle case / the cap case
+               #main / the root element not observed     the observes-both case
+               a second focus() on each correction       the focus case (20 passed before it)
+  I6 browser   keepInPlace not called                    the /errors redirect case: ratio 0, and
+                                                         the filter case without its workaround
+               same, 1440x900 only                       ratio 0.0298 (nine pixels visible)
+               wheel not an input, six runs              the reader-wins case 6 of 6
+  keeper       idle timer stops on silence again         the unreported-shift case alone
+               cap stops with no last correction         the cap-correction case alone
+               a clamped scroll not followed             the grows-downward case alone
+               every growth followed (clamped = true)    the unclamped case alone
+               the keeper as CI ran it (WebKit)          the blocked-thread e2e: top 789, and
+                                                         ratio 0.98 / 0 on two more runs
+  charts       each transform's flag ignored             that transform's window cases + that
+                                                         chart's seam case (7 transforms)
+               errors "always window"                    the run-sentence pair
+               ingestion sentence also switched          the keeps-the-ingestion case alone
+               distribution / per-outcome second branch  that branch's cases alone
+               flag not forwarded (4 components)         the seam case for that chart ALONE
+               windowed 404 relayed again                the query case + the e2e (on the
+                                                         distribution chart)
+               404 converted with no window              the still-relays case alone
+               RunReport passes false (all / errors)     the e2e case; the Table case stays green
+               indicators sentence "...window of this    the e2e's final no-"this run" collection
+               run"                                      alone, after every other line passed
+```
+
+**WHAT WAS RUN.** `typecheck` and `lint` exit 0 by their own exit codes;
+`test:unit` **188 / 2484**, the prediction counted from the source exactly (2412
+plus twelve AppShell cases and sixty for the charts: thirty-six pairs in the
+seven transform files, twenty-one in the seam file and three for the query),
+zero `Errors` lines; `test:integration` **172 / 2142, exit 0, zero failures**,
+the prediction exactly (171 plus the new `.ts` file; 2103 plus the thirty-six
+transform cases and the query's three, none of the `.tsx` ones);
+`pnpm test:e2e` **179 passed, exit 0**, the prediction exactly (177 plus the
+reader-wins case and the charts case). All against a SCRATCH DATABASE
+(`perfportal_summary`), a scratch Redis INDEX (db 8) and e2e port 3800, while
+another worktree ran its own integration gate on its own stores; the 1-minute
+load was 14.5 when integration started and 6.4 when it ended. The tree before
+the last two items measured 186 / 2412, 171 / 2103 and 177, each exact against
+its own prediction (2401 plus eleven cases; 176 plus the one new case) — the
+final-review fix wave's run, kept here because CI measured that tree:
+all five gates exit 0 on it, and **CI MEASURED THE
+TREE BEFORE THAT WAVE**, dispatched on `8e85697` before the placeholder-sentence
+fix: `build` read unit **186 / 2400**, integration
+**171 / 2103** and e2e **176 passed**, and `e2e-cross-browser` collected
+**528** (176 × three engines) and passed **523 with 5 skipped, none failed or
+flaky**, in 23.3 minutes — the collapsible sections are where WebKit's
+visibility workaround has bitten this repository before, and it did not. The
+second dispatch, on `57c58a7`, carried the last two items, and a
+`ResizeObserver` that scrolls was exactly what two engines disagreed about: its
+one flaky case is the keeper's two holes recorded above.
+
+**RE-MEASURED AFTER MERGING `main`**, where the runner-keeps-a-dying-run and
+sweeper-keeps-a-stored-log branches had both landed, with the two keeper fixes
+on top: `pnpm build`, `typecheck` and `lint` exit 0; `test:unit` **188 / 2508**
+(this branch's 2488 plus the runner branch's twenty), zero `Errors` lines;
+`test:integration` **173 / 2171, exit 0, zero failures** (172 / 2142 plus the
+runner branch's file and twenty-seven cases and the sweeper branch's two);
+`pnpm test:e2e` **180 passed, exit 0** — each total predicted before the run, on
+the same scratch stores. Before that merge, on the tree with the keeper fixes
+and nothing from `main`, `run-summary-report.spec.ts` alone passed **78 of 78**
+across the three engines, twice each; the merge brought in no file under
+`apps/web`.
+
+**THE REAL RUN.** The developer database with the API, worker and on-prem
+runner from this worktree on Node 22 and their own Redis index (db 11), and a
+real `ParitySimulation` bundle against the local target: 895 requests, 28 KO,
+Gatling exit 2 for the fixture's deliberate assertion. Watched live — the
+Summary's four live tiles, the SLA banner and two live charts; the Report's two
+live charts and five named withheld views — then finished, at 1440x900 and 375
+in both themes: four tiles, both bars open on their failures, two charts, the
+errors table and its request filter; every Report section opened in turn
+(Groups' three rows, Virtual users' three charts, telemetry honestly empty, no
+agent having run); an old `/charts?from=10000&to=40000` link landing on the
+Report with that window, and Report › Table reading 434 requests inside it.
+The token it minted was revoked afterwards and the viewer's stored theme put
+back.
+
+The sweeper-keeps-a-stored-log branch added no unit FILE and no unit case —
+unit stays **181 / 2313** — and 2 cases to
+`apps/worker/test/pipeline.integration.test.ts`, from **170 / 2086 to
+170 / 2088**. **e2e stays 168.** It is the sibling of the runner-keeps-a-dying-run
+branch's defect, found by that branch's review.
+
+**AN ABANDONED RUN'S STORED LOG WAS THROWN AWAY WHEN THE QUEUE SAID NO.**
+`Sweeper#assembleAbandoned` re-enqueued inside the same `try` as the assembly,
+and its `catch` finalized the run `incomplete` with no statistics on ANY
+failure. So a Redis failure after the whole-record log was stored and its
+sha written discarded a valid log over a row that was already at `parsing`
+carrying `stream_abandoned_at` — exactly what this sweep's own `parsing` arm
+re-enqueues once `parsing_started_at` is stale. The method's docstring
+promised the change could "never strand a run at `parsing`", which was true
+and was the wrong goal: leaving a run for a known recovery is not stranding
+it.
+
+**PAST THE STORE, A FAILURE TO ENQUEUE LEAVES THE RUN FOR THE NEXT SWEEP.** A
+`stored` flag is set once the sha is written; the catch logs and returns
+for a stored run, and still finalizes `incomplete` for anything earlier —
+a bucket, the chunks, a log with no whole record — because a later
+re-enqueue of a row with no valid bundle would only fail it on a checksum.
+The on-prem runner's `closeAbandoned` follows the same rule, which is where
+it was first written.
+
+**THE FAILURE IS INJECTED WHERE `#reenqueue` REALLY CALLS IT.** The Sweeper
+builds its BullMQ `Queue` privately, so the case spies on
+`Queue.prototype.getJob` and makes it reject, then restores it. The same case
+then proves the recovery the fix relies on: the row aged, a second sweep
+re-enqueues it, and the pipeline ends it `incomplete` WITH statistics.
+
+**AND ITS FIRST GREEN RUN FAILED ON THE FIXTURE, NOT THE FIX.** `seedRun`
+writes an upload's `.tgz` bundle key, so the recovery half's pipeline read the
+stored simulation.log as a gzip archive ("The upload is not a gzipped tar
+archive"). The sweep half cannot see a key's shape; only a case that goes on
+to parse it can. The case gives the row a live run's `…/simulation.log` key,
+which is what a real abandoned stream carries.
+
+**RED-VERIFIED, EACH MUTATION ON ITS OWN CASE:**
+
+```
+  the stored-run guard removed   the re-enqueue case: 'incomplete', not 'parsing'
+  stored set before the store    the store-failure case: 'parsing', not 'incomplete'
+```
+
+**WHAT WAS RUN.** `typecheck` and `lint` exit 0 by their own exit codes;
+`test:unit` **181 / 2313**, unchanged as predicted, zero `Errors` lines;
+`pnpm test:e2e` **168 passed, exit 0**; `test:integration` COLLECTED
+**170 / 2088** — the prediction exactly — with ONE failure:
+`trends.integration.test.ts`'s "puts the asked-about run in its own cohort",
+a `ZodError` over a body with every field undefined, which is the non-2xx
+pressure shape this file records, in a run that STARTED at **3,622 free
+pages**. That file then passed **20 / 20, five times out of five**, at a load
+of 17. This branch touches the sweeper and its test file and nothing an API
+read reaches. Against a SCRATCH DATABASE (`perfportal_sweeperkeep`), a scratch
+Redis INDEX (db 13) and e2e port 4100.
+
+**RE-MEASURED AFTER MERGING `main`**, where the runner-keeps-a-dying-run
+branch had landed underneath it: `typecheck` and `lint` exit 0; `test:unit`
+**181 / 2333**, zero `Errors` lines; `test:integration` **171 / 2115, exit 0,
+zero failures** — the runner branch's 171 / 2113 plus this branch's two; `pnpm
+test:e2e` **168 passed, exit 0**. Every total predicted before the run, on the
+same scratch stores, and the trends case that failed once above passed with
+the rest.
+
+The runner-keeps-a-dying-run branch added no unit FILE and 20 unit cases — 9
+to `apps/runner/test/run-events.test.ts`, 2 to `artifact.test.ts` and 9 net in
+`executor-events.test.ts` — from **181 / 2313 to 181 / 2333**. Integration moves with those
+twenty, ONE new file (`apps/runner/test/live-sink.integration.test.ts`, 6) and
+1 case in `packages/persistence/test/run-live.integration.test.ts`, from
+**170 / 2086 to 171 / 2113**, and **e2e stays 168**. It is a defect found by
+accident during the summary-report branch's real-run check, and its review
+round — which found the first cut claiming more than it knew, in four places —
+is half of what it measured.
+
+**A RUNNER RUN WHOSE GATLING DIED PART-WAY WAS FAILED AS UNREADABLE, AND ITS
+JOB READ "complete".** A Gatling SIGTERMed 25 seconds in exited 143. The runner logged
+"keeping the run because simulation.log was produced", closed it as a
+finished stream and marked the job `complete`; the pipeline then met the
+half-record the dying process left and failed the run:
+
+```
+  400 LOG_MALFORMED  simulation.log could not be decoded: needed 4 bytes at 8190, have 0
+  remediation        "Confirm the Gatling run finished and that the whole results
+                      directory was archived without modification."
+```
+
+A run that had measured real requests, reported as unreadable, with a
+remediation about an archive no reader made, beside a job saying it worked.
+
+**AND THE QUIETER HALF WAS NEVER SEEN.** A Gatling killed between two flushes
+leaves a log ending on a record boundary, which parses fine — so that run
+ended `complete`, a claim that the load test ran to its end. The truncation
+was only what made the defect loud.
+
+**GATLING'S OWN EXIT CODES DECIDE IT, READ OUT OF ITS JAR.**
+`io.gatling.app.cli.StatusCode` in gatling-app 3.15.1 is Success 0,
+InvalidArguments 1, AssertionsFailed 2, so only 0 and 2 mean the simulation
+ran to its end — 2 being one of its own assertions failing, which
+`ParitySimulation` does on purpose. `endedEarly` is any other code, or a
+signal. **A JVM that handles SIGTERM exits 143 with NO signal reported**,
+measured on the real kill, so "a signal was reported" would have missed the
+one case that actually happened.
+
+**A PRODUCER THAT DIED IS AN ABANDONED STREAM, AND THE SWEEPER ALREADY KNEW
+WHAT TO DO WITH ONE.** `RunnerLiveSink.closeAbandoned` follows
+`Sweeper#claimForAssembly` and `#assembleAbandoned` in order, with ONE
+deliberate difference (the next paragraph): claim the
+run with `stream_abandoned_at` in the SAME statement, assemble, cut to the
+last whole record with `truncateToWholeRecords` (the decoder that owns
+record framing — the runner depends on `@perfportal/plugin-gatling` now),
+store that, and hand it to the pipeline, which ends it `incomplete` WITH its
+statistics. The job then FAILS with `GATLING_ENDED_EARLY`, naming how Gatling
+ended, through the same settle-the-run-then-throw shape the
+no-`simulation.log` branch beside it already used. Run `incomplete`, job
+`failed`: the two say the same thing.
+
+**`claimForClose` TAKES A REQUIRED `{ abandoned }`.** A default would read
+every forgetting caller as a healthy close, with nothing anywhere saying so —
+this file's rule for a parameter whose wrong value is silent. The API's
+client-driven close passes `false`, because its protocol has no field for a
+producer that died.
+
+**FAILURE NEVER STRANDS THE RUN.** Before `finalizeLive`, any failure — the
+bucket, the chunks, a log with no whole record — finalizes it `incomplete`
+with no statistics. AFTER it, the stored log is whole and the row is at
+`parsing` carrying `stream_abandoned_at`, so a refusing queue leaves it
+there for the sweeper's `parsing` arm to re-enqueue — exactly how `close()`
+recovers past the same point — and the data survives. The first draft marked
+it incomplete there too, which would have thrown away a valid log. **That is
+where it deliberately parts from the sweeper**, whose `#assembleAbandoned` has
+ONE `catch` around everything: a `#reenqueue` that fails AFTER its sha UPDATE
+marks the run `incomplete` and discards a log it had stored whole. The first
+version of this entry, and of the code comment, said "step for step"; it is
+not, on exactly this point (KNOWN AND LEFT). The sweeper-keeps-a-stored-log
+branch has since given the sweeper the same boundary.
+
+**THE REVIEW FOUND THE FIRST CUT CLAIMING MORE THAN IT KNEW, IN FOUR PLACES.**
+Each was a sentence — in a job, a log, a comment — stating something the code
+had not established:
+
+  - **AN EXIT THAT IS NEITHER 0 NOR 2 CAN FOLLOW A FINISHED SIMULATION.** In
+    gatling-app 3.15.1 `Gatling$.start` returns from `Runner.run` and then runs
+    `RunResultProcessor.processRunResult`, which re-parses the log and writes
+    the HTML reports; an exception there (an OutOfMemoryError on a big soak
+    log, a full disk under the reports folder) escapes `main` as exit 1 over a
+    COMPLETE log. The runner never read those reports — the executor deletes
+    the work directory they land in — so both launch commands pass
+    `--no-reports` now, from ONE `gatlingFlags()` helper. Spelled out of the
+    jars rather than remembered: `io.gatling.shared.cli.GatlingCliOptions.NoReports`
+    is long name `no-reports`, short `nr`, "Runs simulation but does not
+    generate reports", and it lives in **`gatling-shared-cli-0.0.7`** — the
+    jar gatling-app 3.15.1 ships with, not a 3.15.1 jar.
+    `RunResultProcessor.reportsGenerationEnabled` honours it, and `javap -c` on
+    `initLogFileData` shows what it leaves alone: the log is still re-read when
+    the simulation `hasAssertions`, so a failed Gatling assertion still exits 2
+    and still prints its lines. A simulation with none no longer re-reads its
+    log at all. `strings` is no help here — macOS's reads a class file's
+    CAFEBABE as a fat Mach-O and refuses it; `javap -c -constants` is what works.
+    **The job's message states the evidence, not the simulation:**
+    `Gatling exited with code 143 rather than a finished simulation's exit code
+    (0, or 2 when a Gatling assertion failed).` — never "before the simulation
+    finished", which an exit-1-after-finish would make false.
+
+  - **THE JOB SAID THE RUN KEPT WHAT IT MEASURED WHEN IT MIGHT NOT HAVE.**
+    `closeAbandoned` returned nothing, and falls back to `incomplete` with no
+    statistics on a storage error, a log with no whole record, or no bytes. It
+    returns `'kept' | 'empty' | 'not_claimed'` now (kept being stored and
+    finalized, whether or not the queue took it), and the job's remediation and
+    the Logs ending are chosen from it. Each outcome is pinned where it arises:
+    the whole-records case is `kept`, the no-whole-record case and the new
+    bucket-refuses case are `empty`.
+
+  - **THE LOGS TAB ENDED `Run failed: …` OVER A RUN THAT DID NOT FAIL.** The
+    run ended `incomplete`; the JOB failed. The Logs ending is `Run ended early:
+    Gatling exited with code 143. What it measured was kept.` (or `Nothing it
+    measured could be kept.`), written by the catch — still the ONE place a
+    failed job's log gets its last line — from a line the executor sets just
+    before the throw, so the catch cannot write a second ending.
+
+  - **A CANCEL AFTER THE INJECTION ENDED WROTE THE INJECTION AND THE ENDING
+    AGAIN.** `markClosing` is past the injection, and `closeAbandoned` spends S3
+    reads and up to three seconds of queue retries — a window a cancel (or the
+    runner's own shutdown, which cancels the job and then awaits the run) can
+    land in. The catch wrote the cancelled ending: a second injection-ended
+    line, a second Ending phase and "Run ended without results" over a run
+    that kept its results. A stage `'ending'`, set right after `markClosing`,
+    stops it, and `#recordCancelledEnding` does not take that stage at all.
+
+  And one it did not name: **a zero-byte log under a JVM-handled SIGTERM was
+  still keyed on `result.signal`.** Exit 143 with no signal, before Gatling's
+  first flush, read as an ordinary exit and sent the operator to "confirm the
+  simulation class is correct". `wasTerminated` — a signal OR a code above 128 —
+  decides now, beside `endedEarly`.
+
+**RED-VERIFIED, EVERY MUTATION ON ITS OWN CASE**, from a checkpoint commit
+with each replacement count asserted, persistence rebuilt around its
+mutation:
+
+```
+  executor   endedEarly never true (the before-state)  both it.each rows: closeAbandoned never called
+             close() instead of closeAbandoned()       the same two rows
+  rule       exit 2 counted as early                   the finished-run rule case + the exit-2 executor case
+             a signal ignored                          the signal rule case ALONE (a real SIGKILL's code
+                                                       is null, which is not 0 or 2 either)
+  sink       no truncation                             the whole-records case ("expected 18884 to be less
+                                                       than 18884") and the no-whole-record case
+             an empty log enqueued                     the no-whole-record case alone
+  claim      abandoned ignored                         the claim case + the sink's whole-records case
+```
+
+**AND THE REVIEW ROUND'S, THE SAME WAY, FROM A SECOND CHECKPOINT:**
+
+```
+  artifact   --no-reports out of the shared helper     the jar case AND the bundle case
+             dropped from the jar builder alone        the jar case alone
+             dropped from the bundle builder alone     the bundle case alone
+             placed before the main class              the jar case ("expected 7 to be greater than 8")
+  message    "... before the simulation finished."     the rule's message cases (2) + 2 executor rows
+  zero-byte  terminated = a signal alone               the exit-143 row alone
+             the code-above-128 arm dropped            the rule case + that same row
+  sink       the post-finalize guard deleted           the queue-refuses case alone
+                                                       ("expected 'incomplete' to be 'parsing'")
+             the catch not marking incomplete          the bucket-refuses case alone
+             the outcome always `kept`                 the bucket-refuses case alone
+             the no-whole-record return says `kept`    the no-whole-record case alone
+             a cut at an EARLIER record                the whole-records case ("expected 14803 to be
+                                                       less than 1024")
+             a stored log that is not a prefix         the whole-records case, on `equals`
+  ending     the old catch (a cancel checked first)    six cases, the cancel-after-injection one among them
+             the early line never written              five cases
+             `stage = 'ending'` never set              the non-early cancel case ALONE
+  advice     the `empty` remediation branch dead       the rule case + the `empty` executor row
+```
+
+**TWO OF THOSE ARE WORTH READING TWICE.** `stage = 'ending'` removed fails ONE
+case and not the early-exit one: the early-exit case is held by the executor's
+`endedEarlyLine` branch, which the catch tests FIRST, so the stage guard only
+matters for a failure that is NOT an early exit — a Gatling that wrote nothing,
+a close that threw. Without a case for THAT, the guard was dead code with a
+passing suite, which is what the first draft of the round had. And the
+whole-records case's two new assertions are the pair "a prefix" and "under one
+record of slack": decodable and shorter is also true of a log that threw most
+of the run away, which the earlier-record cut shows (14,803 bytes of slack).
+
+**AND A TEST DOUBLE HAD TO LEARN WHAT `closed` MEANS.** The executor's catch
+aborts a run whose sink is not `closed`; the harness's sink had `closed:
+false` as a constant, so the first green run failed on `abortIncomplete`
+being called — true of the mock, false of the real sink, whose
+`closeAbandoned` closes it in its `finally`. The mock's `closeAbandoned` sets
+`closed` now, which keeps the assertion about the executor's own check — and
+the review round's zero-byte cases then failed on `abortIncomplete` being
+called TWICE, for the same reason one method over: the real one closes the
+sink, the mock did not, so the catch aborted again. Both close it now.
+
+**THE REAL RUN.** The developer database, the API, worker and runner from this
+worktree on Redis db 11, a real `ParitySimulation` bundle, and Gatling
+SIGTERMed by PID 25 seconds in — exit 143, the same 8,190 streamed bytes that
+failed before. The run ended `incomplete`, `stream_abandoned_at` set, its log
+cut to **8,177** bytes, **185 requests and 3 KO** kept, its SLA rules judged;
+the job `failed`, `GATLING_ENDED_EARLY`; the Logs tab ended on
+`Run failed: GATLING_ENDED_EARLY: Gatling exited with code 143 before the
+simulation finished.`; the run page read "Load test stopped early · 18s".
+The token it minted was revoked afterwards.
+
+**AND AGAIN AFTER THE REVIEW ROUND, WITH BOTH RUNS THE ROUND NEEDED.** Same
+stack, rebuilt. A run with NO kill ended Gatling exit 2 — `ParitySimulation`'s
+deliberate failing assertion — with `--no-reports` as the command line's last
+argument: the run `complete`, the job `complete`, 14 statistics rows, and the
+job log still printed `Parsing log file(s)...` and all three assertion lines
+(`Search: 95th percentile … less than 100.0 : false (actual : 1875.0)`), with
+NO `Generating reports...` line anywhere. A run SIGTERMed by PID 25 seconds in
+ended `incomplete`, `stream_abandoned_at` set, 187 requests and 3 KO kept
+across 14 rows; the job `failed` with `GATLING_ENDED_EARLY` and the message
+`Gatling exited with code 143 rather than a finished simulation's exit code (0,
+or 2 when a Gatling assertion failed).`; and its events ended `Run injection
+ended with reason 'Gatling exited with code 143'`, `--- Ending`,
+`Run ended early: Gatling exited with code 143. What it measured was kept.`,
+with no `Run failed` line. Stopped by PID — the worker took a second TERM — and
+the token revoked.
+
+**KNOWN AND LEFT, EACH A DECISION RATHER THAN AN OVERSIGHT:**
+
+  - The API's client-driven close (the Gradle plugin's live mode) still closes
+    as healthy — its protocol has no way to say the producer died, and a client
+    whose Gatling crashed sends its close anyway. That is a protocol change,
+    its own branch.
+  - **An exit that is not 0 or 2 can still follow a finished simulation.**
+    `--no-reports` removed the biggest after-the-run failure, not all of them:
+    an `after {}` hook throwing, or the assertion re-read running out of
+    memory, still exits 1 over a whole log. Such a run is kept as `incomplete`
+    WITH its whole log, and the job says how the process ended without
+    claiming where the simulation was. Telling the two apart needs Gatling's own
+    "completed" line, which goes through logback — controlled by the uploaded
+    artifact, and silenced by the reference bundle — so stdout cannot be relied
+    on as evidence.
+  - **The sweeper's own abandoned path still has the discarded-log defect**
+    described above: its `catch` marks a run `incomplete` when `#reenqueue`
+    fails after the log was stored whole. `Sweeper` is not touched here; it is
+    its own branch. Done by the sweeper-keeps-a-stored-log branch, which
+    merged after this one.
+  - **A deliberate cancel discards data while a crash keeps it.** A run the
+    operator cancels ends through `abortIncomplete` with no statistics, and one
+    whose Gatling died ends with everything it measured. Whether a cancelled
+    run should keep its partial data is a product decision for a later branch.
+  - A failure after the injection ended that is NOT an early exit (a Gatling
+    that wrote nothing, a close that threw) ends the log on `Run failed: …`
+    even when a cancel landed meanwhile, where the job reads `cancelled` —
+    the alternative is a second Ending phase, which is worse.
+
+**WHAT WAS RUN.** `typecheck` and `lint` exit 0 by their own exit codes;
+`test:unit` **181 / 2333**, zero `Errors` lines; `test:integration`
+**171 / 2113, exit 0, zero failures**; `pnpm test:e2e` **168 passed, exit 0** —
+every total the one counted from the source before any suite ran, on the final
+tree (the commit after it changes `CLAUDE.md` alone), against a SCRATCH
+DATABASE (`perfportal_runnerdeath`), a scratch Redis INDEX (db 14 — db 9 held
+164 keys of somebody else's) and e2e port 3900, from a worktree at an undotted
+path. Each suite started at a 1-minute load under 8 (4.67, 7.01 and 4.79),
+with another worktree's integration run beside it on its own stores.
 
 The run-logs branch added SEVEN unit files —
 `packages/contracts/test/run-events.test.ts` (10),

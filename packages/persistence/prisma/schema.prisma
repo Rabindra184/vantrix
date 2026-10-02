@@ -363,7 +363,9 @@ model Run {
   /// producer a fresh silence budget.
   streamUpdatedAt  DateTime? @map("stream_updated_at") @db.Timestamptz(3)
 
-  /// When the sweeper finalized this run because its producer stopped.
+  /// When this run's producer was found to have stopped before its stream
+  /// ended: the sweeper finalizing a stale `running` run, or the on-prem
+  /// runner closing the run of a Gatling that ended early.
   ///
   /// NULL for every run that closed properly, and for every run that predates
   /// the column. It exists because the pipeline commits statistics and the
@@ -373,8 +375,10 @@ model Run {
   /// carrying whatever its stream delivered. Nothing else tells the two apart;
   /// `claimForClose` and the sweep both write `parsing`.
   ///
-  /// Set by ONE writer (Sweeper's running arm) and read by ONE (the pipeline's
-  /// terminal UPDATE), so the new behaviour has exactly one way in.
+  /// Set by TWO writers, each in the same statement as its claim off
+  /// `running` — the Sweeper's running arm, and `RunnerLiveSink.closeAbandoned`
+  /// through `claimForClose({ abandoned: true })` — and read by ONE (the
+  /// pipeline's terminal UPDATE), so the behaviour has exactly one way out.
   streamAbandonedAt DateTime? @map("stream_abandoned_at") @db.Timestamptz(3)
   idempotencyKey   String?   @map("idempotency_key")
   /// When the platform received this run's bundle (accept time), NOT when

@@ -34,8 +34,8 @@ import { useEffect } from 'react';
  * is deliberately distinct from a title of `PerfPortal`: it leaves whatever
  * the previous page set in place for the moment it takes to resolve, rather
  * than flashing the bare product name between two named pages. The same
- * "absence is not a value" rule `RunTabs`' `errorCount` and `RunHeader`'s
- * `peakUsers` already follow.
+ * "absence is not a value" rule `RunHeader`'s `verdict` already follows:
+ * `undefined` is not evaluated yet, and `null` is evaluated with no verdict.
  */
 export default function useDocumentTitle(title: string | null): void {
   useEffect(() => {

@@ -1,6 +1,7 @@
 import type { SeriesResponse } from '@perfportal/contracts';
 import { useMemo, useState } from 'react';
 import Chart from './Chart';
+import { RUN_TIME_GROUP } from './crosshair';
 import type { TimeDomainMs } from './types';
 import { Chip, ControlBar, ControlGroup, Segmented, Switch } from './ChartControls';
 import type { MarkRole } from './theme';
@@ -63,6 +64,7 @@ export default function PercentilesChart({
   domainMs,
   warmupMs,
   compact,
+  windowSelected,
 }: {
   readonly series: SeriesResponse;
   readonly id?: string;
@@ -75,14 +77,22 @@ export default function PercentilesChart({
   readonly warmupMs?: number;
   /** §22.6's sparkline — see `ChartProps.compact`. */
   readonly compact?: boolean;
+  /**
+   * Did the reader narrow the Report to a time window? REQUIRED, no default: a
+   * window that selects nothing and a run that recorded nothing draw the same
+   * empty payload, and the sentence under the figure must not claim a fact about
+   * the RUN when the reader asked about a WINDOW. The Report passes
+   * `window !== null`; the Summary and the drill-downs pass `false`.
+   */
+  readonly windowSelected: boolean;
 }) {
   const [scale, setScale] = useState<'log' | 'value'>('log');
   const [bands, setBands] = useState<readonly Band[]>(DEFAULT_BANDS);
   const [outcome, setOutcome] = useState<Outcome>('ok');
 
   const data = useMemo(
-    () => toPercentiles(series, bands, outcome, { x: 'ms' }),
-    [series, bands, outcome],
+    () => toPercentiles(series, { bands, outcome, x: 'ms', windowSelected }),
+    [series, bands, outcome, windowSelected],
   );
 
   // The transform always emits series in BANDS order, so the roles must be the
@@ -111,8 +121,8 @@ export default function PercentilesChart({
       // them to this chart rather than to the one above it.
       // A SPARKLINE HAS NO CONTROLS. Three groups of chips above a 96px
       // drawing is more chrome than figure, and §22.6's summary is read-only
-      // by definition — the full chart, controls and all, is one tap away on
-      // the Charts tab.
+      // by definition — the full chart, controls and all, is in the Report's
+      // Requests section.
       controls={
         compact ? undefined : (
         <ControlBar>
@@ -180,7 +190,7 @@ export default function PercentilesChart({
       }}
       unit="ms"
       // Shares one crosshair with the other time-axis charts (§22.4/§22.5).
-      group="run-time"
+      group={RUN_TIME_GROUP}
       roles={roles}
     />
   );

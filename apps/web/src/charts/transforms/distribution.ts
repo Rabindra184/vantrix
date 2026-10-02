@@ -130,7 +130,16 @@ function overflowNote(count: number): string {
  * checkpoint #4, and it would make "this run had no failures" and "this chart
  * forgot to draw failures" the same picture.
  */
-export function toDistribution(d: DistributionResponse): ChartData {
+export function toDistribution(
+  d: DistributionResponse,
+  /**
+   * REQUIRED, no default: the empty sentences below are claims about the whole
+   * run unless the reader asked about a window, and a wrong value is silent.
+   * The Report passes `window !== null`; the Summary and the drill-downs pass
+   * `false`.
+   */
+  opts: { readonly windowSelected: boolean },
+): ChartData {
   const columns = [labelColumn(d.exactValues), ...VALUE_COLUMNS];
   // Emitted in the empty branch too: "everything overflowed" is exactly the
   // case where there are no bins to draw AND the reader most needs to know why.
@@ -148,8 +157,17 @@ export function toDistribution(d: DistributionResponse): ChartData {
       // request took no time at all". The two cases are told apart because a
       // reader acts on them differently: nothing to report, versus a run whose
       // observations all landed outside the recorded range.
-      empty:
-        d.labels.length === 0
+      //
+      // BOTH switch under a window. "In this run" is the claim a window can
+      // falsify: the window may hold only the responses that overflowed while
+      // the rest of the run fell inside the range, so the second sentence is
+      // no truer of the run than the first. (The overflow `limitation` beside
+      // it is a fact about the histogram's storage and stays.)
+      empty: opts.windowSelected
+        ? d.labels.length === 0
+          ? 'No response times fall in the selected window, so there is no distribution to show.'
+          : 'No response time in the selected window fell inside the recorded range, so there are no bins to draw.'
+        : d.labels.length === 0
           ? 'No response times were recorded for this run, so there is no distribution to show.'
           : 'No response time in this run fell inside the recorded range, so there are no bins to draw.',
       limitation,

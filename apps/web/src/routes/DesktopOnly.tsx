@@ -82,9 +82,14 @@ export default function DesktopOnly({
         <h3 className="text-[0.9375rem] font-semibold tracking-tight text-primary">{what}</h3>
         <p className="text-[0.8125rem] leading-relaxed text-muted">
           Not drawn at this width — it would be too small to read here, and building it is work a
-          narrow screen does not need to do. The summary above carries the verdict and the headline
-          numbers.
+          narrow screen does not need to do. The run's Summary carries the verdict and the
+          headline numbers.
         </p>
+        {/* "The Summary", never "the summary above". This sentence was written
+            when the verdict band sat above every run section; it draws on the
+            Summary alone now, and every caller of this component is a Report,
+            Trends, Compare or telemetry view with nothing of the kind above
+            it. Naming the page keeps the pointer true wherever it renders. */}
       </div>
       <Button
         variant="secondary"

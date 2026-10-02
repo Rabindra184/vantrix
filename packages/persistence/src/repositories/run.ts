@@ -716,11 +716,27 @@ export class RunRepository {
    * claim lands, and the sweeper could re-enqueue it while close() is still
    * assembling the log, mid-`Promise.all` over a multi-thousand-object
    * live-chunk prefix.
+   *
+   * `abandoned` stamps `stream_abandoned_at` IN THE SAME STATEMENT, for a
+   * close whose producer died before its simulation finished — the on-prem
+   * runner's Gatling ending on a signal or an unexpected exit code. The
+   * pipeline reads that column to end the run `incomplete` rather than
+   * `complete`, and a row at `parsing` without it is indistinguishable from
+   * a healthy close; the sweeper's own claim stamps both together for the
+   * same reason. REQUIRED, with no default: a caller that forgets it reads as
+   * a healthy close, and nothing anywhere would say so.
    */
-  async claimForClose(runId: string): Promise<boolean> {
+  async claimForClose(runId: string, opts: { abandoned: boolean }): Promise<boolean> {
+    const now = new Date();
     const { count } = await this.prisma.run.updateMany({
       where: { id: runId, status: 'running' },
-      data: { status: 'parsing', parsingStartedAt: new Date() },
+      data: {
+        status: 'parsing',
+        parsingStartedAt: now,
+        // `undefined` is Prisma's "leave as it is": a healthy close writes
+        // nothing to the column, which is null on every running row.
+        streamAbandonedAt: opts.abandoned ? now : undefined,
+      },
     });
     return count > 0;
   }

@@ -30,6 +30,11 @@ export interface Slot {
  * let their transforms explain themselves. So on the same page, seven charts
  * say "no response times were recorded" and the eighth has an error to relay.
  * Both are the reader being told what happened; only the wording differs.
+ *
+ * ONE 404 IS NOT RELAYED: a WINDOWED read that selects no buckets. That is a
+ * quiet window, not a run without a histogram, so `distributionQuery` turns it
+ * into the empty payload and the transforms name the window like their
+ * siblings do (see its own comment).
  */
 export function Payload<T>({
   query,
@@ -65,7 +70,7 @@ export function Payload<T>({
  * literal "chart" it used to be because the tables use this too, and a table
  * that apologised for a chart would be describing the wrong hole in the page.
  */
-function explain(error: unknown, what: string): string {
+export function explain(error: unknown, what: string): string {
   if (error instanceof ProblemError) return `${error.detail} ${error.remediation}`;
   return error instanceof Error
     ? `This ${what}’s data could not be loaded: ${error.message}`
@@ -102,14 +107,13 @@ export function Undrawn({ slot, reason }: { slot: Slot; reason: string }) {
  * What its caller renders once the payload arrives, or — until then — a
  * heading and the reason it is not there.
  *
- * USUALLY ONE TABLE (`ErrorsTable`), but not always: the Statistics slot's
- * `children` renders `RunStats`'s six tiles ahead of `StatisticsTable`, both
- * from this same payload, because a failed or still-pending `/stats` should
- * explain itself once rather than leaving the tile row to render six dashes
- * above an error the reader has to notice separately (`RunDetail.tsx`'s
- * `RunOverviewTab`). This component owns only the loading and error states;
- * how many things `children` draws from the resolved payload is its callers'
- * choice.
+ * USUALLY ONE TABLE (`ErrorsTable`, or `StatisticsTable` in the Report), but
+ * a caller may draw more than one thing from the resolved payload — the
+ * Statistics slot once rendered a row of tiles ahead of its table, so that a
+ * failed or still-pending `/stats` explained itself once rather than leaving
+ * the tiles to render dashes above an error the reader has to notice
+ * separately. This component owns only the loading and error states; how many
+ * things `children` draws from the resolved payload is its callers' choice.
  *
  * A TABLE WHOSE FETCH FAILED MUST NOT SIMPLY VANISH, for the same reason
  * `Payload` renders undrawn charts rather than nothing: the statistics table IS
@@ -125,11 +129,17 @@ export function Undrawn({ slot, reason }: { slot: Slot; reason: string }) {
  */
 export function TableSection<T>({
   title,
+  headingLevel = 2,
   query,
   columns,
   children,
 }: {
   title: string;
+  /**
+   * `3` when the table sits inside a section that has its own `<h2>` — the
+   * Report's Statistics under Requests — so the outline says it belongs there.
+   */
+  headingLevel?: 2 | 3;
   query: UseQueryResult<T>;
   /**
    * How many columns the table this stands in for will have.
@@ -155,7 +165,7 @@ export function TableSection<T>({
 
   return (
     <section className="flex flex-col gap-3">
-      <SectionHeading>{title}</SectionHeading>
+      <SectionHeading level={headingLevel}>{title}</SectionHeading>
       {query.isPending ? (
         <LoadingState label="Loading…">
           <SkeletonTable columns={columns} rows={5} />

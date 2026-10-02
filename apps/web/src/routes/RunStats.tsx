@@ -1,57 +1,70 @@
 import { Fragment } from 'react';
 import { Link } from 'react-router-dom';
-import type { Assertion, StatRow, StatsResponse, TrendRun } from '@perfportal/contracts';
+import type { Assertion, RunResponse, StatRow, StatsResponse, TrendRun } from '@perfportal/contracts';
 import StatTile from '../components/StatTile';
 import { comparability, summariseConditions } from './comparability';
 import { formatInstant } from './format';
 import { clampPercentile, type PercentileRange } from '../percentile';
 import { runPath } from './paths';
 import { runName } from '../runNumber';
-import { formatCount, formatMs, formatRate } from '../tables/StatisticsTable';
+import { StatisticsEmpty, formatCount, formatMs } from '../tables/StatisticsTable';
 
 /**
- * §13.2's headline numbers, above the tables.
+ * The Summary's headline numbers — GE's four, and no more.
  *
  * EVERY VALUE COMES FROM THE RUN-SCOPE STATS ROW the page already fetched —
- * `statsQuery` is asked for twice on this page and served once from cache, so
- * this adds no request. Nothing here is derived from anywhere else: a tile that
- * disagreed with the statistics table directly beneath it would be worse than
- * no tile.
+ * `statsQuery` is asked for once and served from cache, so this adds no
+ * request — EXCEPT PEAK USERS, which the row cannot carry: it records no user
+ * count, so that one is handed in from the users series the Summary fetches
+ * whole-run. A tile that disagreed with the statistics table it summarises
+ * would be worse than no tile, so nothing else is derived from anywhere else.
  *
- * The nine fields these six tiles read — `count`, `errorRate`, `okCount`,
- * `koCount`, `throughputRps`, `meanMs`, `maxMs`, `percentiles.p95`,
- * `percentiles.p99` — are exactly the run-scope row's own fields, read
- * straight off it as a headline value or a hint (some, like `count`, in more
- * than one tile's hint) and never recombined into a new quantity the row does
- * not already carry.
+ * The fields the three row-fed tiles read — `errorRate`, `koCount`, `count`,
+ * `okCount` and `percentiles.p95` — are the run-scope row's own fields, read
+ * straight off it as a headline value or a hint and never recombined into a
+ * new quantity the row does not already carry.
  *
- * EVERY NUMBER IS WRITTEN DOWN THE SAME WAY THE TABLE WRITES IT: `formatCount`,
- * `formatMs` and `formatRate` are imported from
- * `StatisticsTable`, never re-derived here. `formatCount` in particular is
- * `String(value)` — no grouping separator — and that is not a style choice
- * this file gets to make independently: `StatisticsTable`'s own docstring
- * (`formatCount`) explains that a locale-dependent separator would make what a
- * reader (or a test) sees depend on where it ran, and a count tile that used
- * `.toLocaleString()` would read "1,234" beside a table row reading "1234" for
- * any run at four digits or more — a real disagreement, not a hypothetical
- * one, and the exact class of bug this whole component exists to rule out.
+ * EVERY NUMBER IS WRITTEN DOWN THE SAME WAY THE TABLE WRITES IT: `formatCount`
+ * and `formatMs` are imported from `StatisticsTable`, never re-derived here.
+ * `formatCount` in particular is `String(value)` — no grouping separator — and
+ * that is not a style choice this file gets to make independently:
+ * `StatisticsTable`'s own docstring (`formatCount`) explains that a
+ * locale-dependent separator would make what a reader (or a test) sees depend
+ * on where it ran, and a count tile that used `.toLocaleString()` would read
+ * "1,234" beside a table row reading "1234" for any run at four digits or more
+ * — a real disagreement, not a hypothetical one, and the exact class of bug
+ * this whole component exists to rule out.
  *
- * `null`, not zeroed tiles, when the payload carries no run-scope row: a
- * statistics table with nothing to show already renders its own "no
- * statistics were recorded" message (`StatisticsTable`), and six tiles
- * reading 0/0.00%/— above that sentence would assert measurements nobody
- * took.
+ * WHEN THE PAYLOAD CARRIES NO RUN-SCOPE ROW this draws the table's own empty
+ * sentence (`StatisticsEmpty`), not nothing. It used to return `null`, because
+ * the statistics table beside it said so; the Summary has no statistics table
+ * any more (it is in the Report), so this is the only place an empty run is
+ * said. Zeroed tiles would still be wrong — `0 requests` reads as a measurement
+ * nobody took — which is why it is a sentence.
  */
 type DeltaTone = 'better' | 'worse' | 'neutral';
 
 export default function RunStats({
   stats,
+  peakUsers,
+  runStatus,
   baseline,
   current,
   assertions,
-  windowed,
 }: {
   readonly stats: StatsResponse;
+  /**
+   * The most users the run had running at once, from the users series — or
+   * `null` until that arrives, and for a run that recorded no buckets. A dash,
+   * never `0`: zero is a measurement.
+   */
+  readonly peakUsers: number | null;
+  /**
+   * Why an empty payload is empty, which it cannot work out for itself: a run
+   * whose stream stopped kept nothing, and "recorded no statistics" would tell
+   * a reader who watched 440 requests go by that none existed.
+   */
+  readonly runStatus: RunResponse['status'] | undefined;
   readonly baseline?: TrendRun | null;
   /**
    * This run as its own cohort row, so the note under the tiles can say what
@@ -66,64 +79,29 @@ export default function RunStats({
    * leaves every tile untinted — see `slaTone`.
    */
   readonly assertions?: readonly Assertion[];
-  /**
-   * Is a time window applied? Three things below change with it, and every one
-   * of them was wrong under a window before this prop existed — see the empty
-   * branch, the percentile note and `slaTone`.
-   */
-  readonly windowed?: boolean;
 }) {
   const run = stats.stats.find((row) => row.scope === 'run');
   if (run === undefined) {
-    /* ═══ AN EMPTY WINDOW IS A MEASUREMENT, NOT AN ABSENCE ═══
-     *
-     * This returned `null`, on the reasoning — written here — that "a
-     * statistics table with nothing to show already renders its own 'no
-     * statistics were recorded' message, and six tiles reading 0/0.00%/—
-     * above that sentence would assert measurements nobody took".
-     *
-     * The first half of that is true of a run with no statistics and FALSE of
-     * a window with none. MEASURED on the reference run at `?from=62000&to=63000`
-     * — a real, in-range second of a 62s run that happens to hold no requests
-     * — the whole "Run totals" section vanished and the statistics table
-     * printed no such message either. A reader who dragged the brush one
-     * second too far got a page with its headline numbers silently removed and
-     * nothing anywhere saying why.
-     *
-     * The second half stays right, which is why this is a sentence and not
-     * zeroed tiles: `0 requests` is a claim about the window (true) that reads
-     * as a claim about the run (false). So the section keeps its landmark and
-     * says what happened.
-     *
-     * The whole-run case is untouched and still renders nothing: there the
-     * table's own message IS on screen, and this component has no scope to
-     * add. */
-    if (windowed !== true) return null;
     return (
-      <section aria-label="Run totals" data-testid="stats-empty-window">
-        <p className="rounded-lg border border-default bg-sunken px-3 py-2 text-[0.8125rem] text-muted">
-          No requests fall inside the selected window, so this run’s totals cannot be computed for
-          it. The run’s own figures are unchanged — widen the window to see them.
-        </p>
+      <section aria-label="Run totals" data-testid="stats-empty">
+        {/* `false`: the Summary is whole-run by construction — it sends no window
+            and ignores one in its URL — so "a window selected nothing" is not a
+            state it can be in, and the retained/recorded wording is the true one. */}
+        <StatisticsEmpty runStatus={runStatus} windowSelected={false} />
       </section>
     );
   }
 
   return (
     <section aria-label="Run totals" className="@container">
-      {/* SIX ACROSS ONLY AT `xl`, not at `lg`. The six-column grid was
-          breaking at 1024px: `14.40 req/s` is the widest value any tile
-          renders, and in a ~150px column it wrapped onto a second line, which
-          pushed that one tile's hint down and left the row's baselines
-          visibly out of step. Three across from `sm` to `xl` gives every value
-          a line to itself at the widths a laptop actually uses, and the row
-          only goes to six when there is room for it. */}
-      {/* AND THE THRESHOLDS ARE CONTAINER-RELATIVE NOW, for the reason the
-          comment above already half-states: what decides whether six columns
-          fit is the width this list HAS and the size of the text in it, and
-          `xl:` knows neither. Tailwind's container thresholds are in rem, so
-          at a 32px root `@5xl` is 2048px and the section never reaches it —
-          the row drops back to three and then two instead of spilling.
+      {/* FOUR ACROSS ONLY WHEN THIS LIST HAS ROOM, and the question asked is
+          the width the LIST has, not the viewport's. `xl:` knows neither the
+          sidebar nor the size of the text in it; Tailwind's container
+          thresholds are in rem, so at a 32px root `@xl` is 1024px and the row
+          drops back to two across instead of spilling. (The grid held six
+          tiles when this comment was written, where the widest value,
+          `14.40 req/s`, wrapped in a ~150px column and left one tile's hint out
+          of step with its neighbours' — four tiles clear that with room.)
 
           `@container` GOES ON THE `<section>`, NOT ON THIS `<dl>`. A container
           query cannot query the element that declares the context — put both
@@ -131,73 +109,29 @@ export default function RunStats({
           that way first here, and it cost `run-tables.spec.ts`'s M01 geometry
           bound: the tiles fell to two columns at every width, which made the
           block tall enough to push the run totals past 900px. */}
-      {/* ═══ THE ORDER IS THE 09-13 REVIEW'S TARGET LAYOUT, ITEM 3 ═══
+      {/* ═══ THE ORDER IS GE's, AND SO IS THE COUNT ═══
        *
-       * "p95 response time, error rate, throughput, total requests; p99 and
-       * mean can follow at lower emphasis."
+       * GE's Summary shows exactly four numbers — error ratio, total requests,
+       * max concurrent users, p95 — and this row shows the same four in the
+       * same order, so a reader moving between the two products finds each
+       * number in the same place. Throughput, p99 and mean are in the Report's
+       * statistics table, one section away; they were tiles here (six, with p95
+       * promoted to first by the 09-13 review's target layout) and the Summary
+       * is a summary — more numbers do not make a faster read.
        *
-       * This row read Requests, Error rate, Requests/s, Mean, p95, p99 — so
-       * the number a performance engineer triages on sat FOURTH, behind a
-       * count and a mean, and nothing anywhere argued that order. It was not a
-       * decision that was taken and defended; it was the order the tiles
-       * happened to be written in, and no test could see it: every assertion
-       * reaches these by `data-testid`, and `run-tables.spec.ts`'s M01 bound
-       * checks that three of them sit inside the first 900px, which is a claim
-       * about POSITION and says nothing about sequence.
+       * WHAT THE CUT COSTS, STATED RATHER THAN GLOSSED: the tint and the delta
+       * the removed tiles carried go with them. A gate on throughput, p99 or
+       * mean still judges the run and still shows in Platform gates; it just no
+       * longer colours a number up here. `slaTone` keeps its other callers.
        *
-       * WHAT IT COSTS, STATED RATHER THAN GLOSSED: Mean/p95/p99 used to sit
-       * adjacent in ascending order, which is a real and coherent grouping.
-       * Promoting p95 breaks it. The review's reading wins because a reader
-       * arrives asking "is the latency acceptable", not "walk me up the
-       * distribution" — and the three still share one vocabulary with
-       * `StatisticsTable`'s columns, which is what N01 was about.
+       * ═══ AND "LOWER EMPHASIS" STAYS DECLINED ═══
        *
-       * ═══ AND "LOWER EMPHASIS" IS DECLINED, WITH THE REASON ═══
-       *
-       * The finding says p99 and mean "CAN follow at lower emphasis" —
-       * permission, not requirement — and in THIS component both spellings of
-       * emphasis are already spoken for. Colour is reserved for SLA `tone`,
-       * which `StatTile`'s own docstring argues at length ("colouring a number
-       * red is a JUDGEMENT, and the platform has only made one where a rule
-       * exists"), so a muted value would either collide with that vocabulary
-       * or invent a second one. Size is worse: `mt-auto` on the hint exists
-       * specifically to keep six values on a common baseline, and the grid
-       * comment above records that defect being fixed twice already.
-       *
-       * Position IS the emphasis this grid has. First is first. */}
-      <dl className="grid grid-cols-2 gap-3 @xl:grid-cols-3 @5xl:grid-cols-6">
-        <StatTile
-          /* ═══ "Mean", "p95", "p99" — THE TABLE'S OWN WORDS ═══
-           *
-           * Review N01 asks for `p95 response time` as the standard spelling,
-           * and these three deliberately fall short of it. MEASURED: at
-           * 1280x800 the six-across grid gives each tile 147px and the label
-           * box 113px, where "Mean response time" wraps to two lines (h=36
-           * against 18) and pushes that tile's value 18px below its five
-           * neighbours — the baseline defect the grid comment above records
-           * fixing once already. Every other width was clear (1440, 1024, 390).
-           *
-           * What the finding is actually about is DRIFT: one quantity spelled
-           * differently on each surface. These now match `StatisticsTable`'s
-           * columns and `SLA_METRIC_SCALARS`' own names exactly, so the tile,
-           * the table and the metric a gate is authored against are one word.
-           * That is a stronger standardisation than the review's phrasing, and
-           * it fits. The long form belongs in PROSE, where `ProjectRules`
-           * already writes it out in full.
-           *
-           * The `ms` unit beside each value is what says these are times.
-           *
-           * This comment rides with p95 rather than Mean now, because the
-           * target-layout order above put p95 first of the three and it
-           * explains all three. */
-          label="p95"
-          value={percentileValue(run, 'p95')}
-          unit={percentileUnit(run, 'p95')}
-          tone={slaTone(windowed === true ? undefined : assertions, 'p95')}
-          hint="estimate"
-          delta={deltaFor(percentileMs(run, 'p95'), percentileMs(baseline, 'p95'), 'lower')}
-          data-testid="stat-p95"
-        />
+       * Colour is reserved for SLA `tone`, which `StatTile`'s own docstring
+       * argues at length ("colouring a number red is a JUDGEMENT, and the
+       * platform has only made one where a rule exists"), and size would break
+       * the common baseline `mt-auto` on the hint exists to keep. Position IS
+       * the emphasis this grid has. First is first. */}
+      <dl className="grid grid-cols-2 gap-3 @xl:grid-cols-4">
         <StatTile
           label="Error rate"
           // The field and expression `StatisticsTable`'s `% KO` column uses
@@ -205,29 +139,15 @@ export default function RunStats({
           // `koCount / count`, which would be a second definition of one
           // number sitting a few hundred pixels from the first.
           value={`${(run.errorRate * 100).toFixed(2)}%`}
-          tone={slaTone(windowed === true ? undefined : assertions, 'error_rate')}
+          tone={slaTone(assertions, 'error_rate')}
           hint={`${formatCount(run.koCount)} of ${formatCount(run.count)} requests`}
           delta={deltaFor(run.errorRate, baseline?.errorRate, 'lower')}
           data-testid="stat-error-rate"
         />
         <StatTile
-          /* "Requests/s", the spelling N01 standardises on, and it replaces
-             BOTH halves of the old tile: the label said "Mean Throughput" and
-             the unit said "req/s", so the row named one quantity twice and
-             agreed with neither the chart axis nor the statistics column. The
-             unit is gone because the label now carries it — repeating it would
-             render "Requests/s 14.40 req/s". */
-          label="Requests/s"
-          value={formatRate(run.throughputRps)}
-          tone={slaTone(windowed === true ? undefined : assertions, 'throughput_rps')}
-          hint={`${formatCount(run.count)} requests over the run`}
-          delta={deltaFor(run.throughputRps, baseline?.throughputRps, 'higher')}
-          data-testid="stat-throughput"
-        />
-        <StatTile
           label="Requests"
           value={formatCount(run.count)}
-          tone={slaTone(windowed === true ? undefined : assertions, 'count')}
+          tone={slaTone(assertions, 'count')}
           /* "successful / failed", not "OK / KO" — review N01. Those two are
              Gatling's words, and nothing in this repo requires them: the PRD
              binds QUANTITIES (count, ok/ko count, % KO, count/second…) and
@@ -239,27 +159,36 @@ export default function RunStats({
           delta={deltaFor(run.count, baseline?.count, 'neutral')}
           data-testid="stat-total-requests"
         />
-        {/* p99 THEN Mean, which is the order the finding lists them in ("p99
-            and mean can follow"). The ascending Mean → p95 → p99 grouping was
-            already broken by promoting p95, so preserving it between these two
-            alone would buy nothing and cost agreement with the spec. */}
         <StatTile
-          label="p99"
-          value={percentileValue(run, 'p99')}
-          unit={percentileUnit(run, 'p99')}
-          tone={slaTone(windowed === true ? undefined : assertions, 'p99')}
-          hint="estimate"
-          delta={deltaFor(percentileMs(run, 'p99'), percentileMs(baseline, 'p99'), 'lower')}
-          data-testid="stat-p99"
+          /* GE's "Max. concurrent V.U", in this product's words. From the users
+             series (the Summary fetches it whole-run), not the statistics row,
+             which carries no user count. No "vs previous": a cohort row records
+             no peak, so there is nothing honest to compare against. */
+          label="Peak users"
+          value={peakUsers === null ? '—' : formatCount(peakUsers)}
+          hint="concurrent, at the busiest moment"
+          data-testid="stat-peak-users"
         />
         <StatTile
-          label="Mean"
-          value={formatMs(run.meanMs)}
-          unit="ms"
-          tone={slaTone(windowed === true ? undefined : assertions, 'mean')}
-          hint={`up to ${formatMs(run.maxMs)} ms`}
-          delta={deltaFor(run.meanMs, baseline?.meanMs, 'lower')}
-          data-testid="stat-mean-response"
+          /* "p95", the table's own word (review N01 asks for `p95 response
+             time` and this deliberately falls short of it). MEASURED: at
+             1280x800 a six-across grid gave each tile 147px and the label box
+             113px, where "Mean response time" wrapped to two lines and pushed
+             that tile's value 18px below its neighbours — the baseline defect
+             this grid once recorded fixing. What the finding is actually about
+             is DRIFT: one quantity spelled differently on each surface. This
+             matches `StatisticsTable`'s column and `SLA_METRIC_SCALARS`' own
+             names exactly, so the tile, the table and the metric a gate is
+             authored against are one word. The long form belongs in PROSE,
+             where `ProjectRules` already writes it out in full, and the `ms`
+             unit beside the value is what says this is a time. */
+          label="p95"
+          value={percentileValue(run, 'p95')}
+          unit={percentileUnit(run, 'p95')}
+          tone={slaTone(assertions, 'p95')}
+          hint="estimate"
+          delta={deltaFor(percentileMs(run, 'p95'), percentileMs(baseline, 'p95'), 'lower')}
+          data-testid="stat-p95"
         />
       </dl>
 
@@ -267,12 +196,12 @@ export default function RunStats({
 
       {/* ═══ THE METHODOLOGY ONCE, NOT ONCE PER TILE (review 09-13 N02) ═══
        *
-       * Both percentile tiles carried "an estimate, accurate to within 1%" —
-       * the same sentence, twice, in a six-tile row where every other hint is
-       * a fact about ITS OWN tile. The tiles keep the one word that is a
-       * property of the value (`estimate`, so nobody reads p95 as exact) and
-       * the reasoning moves here, where it is said once and can be longer for
-       * it.
+       * The percentile tiles carried "an estimate, accurate to within 1%" — the
+       * same sentence, twice, in a row where every other hint is a fact about
+       * ITS OWN tile. (One percentile tile is left, and the reasoning stands:
+       * the tile keeps the one word that is a property of the value, and the
+       * method is said here where it can be longer for it.) The tile keeps
+       * `estimate`, so nobody reads p95 as exact.
        *
        * IT IS WORTH SAYING AT ALL, which is why this is a disclosure and not a
        * deletion: the 1% is a CLAIM ABOUT THIS PLATFORM, not a disclaimer.
@@ -282,27 +211,29 @@ export default function RunStats({
        * against the true distribution. A reader comparing the two reports needs
        * that, and it is the kind of thing they need once.
        *
-       * NO HEADING. `run-tables.spec.ts` asserts the Overview tab's heading
-       * outline is exactly ['Platform gates', 'Simulation assertions',
-       * 'Statistics']; a `<summary>` contributes a group, not a heading, so
-       * this cannot break that outline the way an <h2> would. */}
+       * NO HEADING. The Summary's heading outline is exactly ['Platform gates',
+       * 'Simulation assertions', 'Over time', 'Errors'], pinned in
+       * `RunSummary.test.tsx`; a `<summary>` contributes a group, not a
+       * heading, so this cannot break that outline the way an <h2> would. */}
       <details className="group mt-3" data-testid="percentile-method">
         <summary className="w-fit cursor-pointer list-none text-[0.75rem] font-medium text-accent hover:underline hover:underline-offset-2">
           <span className="group-open:hidden">How percentiles are measured</span>
           <span className="hidden group-open:inline">Hide how percentiles are measured</span>
         </summary>
         <p className="pt-2 text-[0.75rem] leading-relaxed text-muted">
-          {/* "of the whole run" IS FALSE UNDER A WINDOW, and this paragraph
-              said it unconditionally. The sketch is rebuilt from the buckets
-              the window selects, so under one the rank is read from that
-              stretch — which is the whole point of applying it. A methodology
-              note that names the wrong population is worse than none, because
-              a reader checks it precisely when the number surprises them. */}
-          Percentiles are read from a sketch of {windowed === true ? 'the selected window' : 'the whole run'} rather than from a bucketed
+          {/* "the whole run" — the Summary never carries a window (GE's does
+              not either), so there is no second population for this sentence to
+              name. It was conditional while this row could be narrowed, because
+              the sketch is rebuilt from the buckets a window selects; a note
+              that names the wrong population is worse than none, since a reader
+              checks it precisely when the number surprises them. The Report's
+              table is the windowed surface now. */}
+          Percentiles are read from a sketch of the whole run rather than from a bucketed
           histogram, which answers any rank — p95, p99, p99.9 — to within 1% of the true
           distribution. The tool&rsquo;s own report estimates from fixed bands and can drift
           further: on this fixture&rsquo;s p99 it reads 9.47% low, reporting a number that occurs
-          nowhere in the data. Minimum, maximum, mean and every count on this row are exact.
+          nowhere in the data. The error rate, the request count and the peak user count on this
+          row are counted, not estimated — p95 is the only estimate here.
         </p>
       </details>
     </section>
@@ -315,9 +246,10 @@ export default function RunStats({
  * sample's own minimum and maximum, and `clampPercentile` projects the raw
  * estimate onto the run row's own range (`clampPercentile`'s doc explains
  * why). Reusing it — rather than re-deriving the clamp here — is what keeps
- * the p99 tile from reading 2515 while the "All Requests" row directly below
- * it reads 2503, the exact disagreement this whole component exists to rule
- * out.
+ * the p95 tile from disagreeing with the "All Requests" row of the Report's
+ * statistics table, which clamps through the same function: the reference run's
+ * raw p99 reads 2515 against a maximum of 2503, and it is the exact
+ * disagreement this whole component exists to rule out.
  *
  * `—`, never `0`, for a project configured with no such percentile: a gap in
  * `row.percentiles` is not a measurement of zero.
@@ -396,10 +328,9 @@ function percentileMs(
  * recorded no branch cannot be said to match one that did, so it reads "not
  * recorded" rather than being quietly counted as agreement.
  *
- * NO HEADING, for the reason the percentile disclosure below gives: a
- * `<summary>` contributes an ARIA group and not a heading, so the Overview
- * outline `run-tables.spec.ts` pins as exactly ['Platform gates', 'Simulation
- * assertions', 'Statistics'] is untouched.
+ * NO HEADING, for the reason the percentile disclosure above gives: a
+ * `<summary>` contributes an ARIA group and not a heading, so the Summary's
+ * outline (pinned in `RunSummary.test.tsx`) is untouched.
  */
 function BaselineNote({
   previous,
@@ -509,20 +440,22 @@ function deltaTone(change: number, better: 'higher' | 'lower' | 'neutral'): Delt
 const NEAR_MARGIN = 0.1;
 
 /**
- * ═══ NOT UNDER A WINDOW, BECAUSE THE GATE JUDGED THE WHOLE RUN ═══
+ * ═══ THE TINT AND THE VALUE JUDGE THE SAME POPULATION, BECAUSE THE SUMMARY IS
+ * ALWAYS THE WHOLE RUN ═══
  *
- * Every caller passes `windowed === true ? undefined : assertions`. An SLA
- * assertion is evaluated once, against the run, at finalize — nothing
- * re-evaluates it per window and nothing could, since the rule's threshold is
- * a statement about the run. So under a window the VALUE in a tile is this
- * stretch's and the TINT would be the whole run's: a p95 tile showing a
- * perfectly healthy ten seconds, coloured as a breach, because a different
- * ten seconds broke the gate.
+ * An SLA assertion is evaluated once, against the run, at finalize — nothing
+ * re-evaluates it per window, since the rule's threshold is a statement about
+ * the run. While this row could be narrowed to a window the VALUE in a tile was
+ * that stretch's and the TINT the whole run's — a p95 tile showing a perfectly
+ * healthy ten seconds, coloured as a breach because a different ten seconds
+ * broke the gate — so every caller withheld the tint under one. The Summary
+ * never carries a window now (GE's does not), so there is nothing to withhold
+ * and every caller passes `assertions` as it is. The Report's window does not
+ * reach this component.
  *
- * Withheld rather than recomputed. Recomputing would invent a verdict nobody
- * configured — the "a platform gate is the organisation's policy" line this
- * repo already draws between SLA gates and simulation checks — and a tint
- * that means something different from the tint beside it is worse than none.
+ * Not recomputed per anything, either: recomputing would invent a verdict
+ * nobody configured — the "a platform gate is the organisation's policy" line
+ * this repo already draws between SLA gates and simulation checks.
  */
 function slaTone(
   assertions: readonly Assertion[] | undefined,

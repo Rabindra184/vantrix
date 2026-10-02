@@ -58,9 +58,10 @@ export interface LifecycleInput {
   readonly assertions: readonly Assertion[] | undefined;
   /**
    * The live Load test's duration when the page has a socket delta: its
-   * summary's `activityMs ?? durationMs`, the "Duration so far" tile's own
-   * expression. Null when there is none — a phone (no socket, §22.6), a
-   * finished run, or before the first delta. REQUIRED, not optional: an
+   * summary's `activityMs ?? durationMs`, the expression `RunHeader`'s Duration
+   * chip computes once the run finishes. Null when there is none — a phone
+   * (no socket, §22.6), a finished run, or before the first delta. REQUIRED,
+   * not optional: an
    * omitted one would silently fall back to the stamp-based figure, which
    * counts a runner's preparation as load.
    */
@@ -153,11 +154,12 @@ export function lifecycleSteps(input: LifecycleInput): LifecycleStep[] {
       // FROM THE RUN'S OPEN, the only stamp a live run has: nothing writes
       // `toolStartedAt` until the pipeline's terminal UPDATE, which also ends
       // `running`. The DURATION is the live span when the page has one — the
-      // "Duration so far" tile's own `activityMs ?? durationMs`, so the two
-      // agree, and so a runner's artifact preparation and JVM start-up, which
-      // follow the moment it opens its live run, are neither counted as load
-      // nor dropped when the run finishes. A phone has no socket and measures
-      // open to last chunk.
+      // delta's `activityMs ?? durationMs`, which is the finished run's
+      // Duration chip's own expression, so the figure does not change basis
+      // when the run ends, and so a runner's artifact preparation and JVM
+      // start-up, which follow the moment it opens its live run, are neither
+      // counted as load nor dropped when the run finishes. A phone has no
+      // socket and measures open to last chunk.
       const durationMs = liveSpanMs ?? between(received, lastChunk);
       steps.push({
         name: 'load-test',
