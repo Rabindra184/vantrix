@@ -150,7 +150,8 @@ The sla-values-rounded branch added no unit FILE and 18 cases — 12 to
 `packages/contracts/test/rules.test.ts`, 2 each to
 `apps/web/test/assertionExport.test.ts` and
 `apps/web/test/toolAssertion.test.ts`, and 1 each to
-`apps/web/test/RunDetail.live.test.tsx` and `apps/web/test/ProjectRules.test.tsx`
+`apps/web/test/RunDetail.live.test.tsx` (moved to `AssertionBars.test.tsx` at
+the merge with `main`; see below) and `apps/web/test/ProjectRules.test.tsx`
 — from **181 / 2313 to 181 / 2331**. The three `.ts` files are ones
 integration runs too, so integration moves from **170 / 2086 to 170 / 2102**,
 and **e2e stays 168**. It is a defect seen on the summary-report branch's
@@ -327,6 +328,28 @@ was not quiet — another worktree's integration suite ran beside this one on
 its own stores, free pages stood at 3,669 to 4,131 and the 1-minute load at
 6.8 to 7.6 at each start — and every suite passed, which this file counts as a
 pass: pressure manufactures failures, never a clean result.
+
+**RE-MEASURED AFTER MERGING `main`**, where the runner-keeps-a-dying-run,
+sweeper-keeps-a-stored-log and summary-report branches had all landed. **The
+gates table this branch rounded the Actual cell of was gone**: the summary
+branch moved each gate into a card in `AssertionBars.tsx`'s Platform gates bar,
+and that card called the deleted `formatSlaValue` — the second-merger re-point
+this entry's first version said `tsc` would demand, and it did. The card's
+Actual line takes `formatSlaMeasured` with the rule's threshold, and the tie
+guard moved with the cell, from `RunDetail.live.test.tsx` (whose table no
+longer exists) to `AssertionBars.test.tsx`, where the card is built; passing
+the call site a threshold that renders nothing like the bound, so no widening
+happens, fails that case alone. `typecheck` and `lint` exit 0; `test:unit`
+**188 / 2526** (the summary tree's 2508 plus this branch's eighteen), zero
+`Errors` lines; `test:integration` COLLECTED **173 / 2187** and `pnpm
+test:e2e` **180**, each the prediction exactly, with ONE failure apiece:
+`read.integration.test.ts`'s "is identical to omitting the parameter when a
+token names its own project", a body of `{}` — the non-2xx pressure shape this
+file records — and `acceptance.spec.ts`'s keyboard-and-chart-table case, the
+menu item never appearing, the intermittent this file records three times.
+This branch changes how a value is formatted and reaches neither a run list
+nor a menu, and each file then passed alone **five times out of five** (39 / 39
+and 7 / 7), at a 5-minute load that reached 17.7. No test failed twice.
 
 The summary-report branch added TEN unit files —
 `apps/web/test/CollapsibleSection.test.tsx`, `AssertionBars.test.tsx`,
