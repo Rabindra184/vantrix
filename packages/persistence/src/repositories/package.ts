@@ -118,6 +118,17 @@ export class PackageRepository {
     return row ? toRecord(row) : null;
   }
 
+  /** One package by id, without usage: what `create` hands back. */
+  private async record(orgId: string, projectId: string, id: string): Promise<PackageRecord | null> {
+    const [row] = await this.prisma.$queryRaw<PackageRow[]>`
+      SELECT ${PACKAGE_COLUMNS}
+      FROM package p
+      LEFT JOIN runner_artifact a ON a.id = p.current_artifact_id
+      WHERE p.org_id = ${orgId}::uuid AND p.project_id = ${projectId}::uuid AND p.id = ${id}::uuid
+    `;
+    return row ? toRecord(row) : null;
+  }
+
   async create(input: {
     id: string;
     orgId: string;
@@ -133,7 +144,7 @@ export class PackageRepository {
     } catch (err) {
       throw nameTaken(err);
     }
-    const created = await this.findByName(input.orgId, input.projectId, input.name);
+    const created = await this.record(input.orgId, input.projectId, input.id);
     if (!created) throw new Error('package insert returned no row');
     return created;
   }
@@ -157,6 +168,14 @@ export class PackageRepository {
    * the same SHA-256, THAT row becomes current and nothing new is stored — the
    * caller deletes its temporary file (`reused: true`). Null when the package
    * is not in this tenant.
+   *
+   * THE RESULT IS THE VERSION THIS CALL MADE CURRENT, not whatever is current
+   * when the caller gets it: the caller queues a job on `version`, and a run
+   * must start from the jar this upload carried, never another upload's. So
+   * the version and the package are read back INSIDE the transaction, by this
+   * call's version id, while the package row is still locked. Re-reading
+   * `current` after the commit would race a concurrent upload (wrong version)
+   * and a concurrent delete (no row at all, after the insert succeeded).
    */
   async addVersion(
     orgId: string,
@@ -164,7 +183,7 @@ export class PackageRepository {
     packageId: string,
     version: NewPackageVersion,
   ): Promise<{ package: PackageRecord; version: PackageVersionRecord; reused: boolean } | null> {
-    const outcome = await this.prisma.$transaction(async (tx) => {
+    return this.prisma.$transaction(async (tx) => {
       const [owner] = await tx.$queryRaw<{ id: string; kind: string }[]>`
         SELECT id, kind FROM package
         WHERE org_id = ${orgId}::uuid AND project_id = ${projectId}::uuid AND id = ${packageId}::uuid
@@ -196,12 +215,16 @@ export class PackageRepository {
         UPDATE package SET current_artifact_id = ${artifactId}::uuid, updated_at = now()
         WHERE id = ${packageId}::uuid
       `;
-      return { artifactId, reused: existing !== undefined };
+      const [row] = await tx.$queryRaw<PackageRow[]>`
+        SELECT ${PACKAGE_COLUMNS}
+        FROM package p
+        JOIN runner_artifact a ON a.id = ${artifactId}::uuid
+        WHERE p.id = ${packageId}::uuid
+      `;
+      const record = row ? toRecord(row) : null;
+      if (!record?.current) throw new Error('package version insert returned no row');
+      return { package: record, version: record.current, reused: existing !== undefined };
     });
-    if (!outcome) return null;
-    const pkg = await this.find(orgId, projectId, packageId);
-    if (!pkg?.current) throw new Error('package version insert returned no row');
-    return { package: pkg, version: pkg.current, reused: outcome.reused };
   }
 
   /**

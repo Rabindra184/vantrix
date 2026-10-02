@@ -111,6 +111,63 @@ async function countArtifacts(packageId: string): Promise<number> {
   return Number(rows[0]!.n);
 }
 
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+async function waitUntil(what: string, probe: () => Promise<boolean>, ms = 10_000): Promise<void> {
+  const deadline = Date.now() + ms;
+  while (!(await probe())) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    await sleep(25);
+  }
+}
+
+/**
+ * A client whose every query OUTSIDE a transaction waits for `gate`. A
+ * transaction's own queries run on the client Prisma hands the callback, so
+ * they are never held. This is how a test parks a repository call in the gap
+ * between its commit and whatever it reads afterwards, deterministically,
+ * instead of hoping two calls interleave.
+ */
+function gated(client: typeof prisma, gate: Promise<void>): typeof prisma {
+  return new Proxy(client, {
+    get(target, prop) {
+      const value: unknown = Reflect.get(target, prop, target);
+      if (typeof value !== 'function') return value;
+      const fn = value as (...args: unknown[]) => unknown;
+      if (prop === '$transaction') return fn.bind(target);
+      return async (...args: unknown[]) => {
+        await gate;
+        return fn.apply(target, args);
+      };
+    },
+  });
+}
+
+/**
+ * Runs `addVersion` for `mine` with its post-commit queries parked, waits for
+ * the version row to be committed, runs `inTheGap`, then lets the call finish.
+ * A correct addVersion issues no query after its commit, so it never waits; one
+ * that re-reads afterwards is held here while `inTheGap` changes the world.
+ */
+async function addVersionWithGap(packageId: string, mine: NewPackageVersion, inTheGap: () => Promise<unknown>) {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const first = new PackageRepository(gated(prisma, gate)).addVersion(orgA, checkout, packageId, mine);
+  void first.catch(() => undefined);
+  try {
+    await waitUntil('the upload to commit', async () => {
+      const found = await pool.query('SELECT 1 FROM runner_artifact WHERE id = $1', [mine.artifactId]);
+      return found.rowCount === 1;
+    });
+    await inTheGap();
+  } finally {
+    release();
+  }
+  return first;
+}
+
 describe('PackageRepository', () => {
   it('creates a package with no file, and lists it with current null and zero usage', async () => {
     const created = await make(checkout, 'Checkout');
@@ -123,11 +180,11 @@ describe('PackageRepository', () => {
     expect(listed[0]!.usage).toEqual({ tests: 0, runs: 0, activeJobs: 0 });
   });
 
-  it('refuses a name the project already has, ignoring case and surrounding space', async () => {
+  it('refuses a name the project already has, ignoring case', async () => {
     await make(checkout, 'Checkout');
     await expect(make(checkout, 'checkout')).rejects.toBeInstanceOf(PackageNameTakenError);
-    // The API trims before calling, so a padded name reaches here already
-    // trimmed; the case half of the rule is what this pins. The rule is per
+    // The index is lower(name), not lower(trim(name)): the API trims before
+    // calling, so only the case half of the rule is pinned here. The rule is per
     // project, so the same name elsewhere is fine.
     await expect(make(search, 'checkout')).resolves.toMatchObject({ name: 'checkout' });
   });
@@ -144,6 +201,8 @@ describe('PackageRepository', () => {
       );
     expect(err).not.toBeNull();
     expect(err).not.toBeInstanceOf(PackageNameTakenError);
+    // It is the unique violation it should be, not some unrelated failure.
+    expect(String(err)).toContain('23505');
   });
 
   it('finds a package by name ignoring case', async () => {
@@ -156,6 +215,8 @@ describe('PackageRepository', () => {
 
   it('makes an uploaded version current and stamps the last upload', async () => {
     const created = await make(checkout, 'Checkout');
+    // updated_at is timestamptz(3): without a pause the two stamps can tie.
+    await sleep(20);
     const v = version();
     const added = await packages.addVersion(orgA, checkout, created.id, v);
     expect(added).not.toBeNull();
@@ -163,7 +224,84 @@ describe('PackageRepository', () => {
     expect(added!.package.current?.artifactId).toBe(v.artifactId);
     expect(added!.version.artifactId).toBe(v.artifactId);
     expect(added!.version.simulations).toEqual(['example.BasicSimulation']);
-    expect(added!.package.updatedAt.getTime()).toBeGreaterThanOrEqual(created.updatedAt.getTime());
+    expect(added!.package.updatedAt.getTime()).toBeGreaterThan(created.updatedAt.getTime());
+  });
+
+  it('lists the most recently touched package first, an upload counting as a touch', async () => {
+    const older = await make(checkout, 'Older');
+    await sleep(20);
+    const newer = await make(checkout, 'Newer');
+    expect((await packages.list(orgA, checkout)).map((p) => p.id)).toEqual([newer.id, older.id]);
+
+    await sleep(20);
+    await packages.addVersion(orgA, checkout, older.id, version());
+    expect((await packages.list(orgA, checkout)).map((p) => p.id)).toEqual([older.id, newer.id]);
+  });
+
+  it("lists only its own project's packages", async () => {
+    const mine = await make(checkout, 'Mine');
+    const other = await make(search, 'In another project');
+    await make(billing, 'In another org', orgB);
+
+    expect((await packages.list(orgA, checkout)).map((p) => p.id)).toEqual([mine.id]);
+    expect((await packages.list(orgA, search)).map((p) => p.id)).toEqual([other.id]);
+    // A project of another org is nothing to this one, and the other way round.
+    expect(await packages.list(orgA, billing)).toEqual([]);
+    expect(await packages.list(orgB, checkout)).toEqual([]);
+  });
+
+  it('round-trips an unknown simulations list and Gatling version as null, never as empty', async () => {
+    const created = await make(checkout, 'Checkout');
+    const unknown = version({ sha256: 'b'.repeat(64), simulations: null, gatlingVersion: null });
+    const added = await packages.addVersion(orgA, checkout, created.id, unknown);
+    expect(added!.version.simulations).toBeNull();
+    expect(added!.version.gatlingVersion).toBeNull();
+
+    const found = await packages.find(orgA, checkout, created.id);
+    expect(found!.current?.simulations).toBeNull();
+    expect(found!.current?.gatlingVersion).toBeNull();
+    // SQL NULL in the column, not a JSON null or an empty list.
+    const { rows } = await pool.query<{ unknown: boolean }>(
+      'SELECT simulations IS NULL AS unknown FROM runner_artifact WHERE id = $1',
+      [unknown.artifactId],
+    );
+    expect(rows[0]!.unknown).toBe(true);
+
+    // A jar that DECLARES no simulations is a different fact from not knowing.
+    const empty = await packages.addVersion(
+      orgA,
+      checkout,
+      created.id,
+      version({ sha256: 'c'.repeat(64), simulations: [] }),
+    );
+    expect(empty!.version.simulations).toEqual([]);
+  });
+
+  it('answers with the version this call made current, even when another upload lands right after', async () => {
+    const created = await make(checkout, 'Checkout');
+    const mine = version({ sha256: 'b'.repeat(64) });
+    const theirs = version({ sha256: 'c'.repeat(64) });
+
+    const result = await addVersionWithGap(created.id, mine, () =>
+      packages.addVersion(orgA, checkout, created.id, theirs),
+    );
+
+    expect(result!.reused).toBe(false);
+    expect(result!.version.artifactId).toBe(mine.artifactId);
+    expect(result!.package.current?.artifactId).toBe(mine.artifactId);
+    // The arrangement did its job: the package has moved on to the other upload.
+    expect((await packages.find(orgA, checkout, created.id))!.current?.artifactId).toBe(theirs.artifactId);
+  });
+
+  it('still answers when the package is deleted right after the upload committed', async () => {
+    const created = await make(checkout, 'Checkout');
+    const mine = version();
+
+    const result = await addVersionWithGap(created.id, mine, () => packages.delete(orgA, checkout, created.id));
+
+    expect(result!.version.artifactId).toBe(mine.artifactId);
+    expect(result!.package.id).toBe(created.id);
+    expect(await packages.find(orgA, checkout, created.id)).toBeNull();
   });
 
   it('reuses a version with identical bytes instead of storing a second one', async () => {
@@ -180,6 +318,64 @@ describe('PackageRepository', () => {
     expect(reused!.version.artifactId).toBe(first.artifactId);
     expect(reused!.package.current?.artifactId).toBe(first.artifactId);
     expect(await countArtifacts(created.id)).toBe(2);
+  });
+
+  it('stores one version when the same bytes are uploaded concurrently', async () => {
+    const created = await make(checkout, 'Checkout');
+    const uploads = Array.from({ length: 4 }, () => version({ sha256: 'd'.repeat(64) }));
+
+    // Plain Promise.all did not make this go red without the package lock: the
+    // calls run one after another fast enough that each sees the previous one's
+    // row. So the overlap is FORCED: a connection holds the package row FOR
+    // UPDATE, all four uploads are started and observed blocked, and only then
+    // is it released. With the lock in addVersion every upload queues at its
+    // first statement and then finds the winner's row; without it every upload
+    // has already looked for an existing version (finding none) and inserts.
+    //
+    // Prisma's interactive transactions expire after 5 s, and the clock starts
+    // when each begins, so the connections they need are opened first: under
+    // load, opening four in the middle of the arrangement once cost the whole
+    // budget.
+    await Promise.all(uploads.map(() => prisma.$queryRaw`SELECT 1`));
+    const holder = await pool.connect();
+    try {
+      const { rows } = await holder.query<{ pid: number }>('SELECT pg_backend_pid() AS pid');
+      const holderPid = rows[0]!.pid;
+      await holder.query('BEGIN');
+      await holder.query('SELECT id FROM package WHERE id = $1 FOR UPDATE', [created.id]);
+
+      const calls = Promise.all(
+        uploads.map((upload) => packages.addVersion(orgA, checkout, created.id, upload)),
+      );
+      void calls.catch(() => undefined);
+      // Transitively: only the first waiter on a row is blocked by the holder,
+      // the rest queue behind that waiter's tuple lock.
+      await waitUntil('all four uploads to be in flight', async () => {
+        const waiting = await pool.query<{ n: number }>(
+          `WITH RECURSIVE queued(pid) AS (
+             SELECT pid FROM pg_stat_activity WHERE $1 = ANY (pg_blocking_pids(pid))
+             UNION
+             SELECT a.pid FROM pg_stat_activity a JOIN queued q ON q.pid = ANY (pg_blocking_pids(a.pid))
+           )
+           SELECT count(*)::int AS n FROM queued`,
+          [holderPid],
+        );
+        return waiting.rows[0]!.n >= uploads.length;
+      });
+      await holder.query('COMMIT');
+
+      const results = await calls;
+      const stored = results.filter((r) => r!.reused === false);
+      expect(stored).toHaveLength(1);
+      expect(await countArtifacts(created.id)).toBe(1);
+      // Every caller was answered with the one row that exists.
+      expect(new Set(results.map((r) => r!.version.artifactId))).toEqual(
+        new Set([stored[0]!.version.artifactId]),
+      );
+    } finally {
+      await holder.query('ROLLBACK').catch(() => undefined);
+      holder.release();
+    }
   });
 
   it('never reaches across tenants', async () => {
@@ -207,16 +403,20 @@ describe('PackageRepository', () => {
 
     await job(checkout, v1.artifactId, 'complete', t1);
     await job(checkout, v2.artifactId, 'complete', t2);
+    // A second run of T1 (tests are DISTINCT, runs are not) and a run with no
+    // test yet (a run, never a test).
+    await job(checkout, v1.artifactId, 'complete', t1);
+    await job(checkout, v2.artifactId, 'complete', null);
     await job(checkout, v1.artifactId, 'queued');
 
     const before = await packages.find(orgA, checkout, created.id);
-    expect(before!.usage).toEqual({ tests: 2, runs: 2, activeJobs: 1 });
+    expect(before!.usage).toEqual({ tests: 2, runs: 4, activeJobs: 1 });
 
     // Retention removes old jobs; the runs and their tests were counted on the
     // run's own package_id, so they survive it.
     await pool.query('DELETE FROM runner_job');
     const after = await packages.find(orgA, checkout, created.id);
-    expect(after!.usage).toEqual({ tests: 2, runs: 2, activeJobs: 0 });
+    expect(after!.usage).toEqual({ tests: 2, runs: 4, activeJobs: 0 });
   });
 
   it('refuses to delete while a job of any version is active, naming the count', async () => {
@@ -230,6 +430,29 @@ describe('PackageRepository', () => {
 
     expect(await packages.delete(orgA, checkout, created.id)).toEqual({ kind: 'in_use', activeJobs: 2 });
     expect(await packages.find(orgA, checkout, created.id)).not.toBeNull();
+  });
+
+  it.each(['queued', 'starting', 'running', 'closing'])(
+    'counts a %s job as active, for usage and for delete',
+    async (status) => {
+      const created = await make(checkout, 'Checkout');
+      const v = version();
+      await packages.addVersion(orgA, checkout, created.id, v);
+      await job(checkout, v.artifactId, status);
+
+      expect((await packages.find(orgA, checkout, created.id))!.usage.activeJobs).toBe(1);
+      expect(await packages.delete(orgA, checkout, created.id)).toEqual({ kind: 'in_use', activeJobs: 1 });
+    },
+  );
+
+  it.each(['complete', 'failed', 'cancelled'])('does not count a %s job as active', async (status) => {
+    const created = await make(checkout, 'Checkout');
+    const v = version();
+    await packages.addVersion(orgA, checkout, created.id, v);
+    await job(checkout, v.artifactId, status);
+
+    expect((await packages.find(orgA, checkout, created.id))!.usage.activeJobs).toBe(0);
+    expect((await packages.delete(orgA, checkout, created.id)).kind).toBe('deleted');
   });
 
   it('waits for a start in flight, then refuses on the job that start queued', async () => {
