@@ -486,9 +486,15 @@ export class RunnerRepository {
    * ("re-checks the current version in statement 2", "re-checks job references
    * in statement 2"). Statement 1's own predicates are pinned at limit 1
    * ("chooses only versions that are not current", "chooses only versions no
-   * job needs"). What remains argued is only the race's real interleaving: the
-   * commit landing INSIDE statement 1, between its snapshot and its row locks,
-   * which nothing outside the database can force.
+   * job needs"). What remains ARGUED, not pinned, is two things. The race's
+   * real interleaving: the commit landing INSIDE statement 1, between its
+   * snapshot and its row locks, which nothing outside the database can force.
+   * And statement 1 SKIPPING a row a writer already holds when it runs — SKIP
+   * LOCKED passing over that writer's KEY SHARE lock, the last sentence of the
+   * paragraph above: every parked case takes the sweep's lock FIRST and brings
+   * the writer after it, so no case holds a writer's lock on a version while
+   * statement 1 chooses. It rests on FOR UPDATE conflicting with KEY SHARE,
+   * which is PostgreSQL's row-lock table, not this code's.
    */
   async deleteUnneededVersionsOlderThan(
     scope: RunnerClaimScope,

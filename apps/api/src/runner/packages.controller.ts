@@ -285,7 +285,11 @@ export class PackagesController {
     }
     // The rows are gone; the files are not yet. A file that cannot be removed
     // is not worth failing a delete that has already committed: its version row
-    // stays, unreferenced, and the runner's retention sweep removes both.
+    // stays, unreferenced, and the runner's retention sweep deletes that row and
+    // TRIES to remove the file. In the shipped compose file it cannot:
+    // runner-artifacts is mounted read-only into the runner
+    // (infra/docker-compose.yml), so its rm fails and is only logged
+    // ("failed to remove retained runner file") — the row goes, the file stays.
     for (const storagePath of result.storagePaths) {
       await removeIfUnder(this.config.runner.artifactDir, storagePath);
     }

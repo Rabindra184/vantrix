@@ -447,9 +447,11 @@ const parameters: Record<string, ParameterObject> = {
     in: 'query',
     description:
       'The name the uploaded file is stored under, whose extension must suit the package\'s kind ' +
-      '(.jar for a Gatling jar; .zip, .tgz or .tar.gz for a runnable bundle). Optional: when ' +
-      'omitted the package\'s own name plus the default extension is used. Checked BEFORE the ' +
-      'body is read, so a wrong extension never costs the upload.',
+      '(.jar for a Gatling jar; .zip, .tgz or .tar.gz for a runnable bundle). The kind check ' +
+      'reads THIS filename, before the body is read, so a wrong extension here never costs the ' +
+      'upload. Optional: when omitted the file is stored as the package\'s own name plus its ' +
+      'own kind\'s extension (.jar or .zip), so there is no extension to check and the body is ' +
+      'taken as the package\'s kind.',
     schema: { type: 'string' },
   },
   StreamOffset: {

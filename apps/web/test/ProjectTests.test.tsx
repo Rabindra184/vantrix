@@ -293,7 +293,7 @@ describe('ProjectTests', () => {
   /**
    * THE NAME THE RAIL RESERVES IS STILL RESERVED. `ProjectRail`'s vocabulary
    * — "All runs", and every project name — cannot be reused by a page's own
-   * controls, and a five-tab strip is five new chances to break that. jsdom
+   * controls, and a six-tab strip is six new chances to break that. jsdom
    * renders one component at a time so it cannot see the collision itself;
    * what this case holds is that this page contributes no link claiming it.
    */
