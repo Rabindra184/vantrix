@@ -58,13 +58,16 @@ function job(): RunnerJobWithArtifact {
   return {
     artifact: {
       id: '55555555-5555-4555-8555-555555555555', orgId: '22222222-2222-4222-8222-222222222222',
-      projectId: '33333333-3333-4333-8333-333333333333', name: 'checkout load', filename: 'checkout.jar',
-      kind: 'gatling_jar', simulationClass: 'example.ParitySimulation', gatlingVersion: '3.15.1',
+      projectId: '33333333-3333-4333-8333-333333333333', filename: 'checkout.jar',
+      kind: 'gatling_jar', gatlingVersion: '3.15.1',
       sha256: 'a'.repeat(64), bytes: 4096, storagePath: STORAGE, createdAt: now,
+      packageId: '66666666-6666-4666-8666-666666666666', packageName: 'checkout load',
+      simulations: ['example.ParitySimulation'],
     },
     job: {
       id: JOB_ID, orgId: '22222222-2222-4222-8222-222222222222', projectId: '33333333-3333-4333-8333-333333333333',
       artifactId: '55555555-5555-4555-8555-555555555555', runId: null, status: 'starting', requestedBy: 'tester',
+      name: 'nightly', simulationClass: 'example.ParitySimulation',
       environment: null, branch: null, commitSha: null, testSlug: null,
       javaOptions: '-Xmx7g -Dleak.secret=PARAM-LEAK-7f3a', systemProperties: { 'leak.key': 'PARAM-LEAK-91c2' },
       logPath: null, error: null, createdAt: now, updatedAt: now,

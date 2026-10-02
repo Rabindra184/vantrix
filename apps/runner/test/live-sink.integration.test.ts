@@ -84,14 +84,15 @@ async function setup(sinkBlobs: BlobStore = blobs) {
   const job: RunnerJobWithArtifact = {
     artifact: {
       id: '55555555-5555-4555-8555-555555555555', orgId: org.id, projectId: project.id,
-      name: 'checkout load', filename: 'checkout.jar', kind: 'gatling_jar',
-      simulationClass: 'example.ParitySimulation', gatlingVersion: '3.15.1',
+      filename: 'checkout.jar', kind: 'gatling_jar', gatlingVersion: '3.15.1',
       sha256: 'a'.repeat(64), bytes: 4096, storagePath: 'runner-artifacts/x.jar', createdAt: now,
+      packageId: null, packageName: null, simulations: null,
     },
     job: {
       id: randomUUID(), orgId: org.id, projectId: project.id,
       artifactId: '55555555-5555-4555-8555-555555555555', runId: null, status: 'starting',
-      requestedBy: 'tester', environment: null, branch: null, commitSha: null, testSlug: null,
+      requestedBy: 'tester', name: 'checkout load', simulationClass: 'example.ParitySimulation',
+      environment: null, branch: null, commitSha: null, testSlug: null,
       javaOptions: null, systemProperties: {}, logPath: null, error: null,
       createdAt: now, updatedAt: now,
     },

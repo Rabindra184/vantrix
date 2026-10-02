@@ -73,9 +73,10 @@ function makeExecutor(configOver: Partial<RunnerConfig>) {
 
 function job(): RunnerJobWithArtifact {
   return {
-    artifact: { name: 'checkout load' },
+    artifact: {},
     job: {
       id: '11111111-1111-1111-1111-111111111111',
+      name: 'checkout load',
       orgId: '22222222-2222-2222-2222-222222222222',
       projectId: '33333333-3333-3333-3333-333333333333',
     },

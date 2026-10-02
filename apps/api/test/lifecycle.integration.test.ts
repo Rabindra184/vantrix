@@ -139,10 +139,8 @@ describe('the lifecycle stamps, on both identity builders', () => {
       data: {
         orgId: ctx.orgId,
         projectId: ctx.projectId,
-        name: 'lifecycle',
         filename: 'bundle.tgz',
         kind: 'gatling_bundle',
-        simulationClass: 'example.ParitySimulation',
         sha256: '0'.repeat(64),
         bytes: BigInt(1),
         storagePath: 'lifecycle/none',
@@ -157,6 +155,8 @@ describe('the lifecycle stamps, on both identity builders', () => {
         runId,
         status: 'running',
         requestedBy: 'lifecycle-test',
+        name: 'lifecycle',
+        simulationClass: 'example.ParitySimulation',
         createdAt: queuedAt,
       },
     });

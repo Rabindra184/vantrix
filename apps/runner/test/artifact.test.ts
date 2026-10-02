@@ -91,9 +91,12 @@ function config(over: Partial<RunnerConfig> = {}): RunnerConfig {
   } as RunnerConfig;
 }
 
+/** The class to run is the JOB's: one version serves many jobs, each naming
+ *  its own simulation, so the artifact below carries none. */
 function job(over: Partial<RunnerJobRecord> = {}): RunnerJobRecord {
   return {
     id: '11111111-1111-1111-1111-111111111111',
+    simulationClass: 'example.ParitySimulation',
     javaOptions: null,
     systemProperties: {},
     ...over,
@@ -104,7 +107,6 @@ function artifact(storagePath: string): RunnerArtifactRecord {
   return {
     kind: 'gatling_jar',
     storagePath,
-    simulationClass: 'example.ParitySimulation',
   } as unknown as RunnerArtifactRecord;
 }
 
@@ -256,7 +258,7 @@ describe('prepareGatlingRun, bundle artifacts', () => {
     const prepared = await prepareGatlingRun(
       config(),
       job(),
-      { kind: 'gatling_bundle', storagePath: archive, simulationClass: 'example.ParitySimulation' } as unknown as RunnerArtifactRecord,
+      { kind: 'gatling_bundle', storagePath: archive } as unknown as RunnerArtifactRecord,
       async () => false,
     );
 

@@ -12,8 +12,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { hashToken, mintToken } from '@perfportal/core';
 import {
-  createAuth, createPool, createPrisma, OrgMemberRepository, RunnerRepository, TelemetryStore,
-  type InboundTelemetrySample,
+  createAuth, createPool, createPrisma, OrgMemberRepository, PackageRepository, RunnerRepository,
+  TelemetryStore, type InboundTelemetrySample,
 } from '@perfportal/persistence';
 import { BlobStore } from '@perfportal/storage';
 // Reached into apps/worker's BUILT output, not its TypeScript source: the
@@ -386,20 +386,27 @@ export const QUEUED_EVENT_COUNT = 3;
  * Java, a bundle and the runner process, none of which this harness starts;
  * what the browser case proves is the seam from `runner_job_event` to the
  * page, and a real runner execution is Task 9's job. The job is queued through
- * the real repository, so the queue events are the real writer's.
+ * the real repositories, on a version of the package `checkout load`, so the
+ * queue events are the real writer's — and their `Using package` line names
+ * that PACKAGE, while the job itself is the run `nightly`.
  */
 export async function seedRunnerRunWithEvents(orgId: string): Promise<string> {
   const runId = await seedRunWithData(orgId);
   const projectId = await projectFor(orgId);
+  const packages = new PackageRepository(prisma);
+  const pkg = await packages.create({ id: randomUUID(), orgId, projectId, name: 'checkout load', kind: 'gatling_jar' });
+  const added = await packages.addVersion(orgId, projectId, pkg.id, {
+    artifactId: randomUUID(), filename: 'checkout.jar', gatlingVersion: '3.15.1',
+    sha256: 'a'.repeat(64), bytes: 1_887_437, simulations: ['example.ParitySimulation'],
+    storagePath: `runner-artifacts/${randomUUID()}.jar`,
+  });
+  if (!added) throw new Error('seedRunnerRunWithEvents: the package version was not added');
   const runner = new RunnerRepository(prisma);
   const created = await runner.createQueued({
-    artifact: {
-      id: randomUUID(), orgId, projectId, name: 'checkout load', filename: 'checkout.jar',
-      kind: 'gatling_jar', simulationClass: 'example.ParitySimulation', gatlingVersion: '3.15.1',
-      sha256: 'a'.repeat(64), bytes: 1_887_437, storagePath: `runner-artifacts/${randomUUID()}.jar`,
-    },
+    orgId, projectId, artifactId: added.version.artifactId,
     job: {
-      id: randomUUID(), requestedBy: 'e2e', environment: null, branch: null, commitSha: null,
+      id: randomUUID(), requestedBy: 'e2e', name: 'nightly', simulationClass: 'example.ParitySimulation',
+      environment: null, branch: null, commitSha: null,
       // DISTINCTIVE ON PURPOSE. A log that must never carry the job's
       // parameters is only proven to when the job HAS some to leak: with
       // `null` and `{}` the absence assertion in run-logs.spec.ts passes
@@ -408,6 +415,7 @@ export async function seedRunnerRunWithEvents(orgId: string): Promise<string> {
       systemProperties: { 'leak.key': 'PARAM-LEAK-e2e-prop' },
     },
   });
+  if (!created) throw new Error('seedRunnerRunWithEvents: createQueued refused the version');
   await prisma.runnerJob.update({ where: { id: created.job.id }, data: { runId, status: 'complete' } });
   for (const event of RUNNER_RUN_EVENTS) await runner.recordRunnerEvent(created.job.id, event);
   return runId;
