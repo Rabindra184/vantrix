@@ -1,5 +1,6 @@
 import type { DistributionResponse } from '@perfportal/contracts';
 import { describe, expect, it } from 'vitest';
+import { expectAboutTheRun, expectAboutTheWindow } from './support/emptySentence';
 import { DISTRIBUTION_ROLES, toDistribution } from '../src/charts/transforms/distribution.js';
 import fixture from './fixtures/reference-run.json';
 
@@ -115,7 +116,7 @@ describe('toDistribution — OK and KO ⑧ (G-20/G-21)', () => {
   // it is the assertion the design's falsification checkpoint #4 (drop the KO
   // series) goes red on.
   it('draws OK and KO as distinct series', () => {
-    const d = toDistribution(fixture.distribution as DistributionResponse);
+    const d = toDistribution(fixture.distribution as DistributionResponse, { windowSelected: false });
     expect(d.series.map((s) => s.name)).toEqual(['OK', 'KO']);
   });
 
@@ -129,7 +130,7 @@ describe('toDistribution — OK and KO ⑧ (G-20/G-21)', () => {
    * because the 60 bins where both are zero prove nothing.
    */
   it('gives each series its own numbers, bin by bin', () => {
-    const d = toDistribution(src);
+    const d = toDistribution(src, { windowSelected: false });
     expect(dataOf(d, 0)).toEqual(src.okPercent);
     expect(dataOf(d, 1)).toEqual(src.koPercent);
     // The guard that keeps the two assertions above from being one assertion.
@@ -147,7 +148,7 @@ describe('toDistribution — OK and KO ⑧ (G-20/G-21)', () => {
   it('still draws KO on a run that recorded no failures', () => {
     const n = src.labels.length;
     const clean = withFields({ koCount: zeros(n), koPercent: zeros(n) });
-    const d = toDistribution(clean);
+    const d = toDistribution(clean, { windowSelected: false });
     expect(d.series.map((s) => s.name)).toEqual(['OK', 'KO']);
     expect(dataOf(d, 1)).toEqual(zeros(n));
   });
@@ -165,7 +166,7 @@ describe('toDistribution — percentages of the combined total (§A.9 F-8)', () 
   // The brief's Step 1 test, verbatim.
   it('keeps the API percentages, which are of the COMBINED total', () => {
     const src = fixture.distribution as DistributionResponse;
-    const d = toDistribution(src);
+    const d = toDistribution(src, { windowSelected: false });
     // okPercent and koPercent together sum to 100 (A.9 F-8). Renormalising
     // either one independently would make each series sum to 100 instead.
     const sum = src.okPercent.reduce((a, b) => a + b, 0) + src.koPercent.reduce((a, b) => a + b, 0);
@@ -188,7 +189,7 @@ describe('toDistribution — percentages of the combined total (§A.9 F-8)', () 
    * 100 and NEITHER sums to 100 alone.
    */
   it('does not rescale either series to sum to 100 on its own', () => {
-    const d = toDistribution(src);
+    const d = toDistribution(src, { windowSelected: false });
     const ok = sum(dataOf(d, 0));
     const ko = sum(dataOf(d, 1));
 
@@ -208,7 +209,7 @@ describe('toDistribution — percentages of the combined total (§A.9 F-8)', () 
    * not a sampled one.
    */
   it('puts each bin’s OK and KO shares in their own columns', () => {
-    const d = toDistribution(src);
+    const d = toDistribution(src, { windowSelected: false });
     expect(d.columns).toEqual([
       'Response time (ms, bin midpoint)',
       'OK (% of all requests)',
@@ -226,7 +227,7 @@ describe('toDistribution — percentages of the combined total (§A.9 F-8)', () 
   });
 
   it('labels every row and every axis tick with the bin label itself', () => {
-    const d = toDistribution(src);
+    const d = toDistribution(src, { windowSelected: false });
     // Exact bin labels are half of G-20/G-21's tolerance. Plotting the bin
     // INDEX — which a histogram invites — loses it while looking fine.
     expect(d.axisLabels).toEqual(src.labels);
@@ -247,22 +248,22 @@ describe('toDistribution — says what it is showing', () => {
    * category-axis name, so this one string covers the table and the drawing.
    */
   it('names the labels as bucket midpoints', () => {
-    const d = toDistribution(src);
+    const d = toDistribution(src, { windowSelected: false });
     expect(d.columns[0]).toMatch(/midpoint/i);
     expect(d.columns[0]).not.toMatch(/exact/i);
   });
 
   it('names them as exact values when Gatling skipped bucketing', () => {
-    const d = toDistribution(withFields({ exactValues: true }));
+    const d = toDistribution(withFields({ exactValues: true }), { windowSelected: false });
     expect(d.columns[0]).toMatch(/exact/i);
     expect(d.columns[0]).not.toMatch(/midpoint/i);
     // And it is a real difference, not the same string twice.
-    expect(d.columns[0]).not.toEqual(toDistribution(src).columns[0]);
+    expect(d.columns[0]).not.toEqual(toDistribution(src, { windowSelected: false }).columns[0]);
   });
 
   // The brief's Step 1 test, verbatim.
   it('says when bins are incomplete rather than drawing a truncated distribution', () => {
-    const d = toDistribution({ ...(fixture.distribution as DistributionResponse), overflowCount: 7 });
+    const d = toDistribution({ ...(fixture.distribution as DistributionResponse), overflowCount: 7 }, { windowSelected: false });
     expect(JSON.stringify(d)).toMatch(/exceeded|incomplete|overflow/i);
   });
 
@@ -274,13 +275,13 @@ describe('toDistribution — says what it is showing', () => {
    * `overflowCount` is 0, so this is the same fixture with nothing changed.
    */
   it('says nothing about incomplete bins when nothing overflowed', () => {
-    const d = toDistribution(src);
+    const d = toDistribution(src, { windowSelected: false });
     expect(d.limitation).toBeUndefined();
     expect(JSON.stringify(d)).not.toMatch(/exceeded|incomplete|overflow/i);
   });
 
   it('names how many observations overflowed', () => {
-    const d = toDistribution(withFields({ overflowCount: 7 }));
+    const d = toDistribution(withFields({ overflowCount: 7 }), { windowSelected: false });
     // The count itself, because "some observations exceeded the range" leaves
     // a reader unable to tell 7 from 7000.
     expect(d.limitation).toMatch(/\b7\b/);
@@ -298,9 +299,7 @@ describe('toDistribution — says what it is showing', () => {
 
 describe('toDistribution — nothing to draw', () => {
   it('explains an empty distribution instead of drawing empty axes', () => {
-    const d = toDistribution(
-      withFields({ labels: [], okCount: [], koCount: [], okPercent: [], koPercent: [] }),
-    );
+    const d = toDistribution(withFields({ labels: [], okCount: [], koCount: [], okPercent: [], koPercent: [] }), { windowSelected: false });
     expect(d.series).toEqual([]);
     expect(d.axisLabels).toEqual([]);
     expect(d.rows).toEqual([]);
@@ -319,19 +318,53 @@ describe('toDistribution — nothing to draw', () => {
    */
   it('distinguishes a run whose every observation overflowed', () => {
     const n = src.labels.length;
-    const d = toDistribution(
-      withFields({
+    const d = toDistribution(withFields({
         okCount: zeros(n),
         koCount: zeros(n),
         okPercent: zeros(n),
         koPercent: zeros(n),
         overflowCount: 895,
-      }),
-    );
+      }), { windowSelected: false });
     expect(d.series).toEqual([]);
     expect(d.empty).toMatch(/recorded range/i);
     expect(d.empty).not.toMatch(/no response times were recorded/i);
     // And the reason is still stated beside it.
     expect(d.limitation).toMatch(/895/);
+  });
+});
+
+/**
+ * A WINDOW THAT SELECTS NO RESPONSES IS NOT A RUN THAT RECORDED NONE. Both empty
+ * branches say "in this run" about something a window can leave empty while the
+ * run is not — the window may hold only the responses that overflowed while the
+ * rest of the run fell inside the range — so BOTH switch. The overflow note is
+ * a fact about the histogram's storage and does not.
+ */
+describe('toDistribution — a window that selects no responses', () => {
+  const noLabels = withFields({ labels: [], okCount: [], koCount: [], okPercent: [], koPercent: [] });
+  const allOverflowed = withFields({
+    okCount: zeros(src.labels.length),
+    koCount: zeros(src.labels.length),
+    okPercent: zeros(src.labels.length),
+    koPercent: zeros(src.labels.length),
+    overflowCount: 40,
+  });
+
+  it.each([
+    ['no bins at all', noLabels, /no distribution to show/i],
+    ['bins that hold nothing', allOverflowed, /no bins to draw/i],
+  ] as const)('names the window, not the run, and keeps the tail (%s)', (_state, payload, tail) => {
+    expectAboutTheWindow(toDistribution(payload, { windowSelected: true }).empty, tail);
+  });
+
+  it.each([
+    ['no bins at all', noLabels, /no distribution to show/i],
+    ['bins that hold nothing', allOverflowed, /no bins to draw/i],
+  ] as const)('still names the run when no window is selected (%s)', (_state, payload, tail) => {
+    expectAboutTheRun(toDistribution(payload, { windowSelected: false }).empty, tail);
+  });
+
+  it('keeps the overflow note under a window', () => {
+    expect(toDistribution(allOverflowed, { windowSelected: true }).limitation).toContain('40');
   });
 });

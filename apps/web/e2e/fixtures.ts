@@ -1080,8 +1080,8 @@ export async function seedRunInOtherOrg(): Promise<string> {
  * and /users return 200 with empty payloads, /distribution returns 404, and
  * the run page is built to handle an empty payload and a failed fetch at
  * once. The header renders from the run payload alone, so none of that is
- * in this test's way. (/distribution is only fetched by the Charts tab,
- * which this test never opens.)
+ * in this test's way. (/distribution is only fetched by the Report's
+ * Requests section, which this test never opens.)
  */
 export async function seedRunWithProvenance(
   orgId: string,

@@ -18,7 +18,7 @@ import { errorsQueryKey, seriesQueryKey, usersQueryKey } from './metrics';
  * reconnects with backoff on any RETRYABLE close — never on `CLOSE_UNAUTHORIZED`
  * (4401), which `LiveRunState.unauthorized` surfaces instead of silently
  * retrying forever. The charts are never told any of this happened:
- * `RunChartsTab`/`RunOverviewTab`/`RunErrorsTab` and everything they render
+ * `RunReport`/`RunSummary` and everything they render
  * are unmodified by this file, and read whatever is in the cache regardless
  * of whether it arrived over REST or over this socket (design part 1 §4,
  * part 2b §4.1).
@@ -29,11 +29,10 @@ import { errorsQueryKey, seriesQueryKey, usersQueryKey } from './metrics';
  * `meanMs`/`stddevMs`/`throughputRps`, and no source for `StatsResponse`'s
  * top-level `indicators`/`bounds` at all: those are folded from a histogram
  * against project-configured bounds neither the wire nor the browser has.
- * `RunStats`'s own docstring states the rule this file follows instead:
- * "null, not zeroed tiles, when the payload carries no run-scope row … six
- * tiles reading 0/0.00%/— above [the table] would assert measurements nobody
- * took." Writing a fabricated `StatRow` with invented zeros would be exactly
- * that assertion. `/stats` is left to its own REST fetch, which honestly
+ * `RunStats`'s own docstring states the rule this file follows instead: with
+ * no run-scope row it draws the table's own empty sentence, never zeroed
+ * tiles, because `0 requests` reads as a measurement nobody took. Writing a
+ * fabricated `StatRow` with invented zeros would be exactly that assertion. `/stats` is left to its own REST fetch, which honestly
  * returns empty rows for a running run (no `RunStat` rows exist until the
  * parse pipeline runs) and resolves for real once the run completes.
  */
@@ -270,8 +269,8 @@ function errorsResponseFrom(runId: string, envelope: LiveDelta['errors']): Error
  * `seriesQueryKey` (`./metrics.ts`) does NOT fold a window into itself the
  * way `usersQueryKey`/`errorsQueryKey` do — `seriesQuery` appends
  * `window?.fromMs ?? null, window?.toMs ?? null` EXTERNALLY, so the key a
- * mounted chart actually subscribes to (`RunChartsTab`, `RunOverviewTab`'s
- * sparkline) is eight elements, not six. A live view is never windowed — the
+ * mounted chart actually subscribes to (`RunReport`, `RunSummary`'s
+ * charts and sparklines) is eight elements, not six. A live view is never windowed — the
  * domain grows with the run instead of being narrowed — so the two trailing
  * nulls below are exactly what `seriesQuery(id, 'run', '', 'response_time',
  * null).queryKey` would produce, written out directly rather than importing
@@ -295,9 +294,11 @@ function applyDelta(queryClient: QueryClient, runId: string, delta: LiveDelta): 
  * ═══ WHAT THE SOCKET WROTE, HANDED BACK TO REST ═══
  *
  * The three keys `applyDelta` writes are BYTE-IDENTICAL to the ones the
- * FINISHED run page subscribes to: `RunShell` mounts `usersQuery(run.id)` and
- * `errorsQuery(run.id)`, and `RunChartsTab` the same eight-element series key
- * `liveSeriesKey` builds. Every one of those factories carries `staleTime:
+ * FINISHED run page subscribes to: `RunSummary` mounts `usersQuery(run.id)`
+ * for its Peak users tile and `errorsQuery(run.id)` for its errors section
+ * (while no request is filtered), and `RunSummary` and `RunReport` the same
+ * eight-element series key `liveSeriesKey` builds (the Report's, while no
+ * window is narrowed). Every one of those factories carries `staleTime:
  * Infinity` (`api/metrics.ts`) — correct for a completed run, whose metrics
  * never change, and fatal for one this socket has been writing into: nothing
  * anywhere in `apps/web` invalidated a query before this call existed, so an
@@ -309,8 +310,8 @@ function applyDelta(queryClient: QueryClient, runId: string, delta: LiveDelta): 
  *
  * INVALIDATE, NEVER REMOVE. `invalidateQueries` marks the entry stale and
  * refetches only ACTIVE observers; the three queries named above are each
- * gated so none of them fetch while the run is non-terminal — `RunShell`'s
- * `users`/`errors` read `enabled: terminal` directly, and `RunChartsTab`'s
+ * gated so none of them fetch while the run is non-terminal — `RunSummary`'s
+ * `users`/`series`/`errors` read `enabled: terminal` directly, and `RunReport`'s
  * `series` folds the identical `terminal` check into its own `enabled: on`
  * (`useRunTerminal`, `useRunWindow.ts`, is where that flag comes from) — so
  * the frozen dashboard (§4.4) keeps drawing the last delta while the run

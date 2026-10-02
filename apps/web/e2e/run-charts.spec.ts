@@ -5,12 +5,15 @@ import {
   seedPendingRun,
   seedRunWithData,
 } from './fixtures.js';
-import { apiJson, openTimeWindow, plot, signIn } from './helpers.js';
+import { apiJson, openSection, openTimeWindow, plot, signIn } from './helpers.js';
 import { SURFACE_TOKENS } from '../src/charts/theme.js';
-import { runChartsPath, runPath } from '../src/routes/paths.js';
+import { runPath, runReportPath } from '../src/routes/paths.js';
 
 /**
- * The eight overview charts on the run detail page, in a real browser.
+ * The ten charts of the run's Report, in a real browser — Requests' seven and
+ * Virtual users' three (backlog #7; they were the Charts tab's nine before it,
+ * and the Summary draws two more of the same figures, which
+ * `run-summary-report.spec.ts` and `run-tables.spec.ts` cover).
  *
  * THIS IS THE FIRST PLACE THE REAL ECHARTS RUNS. The unit suite mocks it —
  * deliberately, because `getBoundingClientRect` returns zeros in jsdom, so a
@@ -27,74 +30,70 @@ import { runChartsPath, runPath } from '../src/routes/paths.js';
  */
 
 /**
- * §13.2's order, and the chart ids as the COMPONENTS actually declare them —
- * `requests-per-second`/`responses-per-second`, not `request-rate`/
- * `response-rate`. The ids are the ones `RatesChart.tsx` passes to `Chart`;
- * a list here that merely resembled them would fail loudly, which is the point
- * of naming them once.
+ * DOCUMENT ORDER, AND THE ORDER IS THE ARGUMENT — now Gatling Enterprise's.
  *
- * The ORDER is asserted, not just the membership. §13.2 numbers these charts
- * ③④⑦⑦ᵇ⑧⑨⑩⑪ and the sequence is itself information: concurrent users sits
- * directly above the arrival rate, and requests/s directly above responses/s,
- * because each pair is meant to be read against its neighbour. A page holding
- * them all in a shuffled order satisfies "the charts are present" and fails
- * the thing the section actually specifies.
+ * The Report holds these under two of its collapsible sections, and this list
+ * is the order they sit in with BOTH open (Requests is open on arrival,
+ * Virtual users is not — every case that counts all ten opens it first).
+ * Asserted as a LIST rather than a set: the sequence is the claim, so a reorder
+ * that kept every figure present would silently undo it, and a failure prints
+ * both sequences.
  *
- * `percentile-distribution` follows `distribution` under exactly that rule,
- * and is not an exception to it: the two are folds of the same payload and
- * answer halves of one question — where the mass of the response times is, and
- * how bad the tail gets. Read apart, the histogram invites eyeballing the area
- * under an unmarked stretch of its right-hand side.
+ *   Requests        GE's measured order — Requests and Responses per Second,
+ *                   Response Time Percentiles, Response Time Distribution,
+ *                   Response Time Percentiles Distribution, Errors per Second —
+ *                   then this product's two (`indicators`, `request-counts`).
+ *   Virtual users   Arrival Rate, Termination Rate, Concurrent Users.
+ *
+ * It replaces §13.2's order, review M12's reading order and review 09-13 M17's
+ * four groups, each of which was an argument about a page that no longer exists:
+ * the Charts tab drew four headed groups, and the Report draws GE's two
+ * sections. The properties those orders defended that SURVIVE are asserted
+ * where they live — the time-linked charts sharing one crosshair, and the
+ * combined requests/responses chart carrying both edges.
+ *
+ * The ids are the ones the COMPONENTS pass to `Chart`; a list here that merely
+ * resembled them would fail loudly, which is the point of naming them once.
  */
-/**
- * DOCUMENT ORDER, AND THE ORDER IS THE ARGUMENT (review M12).
- *
- * This used to open with two aggregates — a response-time range bar and a
- * large OK/KO donut — and put latency-over-time seventh, because the charts
- * were grouped by which QUERY produced them. A reader correlating offered load
- * against throughput, latency and failures scrolled past whole-run summaries
- * to reach the series and then scrolled back.
- *
- * The four time series are adjacent now, in the order the question is asked:
- * what was applied, what got through, what it cost. The whole-run
- * distributions follow, because answering them does not need the reader's
- * place in time.
- *
- * Asserted as a LIST rather than a set: the sequence is the fix, so a reorder
- * that kept every figure present would silently undo it.
- */
-const CHART_IDS = [
-  // ═══ THE ORDER IS THE FOUR GROUPS (review 09-13 M17, second half) ═══
-  //
-  // `RunChartsTab` draws these under four headings, and this list is the
-  // document order they produce. The list is asserted whole, so a regrouping
-  // that silently reordered figures fails here with both sequences printed.
-  //
-  // `request-counts` moved LAST in that change: it sat seventh, between
-  // `indicators` and `distribution`, which split the response-time run in two.
-  // The two properties the previous order defended both survive — the five
-  // charts sharing RUN_TIME's crosshair stay adjacent at 1-5, and the
-  // distribution pair stays adjacent at 7-8.
-  'concurrent-users', // ┐ Offered load
-  'user-start-rate', // ┘
-  'requests-per-second', // ┐ Throughput
-  'responses-per-second', // ┘
-  'percentiles', // ┐ Response time
-  'indicators', // │
-  'distribution', // │
-  'percentile-distribution', // ┘
-  'request-counts', // Outcomes
+const REQUESTS_IDS = [
+  'requests-and-responses',
+  'percentiles',
+  'distribution',
+  'percentile-distribution',
+  'errors-over-time',
+  'indicators',
+  'request-counts',
 ] as const;
+const VIRTUAL_USERS_IDS = ['user-start-rate', 'user-end-rate', 'concurrent-users'] as const;
+const CHART_IDS = [...REQUESTS_IDS, ...VIRTUAL_USERS_IDS] as const;
 
-/** Every chart figure on the page, in document order. */
 /**
- * The §13.2 overview figures — the eight this tab is about.
+ * The Report with its charts drawn: Requests (open on arrival), and Virtual
+ * users too when the case counts all ten. Virtual users is shut on arrival and
+ * a shut section builds nothing, so a case that wants its charts opens it —
+ * exactly as a reader does.
+ *
+ * WAITS FOR EVERY PLOT, because a chart swaps from its loading placeholder to
+ * its real component when its query resolves, and React remounts across that
+ * swap — taking a chart's own state (`PercentilesChart`'s scale and bands) with
+ * it. A click landing before then is silently undone.
+ */
+async function openReport(page: Page, runId: string, sections: 'requests' | 'all' = 'requests'): Promise<void> {
+  await page.goto(runReportPath(runId));
+  if (sections === 'all') await openSection(page, 'virtual-users', 'Virtual users');
+  await expect(plot(figures(page))).toHaveCount(sections === 'all' ? CHART_IDS.length : REQUESTS_IDS.length);
+}
+
+/**
+ * Every chart figure on the Report, in document order.
  *
  * EXCLUDING THE TIME-WINDOW STRIP, which is a `Chart` too and therefore shares
  * this testid namespace, but is a CONTROL rendered by `RunShell` above the
- * tabs rather than one of the numbered figures. Without the exclusion every
- * count and ordering assertion here would silently be about nine charts, and
- * §13.2's numbering is itself information.
+ * sections rather than one of the figures in them. Without the exclusion every
+ * count and ordering assertion here would silently be about one chart too many.
+ *
+ * ONLY THE OPEN SECTIONS' charts exist: a shut `CollapsibleSection` builds
+ * nothing, so this is Requests' seven until Virtual users is opened.
  */
 function figures(page: Page): Locator {
   return page.locator('figure[data-testid^="chart-"]:not([data-testid="chart-time-window"])');
@@ -149,6 +148,8 @@ interface SeriesPayload {
     startOffsetMs: number;
     startedCount: number;
     endedCount: number;
+    okCount: number;
+    koCount: number;
   }[];
 }
 
@@ -200,13 +201,13 @@ async function hoveredSecond(chart: Locator): Promise<string> {
   return /^\s*(-?[\d.]+)/.exec(text)?.[1] ?? '';
 }
 
-test('a completed run shows the eight overview charts, in §13.2 order, on their own tab', async ({
+test('a completed run’s Report shows its ten charts, in GE’s order, under its sections', async ({
   page,
 }) => {
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(runChartsPath(runId));
+  await openReport(page, runId, 'all');
 
   for (const id of CHART_IDS) {
     await expect(page.getByTestId(`chart-data-${id}`)).toHaveCount(1);
@@ -221,114 +222,96 @@ test('a completed run shows the eight overview charts, in §13.2 order, on their
   );
   expect(rendered).toEqual(CHART_IDS.map((id) => `chart-${id}`));
 
-  // NOT below the assertions panel any more — its own tab, entirely (design
-  // §6). The run's own header persists across the tab switch (the layout
-  // route mounts it once, design §3), so its `<h1>` is still the page's first
-  // heading; the Charts section itself carries an `<h2>Charts</h2>` that is
-  // `sr-only` — present in the heading list below (so a screen-reader user
-  // navigating by heading can actually reach this section, which
-  // `aria-label` alone never let them do) but invisible on screen, so
-  // "Platform gates" and "Overview" still appear nowhere on this tab.
+  // THE REPORT IS NOT THE SUMMARY, and the headings say which page this is.
   //
   // THIS ASSERTION IS THE DANGEROUS SHAPE AND IS WORTH KNOWING ABOUT. It said
   // `not.toContain('Assertions')`, and review N01 renamed that heading to
   // "Platform gates" — so it would have gone on PASSING, vacuously, against a
   // string no longer in the product, while no longer guarding anything at all.
   // A negative assertion over a value that can be RENAMED is green in exactly
-  // the case it exists to catch. Kept (the tab split is worth guarding) and
-  // re-pointed, with the positive `toContain('Charts')` above it as the
-  // paired check that the page rendered at all.
-  //
-  // AND THE POSITIVE MOVED WHEN THE HEADING IT NAMED DID (review 09-13 M17).
-  // This read `toContain('Charts')`, for the reachability reason above. That
-  // `sr-only` <h2>Charts</h2> is gone: the tab's four group headings are real,
-  // visible <h2>s now, and they reach the section far better than one invisible
-  // word did. So the paired positive is the group list — which is a STRONGER
-  // check than the one it replaces, because it fails if the grouping collapses
-  // as well as if the page does not render.
+  // the case it exists to catch. Kept (the page split is worth guarding) and
+  // paired with positives that fail if the Report did not render: its own
+  // sections' names. "Overview" went when the tab did, so it is not asserted
+  // absent — a string no longer in the product proves nothing by staying so.
   const headings = await page.getByRole('heading').allTextContents();
   expect(headings[0]).toMatch(/ParitySimulation/);
-  expect(headings).toContain('Offered load');
+  expect(headings).toContain('Requests');
+  expect(headings).toContain('Virtual users');
   expect(headings).not.toContain('Platform gates');
-  expect(headings).not.toContain('Overview');
 });
 
 /**
- * The four investigation groups (review 09-13 M17, second half).
+ * The two Report sections that hold charts, and which chart is in which
+ * (backlog #7; this was review 09-13 M17's four question-groups before it).
  *
  * WHAT THIS ASSERTS IS CONTAINMENT, NOT PRESENCE, and the difference is the
- * whole test. Four headings exist on a page that renders them above one
- * undifferentiated grid too — that is precisely the before state wearing
- * labels, and a `toEqual` over heading text would pass against it. So each
- * group is asked which figures are INSIDE it.
+ * whole test. Two headings exist on a page that renders them above one
+ * undifferentiated grid too, and a `toEqual` over heading text would pass
+ * against it. So each section is asked which figures are INSIDE it.
  *
- * The heading names are checked as an ordered list as well, because a group
+ * The heading names are checked as an ordered list as well, because a section
  * whose charts are right and whose name drifted is a heading that lies about
- * the figures under it — which is the defect M17 is about, one level up.
+ * the figures under it.
+ *
+ * `level: 2` is asserted rather than assumed: `Chart` renders every figure's
+ * title as an `<h3>`, so a section heading at that level would be a SIBLING of
+ * the charts it contains, which is what a first attempt at grouping these
+ * charts did. The level IS the containment claim.
  *
  * Deliberately NOT a snapshot of the whole tree: that would fail on any chart
- * added to any group, which is a change this assertion has no opinion about.
- * It pins where each of the nine lives, and nothing else.
+ * added to any section, a change this assertion has no opinion about. It pins
+ * where each of the ten lives, and nothing else.
  */
-test('every chart sits under the question it answers', async ({ page }) => {
+test('every chart sits in its GE section', async ({ page }) => {
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(runChartsPath(runId));
-  await expect(figures(page).first()).toBeVisible();
+  await openReport(page, runId, 'all');
 
-  // The groups, in document order. `level: 2` is asserted rather than assumed:
-  // `Chart` renders every figure's title as an `<h3>`, so a group heading at
-  // that level would be a SIBLING of the charts it contains — which is what a
-  // first attempt here did, and the failure listed all nine chart titles beside
-  // the four group names. The level IS the containment claim.
   expect(await page.getByRole('heading', { level: 2 }).allTextContents()).toEqual([
-    'Offered load',
-    'Throughput',
-    'Response time',
-    'Outcomes',
+    'Time window',
+    'Requests',
+    'Groups',
+    'Virtual users',
+    'Connections',
+    'Load generators',
   ]);
 
-  const GROUPS = [
-    { heading: 'Offered load', ids: ['concurrent-users', 'user-start-rate'] },
-    { heading: 'Throughput', ids: ['requests-per-second', 'responses-per-second'] },
-    {
-      heading: 'Response time',
-      ids: ['percentiles', 'indicators', 'distribution', 'percentile-distribution'],
-    },
-    { heading: 'Outcomes', ids: ['request-counts'] },
+  const SECTIONS = [
+    { heading: 'Requests', ids: REQUESTS_IDS },
+    { heading: 'Virtual users', ids: VIRTUAL_USERS_IDS },
   ] as const;
 
-  for (const group of GROUPS) {
+  for (const section of SECTIONS) {
     // The SECTION named by that heading, not the heading's siblings: a
     // `locator('..')` walk would depend on how deeply the markup nests.
-    const section = page.getByRole('region', { name: group.heading, exact: true });
-    await expect(section).toHaveCount(1);
+    const region = page.getByRole('region', { name: section.heading, exact: true });
+    await expect(region).toHaveCount(1);
     // `figure[...]`, not `[data-testid^="chart-"]`: each chart also renders a
     // `chart-data-<id>` TABLE under the same prefix, so the loose selector
     // returned every figure followed by its own table. Same shape `figures()`
     // above already guards against, met one level in.
-    const inside = await section
+    const inside = await region
       .locator('figure[data-testid^="chart-"]')
       .evaluateAll((nodes) => nodes.map((n) => n.getAttribute('data-testid')));
-    expect(inside).toEqual(group.ids.map((id) => `chart-${id}`));
+    expect(inside).toEqual(section.ids.map((id) => `chart-${id}`));
   }
 
-  // And every figure is accounted for — a tenth chart dropped outside all four
-  // groups would satisfy every assertion above while being exactly the
-  // ungrouped page this finding exists to remove.
-  const grouped = GROUPS.flatMap((g) => g.ids);
+  // And every figure is accounted for — an eleventh chart dropped outside both
+  // sections would satisfy every assertion above while being exactly the
+  // ungrouped page this case exists to prevent.
+  const grouped = SECTIONS.flatMap((s) => s.ids);
   expect(grouped).toHaveLength(CHART_IDS.length);
   expect([...grouped].sort()).toEqual([...CHART_IDS].sort());
 });
 
-test('every chart actually draws — the real ECharts renders SVG marks for all eight', async ({
+test('every chart actually draws — the real ECharts renders SVG marks for all ten', async ({
   page,
 }) => {
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(runChartsPath(runId));
+  await openReport(page, runId, 'all');
 
   // One <svg> per chart, each containing marks. This is the assertion that
   // fails if ECharts 6.1.0 does not initialise in a browser at all — which the
@@ -342,13 +325,15 @@ test('every chart actually draws — the real ECharts renders SVG marks for all 
     await expect(svg.locator('path').first(), `${id} drew no marks`).toBeAttached();
   }
 
-  // No console errors while eight ECharts instances initialise, connect and
+  // No console errors while ten ECharts instances initialise, connect and
   // draw. A thrown option error leaves a chart blank without failing anything
-  // above it.
+  // above it. The reload shuts Virtual users again (sections reset), so what
+  // is watched is the Requests seven — and the three more are covered by the
+  // loop above having drawn them at all.
   const errors: string[] = [];
   page.on('pageerror', (err) => errors.push(err.message));
   await page.reload();
-  await expect(plot(page.getByTestId('chart-percentiles'))).toHaveCount(1);
+  await expect(plot(figures(page))).toHaveCount(REQUESTS_IDS.length);
   expect(errors).toEqual([]);
 });
 
@@ -405,7 +390,7 @@ test('every chart actually draws in dark mode too, and the page background follo
   );
   await page.emulateMedia({ colorScheme: 'dark' });
   await signIn(page, admin);
-  await page.goto(runChartsPath(runId));
+  await openReport(page, runId, 'all');
 
   // The same "every chart draws marks" shape as the light-mode test above,
   // run under a forced dark `prefers-color-scheme`.
@@ -444,45 +429,68 @@ function rgbOf(hex: string): string {
   return `rgb(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255})`;
 }
 
-test("the requests/s and responses/s tables carry the API's own numbers, on their own edges", async ({
+/**
+ * GE's combined chart carries both edges, and every one of its four lines is a
+ * different counter of the API's own `/series`.
+ *
+ * The two single-edge charts this replaces on the run pages were each pinned to
+ * their own edge (requests STARTED per second, responses ENDED per second); the
+ * combined chart has to hold that claim four times over — Requests is the
+ * start edge, Total is the end edge, and `Responses OK` / `Responses KO` are
+ * the end edge's outcome split — and it has one new claim the pair never could:
+ * OK plus KO is Total in every bucket, because they are the same responses
+ * counted two ways.
+ */
+test("the requests-and-responses table carries the API's own numbers, on their own edges", async ({
   page,
 }) => {
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(runChartsPath(runId));
+  await openReport(page, runId);
 
   const series = await apiJson<SeriesPayload>(page, `/v1/runs/${runId}/series?scope=run&name=`);
   expect(series.buckets.length).toBeGreaterThan(0);
   const perSecond = series.bucketWidthMs / 1000;
 
-  const requests = await readTable(page, 'requests-per-second');
-  const responses = await readTable(page, 'responses-per-second');
+  const rows = await readTable(page, 'requests-and-responses');
+
+  // FOUR value columns per row — the four lines, in the order the legend names
+  // them: Requests, Total, Responses OK, Responses KO.
+  const headers = await page
+    .getByTestId('chart-data-requests-and-responses')
+    .locator('th[scope="col"]')
+    .allTextContents();
+  expect(headers.slice(1)).toEqual(['Requests', 'Total', 'Responses OK', 'Responses KO']);
+  for (const row of rows) expect(row.cells).toHaveLength(4);
 
   // EVERY bucket, not the first one. A spec that checked `[0]` passes against a
   // chart that plots one correct point and garbage after it, and passes against
   // a table whose rows are misaligned with the axis by any offset that leaves
   // the first row alone.
-  expect(requests.map((row) => row.label)).toEqual(
+  expect(rows.map((row) => row.label)).toEqual(
     series.buckets.map((b) => String(b.startOffsetMs / 1000)),
   );
-  expect(requests.map((row) => row.cells[0]?.text)).toEqual(
-    series.buckets.map((b) => String(b.startedCount / perSecond)),
-  );
-  expect(responses.map((row) => row.cells[0]?.text)).toEqual(
-    series.buckets.map((b) => String(b.endedCount / perSecond)),
-  );
+  const column = (i: number) => rows.map((row) => row.cells[i]?.text);
+  expect(column(0)).toEqual(series.buckets.map((b) => String(b.startedCount / perSecond)));
+  expect(column(1)).toEqual(series.buckets.map((b) => String(b.endedCount / perSecond)));
+  expect(column(2)).toEqual(series.buckets.map((b) => String(b.okCount / perSecond)));
+  expect(column(3)).toEqual(series.buckets.map((b) => String(b.koCount / perSecond)));
 
-  // THE TWO CHARTS MUST NOT BE THE SAME CHART. Both read the same payload and
-  // differ only in which counter they take (`rates.ts`'s START_EDGE/END_EDGE),
-  // so mounting `RequestRateChart` twice — or handing one component an `edge`
-  // string and getting it wrong — produces two charts that look entirely
-  // reasonable. On the reference run 33 of 62 seconds start a different number
-  // of requests than they finish, so the two columns genuinely diverge and the
-  // assertions above are each pinned to their own edge.
-  expect(requests.map((row) => row.cells[0]?.text)).not.toEqual(
-    responses.map((row) => row.cells[0]?.text),
-  );
+  // THE LINES MUST NOT BE THE SAME LINE. All four read one payload and differ
+  // only in which counter they take, so wiring two of them to the same field
+  // produces a chart that looks entirely reasonable. On the reference run 33 of
+  // 62 seconds start a different number of requests than they finish, and it
+  // has failures, so Requests differs from Total and OK differs from KO — each
+  // assertion is pinned to its own counter.
+  expect(column(0)).not.toEqual(column(1));
+  expect(column(2)).not.toEqual(column(3));
+
+  // And the invariant that makes OK + KO a split of Total rather than two more
+  // lines: in every bucket the payload's own outcome counts add up to its
+  // ended count. Asserted on the payload so a re-captured fixture cannot make
+  // the premise false without saying so.
+  for (const b of series.buckets) expect(b.okCount + b.koCount).toBe(b.endedCount);
 });
 
 test('the distribution table reads at two decimals and keeps the exact percentage beside it', async ({
@@ -491,7 +499,7 @@ test('the distribution table reads at two decimals and keeps the exact percentag
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(runChartsPath(runId));
+  await openReport(page, runId);
 
   const d = await apiJson<DistributionPayload>(
     page,
@@ -541,15 +549,19 @@ test('the distribution table reads at two decimals and keeps the exact percentag
 });
 
 /** Every chart whose x-axis is elapsed seconds, and which therefore shares the
- *  `run-time` crosshair. Concurrent users is in this list and NOT overlaid on
+ *  `run-time` crosshair — across BOTH of the Report's chart sections, which is
+ *  the point of the shared group: a reader hovering the combined
+ *  requests-and-responses chart sees the same second on the arrival rate two
+ *  sections down. Concurrent users is in this list and NOT overlaid on
  *  requests/s: that is the PRD's deliberate encoding change (§22.4 forbids dual
  *  axes), and the shared pointer is what pays for it. */
 const TIME_AXIS_IDS = [
-  'concurrent-users',
-  'user-start-rate',
+  'requests-and-responses',
   'percentiles',
-  'requests-per-second',
-  'responses-per-second',
+  'errors-over-time',
+  'user-start-rate',
+  'user-end-rate',
+  'concurrent-users',
 ] as const;
 
 /** The charts that are NOT on a time axis, and must therefore be untouched by
@@ -560,30 +572,30 @@ test('the time-linked charts share one crosshair', async ({ page }) => {
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(runChartsPath(runId));
+  await openReport(page, runId, 'all');
 
-  const requests = page.getByTestId('chart-requests-per-second');
+  const requests = page.getByTestId('chart-requests-and-responses');
   const users = page.getByTestId('chart-concurrent-users');
   for (const id of [...TIME_AXIS_IDS, ...OTHER_IDS]) {
     await expect(plot(page.getByTestId(`chart-${id}`))).toHaveCount(1);
   }
 
-  // Nothing is hovered, so no chart has a pointer. Asserted across all eight,
+  // Nothing is hovered, so no chart has a pointer. Asserted across all nine,
   // so "the pointer was already there" cannot be what makes the hover below
   // look successful.
   for (const id of [...TIME_AXIS_IDS, ...OTHER_IDS]) {
     await expect(page.getByTestId(`chart-${id}`).locator(AXIS_POINTER)).toHaveCount(0);
   }
 
-  // Hovering requests/s must move the pointer on concurrent users too — that
-  // linkage is why active users is its own chart rather than a second y-axis
-  // on requests/s.
+  // Hovering requests-and-responses must move the pointer on concurrent users
+  // too — that linkage is why active users is its own chart rather than a
+  // second y-axis on requests/s.
   await plot(requests).hover({ position: { x: 200, y: 60 } });
   await expect.poll(() => users.locator(AXIS_POINTER).count()).toBeGreaterThan(0);
 
-  // ALL FIVE, and ONLY the five. The pointer reaching every time-axis chart is
+  // ALL SIX, and ONLY the six. The pointer reaching every time-axis chart is
   // half the claim; the other half is that it reaches no further. A `group`
-  // applied to all eight charts would connect a percentage histogram and a
+  // applied to all ten charts would connect a percentage histogram and a
   // donut to a time axis they do not share, and would still satisfy an
   // assertion that only looked at concurrent users.
   for (const id of TIME_AXIS_IDS) {
@@ -612,10 +624,9 @@ test('the time-linked charts share one crosshair', async ({ page }) => {
   }
 
   // Moving away takes it back. A pointer that appears once and sticks is a
-  // stale reading of a chart nobody is hovering. The "Overview" heading this
-  // used to hover is gone with the split (design §6) — the run's own `<h1>`,
-  // outside the chart stack and present on every tab, is an equally neutral
-  // target to move the mouse to.
+  // stale reading of a chart nobody is hovering. The run's own `<h1>`, outside
+  // the chart stack and present on every page, is a neutral target to move the
+  // mouse to.
   await page.getByRole('heading', { level: 1 }).hover();
   await expect.poll(() => users.locator(AXIS_POINTER).count()).toBe(0);
 });
@@ -625,13 +636,13 @@ test('a processing run mounts no charts at all', async ({ page }) => {
   // A pending run no worker will ever pick up: `GET /v1/runs/:id` answers 202.
   const runId = await seedPendingRun(admin.orgId);
   await signIn(page, admin);
-  await page.goto(runChartsPath(runId));
+  await page.goto(runReportPath(runId));
 
   await expect(page.getByText(/still processing/i).first()).toBeVisible();
 
   // Charts mount inside the `ready` branch ONLY. A page that rendered them
   // here would fire four metric queries against a run whose rows do not exist
-  // yet and put eight "no data" figures under a run nobody has parsed —
+  // yet and put seven "no data" figures under a run nobody has parsed —
   // stating as a measurement ("nothing was recorded") what is merely "not yet".
   await expect(figures(page)).toHaveCount(0);
 });
@@ -640,15 +651,16 @@ test('a completed run with no data explains every chart rather than showing empt
   page,
 }) => {
   const admin = await seedAdmin();
-  // Complete, so the ready branch mounts all eight charts — but carrying no
+  // Complete, so the ready branch mounts every chart — but carrying no
   // metric rows at all, so every payload is empty. A PENDING run cannot test
   // this: it never renders a chart, so "the page says there is no data" would
   // pass with the whole chart stack deleted.
   const runId = await seedCompleteRunWithoutMetrics(admin.orgId);
   await signIn(page, admin);
-  await page.goto(runChartsPath(runId));
+  await page.goto(runReportPath(runId));
+  await openSection(page, 'virtual-users', 'Virtual users');
 
-  // All eight are present, in order — the sequence does not develop holes
+  // All ten are present, in order — the sequence does not develop holes
   // because a payload was empty.
   await expect(figures(page)).toHaveCount(CHART_IDS.length);
   const rendered = await figures(page).evaluateAll((nodes) =>
@@ -656,7 +668,7 @@ test('a completed run with no data explains every chart rather than showing empt
   );
   expect(rendered).toEqual(CHART_IDS.map((id) => `chart-${id}`));
 
-  // The parity surface survives the absence of data: eight tables, still.
+  // The parity surface survives the absence of data: ten tables, still.
   for (const id of CHART_IDS) {
     await expect(page.getByTestId(`chart-data-${id}`)).toHaveCount(1);
   }
@@ -671,18 +683,13 @@ test('a completed run with no data explains every chart rather than showing empt
     await expect(page.getByTestId(`chart-${id}`).locator('[role="status"]')).toHaveCount(1);
   }
   await expect(page.getByTestId('chart-indicators')).toContainText(/no requests were recorded/i);
-  await expect(page.getByTestId('chart-concurrent-users')).toContainText(
-    /no user activity was recorded/i,
-  );
-  await expect(page.getByTestId('chart-user-start-rate')).toContainText(
-    /no user activity was recorded/i,
-  );
+  for (const id of ['concurrent-users', 'user-start-rate', 'user-end-rate']) {
+    await expect(page.getByTestId(`chart-${id}`)).toContainText(/no user activity was recorded/i);
+  }
   await expect(page.getByTestId('chart-percentiles')).toContainText(/no response times/i);
-  await expect(page.getByTestId('chart-requests-per-second')).toContainText(
-    /no requests were recorded/i,
-  );
-  await expect(page.getByTestId('chart-responses-per-second')).toContainText(
-    /no responses were recorded/i,
+  // ONE chart now says it for both edges, and names both.
+  await expect(page.getByTestId('chart-requests-and-responses')).toContainText(
+    /no requests were recorded.*request or response rates/i,
   );
 
   // `/distribution` is the one endpoint that 404s rather than answering an
@@ -696,15 +703,15 @@ test("every chart's data table is reachable by its own toggle", async ({ page })
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(runChartsPath(runId));
 
-  // WAIT FOR ALL FOUR PAYLOADS FIRST, which "all nine have drawn" proves.
-  // A chart swaps from `RunDetail`'s loading figure to its real component when
-  // its query resolves, and React remounts the subtree across that swap — so a
-  // table opened before then is a table on an element about to be replaced, and
-  // its disclosure state goes with it. That is a real (if brief) behaviour of
-  // the page, not a test artefact; what it is not is what this test is about.
-  await expect(plot(figures(page))).toHaveCount(CHART_IDS.length);
+  // WAIT FOR EVERY PAYLOAD FIRST, which `openReport` proves by waiting for all
+  // ten plots. A chart swaps from its loading placeholder to its real component
+  // when its query resolves, and React remounts the subtree across that swap —
+  // so a table opened before then is a table on an element about to be
+  // replaced, and its disclosure state goes with it. That is a real (if brief)
+  // behaviour of the page, not a test artefact; what it is not is what this
+  // test is about.
+  await openReport(page, runId, 'all');
 
   const menuFor = (id: string) =>
     page.getByTestId(`chart-${id}`).getByRole('button', { name: /data and exports$/ });
@@ -722,14 +729,14 @@ test("every chart's data table is reachable by its own toggle", async ({ page })
    * the relationship is the claim.
    *
    * Each menu is opened by its own trigger, scoped to this chart's figure —
-   * the trigger is named after the chart precisely so nine of them in one
-   * document stay nine distinguishable controls. Radix portals the content, so
+   * the trigger is named after the chart precisely so ten of them in one
+   * document stay ten distinguishable controls. Radix portals the content, so
    * an item exists only while its own menu is open: there is no way to read
-   * nine relationships without opening nine menus.
+   * ten relationships without opening ten menus.
    */
   for (const id of CHART_IDS) {
     const table = page.getByTestId(`chart-data-${id}`);
-    // Collapsed to begin with — nine always-announced tables of a hundred
+    // Collapsed to begin with — ten always-announced tables of a hundred
     // numbers each is not an accessible page.
     await expect(table).not.toBeVisible();
 
@@ -742,7 +749,7 @@ test("every chart's data table is reachable by its own toggle", async ({ page })
     // open or close of a table drives a full ECharts re-layout — `Chart` hides
     // the canvas with `hidden`, and the instance's own ResizeObserver answers
     // the 0×0 box it then reports — which is the expensive half, and is dealt
-    // with once below rather than nine times here.
+    // with once below rather than ten times here.
     await page.keyboard.press('Escape');
     await expect(toggle).toHaveCount(0);
   }
@@ -756,12 +763,12 @@ test("every chart's data table is reachable by its own toggle", async ({ page })
    * loop above just checked against, and a setter that takes no id at all. A
    * chart whose menu item names the right table therefore cannot toggle a
    * different one, and what is left to prove is that toggling works: one
-   * expression, shared by all nine.
+   * expression, shared by all ten.
    *
    * WHAT REPEATING IT COST, MEASURED ON CI. Before the overflow menu this test
    * ran 1.5s in Chromium and 15.6s in WebKit — 10.4x, against about 2x for
    * every other case in this file, because it was the only one driving that
-   * re-layout eighteen times. The menu then added a portalled open per toggle
+   * re-layout twenty times. The menu then added a portalled open per toggle
    * and the runners got ~1.65x slower, and it stopped finishing inside the 60s
    * budget at all: red on `main` for eight consecutive merges, on
    * `e2e-cross-browser` — the one job a pull request never runs.
@@ -808,10 +815,9 @@ test('a chart can fill the screen, and Escape brings it back', async ({ page }) 
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(runChartsPath(runId));
-  await expect(plot(figures(page))).toHaveCount(CHART_IDS.length);
+  await openReport(page, runId);
 
-  const figure = page.getByTestId('chart-requests-per-second');
+  const figure = page.getByTestId('chart-requests-and-responses');
   const dialog = figure.locator('dialog');
 
   // A modal `<dialog>` paints in the TOP LAYER, so it can be a child of the
@@ -877,26 +883,13 @@ async function valueAxisTicks(chart: Locator): Promise<string[]> {
   return chart.locator('svg text[text-anchor="end"]').allTextContents();
 }
 
-/**
- * All eight charts drawn, which proves all four payloads resolved.
- *
- * Required before touching a chart's own controls: a chart swaps from
- * `RunDetail`'s loading figure to its real component when its query resolves,
- * and React remounts across that swap — taking `PercentilesChart`'s `scale` and
- * `bands` state with it. A click landing before then is silently undone.
- */
-async function settled(page: Page): Promise<void> {
-  await expect(plot(figures(page))).toHaveCount(CHART_IDS.length);
-}
-
 test('the percentile chart draws on a log axis by default, and the toggle really switches it', async ({
   page,
 }) => {
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(runChartsPath(runId));
-  await settled(page);
+  await openReport(page, runId);
 
   const chart = page.getByTestId('chart-percentiles');
   const toggle = page.getByTestId('scale-toggle-percentiles');
@@ -942,8 +935,7 @@ test('the tooltip reads at the same precision the data table does', async ({ pag
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(runChartsPath(runId));
-  await settled(page);
+  await openReport(page, runId);
 
   // THE TOOLTIP IS THE SURFACE A SIGHTED READER ACTUALLY USES — the table is
   // collapsed until asked for — and it was rendering ECharts' raw values:
@@ -994,8 +986,7 @@ test('the band selector adds and removes exactly the band it names', async ({ pa
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(runChartsPath(runId));
-  await settled(page);
+  await openReport(page, runId);
 
   const chart = page.getByTestId('chart-percentiles');
 
@@ -1024,8 +1015,7 @@ test('the percentile table carries all ten bands while six are drawn', async ({ 
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(runChartsPath(runId));
-  await settled(page);
+  await openReport(page, runId);
 
   const chart = page.getByTestId('chart-percentiles');
 
@@ -1062,8 +1052,7 @@ test('selecting every band draws all ten, which the palette used to forbid', asy
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(runChartsPath(runId));
-  await settled(page);
+  await openReport(page, runId);
 
   const chart = page.getByTestId('chart-percentiles');
   for (const band of ['p25', 'p80', 'p85', 'p90']) {
@@ -1082,8 +1071,7 @@ test('deselecting every band explains itself rather than drawing an empty grid',
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(runChartsPath(runId));
-  await settled(page);
+  await openReport(page, runId);
 
   const chart = page.getByTestId('chart-percentiles');
 
@@ -1139,7 +1127,7 @@ test('brushing recomputes the statistics, not just the axis', async ({ page }) =
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(runChartsPath(runId));
+  await page.goto(runReportPath(runId));
 
   // DERIVED FROM THE RUN ITSELF: the reference bundle's duration changes on
   // re-capture, so the cut is taken from the run's own series rather than
@@ -1163,13 +1151,13 @@ test('the brush writes the window into the URL and states what it computed', asy
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(runChartsPath(runId));
+  await page.goto(runReportPath(runId));
 
   const brush = page.getByTestId('time-brush');
   await expect(brush).toBeVisible();
 
-  // The control is collapsed by default (review M01); a reader opens it
-  // before typing a range, and so does this.
+  // The control is always open on the Report (it used to be a disclosure,
+  // review M01); `openTimeWindow` waits for it.
   await openTimeWindow(page);
   await page.getByTestId('window-from').fill('0');
   await page.getByTestId('window-to').fill('10');
@@ -1192,7 +1180,7 @@ test('the scrubber is a real chart, and it really draws a slider', async ({ page
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(runChartsPath(runId));
+  await page.goto(runReportPath(runId));
 
   // ONE `<svg>` in the strip's plot, exactly like every other chart. This is
   // the assertion that settles the question the design turned on: an ECharts
@@ -1225,7 +1213,11 @@ test('the scrubber is a real chart, and it really draws a slider', async ({ page
     });
 
   const withSlider = await bottomBandCount('chart-time-window');
-  const withoutSlider = await bottomBandCount('chart-requests-per-second');
+  // Waited for, because the Report's Requests charts draw when THEIR queries
+  // resolve and the strip is up before them; measuring an undrawn chart's band
+  // would make "more than a plain chart" trivially true.
+  await expect(plot(page.getByTestId('chart-requests-and-responses'))).toHaveCount(1);
+  const withoutSlider = await bottomBandCount('chart-requests-and-responses');
   expect(withSlider).toBeGreaterThan(withoutSlider);
 });
 
@@ -1254,13 +1246,14 @@ test('dragging the scrubber commits a window in milliseconds, not axis noise', a
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(runChartsPath(runId));
+  await page.goto(runReportPath(runId));
 
-  /* OPENED FIRST. Review M01 collapsed this control, and a closed `<details>`
-     does not render its children at all — so the strip is not merely below the
-     fold, it does not exist to be measured. `plot()` would report 0 and the
-     drag would land on empty page, which is the same silent failure the
-     scroll note below was written for, one cause earlier. */
+  /* WAITED FOR FIRST. This control used to be a collapsed `<details>` (review
+     M01), whose closed children do not render at all — so the strip was not
+     merely below the fold, it did not exist to be measured, and `plot()` would
+     report 0 with the drag landing on empty page. It is always open now, but
+     the strip is still drawn by a query that has to resolve, and the same wait
+     is what makes the measurement below meaningful. */
   await openTimeWindow(page);
 
   const strip = plot(page.getByTestId('chart-time-window'));
@@ -1352,8 +1345,11 @@ test('a run with no metrics is offered no brush at all', async ({ page }) => {
   const admin = await seedAdmin();
   const runId = await seedCompleteRunWithoutMetrics(admin.orgId);
   await signIn(page, admin);
-  await page.goto(runChartsPath(runId));
+  await page.goto(runReportPath(runId));
 
+  // The Report itself rendered (its first section is on screen) — the absence
+  // below is about the brush, not about a page that failed to draw.
+  await expect(page.locator('section#requests')).toBeVisible();
   await expect(page.getByTestId('time-brush')).toHaveCount(0);
 });
 
@@ -1378,18 +1374,17 @@ test('the selected window survives moving between run tabs', async ({ page }) =>
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(runChartsPath(runId));
+  await page.goto(runReportPath(runId));
 
-  // The control is collapsed by default (review M01); a reader opens it
-  // before typing a range, and so does this.
+  // The window is drawn on the Report alone; that is where a reader types one.
   await openTimeWindow(page);
   await page.getByTestId('window-from').fill('0');
   await page.getByTestId('window-to').fill('10');
   await page.getByTestId('window-apply').click();
   await expect(page).toHaveURL(/[?&]from=0/);
 
-  // EVERY tab keeps it — including the ones that deliberately ignore it, so the
-  // return journey is lossless.
+  // EVERY tab keeps it — including the ones that deliberately ignore it (the
+  // Summary, Trends, Compare), so the return journey is lossless.
   //
   // THE LIST IS READ OFF THE TAB STRIP RATHER THAN WRITTEN DOWN, and that is
   // the whole point of this case. It used to enumerate three of the six tabs —
@@ -1398,10 +1393,11 @@ test('the selected window survives moving between run tabs', async ({ page }) =>
   // one dropping the window: `toggle` wrote `setParams({ runs })`, which React
   // Router reads as the COMPLETE new search string, so ticking a run discarded
   // `from`/`to` and the tab links built from them. A hand-written list is how a
-  // case comes to promise "every" and check half.
+  // case comes to promise "every" and check half. The strip is Summary, Report,
+  // Trends and Compare for this run now (Logs only for a runner's).
   const tabs = page.getByRole('navigation', { name: 'Run sections' }).getByRole('link');
   const names = await tabs.allInnerTexts();
-  expect(names.length, 'the tab strip should have been collected').toBeGreaterThan(4);
+  expect(names.length, 'the tab strip should have been collected').toBeGreaterThanOrEqual(4);
 
   for (const name of names) {
     await page.getByRole('navigation', { name: 'Run sections' })
@@ -1409,91 +1405,81 @@ test('the selected window survives moving between run tabs', async ({ page }) =>
       .click();
     await expect(page, `the window survived the ${name} tab`).toHaveURL(/[?&]from=0/);
     await expect(page).toHaveURL(/[?&]to=10000/);
-    // And the control is still there, showing what is selected. Compare and
-    // Trends withhold the brush deliberately, so it is asserted only where the
-    // reader can actually see it.
-    if (!['Trends', 'Compare'].includes(name)) {
+    // And the control is still there, showing what is selected — on the
+    // Report, the one page that draws it. Every other page withholds the brush
+    // deliberately (the Summary, Trends, Compare all answer whole-run
+    // questions), so it is asserted only where the reader can actually see it,
+    // and ABSENT elsewhere: the parameters survive, the control does not.
+    if (name === 'Report') {
       await expect(page.getByTestId('window-from')).toHaveValue('0');
+    } else {
+      await expect(page.getByTestId('window-from')).toHaveCount(0);
     }
   }
 
-  // Trends is whole-run by construction: the control goes away, the
-  // parameters do not.
+  // The Summary and Trends are whole-run by construction: the control goes
+  // away, the parameters do not.
   await page.getByRole('link', { name: /^Trends/ }).click();
   await expect(page).toHaveURL(/[?&]from=0/);
   await expect(page.getByTestId('time-brush')).toHaveCount(0);
 
-  // Back to a tab that honours it, and the selection is still the reader's.
-  await page.getByRole('link', { name: /^Overview/ }).click();
+  // Back to the page that honours it, and the selection is still the reader's.
+  await page.getByRole('link', { name: /^Report/ }).click();
   await expect(page.getByTestId('window-from')).toHaveValue('0');
   await expect(page.getByTestId('window-to')).toHaveValue('10');
 });
 
 /**
- * REVIEW C03 — the errors TABLE is whole-run while the chart above it is not,
- * because `/v1/runs/:id/errors` takes no `from`/`to` at all. Under a window
- * those two figures sit on one screen meaning different things.
- */
-test('the errors table says its totals are whole-run under a window', async ({ page }) => {
-  const admin = await seedAdmin();
-  const runId = await seedRunWithData(admin.orgId);
-  await signIn(page, admin);
-  await page.goto(runChartsPath(runId));
-
-  // The control is collapsed by default (review M01); a reader opens it
-  // before typing a range, and so does this.
-  await openTimeWindow(page);
-  await page.getByTestId('window-from').fill('0');
-  await page.getByTestId('window-to').fill('10');
-  await page.getByTestId('window-apply').click();
-  await expect(page).toHaveURL(/[?&]from=0/);
-
-  await page.getByRole('link', { name: /^Errors/ }).click();
-  await expect(page.getByTestId('errors-window-note')).toContainText(/whole run/i);
-});
-
-/**
- * ═══ WHAT A WINDOW CHANGES, AND WHAT IT MUST SAY IT DOES NOT ═══
+ * ═══ WHAT A WINDOW CHANGES — AND, SINCE BACKLOG #7, WHAT IT CANNOT ═══
  * (the 09-13 review's acceptance list: "selected-window versus whole-run evidence")
  *
- * A coverage sweep found this the largest unexercised cluster on the list: the
- * API contract for windowing is covered thoroughly and the PAGE almost not at
- * all. Three things on the Overview tab were wrong under a window, and each is
- * the same mistake — the window changed a number and not the thing describing
- * it.
+ * This used to be three cases about the Overview tab, each the same mistake:
+ * the window changed a number and not the thing describing it. The Summary has
+ * no window at all now — Gatling Enterprise's does not either, measured — so
+ * what those cases guarded against is the Summary READING a window it should
+ * not, and each is turned round to say so:
+ *
+ *   an empty window deleted the run's totals   -> an empty window in the URL
+ *                                                 leaves the Summary's totals alone
+ *   the percentile note named the wrong        -> the Summary's percentile note
+ *   population under a window                     names the whole run, window or not
+ *   the errors table's whole-run notice        -> deleted: the Summary never carries
+ *                                                 a window, so the table has nothing to
+ *                                                 disclaim (`run-summary-report.spec.ts`
+ *                                                 asserts the notice is not drawn)
  *
  * `?from=62000&to=63000` is a REAL, IN-RANGE second of the 62s reference run
  * that happens to hold no requests. It is not an out-of-range window:
  * `parseWindow` clamps those to the whole run, correctly, and a case built on
  * one would prove nothing.
  */
-test('an empty window says so instead of deleting the run’s totals', async ({ page }) => {
+test('an empty window in the URL leaves the Summary’s totals alone', async ({ page }) => {
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
 
-  // The whole run first, so the absence below is about the WINDOW and not
+  // The whole run first, so the comparison below is about the WINDOW and not
   // about a page that failed to render.
   await page.goto(runPath(runId));
-  await expect(page.getByTestId('stat-total-requests')).toBeVisible();
+  const tile = page.getByTestId('stat-total-requests');
+  await expect(tile).toHaveText(/\d/);
+  const whole = (await tile.textContent())?.trim();
 
   await page.goto(`${runPath(runId)}?from=62000&to=63000`);
   await expect(page.getByRole('region', { name: 'Run totals' })).toBeVisible();
 
-  /* THE SECTION SURVIVES AND EXPLAINS ITSELF. It used to return `null`: the
-     six headline numbers vanished with nothing anywhere saying why, and the
-     comment defending that pointed at a "no statistics were recorded" message
-     the statistics table does not print for this state. */
-  const empty = page.getByTestId('stats-empty-window');
-  await expect(empty).toBeVisible();
-  await expect(empty).toContainText(/no requests fall inside the selected window/i);
-  // And it does not read as a claim about the RUN, which is the whole reason
-  // zeroed tiles were the wrong answer.
-  await expect(empty).toContainText(/run’s own figures are unchanged|widen the window/i);
-  await expect(page.getByTestId('stat-total-requests')).toHaveCount(0);
+  /* THE TOTALS ARE THE RUN'S, UNCHANGED. A Summary that read this window would
+     have asked for a second with no requests and drawn none of its four
+     numbers — which is what the Overview did to its six, `return null`, until
+     it was made to explain itself. Not reading the window removes the
+     question. The "empty window" sentence that explained it is gone with the
+     only page that could draw one, and so is its testid — which is why this
+     asserts the tile's TEXT and not the sentence's absence: a negative over a
+     testid nothing renders any more is green whatever the page does. */
+  await expect(tile).toHaveText(whole ?? '');
 });
 
-test('the percentile note names the population it is actually describing', async ({ page }) => {
+test('the Summary’s percentile note names the whole run, with or without a window', async ({ page }) => {
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
@@ -1503,13 +1489,15 @@ test('the percentile note names the population it is actually describing', async
   await page.goto(runPath(runId));
   await expect(note).toContainText(/sketch of the whole run/i);
 
-  /* UNDER A WINDOW THAT SENTENCE WAS FALSE. The sketch is rebuilt from the
-     buckets the window selects, so the rank is read from that stretch — and a
-     methodology note naming the wrong population is worse than none, because a
-     reader opens it precisely when the number surprises them. A window with
-     requests in it, so the tiles really are windowed. */
+  /* UNDER A WINDOW THE SENTENCE USED TO BE FALSE, so it was conditional: the
+     sketch was rebuilt from the buckets the window selects, and a methodology
+     note naming the wrong population is worse than none, because a reader
+     opens it precisely when the number surprises them. The Summary has no
+     second population now, so the sentence is not conditional any more — and
+     this keeps it that way: a window with requests in it, in the URL, must
+     leave the whole-run sentence and must not bring the old windowed one back. */
   await page.goto(`${runPath(runId)}?from=0&to=2000`);
   await expect(page.getByTestId('stat-total-requests')).toBeVisible();
-  await expect(note).toContainText(/sketch of the selected window/i);
-  await expect(note).not.toContainText(/sketch of the whole run/i);
+  await expect(note).toContainText(/sketch of the whole run/i);
+  await expect(note).not.toContainText(/sketch of the selected window/i);
 });

@@ -32,7 +32,8 @@ import { useRunTerminal } from './useRunWindow';
  *
  * `role="log"` so a screen reader announces new events politely, and an
  * `sr-only` heading so a reader moving by heading can reach the section — the
- * reason the Charts tab carries one too.
+ * reason the Summary's "Over time" and the Report's "Time window" are
+ * visually hidden headings too.
  */
 export default function RunLogs() {
   const { runId } = useParams<{ runId: string }>();

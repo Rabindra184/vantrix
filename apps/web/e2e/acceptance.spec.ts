@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { seedAdmin, seedProjectWithRuns, seedRunWithData, seedTestWithRuns } from './fixtures.js';
 import { signIn } from './helpers.js';
-import { runPath } from '../src/routes/paths.js';
+import { runPath, runReportPath } from '../src/routes/paths.js';
 
 /**
  * ═══ THE 09-13 REVIEW'S PRODUCTION-READINESS BAR ═══
@@ -127,7 +127,7 @@ test('a 120-character project name does not push any page sideways', async ({ pa
  * the fixture-cannot-distinguish shape CLAUDE.md records many times.
  */
 for (const width of [320, 414]) {
-  test(`neither the run list, a run page nor a test's page scrolls sideways at ${width}px`, async ({
+  test(`neither the run list, a run's Summary or Report, nor a test's page scrolls sideways at ${width}px`, async ({
     page,
   }) => {
     const admin = await seedAdmin();
@@ -143,7 +143,12 @@ for (const width of [320, 414]) {
 
     for (const [name, path] of [
       ['run list', '/runs'],
-      ['run page', runPath(runId)],
+      ['run Summary', runPath(runId)],
+      // The Report is its own page now (backlog #7) and draws the time window
+      // and its collapsible sections; on a phone the window is withheld and
+      // every chart section sits behind a desktop-only gate, which is what this
+      // is for.
+      ['run Report', runReportPath(runId)],
       ['project tests', '/projects/checkout'],
     ] as const) {
       await page.goto(path);
@@ -257,9 +262,23 @@ test('every page still fits the window at 200% text', async ({ page }) => {
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
 
-  for (const url of ['/projects/checkout/rules', '/projects/checkout/setup', '/runs', runPath(runId)]) {
+  // BOTH RUN PAGES, because the run page this case was written against split
+  // in two (backlog #7) and each half carries a cause above: the Summary has
+  // the `StatTile`s, and the Report has the statistics table and its toolbar —
+  // behind a Table switch the Report opens on Charts, so that is asked for.
+  for (const url of [
+    '/projects/checkout/rules',
+    '/projects/checkout/setup',
+    '/runs',
+    runPath(runId),
+    runReportPath(runId),
+  ]) {
     await page.goto(url);
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+    if (url === runReportPath(runId)) {
+      await page.locator('section#requests').getByRole('button', { name: 'Table', exact: true }).click();
+      await expect(page.getByTestId('stat-row-total')).toBeVisible();
+    }
 
     try {
       await page.evaluate(() => {
@@ -307,12 +326,12 @@ test('a keyboard alone can open a chart’s data table and get back out', async 
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(`${runPath(runId)}/charts`);
+  await page.goto(runReportPath(runId));
 
-  const figure = page.getByTestId('chart-requests-per-second');
+  const figure = page.getByTestId('chart-requests-and-responses');
   const trigger = figure.getByRole('button', { name: /data and exports$/ });
   await expect(trigger).toBeVisible();
-  const table = page.getByTestId('chart-data-requests-per-second');
+  const table = page.getByTestId('chart-data-requests-and-responses');
   await expect(table).not.toBeVisible();
 
   await trigger.focus();
@@ -321,7 +340,7 @@ test('a keyboard alone can open a chart’s data table and get back out', async 
   // Enter opens it, and the menu takes focus with it — a menu that opens and
   // leaves the caret behind is one a keyboard user cannot reach into.
   await page.keyboard.press('Enter');
-  const item = page.locator('[role="menuitem"][aria-controls="chart-data-requests-per-second"]');
+  const item = page.locator('[role="menuitem"][aria-controls="chart-data-requests-and-responses"]');
   await expect(item).toHaveCount(1);
   await expect(item).toBeFocused();
 
@@ -329,6 +348,6 @@ test('a keyboard alone can open a chart’s data table and get back out', async 
   await expect(table).toBeVisible();
 
   // And the caret comes back to where the reader started, rather than to the
-  // top of a document holding nine figures.
+  // top of a document holding seven figures.
   await expect(trigger).toBeFocused();
 });

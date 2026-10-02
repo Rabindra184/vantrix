@@ -24,7 +24,17 @@ export const OTHER_LABEL = 'Other errors';
  * same argument `transforms/rates.ts` makes — and because every bucket scales
  * equally, getting it wrong changes no shape and looks like nothing is wrong.
  */
-export function toErrorSeries(response: ErrorSeriesResponse): ChartData {
+export function toErrorSeries(
+  response: ErrorSeriesResponse,
+  /**
+   * REQUIRED, with no default: a reader who narrowed to a window and a reader
+   * looking at the whole run are told different things by the same empty
+   * payload, and a parameter whose wrong value is silent must not have a
+   * default. `windowSelected` is the Report's `window !== null`; the Summary
+   * and the drill-downs pass `false`. See the empty branch below.
+   */
+  opts: { readonly windowSelected: boolean },
+): ChartData {
   const perSecond = response.bucketWidthMs / 1000;
   const label = (message: string | null): string => message ?? OTHER_LABEL;
 
@@ -38,8 +48,18 @@ export function toErrorSeries(response: ErrorSeriesResponse): ChartData {
       // only one of them is good news; a reader who cannot tell "this run
       // passed" from "we never recorded this" has been told nothing at all.
       // This is the whole job of `available` in the contract.
+      //
+      // AND A WINDOW CHANGES WHICH RUN-WIDE CLAIM IS TRUE. "No requests failed
+      // in this run" is a statement about the whole run, and under a window
+      // that selects nothing it is false whenever the run failed anywhere else
+      // (the reference run fails 24 requests; a one-second window holding none
+      // of them said so about all of them). The ingestion sentence beside it is
+      // about when the run was STORED, which a window cannot change, so it
+      // stays.
       empty: response.available
-        ? 'No requests failed in this run.'
+        ? opts.windowSelected
+          ? 'No requests failed in the selected window.'
+          : 'No requests failed in this run.'
         : 'This run was ingested before failures were recorded over time.',
     };
   }

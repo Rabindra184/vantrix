@@ -1,25 +1,21 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import {
-  seedAdmin,
-  seedIncompleteRun,
-  seedRunWithData,
-  seedRunWithFailedAssertion,
-} from './fixtures.js';
-import { openTimeWindow, plot, signIn } from './helpers.js';
-import { runErrorsPath, runPath } from '../src/routes/paths.js';
+import { seedAdmin, seedIncompleteRun, seedRunWithData } from './fixtures.js';
+import { plot, signIn } from './helpers.js';
+import { runPath, runReportPath } from '../src/routes/paths.js';
 
 /**
- * §13.2 ⑤ the statistics table and ⑥ the errors table, on the run detail page,
- * in a real browser.
+ * §13.2 ⑤ the statistics table and ⑥ the errors table, on the run pages, in a
+ * real browser.
  *
  * WHAT ONLY EXISTS HERE. The unit suites (`StatisticsTable.test.tsx`,
  * `ErrorsTable.test.tsx`, `buildTree.test.ts`) already pin the tree, the sort,
  * the filter, the columns and the shares against the captured fixture, in jsdom.
- * What they cannot reach is the MOUNT: that the run detail page fetches these
- * two payloads at all, that the statistics table lives on the run's Overview
- * tab and the errors table on its own (design §6), that the row links resolve
- * to routes the router actually has, and that the accessible names these
- * tables were built around are the names a REAL ENGINE computes.
+ * What they cannot reach is the MOUNT: that the run pages fetch these two
+ * payloads at all, that the statistics table lives in the Report's Requests
+ * section behind its Table switch and the errors table on the Summary
+ * (backlog #7), that the row links resolve to routes the router actually has,
+ * and that the accessible names these tables were built around are the names
+ * a REAL ENGINE computes.
  * That last one is not a formality — task 6 measured that jsdom's
  * `dom-accessibility-api` consults a descendant's `aria-labelledby` but not its
  * `aria-label`, and browsers do not all agree. This file is the first time
@@ -156,17 +152,32 @@ const renderedRows = (page: Page): Promise<string[]> =>
 const renderedPaths = (page: Page): Promise<string[]> =>
   statRows(page).evaluateAll((nodes) => nodes.map((n) => n.getAttribute('data-path') ?? ''));
 
+/**
+ * GE's Charts / Table switch, on the Report's Requests section (open by
+ * default). Charts is what the section opens on, so every case that reads the
+ * statistics table has to ask for it — exactly as a reader does.
+ *
+ * The switch is component state, not URL state, so a page that is left and
+ * returned to (a row's detail page and Back) opens on Charts again and has to
+ * ask again. `section#requests` scopes the button because "Table" is a short
+ * name, and the exact match is what keeps a chart's own controls out of it.
+ */
+async function openStatistics(page: Page): Promise<void> {
+  await page.locator('section#requests').getByRole('button', { name: 'Table', exact: true }).click();
+  await expect(statisticsTable(page)).toBeVisible();
+}
+
 async function openRun(page: Page): Promise<string> {
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(runPath(runId));
-  await expect(statisticsTable(page)).toBeVisible();
+  await page.goto(runReportPath(runId));
+  await openStatistics(page);
   return runId;
 }
 
 /* ======================================================================== *
- * 1. THE STATISTICS TABLE HOLDS EVERY ROW; THE ERRORS TABLE IS ITS OWN TAB
+ * 1. THE STATISTICS TABLE HOLDS EVERY ROW; THE ERRORS TABLE IS ON THE SUMMARY
  * ======================================================================== */
 
 test('a completed run shows every request and group in one table', async ({ page }) => {
@@ -246,41 +257,67 @@ test('a completed run shows every request and group in one table', async ({ page
   // into their sum of the rows.
   await expect(page.locator('[data-testid="stat-row"][data-scope="run"]')).toHaveCount(0);
 
-  /* ---- the Overview tab's sections, in order (design §6, Appendix A G-05) ----
+  /* ---- the Report's sections, in order (GE's order; backlog #7) ----
    *
    * Through the section headings rather than pixel positions, so this survives
-   * any layout change that keeps the order. Errors and the eight charts moved
-   * to their own tabs; `Overview`'s own `<h2>` went with the split, deleted
-   * rather than left behind, since a tab named Overview directly above a
-   * heading that said Overview would say it twice.
+   * any layout change that keeps the order. `h2` only: every chart's own title
+   * and the `Statistics` heading sit one level down, inside their section, so
+   * the outline is the Report's skeleton and nothing else.
    *
-   * `Simulation assertions` joined the list with G-05. It is a SEPARATE section
-   * from `Platform gates` on purpose and the two must not be collapsed: the
-   * first is this platform's SLA rules, which a project configures and the
-   * 200/422 verdict gates on; the second is what the load test itself
-   * declared, fixed at run time and able to express comparisons (`between`,
-   * `in`) the SLA comparator set has no member for.
-   *
-   * BOTH WERE CALLED "ASSERTIONS" UNTIL REVIEW N01, which is the drift that
-   * finding names. Only the platform's moved: `Simulation assertions` keeps
-   * its word because that word is right — the PRD gives "Assertions table" to
-   * G-05, the tool's own feature.
-   *
-   * It appears here because this run was ingested through the real pipeline, so
-   * the plugin decoded the reference simulation's own assertions. A run seeded
-   * without that path carries `null` and draws no section at all — which is
-   * deliberately distinct from `[]`, "the simulation declared none".
+   * `Time window` leads and is `sr-only`: the control is drawn above every
+   * section and has to be a landmark a screen-reader user can reach by
+   * heading, without a visible title GE does not draw either.
    */
+  expect(await page.getByRole('heading', { level: 2 }).allTextContents()).toEqual([
+    'Time window',
+    'Requests',
+    'Groups',
+    'Virtual users',
+    'Connections',
+    'Load generators',
+  ]);
+  // The table's own heading is one level down, which is what keeps it out of
+  // the list above — asserted as present so the list cannot pass by the
+  // heading having vanished.
+  await expect(page.getByRole('heading', { level: 3, name: 'Statistics' })).toBeVisible();
+});
+
+/**
+ * THE SUMMARY'S OUTLINE, the other half of what the Overview's single list used
+ * to say (design §6, Appendix A G-05).
+ *
+ * `Simulation assertions` is a SEPARATE section from `Platform gates` on
+ * purpose and the two must not be collapsed: the first is this platform's SLA
+ * rules, which a project configures and the 200/422 verdict gates on; the
+ * second is what the load test itself declared, fixed at run time and able to
+ * express comparisons (`between`, `in`) the SLA comparator set has no member
+ * for. BOTH WERE CALLED "ASSERTIONS" UNTIL REVIEW N01 — only the platform's
+ * moved, because the PRD gives "Assertions table" to G-05, the tool's own
+ * feature.
+ *
+ * `Simulation assertions` appears because this run was ingested through the
+ * real pipeline, so the plugin decoded the reference simulation's own
+ * assertions. A run seeded without that path carries `null` and draws no bar at
+ * all — deliberately distinct from `[]`, "the simulation declared none".
+ *
+ * `Over time` is `sr-only`: GE draws no title over its two charts, but without
+ * one they would sit under `Simulation assertions` in a screen reader's outline.
+ * The errors table closes the page — it is on the Summary now, not a tab of
+ * its own, which is what the last entry is.
+ */
+test('the Summary’s headings are the two bars, the charts and the errors', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(runPath(runId));
+  await expect(errorsTable(page)).toBeVisible();
+
   expect(await page.getByRole('heading', { level: 2 }).allTextContents()).toEqual([
     'Platform gates',
     'Simulation assertions',
-    'Statistics',
+    'Over time',
+    'Errors',
   ]);
-
-  /* ---- and the errors table is one tab away, not a second scroll down ---- */
-  await page.goto(runErrorsPath(runId));
-  await expect(errorsTable(page)).toBeVisible();
-  expect(await page.getByRole('heading', { level: 2 }).allTextContents()).toEqual(['Errors']);
 });
 
 /* ======================================================================== *
@@ -411,17 +448,21 @@ test('a row links to its detail page', async ({ page }) => {
    * resolves to the right group, by its full path.
    */
   await page.goBack();
-  await expect(statisticsTable(page)).toBeVisible();
+  // The Charts / Table switch is component state, so coming back to the Report
+  // opens it on Charts again and the reader asks for the table again.
+  await openStatistics(page);
   await page.getByRole('button', { name: /expand Catalog/i }).click();
   await page.getByRole('link', { name: 'Recommendations', exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/runs/${runId}/groups/Catalog%2FRecommendations$`));
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Catalog/Recommendations');
 
   /* The group page is a page of the app, not a dead end: it is inside the
-   * signed-in shell and offers the way back. */
+   * signed-in shell and offers the way back — to the run's Summary, which is
+   * what `/runs/:id` is. The statistics table is not there (it is in the
+   * Report), so the proof of arrival is the Summary's own headline numbers. */
   await page.getByRole('link', { name: /back to (this|the) run/i }).click();
   await expect(page).toHaveURL(new RegExp(`/runs/${runId}$`));
-  await expect(statisticsTable(page)).toBeVisible();
+  await expect(page.getByTestId('stat-error-rate')).toBeVisible();
 });
 
 /* ======================================================================== *
@@ -528,12 +569,13 @@ test('the column headings are the payload’s own, and name themselves in Chromi
   await expect(table.getByRole('columnheader')).toHaveCount(everything.length);
   await expect(table.getByRole('columnheader', { name: '99.9th', exact: true })).toHaveCount(0);
 
-  // D-8: the errors table has three columns and no fourth — its own tab now.
+  // D-8: the errors table has three columns and no fourth — on the Summary now.
   //
   // `Share of errors`, not `Percentage` (review 09-13 M15): a bare "Percentage"
   // needed a paragraph underneath to say percentage OF WHAT, and the column
   // that needs a footnote to be read is the column that is named wrong.
-  await page.goto(runErrorsPath(runId));
+  await page.goto(runPath(runId));
+  await expect(errorsTable(page)).toBeVisible();
   const errorHeaders = errorsTable(page).getByRole('columnheader');
   await expect(errorHeaders).toHaveText(['Error', 'Count', 'Share of errors']);
 });
@@ -605,13 +647,12 @@ test('the table opens sorted worst-first, on the highest percentile the payload 
 test('the errors table shows each distinct error as a share of the run’s failures', async ({
   page,
 }) => {
-  // Not `openRun`: that helper lands on Overview, where the errors table
-  // no longer is (design §6) — this test is about the errors table alone,
-  // so it goes straight to its own tab.
+  // Not `openRun`: that helper lands on the Report's statistics table, and
+  // this test is about the errors table alone, which is on the Summary.
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(runErrorsPath(runId));
+  await page.goto(runPath(runId));
   await expect(errorsTable(page)).toBeVisible();
 
   const json = await errors(page, runId);
@@ -682,10 +723,10 @@ test('the errors payload is fetched run-scoped, spelled exactly as the fixture c
    * omitted, and the reader's SQL is unconditionally scoped, so `/errors` and
    * `/errors?scope=run&name=` are identical. The real trap is the inverse —
    * `?name=X` WITHOUT `scope` is silently ignored and returns the run totals. */
-  // `startsWith('/v1/')` as well as `endsWith('/errors')`, now that the PAGE's
-  // own route is `/runs/:id/errors` (design §3) — a filter on the suffix
-  // alone would also catch the document navigation below and put a second,
-  // wrong entry in `seen`.
+  // `startsWith('/v1/')` as well as `endsWith('/errors')`, from when the PAGE's
+  // own route was `/runs/:id/errors` (design §3) — and the old URL still
+  // resolves, as a redirect, so a filter on the suffix alone would still catch
+  // a document navigation to it and put a second, wrong entry in `seen`.
   const seen: string[] = [];
   page.on('request', (request) => {
     const url = new URL(request.url());
@@ -694,36 +735,47 @@ test('the errors payload is fetched run-scoped, spelled exactly as the fixture c
     }
   });
 
-  await page.goto(runErrorsPath(runId));
+  await page.goto(runPath(runId));
   await expect(errorsTable(page)).toBeVisible();
 
   expect(seen).toEqual([`/v1/runs/${runId}/errors?scope=run&name=`]);
 });
 
 /* ======================================================================== *
- * ERRORS OVER TIME — the chart above the table
+ * ERRORS OVER TIME — in the Report now, the table on the Summary
  * ======================================================================== */
 
-test('the errors tab draws failures over time above the table', async ({ page }) => {
+/**
+ * The chart that used to sit above the errors table is in the Report's Requests
+ * section (GE's "Errors per Second"), where it is windowed with its neighbours;
+ * the table stayed on the Summary, whole-run, because its endpoint takes no
+ * window. The old claim that the table sat BELOW the chart died with the tab
+ * they shared — the pair is two pages apart now — and the case says where each
+ * went instead, with the Summary's absence paired with its table's presence so
+ * the absence cannot pass against a page that failed to render.
+ */
+test('the Report draws failures over time, and the Summary keeps only the table', async ({ page }) => {
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(runErrorsPath(runId));
+  await page.goto(runReportPath(runId));
 
   const figure = page.getByTestId('chart-errors-over-time');
   // EXACTLY ONE svg in the PLOT. Scoped to `[data-chart-canvas]`, so the
   // figure's own header icons are not in the count — see `helpers.ts`.
   await expect(plot(figure)).toHaveCount(1);
 
-  // The table is still below it, holding every message rather than five.
+  await page.goto(runPath(runId));
+  // The table is still on the Summary, holding every message rather than five.
   await expect(errorsTable(page)).toBeVisible();
+  await expect(page.getByTestId('chart-errors-over-time')).toHaveCount(0);
 });
 
 test('it draws a series per message the payload really carries', async ({ page }) => {
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(runErrorsPath(runId));
+  await page.goto(runReportPath(runId));
 
   // DERIVED FROM THE ENDPOINT THE CHART ACTUALLY DRAWS, not from the flat
   // `/errors` table beside it. Two things make the flat payload the wrong
@@ -751,7 +803,7 @@ test('the errors chart carries its data table, like every other chart', async ({
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(runErrorsPath(runId));
+  await page.goto(runReportPath(runId));
 
   // The parity surface, and the screen-reader route to the same numbers.
   await expect(page.getByTestId('chart-data-errors-over-time')).toHaveCount(1);
@@ -816,6 +868,12 @@ test('the run totals come before the assertions, and near the top', async ({ pag
    *      937  after C01 took the decision band from 316px to 246px
    *      649  after M01 collapsed the time window (332px -> 44px)
    *      690  after the window's range line and mode became always visible (44px -> 85px)
+   *      656  after the Summary/Report split (backlog #7) took the time window off
+   *           this page altogether — measured again at 1440x900 on the Summary,
+   *           the lifecycle strip and the verdict band still above it
+   *      644  after `RunShell` grouped that strip with the band (12px between
+   *           them, not the shell's 24px) — 643.8 measured; the tiles' bottoms
+   *           are 718.8 (error rate, requests, peak users) and 722.8 (p95)
    *
    * It was 1100 for three branches — deliberately the MEASUREMENT rather than
    * the goal, because a threshold set to an unmet bar is a failing test
@@ -827,17 +885,24 @@ test('the run totals come before the assertions, and near the top', async ({ pag
   const top = await totals.evaluate((el) => el.getBoundingClientRect().top);
   expect(top).toBeLessThan(900);
 
-  for (const id of ['stat-error-rate', 'stat-throughput', 'stat-p95']) {
+  for (const id of ['stat-error-rate', 'stat-total-requests', 'stat-p95']) {
     const y = await page.getByTestId(id).evaluate((el) => el.getBoundingClientRect().bottom);
     expect(y, `${id} is below the fold at 1440x900`).toBeLessThan(900);
   }
 });
 
 /**
- * REVIEW M01 / M10 — FAILED CHECKS FIRST, THE REST BEHIND A DISCLOSURE.
+ * REVIEW M01 / M10 — FAILED CHECKS FIRST.
  *
  * The list was in the tool's own order, so the parity run showed two PASSING
  * checks above its failing one. The reader's question is "what broke".
+ *
+ * WHAT CHANGED WITH THE SUMMARY (backlog #7): the passing checks used to sit
+ * behind a "show the rest" toggle, so this asserted a click revealed more. The
+ * bar itself is the disclosure now and it is OPEN ON ARRIVAL while it holds a
+ * failure, showing every card — so the claim is that EVERY check is there, in
+ * the run's own count, with the failures ahead of everything that is not one.
+ * The count comes from the run's own payload rather than being written down.
  */
 test('simulation assertions lead with the failures', async ({ page }) => {
   const admin = await seedAdmin();
@@ -845,18 +910,20 @@ test('simulation assertions lead with the failures', async ({ page }) => {
   await signIn(page, admin);
   await page.goto(runPath(runId));
 
-  const outcomes = page.getByTestId('tool-assertion-outcome');
+  const outcomes = page.getByTestId('simulation-outcome');
   await expect(outcomes.first()).toBeVisible();
 
   // Whatever is on screen at rest is the failure, not a passing check above it.
   expect(await outcomes.first().textContent()).toMatch(/failed/i);
 
-  // And the rest are one click away, counted rather than merely hinted at.
-  const toggle = page.getByTestId('tool-assertions-toggle');
-  await expect(toggle).toBeVisible();
-  const before = await outcomes.count();
-  await toggle.click();
-  expect(await outcomes.count()).toBeGreaterThan(before);
+  // Every check the simulation declared is a card in the open bar, and no
+  // passing one sits above a failing one.
+  const run = await payload<{ readonly toolAssertions: readonly unknown[] }>(page, `/v1/runs/${runId}`);
+  expect(run.toolAssertions.length, 'the reference run declares more than one assertion').toBeGreaterThan(1);
+  await expect(page.getByTestId('simulation-card')).toHaveCount(run.toolAssertions.length);
+  const words = (await outcomes.allTextContents()).map((t) => (/failed/i.test(t) ? 'failed' : 'other'));
+  expect(words, 'a failed check follows one that is not').toEqual([...words].sort((a, b) => (a === b ? 0 : a === 'failed' ? -1 : 1)));
+  expect(words.some((w) => w === 'other'), 'the passing checks are in the open bar too').toBe(true);
 });
 
 /**
@@ -882,11 +949,11 @@ test('a failing simulation check leads to the request it is about', async ({ pag
   await signIn(page, admin);
   await page.goto(runPath(runId));
 
-  const failing = page.getByTestId('tool-assertion-row').first();
-  await expect(failing.getByTestId('tool-assertion-outcome')).toContainText(/failed/i);
+  const failing = page.getByTestId('simulation-card').first();
+  await expect(failing.getByTestId('simulation-outcome')).toContainText(/failed/i);
 
-  // The Target cell, which was plain text: the reader could read the name of
-  // the request that broke and had nowhere to go with it.
+  // The Target, which was plain text: the reader could read the name of the
+  // request that broke and had nowhere to go with it.
   const target = failing.getByRole('link');
   await expect(target).toHaveCount(1);
   const name = (await target.textContent())?.trim() ?? '';
@@ -897,7 +964,7 @@ test('a failing simulation check leads to the request it is about', async ({ pag
 
   /* AND THE PAGE IT REACHES IS ABOUT THAT REQUEST.
    *
-   * The two spellings are the assertion. The cell READS `Cart / Add To Cart`,
+   * The two spellings are the assertion. The card READS `Cart / Add To Cart`,
    * because a path is easier to scan with air in it; the row is ADDRESSED as
    * `Cart/Add To Cart`, which is what `rowFor` keys on and what `buildTree`
    * splits — and `RequestDetail`'s `<h1>` renders the URL parameter verbatim.
@@ -938,6 +1005,12 @@ test('a windowed drill-down says its figures are the whole run’s', async ({ pa
   await expect(notice).toBeVisible();
   await expect(notice).toContainText(/does not narrow/i);
   await expect(notice).toContainText(/whole run/i);
+  /* AND IT POINTS AT THE PAGE THAT DOES HONOUR THE WINDOW. The sentence used
+     to say "the run page's own figures", which was true of the old Overview
+     and is false of the Summary this page's "Back to this run" now lands on:
+     the Summary ignores a window. Only the Report applies one. */
+  await expect(notice).toContainText(/the run.s Report still honours it/i);
+  await expect(notice).not.toContainText(/run page/i);
 
   /* AND THE ERRORS TABLE SAYS IT FOR ITS OWN TOTALS, which is the half that
      was missing from this call site alone. Both, because the page-level notice
@@ -958,7 +1031,7 @@ test('a windowed drill-down says its figures are the whole run’s', async ({ pa
 });
 
 /**
- * The Errors tab's request filter (review 09-13 M15).
+ * The errors table's request filter (review 09-13 M15), on the Summary.
  *
  * WHAT ONLY A BROWSER CAN PROVE HERE IS THE SEAM. `errorRequestFilter.test.ts`
  * pins which names the derivation offers, from a payload it writes itself — so
@@ -977,7 +1050,7 @@ test('the errors table can be narrowed to the request that failed', async ({ pag
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(runErrorsPath(runId));
+  await page.goto(runPath(runId));
 
   const filter = page.getByTestId('errors-request-filter');
   await expect(filter).toBeVisible();
@@ -1016,49 +1089,6 @@ test('the errors table can be narrowed to the request that failed', async ({ pag
 });
 
 /**
- * ═══ A VERDICT AND A STATISTIC, SIDE BY SIDE, IN DIFFERENT SCOPES ═══
- *
- * The evidence-window-scope branch fixed one mistake made three times -- a
- * number the window narrowed under wording that still described the whole run
- * -- and the two evidence SECTIONS were the fourth. Platform gates and
- * simulation assertions are decided once, at finalize, over the whole run; the
- * statistics above them are re-read per window. A reader narrowing to a healthy
- * stretch saw a windowed p95 beside a whole-run FAILED gate whose actual
- * appears nowhere on their screen.
- *
- * WHAT ONLY A BROWSER PROVES. `ToolAssertions.test.tsx` hands the tab a window
- * through a stand-in for the shell's `<Outlet context>`, so it can only show
- * the section renders what it is given. Whether the REAL shell's brush delivers
- * a window to this tab is a different question -- the "a test that writes both
- * sides of a join proves neither" rule this repo already records for M13's
- * Target link.
- *
- * Both states are asserted, because the notice is withheld without a window and
- * an assertion on the windowed state alone passes against one rendered always.
- */
-test('the evidence sections say their verdicts are the whole run’s under a window', async ({ page }) => {
-  const admin = await seedAdmin();
-  const runId = await seedRunWithFailedAssertion(admin.orgId);
-  await signIn(page, admin);
-  await page.goto(runPath(runId));
-
-  // The gate is on screen and there is nothing to disclaim yet.
-  await expect(page.getByRole('heading', { name: 'Platform gates' })).toBeVisible();
-  await expect(page.getByTestId('finalized-verdict-notice')).toHaveCount(0);
-
-  await openTimeWindow(page);
-  await page.getByTestId('window-from').fill('0');
-  await page.getByTestId('window-to').fill('10');
-  await page.getByTestId('window-apply').click();
-  await expect(page).toHaveURL(/[?&]from=0/);
-
-  // The window reached the tab, and the gate says which scope it belongs to.
-  const notices = page.getByTestId('finalized-verdict-notice');
-  await expect(notices.first()).toBeVisible();
-  await expect(notices.first()).toContainText(/decided when the run finished, against the whole run/);
-});
-
-/**
  * ═══ THE LINK AND ITS DESTINATION USE ONE WORD (review.md 22) ═══
  *
  * The decision band's link read "See the failed simulation check" and targeted
@@ -1094,6 +1124,20 @@ test('the band’s link to a failed assertion names what it lands on', async ({ 
   await expect(
     page.getByRole('heading', { name: new RegExp(stem, 'i') }).first(),
   ).toBeVisible();
+
+  /* AND WHAT IT LANDS ON IS THE BAR, OPEN, WITH THE HEADING IT NAMES. The heading
+   * is now a button's label inside a collapsible bar, so "a heading with the
+   * word exists" no longer says the reader can SEE the failure — a bar that
+   * shut itself (or never opened) would still have its heading. This run's bar
+   * holds a failure, so it is open on arrival and stays open once the fragment
+   * has scrolled to it. */
+  const bar = page.locator('section#simulation-assertions');
+  await expect(bar.getByRole('heading', { level: 2 })).toHaveText('Simulation assertions');
+  await expect(bar.getByRole('button', { name: 'Simulation assertions', exact: true })).toHaveAttribute(
+    'aria-expanded',
+    'true',
+  );
+  await expect(bar.getByTestId('simulation-card').first()).toBeVisible();
 });
 
 /**
@@ -1122,4 +1166,13 @@ test('an incomplete run says its statistics were not retained', async ({ page })
   // or renders neither.
   await expect(page.getByText(/no statistics were retained/i)).toBeVisible();
   await expect(page.getByText(/no statistics were recorded/i)).toHaveCount(0);
+
+  // AND THE GATES SAY THE SAME THING IN THEIR OWN WORDS. An incomplete run no
+  // pipeline processed carries `assertions: []` because no rule ran, which is
+  // not "no project has a rule" — the bar's summary keeps the two apart, and
+  // only a real API response (this run's) can show which one the page was
+  // handed.
+  await expect(page.locator('section#platform-gates')).toContainText(
+    'not evaluated — the run left nothing to judge',
+  );
 });

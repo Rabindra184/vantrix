@@ -132,7 +132,7 @@ export const formatMs = (value: number): string =>
   Number.isFinite(value) ? String(Math.round(value)) : '—';
 
 /** Two decimals, as Gatling writes `% KO` (2.68) and `Cnt/s` (14.21). */
-export const formatRate = (value: number): string =>
+const formatRate = (value: number): string =>
   Number.isFinite(value) ? value.toFixed(2) : '—';
 
 /** Gatling's own name for the leftmost column, and it holds groups too. */
@@ -161,17 +161,20 @@ const EXECUTION_COLUMNS: readonly Column[] = [
      * "when explicitly needed for Gatling parity" — which this is: the
      * statistics table IS the parity surface, and `formatRate`'s own docstring
      * cites `Cnt/s` (14.21) as the tool's spelling. So the column keeps it and
-     * the `<abbr>` carries the bridge, because the run totals directly above
-     * call the same number something else and a reader should not have to
+     * the `<abbr>` carries the bridge, because the Summary's combined chart
+     * draws the same number under another name and a reader should not have to
      * guess that two labels are one measurement.
      *
-     * THE BRIDGE NAMES THE OTHER END, SO IT MOVES WHEN THAT END DOES. This
-     * said "the run totals call req/s" while the same change renamed that tile
-     * to `Requests/s` and deleted its separate unit — a cross-reference naming
-     * a surface by a word that surface no longer uses, which is precisely the
-     * defect the "Mint one under Access" fix had just corrected one file over.
+     * THE BRIDGE NAMES THE OTHER END, SO IT MOVES WHEN THAT END DOES. It said
+     * "the run totals call req/s", then `Requests/s` — and the run totals no
+     * longer carry a rate tile at all (GE's Summary shows four numbers, and
+     * throughput is not one), so it points at the chart that plots the same
+     * quantity, as `Count/s`. That is a cross-reference naming a surface by a
+     * word that surface may stop using, which is precisely the defect the "Mint
+     * one under Access" fix had corrected one file over; this table's own test
+     * reads the chart's source for the word the hint promises.
      * Whenever a label changes, grep for prose that names it from elsewhere. */
-    hint: 'Count of events per second — the same measurement the run totals call Requests/s',
+    hint: 'Count of events per second — the same measurement the requests-and-responses chart plots as Count/s',
     value: (r) => r.throughputRps,
     format: formatRate,
   },
@@ -516,10 +519,77 @@ export function statisticsCsv(
   ]);
 }
 
+/**
+ * The table's empty branch, shared with the Summary's headline numbers so the
+ * two can never describe one empty run two ways.
+ *
+ * ═══ "RECORDED" IS FALSE FOR A RUN WHOSE STREAM STOPPED ═══
+ *
+ * Measured end to end: a live run given 18,884 bytes of a real
+ * simulation log published a delta reading count 440 / ok 428 /
+ * ko 12 — numbers a reader WATCHED on the live page — and the
+ * sweeper then finalized it `incomplete` with zero stat rows, no
+ * simulation and no duration. The bytes are still in the object
+ * store; nothing assembles them, because `finalizeLive` only runs
+ * under `close()` and the sweeper must not re-enqueue.
+ *
+ * So those statistics were recorded and are not RETAINED, and the
+ * unconditional sentence told a reader who had just seen 440
+ * requests that none existed. Whether an abandoned run should keep
+ * its partial data is a product decision and is not made here; what
+ * is fixed is the product describing it wrongly.
+ *
+ * ═══ AND "RECORDED" IS FALSE UNDER A WINDOW TOO ═══
+ *
+ * A time window that selects no requests re-reads the statistics from the
+ * buckets inside it and finds none, so the payload is as empty as a run's that
+ * measured nothing — and "No statistics were recorded for this run" then says
+ * something false about the RUN, which recorded 895 requests. The Report is the
+ * only page that can be windowed, and its Groups section already says the right
+ * thing for the same state ("No groups ran in the selected window.", GroupsList).
+ * This is that sentence for the table, and it points at the one place the run's
+ * own figures are: the Summary, which is whole-run by construction.
+ *
+ * THE WINDOW BRANCH COMES FIRST, because it is true whatever the run's status:
+ * an incomplete run read through a window is still a window that selected
+ * nothing, and "retained" would be a second wrong claim stacked on the first.
+ *
+ * `windowSelected` is REQUIRED and has no default: a caller that forgets it
+ * reads as "no window", which prints a false sentence over a narrowed view and
+ * fails nothing — this repo's rule for a parameter whose wrong value is silent.
+ * The Summary's headline numbers pass `false` for the reason `RunStats` gives.
+ */
+export function StatisticsEmpty({
+  runStatus,
+  windowSelected,
+}: {
+  readonly runStatus: RunResponse['status'] | undefined;
+  readonly windowSelected: boolean;
+}) {
+  if (windowSelected) {
+    return (
+      <EmptyState
+        title="No requests ran in the selected window"
+        body="The run's own figures are on the Summary, which always covers the whole run."
+      />
+    );
+  }
+  return runStatus === 'incomplete' ? (
+    <EmptyState
+      title="No statistics were retained for this run"
+      body="This run's stream stopped before it finished, and figures measured while it was live are not kept. Re-run the test for a complete set."
+    />
+  ) : (
+    <EmptyState title="No statistics were recorded for this run" />
+  );
+}
+
 export default function StatisticsTable({
   stats,
   runId,
   runStatus,
+  windowSelected,
+  headingLevel = 2,
 }: {
   stats: StatsResponse;
   runId: string;
@@ -534,6 +604,21 @@ export default function StatisticsTable({
    * Optional, so every other caller keeps the unconditional wording.
    */
   runStatus?: RunResponse['status'];
+  /**
+   * Whether a time window is narrowing these rows — the Report's, never the
+   * Summary's. REQUIRED, with no default, for the reason `StatisticsEmpty`
+   * gives: a caller that forgets it reads as "no window", which prints a false
+   * "recorded for this run" over a view that selected nothing, and nothing
+   * fails. Today it decides only the empty branch's wording; it is on the
+   * table, not on the caller's side of it, because only the table knows it is
+   * empty (`total === null && tree.length === 0`).
+   */
+  readonly windowSelected: boolean;
+  /**
+   * `3` when this sits under a section's own `<h2>` — the Report's Requests —
+   * so the outline says the table belongs to it. The size follows the level.
+   */
+  readonly headingLevel?: 2 | 3;
 }) {
   const headingId = useId();
   const filterId = useId();
@@ -799,32 +884,10 @@ export default function StatisticsTable({
   if (total === null && tree.length === 0) {
     return (
       <section aria-labelledby={headingId} className="flex flex-col gap-3">
-        <SectionHeading id={headingId} overline="Run telemetry">Statistics</SectionHeading>
+        <SectionHeading id={headingId} level={headingLevel} overline="Run telemetry">Statistics</SectionHeading>
         {/* No table at all, rather than headings over nothing: an empty table
             reads as a run that was measured and found to have done nothing. */}
-        {/* ═══ "RECORDED" IS FALSE FOR A RUN WHOSE STREAM STOPPED ═══
-         *
-         * Measured end to end: a live run given 18,884 bytes of a real
-         * simulation log published a delta reading count 440 / ok 428 /
-         * ko 12 — numbers a reader WATCHED on the live page — and the
-         * sweeper then finalized it `incomplete` with zero stat rows, no
-         * simulation and no duration. The bytes are still in the object
-         * store; nothing assembles them, because `finalizeLive` only runs
-         * under `close()` and the sweeper must not re-enqueue.
-         *
-         * So those statistics were recorded and are not RETAINED, and the
-         * unconditional sentence told a reader who had just seen 440
-         * requests that none existed. Whether an abandoned run should keep
-         * its partial data is a product decision and is not made here; what
-         * is fixed is the product describing it wrongly. */}
-        {runStatus === 'incomplete' ? (
-          <EmptyState
-            title="No statistics were retained for this run"
-            body="This run's stream stopped before it finished, and figures measured while it was live are not kept. Re-run the test for a complete set."
-          />
-        ) : (
-          <EmptyState title="No statistics were recorded for this run" />
-        )}
+        <StatisticsEmpty runStatus={runStatus} windowSelected={windowSelected} />
       </section>
     );
   }
@@ -873,7 +936,7 @@ export default function StatisticsTable({
           32px root that input alone is 448px. Wrapping is what makes the
           answer independent of the reader's font size. */}
       <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-        <SectionHeading id={headingId} overline="Run telemetry">Statistics</SectionHeading>
+        <SectionHeading id={headingId} level={headingLevel} overline="Run telemetry">Statistics</SectionHeading>
 
         {/* G-14, THE FILTER BOX. A real `<label htmlFor>` rather than a
             placeholder: a placeholder disappears the moment the reader types,

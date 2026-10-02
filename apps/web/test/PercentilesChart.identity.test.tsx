@@ -13,8 +13,8 @@ describe('PercentilesChart identity', () => {
   it('derives every testid from the caller’s id', () => {
     render(
       <>
-        <PercentilesChart series={series} id="percentiles-a" title="A" />
-        <PercentilesChart series={series} id="percentiles-b" title="B" />
+        <PercentilesChart series={series} id="percentiles-a" title="A" windowSelected={false} />
+        <PercentilesChart series={series} id="percentiles-b" title="B" windowSelected={false} />
       </>,
     );
 
@@ -37,7 +37,7 @@ describe('PercentilesChart identity', () => {
   });
 
   it('keeps the default identity when the caller names nothing', () => {
-    render(<PercentilesChart series={series} />);
+    render(<PercentilesChart series={series} windowSelected={false} />);
     expect(screen.getByTestId('scale-toggle-percentiles')).toBeInTheDocument();
     expect(screen.getByTestId('band-p95-percentiles')).toBeInTheDocument();
     expect(screen.getByTestId('outcome-ko-percentiles')).toBeInTheDocument();
@@ -46,7 +46,7 @@ describe('PercentilesChart identity', () => {
   it('opens on OK, so the chart a reader knows does not move under them', () => {
     // G-22 / RQ-05 specify the OK set, and this chart showed it exclusively
     // before the selector existed. The default is the compatibility promise.
-    render(<PercentilesChart series={series} />);
+    render(<PercentilesChart series={series} windowSelected={false} />);
     expect(screen.getByTestId('outcome-ok-percentiles')).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByTestId('outcome-ko-percentiles')).toHaveAttribute('aria-pressed', 'false');
     expect(screen.getByTestId('outcome-all-percentiles')).toHaveAttribute('aria-pressed', 'false');

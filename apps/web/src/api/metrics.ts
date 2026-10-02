@@ -10,7 +10,7 @@ import {
   UsersResponseSchema,
 } from '@perfportal/contracts';
 import type { Window } from '@perfportal/contracts';
-import { apiFetch } from './fetch';
+import { ProblemError, apiFetch } from './fetch';
 import {
   distributionPath,
   errorSeriesPath,
@@ -41,7 +41,7 @@ import {
  * has no 202 branch to hand it. MINOR 4: this used to claim "charts mount
  * only under the run detail page's existing `state === 'ready'` branch, so
  * the processing case cannot arise" — no longer true since Task 7/9:
- * `RunChartsTab` (and every other tab) now mounts for a `state ===
+ * `RunReport` (and every other tab) now mounts for a `state ===
  * 'processing'` run too (design §6), and draws its own live figures there.
  * What actually prevents the processing case from reaching these queries is
  * each tab's own `enabled: terminal` gate (`useRunTerminal`,
@@ -62,10 +62,11 @@ import {
  * and a newly mounted observer for stale data refetches on mount REGARDLESS
  * of whether another observer already holds the same key warm. That is not
  * hypothetical — it is what this page actually does. `RunShell` fetches
- * `usersQuery` and `errorsQuery` for the header and the tab strip; `stats`,
+ * `usersQuery` on the Report, for the brush's snapped window; `stats`,
  * `users`, `distribution` and `series` are each asked for again, under the
- * identical key, by whichever of `RunOverviewTab` / `RunChartsTab` /
- * `RunErrorsTab` the reader opens — and because those are ROUTES that mount at
+ * identical key, by whichever of `RunSummary` / `RunReport`
+ * the reader opens (the Summary's unwindowed ones are the Report's while no
+ * window is narrowed) — and because those are ROUTES that mount at
  * DIFFERENT times, not components sharing one render, a shared key alone only
  * dedupes observers that happen to mount while a fetch is still in flight. The
  * `staleTime` is what stops the later, separate mount from firing a second
@@ -101,9 +102,9 @@ export const statsQueryKey = (id: string, window: Window | null) =>
  * TWO ROUTES, ONE FETCH — but only because of `staleTime`, not because of the
  * KEY alone. This docstring used to say `RunDetail` "mounts the statistics
  * table and the chart stack as separate components", which was true before
- * this key had a route split to survive: today `RunOverviewTab` (the
- * statistics table, and the six stat tiles) and `RunChartsTab` (the indicator
- * bands and the request-count donut) are different ROUTES under `RunShell`,
+ * this key had a route split to survive: today `RunSummary` (the four stat
+ * tiles) and `RunReport` (the statistics table, the indicator bands and the
+ * request-count donut) are different ROUTES under `RunShell`,
  * mounted at whatever moment the reader clicks a tab — not two components
  * rendered together in one commit. A shared key on its own only dedupes
  * observers that mount while a fetch is still in flight; it says nothing
@@ -179,6 +180,26 @@ export const distributionQueryKey = (
  * one, and hard-coding it into the URL while leaving it out of the key would
  * be the shape that silently serves one family's data under another's key.
  */
+/**
+ * ═══ A WINDOW THAT SELECTS NO BUCKETS IS AN EMPTY DISTRIBUTION, NOT A MISSING ONE ═══
+ *
+ * `/distribution` answers **404** when the buckets a windowed read selects are
+ * none — "No response_time histogram for run "" in run <id>. … which lists every
+ * row this run recorded." — because the handler cannot tell a name that never
+ * existed from a window that happened to hold nothing (`parity.controller.ts`
+ * keeps "absent, not empty" for both). `Payload` relays a failed query's own
+ * text, so a reader who brushed a quiet second saw that developer sentence in
+ * both distribution charts, naming "this run" and a run id, while every sibling
+ * chart (which gets a 200 with an empty payload) said which window was empty.
+ *
+ * So on a WINDOWED read the 404 is read as what it means here and turned into
+ * the empty payload the transforms already explain ("No response times fall in
+ * the selected window"). Nothing else changes: an UNWINDOWED 404 is a run with
+ * no histogram at all and is still relayed (a window is never offered for one),
+ * the drill-downs never pass a window, and any other failure still throws.
+ * Changing the endpoint to answer 200 was the alternative, and is an API
+ * contract change this sub-project does not make.
+ */
 export const distributionQuery = (
   id: string,
   scope = 'run',
@@ -187,8 +208,29 @@ export const distributionQuery = (
   window: Window | null = null,
 ) => ({
   queryKey: [...distributionQueryKey(id, scope, name, family), window?.fromMs ?? null, window?.toMs ?? null] as const,
-  queryFn: () =>
-    apiFetch(DistributionResponseSchema, distributionPath(id, scope, name, family, window)),
+  queryFn: async () => {
+    try {
+      return await apiFetch(DistributionResponseSchema, distributionPath(id, scope, name, family, window));
+    } catch (error) {
+      if (window === null || !(error instanceof ProblemError) || error.status !== 404) throw error;
+      // Parsed rather than cast, so a `scope` or `family` the contract does not
+      // know is a loud failure and not an invented payload.
+      return DistributionResponseSchema.parse({
+        runId: id,
+        window: null,
+        scope,
+        name,
+        family,
+        labels: [],
+        okCount: [],
+        koCount: [],
+        okPercent: [],
+        koPercent: [],
+        exactValues: false,
+        overflowCount: 0,
+      });
+    }
+  },
   staleTime: Infinity,
 });
 

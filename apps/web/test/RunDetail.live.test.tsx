@@ -7,7 +7,8 @@ import type { LiveDelta, RunProcessing, RunResponse } from '@perfportal/contract
 import { fetchRun, runQueryKey } from '../src/api/run';
 import { useLiveRun } from '../src/api/live';
 import useIsCompact from '../src/useIsCompact';
-import RunDetail, { RunOverviewTab } from '../src/routes/RunDetail';
+import RunDetail from '../src/routes/RunDetail';
+import RunSummary from '../src/routes/RunSummary';
 
 /**
  * `RunDetail`'s own remaining job (Task 7, design part 2b): choosing what
@@ -26,11 +27,12 @@ import RunDetail, { RunOverviewTab } from '../src/routes/RunDetail';
  * Every one of those old cases is accounted for in Task 7's report: moved
  * into `LiveStatusStrip.test.tsx` where the behaviour it pinned now lives,
  * confirmed already covered by an existing case there, or left below as an
- * `it.todo` naming the task that will re-cover it once the corresponding tab
- * (Overview/Charts/Errors) wires in `WaitingPanel`/`LiveSummary`/the live
+ * `it.todo` naming the task that will re-cover it once the corresponding page
+ * (the Summary, which the Overview and Errors tabs became, and the Report, which
+ * the Charts tab did) wires in `WaitingPanel`/`LiveSummary`/the live
  * charts. None were silently dropped.
  *
- * FIX ROUND 1. `mountRun`'s index child is the REAL `RunOverviewTab`, not a
+ * FIX ROUND 1. `mountRun`'s index child is the REAL `RunSummary`, not a
  * placeholder — a placeholder could never have caught this tab rendering
  * BLANK for a processing run, which is exactly what it did until this round
  * wired `WaitingPanel` into it. Two of the `it.todo`s below are resolved by
@@ -91,10 +93,10 @@ function liveState(
  * Mounts `RunDetail` inside a route WITH tab children — the shape that
  * actually exercises the reachability fix (Task 7's whole point): a tab URL
  * that resolves to something is only provable if there is a child route for
- * it to resolve TO. The index child is the REAL `RunOverviewTab` (fix round
+ * it to resolve TO. The index child is the REAL `RunSummary` (fix round
  * 1, IMPORTANT 4) — a placeholder div here could never catch this tab
  * rendering blank for a processing run, which is exactly the regression this
- * fix round closed by wiring `WaitingPanel` into it. `RunOverviewTab`'s own
+ * fix round closed by wiring `WaitingPanel` into it. `RunSummary`'s own
  * `run` query resolves from the SAME cache entry seeded below, so it does not
  * need `fetchRun` mocked any differently than `RunDetail`'s own.
  *
@@ -116,7 +118,7 @@ function mountRun(body: { state: 'processing' | 'ready'; run: unknown }) {
       <MemoryRouter initialEntries={[`/runs/${RUN_ID}`]}>
         <Routes>
           <Route path="/runs/:runId" element={<RunDetail />}>
-            <Route index element={<RunOverviewTab />} />
+            <Route index element={<RunSummary />} />
           </Route>
         </Routes>
       </MemoryRouter>
@@ -155,7 +157,7 @@ describe('RunDetail — one shell, for every state', () => {
     // tab URLs resolved to nothing at all.
     mountRun({ state: 'processing', run: { id: RUN_ID, status: 'pending', statusUrl: '/x' } });
     expect(screen.getByRole('navigation', { name: 'Run sections' })).toBeInTheDocument();
-    // The tab is not BLANK either — the real `RunOverviewTab` this test
+    // The tab is not BLANK either — the real `RunSummary` this test
     // mounts (fix round 1, IMPORTANT 4) shows `WaitingPanel`'s own sentence
     // rather than nothing.
     expect(screen.getByText(/still processing/i)).toBeInTheDocument();
@@ -163,7 +165,7 @@ describe('RunDetail — one shell, for every state', () => {
 
   it('keeps the tab strip across running -> parsing -> complete', async () => {
     // A terminal run's shell fetches `/users` and `/errors` (RunShell's own
-    // `terminal` gate), and `RunOverviewTab`'s own `/stats` once `ready` —
+    // `terminal` gate), and `RunSummary`'s own `/stats` once `ready` —
     // stubbed here so the `ready` transition below doesn't reach for a real
     // network in jsdom.
     vi.stubGlobal(
@@ -181,18 +183,19 @@ describe('RunDetail — one shell, for every state', () => {
 
     await rerenderAs({ state: 'ready', run: COMPLETE_RUN });
     expect(screen.getByRole('navigation', { name: 'Run sections' })).toBeInTheDocument();
-    // The tab has left `WaitingPanel` behind now that the run is `ready` —
-    // `Assertions`' own empty state renders instead (`COMPLETE_RUN` declares
-    // none), which is proof this is the real content branch, not a stale
-    // waiting screen.
+    // The page has left `WaitingPanel` behind now that the run is `ready` —
+    // the Platform gates bar's own summary renders instead (`COMPLETE_RUN`
+    // declares no rule), which is proof this is the real content branch, not a
+    // stale waiting screen.
     expect(screen.queryByText(/still processing/i)).not.toBeInTheDocument();
-    /* The Assertions section's own empty text. It was a full `EmptyState`
-       headed "No SLA rules were evaluated against this run"; review 09-13 M03
-       cut it to one row, because the decision band at the top of the same page
-       already says "Platform gates: not configured — no SLA rule judged this
-       run". The assertion still proves this is the real content branch — it
-       just names the sentence that survived. */
-    expect(screen.getByText(/no sla rules judged this run/i)).toBeInTheDocument();
+    /* SCOPED TO THE BAR, because the decision band at the top of the same page
+       says the identical words ("Platform gates: not configured — no SLA rule
+       judged this run") and a page-wide query would find both. The assertion
+       still proves this is the real content branch — it just names the bar that
+       holds it. */
+    expect(
+      within(screen.getByTestId('section-platform-gates')).getByText('not configured — no SLA rule judged this run'),
+    ).toBeInTheDocument();
   });
 
   it('renders the shell even when the 202 carried no identity', () => {
@@ -231,7 +234,7 @@ describe('RunDetail — one shell, for every state', () => {
   });
 
   /**
-   * Fix round 1's Ruling: `WaitingPanel` is wired into `RunOverviewTab` now,
+   * Fix round 1's Ruling: `WaitingPanel` is wired into `RunSummary` now,
    * closing two of the `it.todo`s the original Task 7 report left behind —
    * this and the case below replace them (their names are preserved in a
    * comment at the old `it.todo` site so the history stays legible).
@@ -255,9 +258,9 @@ describe('RunDetail — one shell, for every state', () => {
    * A completed run carrying three platform gates, ONE of them failed.
    *
    * Shared by the two cases below because they assert different halves of one
-   * render — that the evidence is stated once, and that the passing gates
-   * collapse. Seeding it twice would let the two drift into disagreeing about
-   * what "three gates" means.
+   * render — that the evidence is stated once, as a card per gate, and that the
+   * bar opens on the failure. Seeding it twice would let the two drift into
+   * disagreeing about what "three gates" means.
    */
   function seedThreeGates() {
     vi.stubGlobal(
@@ -321,73 +324,58 @@ describe('RunDetail — one shell, for every state', () => {
   /**
    * ═══ ONE EVIDENCE SURFACE, NOT THREE (review.md 9) ═══
    *
-   * This asserted an `assertion-evidence-panel` above the table, carrying the
-   * failure's message and three count tiles. Every one of those facts is
+   * This asserted an `assertion-evidence-panel` above the gates table, carrying
+   * the failure's message and three count tiles. Every one of those facts is
    * stated elsewhere on the same screen — the decision band spells the counts
-   * as a sentence AND as tiles and links to the first failure, and the table
-   * below carries the message in its own column — so the panel was length
-   * without information, and it is gone.
+   * as a sentence AND as tiles and links to the first failure, and the evidence
+   * below carries the message — so the panel was length without information,
+   * and it is gone.
    *
    * The CLAIM survives and is what is asserted now: the evidence is on the
-   * page, as rows, exactly once. The panel's absence sits beside the rows'
-   * presence, because an absence alone passes against a tab that rendered
-   * nothing at all.
+   * page, as one card per gate, exactly once. The panel's absence sits beside
+   * the cards' presence, because an absence alone passes against a page that
+   * rendered nothing at all.
+   *
+   * WHAT THIS CASE IS FOR NOW IS THE SEAM. The gate card's own wording — the
+   * outcome sentence and the dash for a not-applicable actual — is pinned where
+   * the card is built (`AssertionBars.test.tsx`), which is where it died with
+   * the table that used to hold it here. This mounts the real run page, so it is
+   * the one place that proves `RunSummary` hands the run's own gates to the bar.
    */
-  it('states the SLA evidence once, as table rows, with no summary repeating it', () => {
+  it('states the SLA evidence once, as a card per gate, with no summary repeating it', () => {
     seedThreeGates();
 
-    // The failed gate's message, IN ITS ROW — scoped, because the decision
-    // band states it too and that is deliberate: the band is the conclusion
-    // and the table is the evidence for it. What the panel added was a THIRD
-    // copy between them, summarising the table directly above the table.
+    // `getAllBy…`, not `getBy…`: three gates, three cards. The failed gate
+    // sorts first, so the first card is the failure — and its sentence is the
+    // reader's vocabulary, never the stored `p99 breached its threshold.`.
+    const cards = screen.getAllByTestId('gate-card');
+    expect(cards).toHaveLength(3);
     expect(
-      // `getAllBy…[0]`, not `getBy…`: the singular form throws on a table
-      // holding more than one row, which quietly made this case depend on
-      // the COLLAPSE — a claim it does not make and the case below does.
-      // Pinning the table open then failed both, which is how the coupling
-      // surfaced. The failed gates sort first, so this is the failure's row.
-      //
-      // RE-POINTED AT THE CLAIM RATHER THAN THE STRING. This read the stored
-      // message verbatim — `p99 breached its threshold.` — which was how it
-      // LOCATED the row, never what the case is about. That column now states
-      // the gate in the reader's vocabulary (review.md's copy table, row 1),
-      // so the assertion follows the product instead of the product bending
-      // to suit it. The claim is untouched: the evidence appears ONCE, as
-      // table rows, with no panel repeating it.
-      //
-      // It doubles as this branch's pin on the gates-table caller — the one
-      // surface a fix for the decision band alone would have left speaking
-      // schema, which is the one-caller-short shape the branch is about.
-      within(screen.getAllByTestId('assertion-row')[0]!).getByText(
-        'Whole-run p99 response time 1830 ms exceeds the 750 ms limit.',
-      ),
+      within(cards[0]!).getByText('Whole-run p99 response time 1830 ms exceeds the 750 ms limit.'),
     ).toBeInTheDocument();
     expect(screen.queryByTestId('assertion-evidence-panel')).toBeNull();
-
   });
 
   /**
-   * ═══ AND THE PASSING GATES COLLAPSE (review.md 9) ═══
+   * ═══ AND THE BAR OPENS ON THE FAILURE (review.md 9, and GE's own bar) ═══
    *
-   * "Collapse passed checks by default." `ToolAssertions` has split its rows
-   * into failed-and-the-rest since it was written; this table rendered every
-   * gate, always — so two evidence tables on ONE tab disagreed about whether a
-   * passing check is worth a row.
+   * "Collapse passed checks by default" used to be a table that filed the
+   * passing gates behind an `Other gates (N)` control. A bar is the collapse
+   * now — one disclosure over all of them — so the claim is that the page
+   * arrives with the failure already on screen and the bar saying what the
+   * three gates came to, which is how a reader meets a failed gate on a run
+   * they did not watch finish.
    *
    * ITS OWN CASE, not folded into the one above. Both claims were asserted
-   * together at first, and both mutations — restoring the panel, and pinning
-   * the table open — then failed the same case, which proves one thing twice.
+   * together at first, and both mutations — restoring the panel, and shutting
+   * the bar — then failed the same case, which proves one thing twice.
    */
-  it('opens the gates table on the failures and files the passing ones behind a control', () => {
-    vi.stubGlobal(
-      'fetch',
-      () => Promise.resolve(new Response(JSON.stringify({ runId: RUN_ID, errors: [] }), { status: 200 })),
-    );
+  it('arrives open on a failed gate, and says what the gates came to', () => {
     seedThreeGates();
 
-    // Three seeded, one failed: one row, and the other two named by the control.
-    expect(screen.getAllByTestId('assertion-outcome')).toHaveLength(1);
-    expect(screen.getByTestId('platform-gates-toggle')).toHaveTextContent('Other gates (2)');
+    const bar = screen.getByTestId('section-platform-gates');
+    expect(within(bar).getByRole('button', { name: 'Platform gates' })).toHaveAttribute('aria-expanded', 'true');
+    expect(within(bar).getByText('1 failed, 1 passed, 1 not applicable')).toBeInTheDocument();
   });
 });
 
@@ -401,35 +389,38 @@ describe('RunDetail — one shell, for every state', () => {
  * proven by an existing case elsewhere, that is noted and the case is not
  * reproduced (a passing duplicate is not extra coverage). Where it is not,
  * it is left here as `it.todo`, named for the task that will give it a real
- * home: Task 8 (Overview tab: `WaitingPanel`, `LiveSummary`), Task 9 (Charts
- * tab: the live charts, the DesktopOnly-gated withheld notices for
- * distribution/percentile-distribution), or Task 10 (Errors tab: the
- * live-fed errors table, the errors-per-second withheld notice).
+ * home: Task 8 (the Summary, then the Overview tab: `WaitingPanel`,
+ * `LiveSummary`), Task 9 (the Report, then the Charts tab: the live charts, the
+ * DesktopOnly-gated withheld notices for distribution/percentile-distribution),
+ * or Task 10 (the Summary's errors table, then the Errors tab's, and the
+ * Report's errors-per-second withheld notice).
  * ======================================================================== */
 
 /**
  * Every claim below is now RESOLVED — Tasks 8, 9 and 10 each wired a real
- * tab and each has its own `*.live.test.tsx` file, so nothing here still
- * needs a target that does not exist. Kept as a plain comment block, not a
- * `describe` with no `it`s inside it, so the history of what moved where
- * stays legible without an empty suite in the file.
+ * page and each has its own `*.live.test.tsx` file (the Overview and Errors
+ * tabs' two became `RunSummary.live.test.tsx`), so nothing here still needs a
+ * target that does not exist. Kept as a plain comment block, not a `describe`
+ * with no `it`s inside it, so the history of what moved where stays legible
+ * without an empty suite in the file.
  *
  * Old: "renders the live page once a delta has arrived for a running run".
  * Its connection-message and finalizing-notice-absent halves are now
  * `LiveStatusStrip.test.tsx`'s "says the run is live while it streams and
  * the socket is up" (extended in Task 7 to also assert the finalizing
  * notice's absence). The remaining claim — exactly four withheld-chart
- * notices appear once a delta has arrived — RESOLVED across the three tabs
- * that now split it: `RunOverviewTab.live.test.tsx`'s "states that the
- * statistics table is withheld" (1), `RunChartsTab.live.test.tsx`'s "draws
- * the five live figures and states the two that are withheld" (2), and
- * `RunErrorsTab.live.test.tsx`'s "keeps the errors table live and states
- * that the chart is not" (1) — four, matching the original count, on three
- * different URLs instead of one.
+ * notices appear once a delta has arrived — RESOLVED across the pages that now
+ * split it: `RunReport.live.test.tsx`'s "draws the live figures and states the
+ * five that are withheld" (five now: the Charts tab's two, Errors per second's,
+ * and the two charts it used to omit). The Summary withholds nothing it never
+ * drew: the statistics table the first notice named is in the Report, and the
+ * errors chart the last one named is in the Report's Requests section — while
+ * the errors TABLE stays live on the Summary, `RunSummary.live.test.tsx`'s
+ * "keeps the errors table live, off the cache the delta writes".
  *
  * Old: "keeps the ordinary Processing screen while running with no delta
  * yet" / "...for a run never live this session". RESOLVED in fix round 1:
- * `WaitingPanel` is wired into `RunOverviewTab` now — see "shows
+ * `WaitingPanel` is wired into `RunSummary` now — see "shows
  * WaitingPanel, not a live summary, while running with no delta yet" and
  * "shows WaitingPanel for a run never live this session (pending)" above.
  *
@@ -437,29 +428,32 @@ describe('RunDetail — one shell, for every state', () => {
  * stops". The banner itself is `LiveStatusStrip.test.tsx`'s "says streaming
  * stopped once the run leaves running"; the remaining claim — the live
  * tiles (`LiveSummary`) stay on screen, unblanked, underneath that banner —
- * RESOLVED in Task 8: `RunOverviewTab.live.test.tsx`'s "drops the 'still
- * streaming' hint once the run has frozen, without blanking the tiles"
- * mounts the real tab and asserts both halves at once.
+ * RESOLVED in Task 8: `RunSummary.live.test.tsx`'s "keeps the tiles on
+ * screen, unblanked, once the run has left running" mounts the real page
+ * with the socket down, so a tile read off the connection would vanish.
  *
  * Old: "reads its headline tiles straight off the delta summary, not a
  * StatRow" / "drops the 'still streaming' hint once the run has frozen".
- * Both are `LiveSummary`'s own behaviour, exported in Task 7 specifically
- * for Task 8 to wire in — RESOLVED: `RunOverviewTab.live.test.tsx`'s "shows
- * the live tiles while a run streams" (reads `count`/`errorRate`/`maxUsers`
- * straight off a `LiveDelta` fixture, never a `StatRow`) and "drops the
- * 'still streaming' hint…" / "keeps the 'still streaming' hint…" above.
+ * The first is `LiveSummary`'s own behaviour — RESOLVED:
+ * `RunSummary.live.test.tsx`'s "shows GE’s four live tiles, in GE’s order,
+ * while a run streams" (reads `count`/`errorRate`/`maxUsers`/`percentiles`
+ * straight off a `LiveDelta` fixture, never a `StatRow`). The second died with
+ * the live Duration tile that carried the hint: the live row is GE's four now,
+ * the same as the finished one, and duration is `RunHeader`'s chip.
  *
  * Old: "draws the live charts from whatever the socket already wrote to the
  * cache" / "gates the charts and the three withheld notices behind
  * DesktopOnly on a narrow viewport". RESOLVED in Task 9:
- * `RunChartsTab.live.test.tsx`'s "draws the five live figures and states the
- * two that are withheld" (seeds the cache directly, at the SAME keys
+ * `RunReport.live.test.tsx`'s "draws the live figures and states the five that
+ * are withheld" (seeds the cache directly, at the SAME keys
  * `applyDelta` writes, rather than mocking a fetch) and "gates the live
  * charts behind DesktopOnly on a narrow viewport".
  *
  * Old: "draws the live-fed errors table" / "states the errors-over-time
- * chart is withheld". RESOLVED in Task 10: `RunErrorsTab.live.test.tsx`'s
- * "keeps the errors table live and states that the chart is not".
+ * chart is withheld". RESOLVED in Task 10: the table half is
+ * `RunSummary.live.test.tsx`'s "keeps the errors table live, off the cache the
+ * delta writes" (folded in from the Errors tab's own file); the chart half is
+ * the Report's "Errors per second" notice above.
  *
  * NOT carried forward, and deliberately never given an `it.todo`: "renders
  * nothing if handed a null lastDelta" defended `Live`'s own `if (delta ===

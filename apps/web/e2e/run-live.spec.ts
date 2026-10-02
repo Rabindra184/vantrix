@@ -1,8 +1,8 @@
 import { expect, test } from '@playwright/test';
 import { Redis } from 'ioredis';
 import { openLiveRun, seedAdmin } from './fixtures.js';
-import { plot, signIn } from './helpers.js';
-import { runChartsPath, runErrorsPath, runPath } from '../src/routes/paths.js';
+import { openSection, plot, signIn } from './helpers.js';
+import { runPath, runReportPath } from '../src/routes/paths.js';
 
 /**
  * A RUNNING run's page — design part 2b §4.1, §4.3, §4.4, and FR-LIVE-4.
@@ -10,8 +10,8 @@ import { runChartsPath, runErrorsPath, runPath } from '../src/routes/paths.js';
  * WHAT ONLY EXISTS HERE. `RunDetail.live.test.tsx` already proves the branch
  * decision — what `identity`/`status`/`verdict`/`windowable`/`live`
  * `RunDetail` hands `RunShell`, and the `running && !compact` gate on the
- * socket itself; `RunShell.test.tsx` and the three per-tab `*.live.test.tsx`
- * files (`RunOverviewTab`, `RunChartsTab`, `RunErrorsTab`) prove the live
+ * socket itself; `RunShell.test.tsx` and the per-section live
+ * files (`RunSummary.live.test.tsx` and the Report's) prove the live
  * branches' own rendering — all of it against a mocked `useLiveRun`/a
  * QueryClient pre-populated by hand. What none of those can reach is the
  * REAL SOCKET: a real `POST /v1/runs/live` opening a run, a real
@@ -143,12 +143,12 @@ test.describe('a running run draws its live dashboard', () => {
    * component end to end on one URL: its `<h1>` ("Run in progress"),
    * `LiveSummary`'s tiles, the five live charts, the live-fed errors table,
    * and four withheld-section notices. `Live` no longer exists — `RunShell`
-   * renders for a running run instead, and its content is now split across
-   * three tabs (Overview, Charts, Errors), each wired in its own task
-   * (8, 9, 10). This rewrite keeps the ORIGINAL claims — same delta fixture,
-   * same tile values, same chart ids, same withheld-notice count — but
-   * points each one at the tab that now owns it, navigating between them
-   * with `page.goto` the same way `run-charts.spec.ts` does.
+   * renders for a running run instead — and its content is split across the
+   * Summary and the Report (backlog #7; it was three tabs before that). This
+   * keeps the ORIGINAL claims — same delta fixture, same tile values, same
+   * chart ids, a withheld notice for each section that cannot be live —
+   * pointed at the page that now owns each, navigating between them with
+   * `page.goto` the same way `run-charts.spec.ts` does.
    *
    * The `<h1>` assertion is NOT carried forward: "Run in progress" is gone
    * for good, not relocated — the header now carries the run's identity, the
@@ -170,7 +170,7 @@ test.describe('a running run draws its live dashboard', () => {
       await seedSnapshot(redis, runId, delta);
       await signIn(page, admin);
 
-      /* ---- Overview: the streaming sentence, the headline tiles, one withheld notice ---- */
+      /* ---- Summary: the streaming sentence, GE's four numbers, two live charts, the live errors ---- */
       await page.goto(runPath(runId));
 
       await expect(page.getByRole('navigation', { name: 'Run sections' })).toBeVisible();
@@ -179,51 +179,70 @@ test.describe('a running run draws its live dashboard', () => {
       await expect(page.getByText(/updating as the run streams/i)).toBeVisible();
       await expect(page.getByTestId('live-notice-finalizing')).toHaveCount(0);
 
-      /* ---- the headline tiles, computed from the delta this test built ---- */
+      /* ---- the four headline tiles, computed from the delta this test built ---- */
       await expect(page.getByTestId('live-stat-total-requests')).toContainText(String(delta.summary.count));
       await expect(page.getByTestId('live-stat-error-rate')).toContainText(
         `${(delta.summary.errorRate * 100).toFixed(2)}%`,
       );
       await expect(page.getByTestId('live-stat-peak-users')).toContainText(String(delta.summary.maxUsers));
       await expect(page.getByTestId('live-stat-p95')).toContainText(`${delta.summary.percentiles.p95} ms`);
-
-      // ONE withheld notice here — the statistics table, which needs
-      // per-endpoint rows the live wire excludes on every path.
-      await expect(page.getByTestId('live-notice-withheld')).toHaveCount(1);
-      await expect(page.getByText('Statistics', { exact: true })).toBeVisible();
-
-      /* ---- Charts: the live charts really drew, two withheld notices ---- */
-      await page.goto(runChartsPath(runId));
+      // FOUR, and the two the old row carried are gone — duration lives in the
+      // header's chips, p99 in the Report's table.
+      await expect(page.locator('[data-testid^="live-stat-"]')).toHaveCount(4);
 
       // Exactly one svg per PLOT — `plot()` scopes to `[data-chart-canvas]`
       // rather than to the whole figure, so this counts what ECharts drew and
       // not what the card contains. That distinction is why a chart header can
       // now carry icon controls; see `helpers.ts`.
-      for (const id of ['concurrent-users', 'user-start-rate', 'percentiles', 'requests-per-second', 'responses-per-second']) {
+      for (const id of ['requests-and-responses', 'percentiles']) {
         await expect(plot(page.getByTestId(`chart-${id}`))).toHaveCount(1);
       }
 
-      await expect(page.getByTestId('live-notice-withheld')).toHaveCount(2);
-      await expect(page.getByText('Response time distribution', { exact: true })).toBeVisible();
-      await expect(page.getByText('Response time percentiles distribution', { exact: true })).toBeVisible();
-      // Never here — its real chart is on the Errors tab.
-      await expect(page.getByText('Errors per second', { exact: true })).toHaveCount(0);
-
-      /* ---- Errors: the live-fed table, one withheld notice ---- */
-      await page.goto(runErrorsPath(runId));
-
+      // The live-fed errors table, whose rows are the delta's own.
       const errorsTable = page.getByRole('table', { name: /errors/i });
       await expect(errorsTable).toBeVisible();
       for (const row of delta.errors.rows) {
         await expect(page.getByTestId('error-row').filter({ hasText: row.message })).toBeVisible();
       }
 
-      await expect(page.getByTestId('live-notice-withheld')).toHaveCount(1);
-      await expect(page.getByText('Errors per second', { exact: true })).toBeVisible();
+      // NOTHING on the Summary is withheld: its numbers and charts all have a
+      // live source (the delta writes the cache keys they read), which is the
+      // whole reason GE's Summary is what a running run shows first. The
+      // statistics table that used to be its one withheld notice is in the
+      // Report now.
+      await expect(page.getByTestId('live-notice-withheld')).toHaveCount(0);
 
-      // No progress indicator anywhere on the withheld sections, on any of
-      // the three tabs above — a spinner claims something is arriving, and
-      // nothing is, on any path, while this run streams.
+      /* ---- Report: Requests' two live charts and five withheld notices ---- */
+      await page.goto(runReportPath(runId));
+
+      // Requests is the one section open on arrival. Its two live charts really
+      // drew; the other five of GE's seven are stated, never left as a silent
+      // gap — and each by NAME, because a count alone is satisfied by five
+      // notices about the wrong things.
+      await expect(page.locator('section#requests')).toBeVisible();
+      for (const id of ['requests-and-responses', 'percentiles']) {
+        await expect(plot(page.getByTestId(`chart-${id}`))).toHaveCount(1);
+      }
+      await expect(page.getByTestId('live-notice-withheld')).toHaveCount(5);
+      for (const subject of [
+        'Response time distribution',
+        'Response time percentiles distribution',
+        'Errors per second',
+        'Response time ranges',
+        'Number of requests',
+      ]) {
+        await expect(page.getByText(subject, { exact: true })).toBeVisible();
+      }
+
+      // Virtual users is shut on arrival and its three charts are all live.
+      await openSection(page, 'virtual-users', 'Virtual users');
+      for (const id of ['user-start-rate', 'user-end-rate', 'concurrent-users']) {
+        await expect(plot(page.getByTestId(`chart-${id}`))).toHaveCount(1);
+      }
+
+      // No progress indicator anywhere on the withheld sections, on either
+      // page above — a spinner claims something is arriving, and nothing is,
+      // on any path, while this run streams.
       await expect(page.getByRole('progressbar')).toHaveCount(0);
       // This fixture's `sla.breaching` is empty — nothing is breaching, so
       // the banner must draw nothing at all, not an empty shell.
@@ -294,15 +313,16 @@ test.describe('a running run shows which SLA rules it is currently breaching', (
       // whole component, not about a plot it does not have.
       await expect(banner.locator('svg')).toHaveCount(0);
 
-      // ON EVERY TAB, not just the one the reader happened to land on. This
+      // ON EVERY PAGE, not just the one the reader happened to land on. This
       // banner used to live inside `Live`, the standalone live page that the
       // run-section work deleted; it now renders in `RunShell`, above the
       // `<Outlet/>`, so a breach follows the reader across the tab strip.
-      // Charts is the tab that proves it — the furthest thing from Overview,
-      // and the one a reader watching a run in progress is most likely to
-      // sit on. Pushing the banner back down into a single tab would leave
-      // `SlaBanner.test.tsx` entirely green.
-      await page.goto(runChartsPath(runId));
+      // The Report is the page that proves it — the furthest thing from the
+      // Summary, which draws the verdict band and the gates the banner
+      // stands in for, and the one a reader watching a run in progress is
+      // most likely to sit on. Pushing the banner back down into a single
+      // page would leave `SlaBanner.test.tsx` entirely green.
+      await page.goto(runReportPath(runId));
       await expect(page.getByTestId('sla-banner')).toBeVisible();
       await expect(page.getByTestId('sla-banner')).toContainText('p95');
     } finally {

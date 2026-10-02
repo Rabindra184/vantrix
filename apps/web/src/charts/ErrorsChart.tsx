@@ -1,11 +1,14 @@
 import type { ErrorSeriesResponse } from '@perfportal/contracts';
 import { useMemo } from 'react';
 import Chart from './Chart';
+import { RUN_TIME_GROUP } from './crosshair';
 import type { TimeDomainMs } from './types';
 import { toErrorSeries } from './transforms/errorSeries';
 
 /**
- * Failures per second, above the errors table on the same tab.
+ * Failures per second, in the Report's Requests section. (The errors table
+ * it was drawn above lives on the Summary now; this chart is windowed with its
+ * neighbours and that table cannot be.)
  *
  * ═══ NO ICON, NO DECORATIVE SVG ═══
  *
@@ -25,7 +28,7 @@ import { toErrorSeries } from './transforms/errorSeries';
  * does not exist: `text-status-failed` emits no CSS at all, silently.
  */
 export default function ErrorsChart(
-  { data, domainMs, warmupMs }: {
+  { data, domainMs, warmupMs, windowSelected }: {
     readonly data: ErrorSeriesResponse;
     readonly domainMs?: TimeDomainMs;
   /**
@@ -33,9 +36,17 @@ export default function ErrorsChart(
    * Travels with `domainMs` because it is a fact about the same axis.
    */
     readonly warmupMs?: number;
+    /**
+     * Did the reader narrow the Report to a time window? REQUIRED, no default: a
+     * window that selects nothing and a run that recorded nothing draw the same
+     * empty payload, and the sentence under the figure must not claim a fact about
+     * the RUN when the reader asked about a WINDOW. The Report passes
+     * `window !== null`; the Summary and the drill-downs pass `false`.
+     */
+    readonly windowSelected: boolean;
   },
 ) {
-  const chart = useMemo(() => toErrorSeries(data), [data]);
+  const chart = useMemo(() => toErrorSeries(data, { windowSelected }), [data, windowSelected]);
 
   return (
     <Chart
@@ -47,7 +58,7 @@ export default function ErrorsChart(
       // clock, because that is what this measures too. (The compare overlay
       // deliberately opts out, but only because its x is elapsed time within
       // several different runs.)
-      group="run-time"
+      group={RUN_TIME_GROUP}
       // Already a value axis; now labelled in SECONDS like every other time
       // chart, and pinned to the same domain so the shared pointer lines up.
       // Its x is an INSTANT, not a measurement — the tooltip title names it.

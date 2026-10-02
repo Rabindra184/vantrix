@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { seedAdmin, seedIncompleteRun, seedRunWithData, seedRunWithProvenance } from './fixtures.js';
 import { signIn } from './helpers.js';
-import { runPath } from '../src/routes/paths.js';
+import { runPath, runReportPath } from '../src/routes/paths.js';
 
 /**
  * ═══ REVIEW M18, IN THE ONLY PLACE IT CAN BE CHECKED ═══
@@ -95,7 +95,7 @@ test('the filters are folded away until something is filtering', async ({ page }
   await expect(page.getByTestId('compact-filters')).toHaveAttribute('open', /.*/);
 });
 
-test('a run page leads with its decision and mounts no drag control', async ({ page }) => {
+test('a run’s Summary leads with its decision, and its numbers start on the first screen', async ({ page }) => {
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
@@ -109,11 +109,17 @@ test('a run page leads with its decision and mounts no drag control', async ({ p
   expect(decision, 'the verdict is on the first screen').toBeLessThan(600);
 
   /* THE BRUSH IS A DRAG CONTROL AND IT IS NOT MOUNTED HERE. 394px of it sat
-     between the decision and the run's own numbers; §22.6 already calls deep
-     analysis a desktop task and dragging is the gesture a phone is worst at.
-     `toHaveCount(0)`, not "not visible": the point is that no ECharts instance
-     is built at all, which is what `DesktopOnly`'s function-children contract
-     exists to guarantee elsewhere. */
+     between the decision and the run's own numbers when the run page was one
+     page; §22.6 already calls deep analysis a desktop task and dragging is the
+     gesture a phone is worst at. It is on the Report alone now (backlog #7), so
+     the Summary never draws it at any width — and the claim that matters on a
+     phone is made on the Report, by 'a narrowed link still narrows on a phone'
+     below, where a window really can arrive. `toHaveCount(0)`, not "not
+     visible": the point is that no ECharts instance is built at all, which is
+     what `DesktopOnly`'s function-children contract exists to guarantee
+     elsewhere. Kept as a regression guard on the shell's `onReport` gate
+     rather than as this case's subject, which is why the case is no longer
+     named for it. */
   await expect(page.getByTestId('time-brush')).toHaveCount(0);
 
   /* ═══ THE NUMBERS' TOP, AND THE BOUND IS THE VIEWPORT NOW ═══
@@ -123,15 +129,32 @@ test('a run page leads with its decision and mounts no drag control', async ({ p
    *      928  after C01 shortened the decision band
    *      876  after M02 withheld the band's prose restatement on a phone
    *      802  after M02 folded the header's secondary metadata away
+   *      804.4 after the run-lifecycle-strip branch, which is where main stood
+   *           when the split began: its one line, grouped under the header
+   *      820  after the Summary/Report split (backlog #7): OVER THE BOUND by 8px —
+   *           the lifecycle line sat in the shell's 24px above the band
+   *      804.4 once the line and the band were grouped (8px on a phone), fixing
+   *           the product rather than the bound — so the split's net change to
+   *           this number is zero
    *      812  the viewport
    *
    * Every earlier bound in this file was the MEASUREMENT rather than the goal,
    * because the goal was unmet and a threshold set to an unmet goal is a
-   * failing test describing work nobody agreed to do. This is the first one
-   * where the two meet: 802 against an 812 viewport, so the bound is 812 and
-   * it is the thing M02 is about rather than a waypoint towards it.
+   * failing test describing work nobody agreed to do. 802 against an 812
+   * viewport was the first where the two met, so the bound is 812 and it is the
+   * thing M02 is about rather than a waypoint towards it — which is why a
+   * measurement past it is a regression and the bound does not move.
    *
-   * TEN PIXELS OF HEADROOM, AND WHAT IT DOES NOT COVER. `seedRunWithData`
+   * THE SUMMARY/REPORT SPLIT'S MEASUREMENT, AT 375x812 ON THIS RUN (backlog #7):
+   * the `<h1>` 152.5-180.5, the tab strip 298-339, the lifecycle line
+   * 363.4-379.4, the decision band 387.4-737.4, the run-totals section from
+   * 761.4, and its first tile at 804.4 — 7.6px inside the bound (the M02
+   * measurement, 802, had ten). It read 820 before `RunShell` grouped the line
+   * with its band: as two siblings the shell's 24px sat above the band, 16px
+   * more than the grouping, and the band's top went from 403 to 387.4 with the
+   * first tile from 820 to 804.4. The fix is in the product, not in the bound.
+   *
+   * WHAT THE OLD TEN PIXELS OF HEADROOM DID NOT COVER, still true. `seedRunWithData`
    * ingests `{ tool: 'gatling', waitMs: 0 }` and no provenance, so this run
    * draws four chips. A run carrying environment, branch and commit draws
    * seven, and its metadata box measures 96px against this one's 44 — putting
@@ -141,19 +164,19 @@ test('a run page leads with its decision and mounts no drag control', async ({ p
   /* ANCHORED ON THE FIRST TILE, ASKED OF THE DOM RATHER THAN NAMED.
    *
    * This measured `[data-testid="stat-total-requests"]`, which was the first
-   * tile when the bound was written and is the FOURTH since the 09-13
-   * review's target layout put p95 first. The claim above is about where the
+   * tile when the bound was written, the FOURTH once the 09-13 review's target
+   * layout put p95 first, and is the second of the Summary's four now (Error
+   * rate, Requests, Peak users, p95 — so the first is `stat-error-rate`). The
+   * claim above is about where the
    * numbers START; naming one tile quietly made it a claim about the Requests
    * tile's position, so a reorder that moved nothing a reader cares about —
    * the section's top and its first row are unchanged — dropped Requests to
    * the second row of the two-column grid and failed a bound with ten pixels
    * of headroom.
    *
-   * `dd[...]`, not `[data-testid^="stat-"]` alone: the empty-window branch
-   * names its own SECTION `stats-empty-window`, which that prefix also
-   * matches. The tiles' testids are on their `<dd>` values, which is also what
-   * the 802 measurement above was taken from, so this stays apples-to-apples
-   * with the history.
+   * `dd[...]`, not `[data-testid^="stat-"]` alone: the tiles' testids are on
+   * their `<dd>` values, which is also what the 802 measurement above was taken
+   * from, so this stays apples-to-apples with the history.
    *
    * This is `run-list.spec.ts`'s `.nth(3)` lesson one file over: derive the
    * handle from the relationship the assertion is about, and it does not rot
@@ -222,11 +245,16 @@ test('a narrowed link still narrows on a phone, and says so', async ({ page }) =
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(`${runPath(runId)}?from=10000&to=30000`);
+  // The Report, because it is the only page a window means anything on: the
+  // Summary reads the whole run whatever the address says, so a notice there
+  // would claim a narrowing that is not happening.
+  await page.goto(`${runReportPath(runId)}?from=10000&to=30000`);
 
   const notice = page.getByTestId('compact-window-notice');
   await expect(notice).toBeVisible();
   await expect(notice).toContainText('10–30 s');
+  // And the drag control is NOT what the reader is offered in its place.
+  await expect(page.getByTestId('time-brush')).toHaveCount(0);
 
   // The one control that cannot be reconstructed without a brush: widen back.
   await notice.getByRole('button', { name: 'Show whole run' }).click();

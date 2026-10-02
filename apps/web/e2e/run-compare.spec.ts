@@ -172,10 +172,13 @@ test('ticking a run keeps the analysis window, there and back', async ({ page })
   await expect(page).toHaveURL(/[?&]to=10000/);
 
   // THE RETURN JOURNEY. The tab links are built FROM these params, so a window
-  // dropped here is not hidden — it is gone from every tab that follows.
+  // dropped here is not hidden — it is gone from every tab that follows. The
+  // Report is the tab that proves it: it is the one page that draws the window
+  // (the Summary reads the whole run whatever the address says), so its
+  // From field is where a lost window would show.
   await page
     .getByRole('navigation', { name: 'Run sections' })
-    .getByRole('link', { name: 'Overview', exact: true })
+    .getByRole('link', { name: 'Report', exact: true })
     .click();
   await expect(page).toHaveURL(/[?&]from=0/);
   await expect(page.getByTestId('window-from')).toHaveValue('0');

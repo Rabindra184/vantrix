@@ -1,6 +1,7 @@
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Outlet, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
@@ -12,16 +13,17 @@ import type {
 import { runQueryKey } from '../src/api/run';
 import { seriesQuery, usersQuery } from '../src/api/metrics';
 import type { LiveRunState } from '../src/api/live';
-import { RunChartsTab } from '../src/routes/RunDetail';
+import RunReport from '../src/routes/RunReport';
 import type { RunWindowContext } from '../src/routes/useRunWindow';
 import useIsCompact from '../src/useIsCompact';
 
 /**
- * `RunChartsTab`'s live branch (Task 9).
+ * `RunReport`'s live branch — what the Charts tab's live branch (Task 9) became
+ * when its charts moved into the Report's sections.
  *
- * Mounted the same way `RunOverviewTab.live.test.tsx` mounts its own tab —
+ * Mounted the same way `RunSummary.live.test.tsx` mounts its own page —
  * a stand-in `<Outlet context={{...}} />` for `RunShell`, plus a pre-seeded
- * `run` query cache so the assertions below need no `await`.
+ * `run` query cache so the assertions below need no `await` beyond a click.
  *
  * `users`/`series` are seeded DIRECTLY into the query cache under the exact
  * keys `useLiveRun`'s `applyDelta` writes while a run streams — this file has
@@ -103,7 +105,7 @@ function renderCharts({
 
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={[`/runs/${RUN_ID}/charts`]}>
+      <MemoryRouter initialEntries={[`/runs/${RUN_ID}/report`]}>
         <Routes>
           <Route
             path="/runs/:runId"
@@ -115,7 +117,7 @@ function renderCharts({
               />
             }
           >
-            <Route path="charts" element={<RunChartsTab />} />
+            <Route path="report" element={<RunReport />} />
           </Route>
         </Routes>
       </MemoryRouter>
@@ -123,24 +125,42 @@ function renderCharts({
   );
 }
 
-describe('RunChartsTab — live', () => {
-  it('draws the five live figures and states the two that are withheld', () => {
+describe('RunReport — live', () => {
+  it('draws the live figures and states the five that are withheld', async () => {
     renderCharts({ live: liveWith({ count: 1200 }) });
 
-    // Five real figures — the same invariant the e2e suite proves with an
-    // SVG count per figure (CLAUDE.md): `ConcurrentUsersChart`,
-    // `UserStartRateChart`, `PercentilesChart`, `RequestRateChart` and
-    // `ResponseRateChart` each render a `<figure>` even from an empty
-    // payload, which is what proves this branch actually reads `users.data`/
-    // `series.data` rather than skipping the charts entirely.
-    expect(screen.getAllByRole('figure')).toHaveLength(5);
+    // Requests opens first: the two charts a live run has a source for. Each
+    // renders a `<figure>` even from an empty payload, which is what proves
+    // this branch reads `series.data` rather than skipping the charts.
+    const requests = screen.getByTestId('section-requests');
+    expect(within(requests).getAllByRole('figure').map((f) => f.getAttribute('data-testid'))).toEqual([
+      'chart-requests-and-responses',
+      'chart-percentiles',
+    ]);
 
-    // Errors per second is NOT here — its real chart lives on the Errors
-    // tab, and a withheld notice belongs where its section belongs.
-    const withheld = screen.getAllByTestId('live-notice-withheld').map((n) => n.textContent ?? '');
-    expect(withheld).toHaveLength(2);
-    expect(withheld.join(' ')).toMatch(/distribution/i);
-    expect(withheld.join(' ')).not.toMatch(/errors per second/i);
+    // The other five Requests figures are STATED, never left as a gap — and
+    // Errors per second is among them now: it lives in this section.
+    const withheld = within(requests).getAllByTestId('live-notice-withheld').map((n) => n.textContent ?? '');
+    expect(withheld).toHaveLength(5);
+    for (const subject of [
+      'Response time distribution',
+      'Response time percentiles distribution',
+      'Errors per second',
+      'Response time ranges',
+      'Number of requests',
+    ]) {
+      expect(withheld.filter((text) => text.includes(subject))).toHaveLength(1);
+    }
+
+    // Virtual users reads the cache the live delta writes, so it draws too —
+    // in GE's order, the ended-per-second chart included.
+    await userEvent.click(screen.getByRole('button', { name: 'Virtual users' }));
+    const users = screen.getByTestId('section-virtual-users');
+    expect(within(users).getAllByRole('figure').map((f) => f.getAttribute('data-testid'))).toEqual([
+      'chart-user-start-rate',
+      'chart-user-end-rate',
+      'chart-concurrent-users',
+    ]);
   });
 
   it('shows the waiting panel before any delta has arrived', () => {
@@ -166,12 +186,13 @@ describe('RunChartsTab — live', () => {
    * TEST GAP CLOSER (whole-branch review). No per-tab fetch spy existed
    * before this fix round — the no-fetch-while-live rule was pinned only in
    * `RunShell.test.tsx` and `RunTrends.live.test.tsx`, and `RunTelemetry.tsx`
-   * (CRITICAL 1) turned out to be exactly the one tab no spy was watching.
-   * This is Charts' own: `stats`/`users`/`distribution`/`series` are all
-   * gated on `enabled: on`, and `on` requires `terminal` — none of the four
-   * should ever reach `fetch` while this tab renders its live branch.
+   * (CRITICAL 1) turned out to be exactly the one section no spy was watching.
+   * This is the Report's own: every section's queries are gated on `terminal`,
+   * so none of them should reach `fetch` while the run is live — and the spy
+   * opens EVERY section first, because a shut section builds nothing and so
+   * proves nothing about whether its gate holds.
    */
-  it('does not fetch /stats, /users, /distribution or /series while the run is not terminal', () => {
+  it('does not fetch any metric while the run is not terminal, in any section', async () => {
     const fetchSpy = vi.fn<(input: RequestInfo) => Promise<Response>>(() =>
       Promise.resolve(
         new Response(
@@ -190,7 +211,7 @@ describe('RunChartsTab — live', () => {
 
     render(
       <QueryClientProvider client={client}>
-        <MemoryRouter initialEntries={[`/runs/${RUN_ID}/charts`]}>
+        <MemoryRouter initialEntries={[`/runs/${RUN_ID}/report`]}>
           <Routes>
             <Route
               path="/runs/:runId"
@@ -205,17 +226,25 @@ describe('RunChartsTab — live', () => {
                 />
               }
             >
-              <Route path="charts" element={<RunChartsTab />} />
+              <Route path="report" element={<RunReport />} />
             </Route>
           </Routes>
         </MemoryRouter>
       </QueryClientProvider>,
     );
 
+    for (const title of ['Groups', 'Virtual users', 'Connections', 'Load generators']) {
+      await userEvent.click(screen.getByRole('button', { name: title }));
+    }
+    // Every section really is open, so the assertions below are about built
+    // bodies and not about shut ones.
+    for (const title of ['Requests', 'Groups', 'Virtual users', 'Connections', 'Load generators']) {
+      expect(screen.getByRole('button', { name: title })).toHaveAttribute('aria-expanded', 'true');
+    }
+
     const urls = fetchSpy.mock.calls.map((c) => String(c[0]));
-    expect(urls.some((u) => u.includes('/stats'))).toBe(false);
-    expect(urls.some((u) => u.includes('/users'))).toBe(false);
-    expect(urls.some((u) => u.includes('/distribution'))).toBe(false);
-    expect(urls.some((u) => u.includes('/series'))).toBe(false);
+    for (const path of ['/stats', '/users', '/distribution', '/series', '/errors', '/telemetry']) {
+      expect(urls.some((u) => u.includes(path)), path).toBe(false);
+    }
   });
 });

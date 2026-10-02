@@ -464,6 +464,19 @@ describe('ErrorsTable — the empty state says what it actually checked', () => 
     expect(screen.queryByText(/for this run/i)).not.toBeInTheDocument();
   });
 
+  /** The scoped body points a reader at where the whole-run answer lives, and
+   *  that place is the Summary: there is no Errors tab any more. It renders on
+   *  five of the reference run's seven request pages, so a pointer at a tab that
+   *  does not exist is read far more often than any other sentence here. Asserted
+   *  as an exclusive pair — either half alone passes against the other wrong
+   *  answer (a body that names nothing, or one that names both). */
+  it('points at the Summary for the whole run, and at no tab that no longer exists', () => {
+    render(<ErrorsTable errors={none} scopeLabel="Search" />);
+    const body = screen.getByText(/came back ok/i).textContent ?? '';
+    expect(body).toMatch(/run's summary/i);
+    expect(body).not.toMatch(/errors tab/i);
+  });
+
   /** Acceptance in the review: a scoped table with failures names that scope
    *  in its caption too, so a screenshot of it cannot be misread as the run's. */
   it('names the scope in the caption when there are rows', () => {

@@ -59,6 +59,6 @@ test('an uploaded run has no Logs tab', async ({ page }) => {
   await page.goto(runPath(runId));
 
   const sections = page.getByRole('navigation', { name: 'Run sections' });
-  await expect(sections.getByRole('link', { name: 'Overview', exact: true })).toBeVisible();
+  await expect(sections.getByRole('link', { name: 'Summary', exact: true })).toBeVisible();
   await expect(sections.getByRole('link', { name: 'Logs', exact: true })).toHaveCount(0);
 });

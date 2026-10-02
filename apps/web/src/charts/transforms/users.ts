@@ -42,8 +42,8 @@ const TIME_COLUMN = 'Elapsed (s)';
 /** One bucket of either the per-scenario or the total array — the same shape. */
 type UserBucket = UsersResponse['total'][number];
 
-/** The two measures these charts draw, and the only fields either one reads. */
-type Measure = 'maxConcurrent' | 'started';
+/** The measures these charts draw, and the only fields any of them reads. */
+type Measure = 'maxConcurrent' | 'started' | 'ended';
 
 /**
  * The bucket width, in milliseconds, inferred from the offsets.
@@ -79,6 +79,17 @@ function inferBucketWidthMs(offsets: readonly number[]): number {
   return Number.isFinite(width) ? width : 1000;
 }
 
+/**
+ * `windowSelected` is REQUIRED on all three transforms, with no default: the
+ * empty sentences are claims about the whole run unless the reader asked about
+ * a window, and a wrong value is silent — `tsc` finds every caller instead. The
+ * Report passes `window !== null`; nothing else windows these charts.
+ */
+export interface UsersOptions {
+  readonly windowSelected: boolean;
+  readonly x?: 'index' | 'ms';
+}
+
 interface Spec {
   readonly measure: Measure;
   /**
@@ -86,7 +97,13 @@ interface Spec {
    * RATE, 1 for a level. See `toUserStartRate` and `toConcurrentUsers`.
    */
   readonly perSecond: boolean;
-  readonly empty: string;
+  /**
+   * What to say when there is no user activity: the sentence for the whole run,
+   * and the one for a window that selected none. Both are written out per chart
+   * because the noun differs ("concurrent users", "an arrival rate") and a
+   * template over a bare noun reads worse than three finished sentences.
+   */
+  readonly empty: { readonly run: string; readonly window: string };
 }
 
 /**
@@ -113,11 +130,7 @@ interface Spec {
  * `null` would make the scenario lines stop summing to the total line drawn
  * directly above them.
  */
-function usersChart(
-  u: UsersResponse,
-  spec: Spec,
-  opts: { readonly x?: 'index' | 'ms' } = {},
-): ChartData {
+function usersChart(u: UsersResponse, spec: Spec, opts: UsersOptions): ChartData {
   const pairs = opts.x === 'ms';
   const offsets = u.total.map((b) => b.startOffsetMs);
   const widthMs = inferBucketWidthMs(offsets);
@@ -136,7 +149,7 @@ function usersChart(
       // Not a flat zero line: "nobody was running" and "this run has not been
       // parsed yet" are different facts a reader acts on differently, and an
       // empty chart cannot tell them apart.
-      empty: spec.empty,
+      empty: opts.windowSelected ? spec.empty.window : spec.empty.run,
     };
   }
 
@@ -205,7 +218,8 @@ function usersChart(
     axisLabels: offsets.map((offset) => offset / 1000),
     columns,
     rows,
-    limitation: spec.perSecond && widthMs !== 1000 ? widthNote(widthMs) : undefined,
+    limitation:
+      spec.perSecond && widthMs !== 1000 ? widthNote(widthMs, spec.measure) : undefined,
   };
 }
 
@@ -215,11 +229,21 @@ function usersChart(
  * window that is not a second, so a one-second spike inside a wide bucket is
  * flattened and cannot be recovered from what is drawn.
  */
-function widthNote(widthMs: number): string {
+function widthNote(widthMs: number, measure: Measure): string {
+  /* WHICH EDGE THE SENTENCE NAMES FOLLOWS THE CHART. This said "started"
+     unconditionally while only the arrival rate was a rate; the termination
+     rate draws the same buckets and would have told its reader a chart of users
+     that ENDED was an average of users that started.
+
+     AND IT STATES THE RECORDED FACT, NOT A REASON FOR IT: it opened "This run
+     is long enough that…", which reads the run's duration off its bucket width
+     — `rates.ts`'s `widthNote` records why that is wrong. The width is what
+     the producer chose; the reader needs the resolution and its consequence. */
+  const edge = measure === 'ended' ? 'ended' : 'started';
   return (
-    `This run is long enough that user activity was recorded in ${widthMs} ms buckets rather ` +
-    'than one-second ones, so each point is the average number of users started per second ' +
-    'across that window. A shorter spike inside a bucket is not visible at this resolution.'
+    `Data resolution: ${widthMs} ms — user activity was recorded in buckets of that width ` +
+    `rather than one-second ones, so each point is the average number of users ${edge} per ` +
+    'second across that window. A shorter spike inside a bucket is not visible at this resolution.'
   );
 }
 
@@ -240,14 +264,14 @@ function widthNote(widthMs: number): string {
  * guessed — a badge asserting "sessions" would be a claim about the ingest path
  * that nothing in the payload supports.
  */
-export function toConcurrentUsers(
-  u: UsersResponse,
-  opts: { readonly x?: 'index' | 'ms' } = {},
-): ChartData {
+export function toConcurrentUsers(u: UsersResponse, opts: UsersOptions): ChartData {
   return usersChart(u, {
     measure: 'maxConcurrent',
     perSecond: false,
-    empty: 'No user activity was recorded for this run, so there are no concurrent users to show.',
+    empty: {
+      run: 'No user activity was recorded for this run, so there are no concurrent users to show.',
+      window: 'No user activity fell in the selected window, so there are no concurrent users to show.',
+    },
   }, opts);
 }
 
@@ -261,13 +285,29 @@ export function toConcurrentUsers(
  * saying it — arrival rate and concurrency diverge exactly when the system
  * under test starts to struggle.
  */
-export function toUserStartRate(
-  u: UsersResponse,
-  opts: { readonly x?: 'index' | 'ms' } = {},
-): ChartData {
+export function toUserStartRate(u: UsersResponse, opts: UsersOptions): ChartData {
   return usersChart(u, {
     measure: 'started',
     perSecond: true,
-    empty: 'No user activity was recorded for this run, so there is no arrival rate to show.',
+    empty: {
+      run: 'No user activity was recorded for this run, so there is no arrival rate to show.',
+      window: 'No user activity fell in the selected window, so there is no arrival rate to show.',
+    },
+  }, opts);
+}
+
+/**
+ * GE's "Users Termination Rate" — users ENDED per second, the twin of
+ * `toUserStartRate`. Read off the same bucket's `ended` count the users
+ * payload has always carried, live and finished.
+ */
+export function toUserEndRate(u: UsersResponse, opts: UsersOptions): ChartData {
+  return usersChart(u, {
+    measure: 'ended',
+    perSecond: true,
+    empty: {
+      run: 'No user activity was recorded for this run, so there is no termination rate to show.',
+      window: 'No user activity fell in the selected window, so there is no termination rate to show.',
+    },
   }, opts);
 }

@@ -33,13 +33,12 @@ const RUN: RunResponse = {
 // router context — every render in this file needs the wrapper, so it lives
 // in exactly one place rather than at each of the call sites below.
 //
-// Takes a whole RunResponse and splits it into the header's new prop shape —
-// identity/status/verdict/peakUsers — so the existing terminal-run cases
+// Takes a whole RunResponse and splits it into the header's prop shape —
+// identity/status/verdict — so the existing terminal-run cases
 // below stay expressed the way they always were: a full run in, an assertion
 // on the render out.
 function renderHeader(
   run: RunResponse,
-  peakUsers: number | null = null,
   compact = false,
   note: ReactNode = null,
 ) {
@@ -49,7 +48,6 @@ function renderHeader(
         identity={run}
         status={run.status}
         verdict={run.verdict}
-        peakUsers={peakUsers}
         compact={compact}
         note={note}
       />
@@ -107,7 +105,7 @@ describe('RunHeader', () => {
    * product — and the case above, which has a declared test, cannot see that.
    */
   it('falls back to the class when no test claims the run, and then says it once', () => {
-    renderHeader(RUN, 42);
+    renderHeader(RUN);
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('example.ParitySimulation');
     expect(screen.queryByTestId('run-simulation')).toBeNull();
   });
@@ -115,12 +113,6 @@ describe('RunHeader', () => {
   it('falls back to the short id when the tool reported no simulation', () => {
     renderHeader({ ...RUN, simulation: null });
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Run a66548b7');
-  });
-
-  /** Zero is a measurement; a run with no user buckets had none taken. */
-  it('omits peak users entirely when there are none', () => {
-    renderHeader(RUN);
-    expect(screen.queryByText(/peak users/)).toBeNull();
   });
 
   it('says the start is ingest time when the tool reported none', () => {
@@ -242,7 +234,7 @@ describe('RunHeader', () => {
     render(
       <MemoryRouter>
         <RunHeader identity={{ id: 'a66548b7-2962-43ff-8b93-7149a6f2a1b8' }}
-                   status="running" verdict={undefined} peakUsers={null} compact={false} note={null} />
+                   status="running" verdict={undefined} compact={false} note={null} />
       </MemoryRouter>,
     );
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Run a66548b7');
@@ -254,14 +246,14 @@ describe('RunHeader', () => {
   it('omits the verdict badge entirely while a run is non-terminal', () => {
     // NOT `VERDICT['none']`. "No verdict" reads as evaluated-and-nothing-found,
     // which is a claim about a run nobody has finished measuring. Same argument
-    // RunTabs' `errorCount: number | null` already makes one line away.
+    // this component's own `verdict` prop docstring makes in as many words.
     render(
       <MemoryRouter>
         <RunHeader identity={{ id: 'a66548b7-2962-43ff-8b93-7149a6f2a1b8',
                                project: { id: '11111111-1111-4111-8111-111111111111',
                                           slug: 'checkout', name: 'Checkout' },
                                tool: 'gatling', startedAt: '2026-08-20T10:43:49.546Z' }}
-                   status="running" verdict={undefined} peakUsers={null} compact={false} note={null} />
+                   status="running" verdict={undefined} compact={false} note={null} />
       </MemoryRouter>,
     );
     expect(screen.queryByTestId('run-verdict')).toBeNull();
@@ -271,7 +263,7 @@ describe('RunHeader', () => {
   it('still renders the verdict badge for a terminal run', () => {
     render(
       <MemoryRouter>
-        <RunHeader identity={FULL_IDENTITY} status="complete" verdict={null} peakUsers={8} compact={false} note={null} />
+        <RunHeader identity={FULL_IDENTITY} status="complete" verdict={null} compact={false} note={null} />
       </MemoryRouter>,
     );
     expect(screen.getByTestId('run-verdict')).toBeInTheDocument();
@@ -298,7 +290,7 @@ describe('RunHeader', () => {
  * "Keep run name, environment, outcome, and primary metrics BEFORE secondary
  * metadata." At 375px the chip strip was a 191px `grid-cols-2` block between
  * the `<h1>` and the decision band, and the run's own totals began at y=876 on
- * an 812px screen. Version, branch, commit, started, duration and peak users
+ * an 812px screen. Version, branch, commit, started and duration
  * fold into a closed disclosure there; ENVIRONMENT does not, because the
  * finding names it beside the run name and the outcome — and because it
  * changes what every number below it means.
@@ -321,7 +313,7 @@ describe('RunHeader — the metadata a phone leads with', () => {
   const details = () => screen.getByTestId('run-metadata');
 
   it('folds the secondary metadata into a disclosure that starts closed', () => {
-    renderHeader({ ...RUN, environment: 'staging', branch: 'release/24.8', commitSha: 'abc1234def5678' }, 8, true);
+    renderHeader({ ...RUN, environment: 'staging', branch: 'release/24.8', commitSha: 'abc1234def5678' }, true);
 
     expect(details().tagName).toBe('DETAILS');
     // CLOSED. One tap away is the whole point — hidden would be a different
@@ -333,13 +325,10 @@ describe('RunHeader — the metadata a phone leads with', () => {
         screen.getByTestId(id),
       );
     }
-    // Peak users carries no testid — it is pinned by its own whole text
-    // elsewhere (see the module docstring) — so it is found the same way.
-    expect(details()).toContainElement(screen.getByText('8 peak users'));
   });
 
   it('keeps environment out of the disclosure, where the finding puts it', () => {
-    renderHeader({ ...RUN, environment: 'staging', branch: 'release/24.8' }, 8, true);
+    renderHeader({ ...RUN, environment: 'staging', branch: 'release/24.8' }, true);
 
     const environment = screen.getByTestId('run-environment');
     expect(environment).toHaveTextContent('staging');
@@ -349,7 +338,7 @@ describe('RunHeader — the metadata a phone leads with', () => {
   });
 
   it('draws no disclosure at all above the breakpoint, and nothing moves', () => {
-    renderHeader({ ...RUN, environment: 'staging', branch: 'release/24.8', commitSha: 'abc1234def5678' }, 8, false);
+    renderHeader({ ...RUN, environment: 'staging', branch: 'release/24.8', commitSha: 'abc1234def5678' }, false);
 
     expect(screen.queryByTestId('run-metadata')).toBeNull();
     // The paired positive: "no disclosure" passes just as happily against a
@@ -358,7 +347,6 @@ describe('RunHeader — the metadata a phone leads with', () => {
     for (const id of ['run-environment', 'run-branch', 'run-commit', 'run-duration']) {
       expect(screen.getByTestId(id)).toBeInTheDocument();
     }
-    expect(screen.getByText('8 peak users')).toBeInTheDocument();
   });
 
   it('names the action the summary will perform, in both directions', () => {
@@ -366,7 +354,7 @@ describe('RunHeader — the metadata a phone leads with', () => {
     // — `RunGlossary`'s pattern, and why the accessible name is stable and no
     // state lives in JavaScript. It also means the summary's own textContent
     // is both strings at once, so nothing may assert on that.
-    renderHeader({ ...RUN, environment: 'staging' }, null, true);
+    renderHeader({ ...RUN, environment: 'staging' }, true);
     expect(screen.getByText('Run details')).toBeInTheDocument();
     expect(screen.getByText('Hide run details')).toBeInTheDocument();
   });
@@ -391,19 +379,19 @@ describe('RunHeader — the note slot', () => {
   };
 
   it('puts the note under the heading, after the tool’s own description', () => {
-    renderHeader({ ...RUN, description: 'Gatling’s own description' }, null, false, SLOT);
+    renderHeader({ ...RUN, description: 'Gatling’s own description' }, false, SLOT);
     const description = screen.getByText('Gatling’s own description');
     const slot = screen.getByTestId('note-slot');
     expect(description.compareDocumentPosition(slot) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it('on a phone with no note, keeps the slot inside Run details and off the first screen', () => {
-    renderHeader({ ...RUN, note: null }, null, true, SLOT);
+    renderHeader({ ...RUN, note: null }, true, SLOT);
     expect(screen.getByTestId('run-metadata')).toContainElement(screen.getByTestId('note-slot'));
   });
 
   it('on a phone with a note, shows it where a reader sees it, not inside Run details', () => {
-    renderHeader(NOTED, null, true, SLOT);
+    renderHeader(NOTED, true, SLOT);
     expect(screen.getByTestId('run-metadata')).not.toContainElement(screen.getByTestId('note-slot'));
   });
 });

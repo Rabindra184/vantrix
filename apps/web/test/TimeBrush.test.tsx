@@ -322,107 +322,42 @@ describe('TimeBrush — an invalid range is refused, never widened', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
-  /* ====================================================================== *
-   * REVIEW M01 — COLLAPSED, BUT NEVER HIDING AN APPLIED WINDOW
-   * ====================================================================== */
+});
 
-  /**
-   * ═══ WHY THIS CONTROL IS A DISCLOSURE NOW ═══
-   *
-   * Measured at 1440x900 it ran 332px, which put the run's own totals at y937
-   * and their VALUES at y980 — eighty pixels below the fold, on the page a
-   * reader opens to read four numbers. M01 asks for failure, p95, error rate
-   * and throughput inside that first screen. Closed it is 85px, range line and
-   * mode included, and the totals begin at y690.
-   *
-   * ═══ AND WHY CLOSING IT IS ONLY SAFE BECAUSE OF THE CASES BELOW ═══
-   *
-   * A reader looking at a tenth of a run with nothing on screen admitting it
-   * is the one failure this control must never cause — `CompactWindowNotice`
-   * exists for exactly that reason one viewport down. So the disclosure opens
-   * itself whenever a window is applied, and says which window from the
-   * outside when it is shut.
-   *
-   * The EFFECT is the half that is easy to get wrong: `RunShell` does not
-   * remount between tabs, so a window arriving from a URL — or a reader
-   * clearing and re-applying one — reaches a component that is already
-   * mounted and already closed. Initial state alone would leave that narrowing
-   * behind a shut control.
-   */
-  const details = () =>
-    document.querySelector('[data-testid="time-brush"] details') as HTMLDetailsElement;
-
-  it('starts closed on a run nobody has narrowed', async () => {
+/**
+ * ═══ THE WINDOW IS ALWAYS OPEN — IT WAS A DISCLOSURE, AND THAT TRADE IS OVER ═══
+ *
+ * Review M01 folded the timeline away because it ran 332px on the page that
+ * also carried the run's totals, which sat 80px below the fold at 1440x900. The
+ * Report carries no totals — they are the Summary's — and Gatling Enterprise's
+ * window bar is always shown, so the navigator, its six steps and the exact
+ * From/To fields are on screen the moment the Report opens.
+ *
+ * What the fold had to guard — a reader looking at a tenth of a run with
+ * nothing admitting it — cannot happen with nothing folded: the range line and
+ * the fields state the window beside the strip they describe.
+ */
+describe('TimeBrush — always open', () => {
+  it('is always open, with a hidden "Time window" heading', async () => {
     await renderBrush();
-    expect(details().open).toBe(false);
-    expect(screen.getByTestId('time-window-toggle')).toHaveTextContent(/whole run/i);
-  });
 
-  /**
-   * PINS THE PROPERTY, NOT THE MECHANISM, and that is measured rather than
-   * assumed: `TimeBrush` both seeds its state from `window` and re-opens in an
-   * effect, and removing EITHER leaves this case green, because the effect
-   * runs on mount too. Verified by deleting each in turn.
-   *
-   * They are kept as deliberate redundancy with different jobs — the seed so
-   * the first PAINT is already open on a narrowed URL rather than flickering
-   * shut-then-open, the effect for windows that arrive at a component already
-   * mounted. Only the effect is separately pinned, by the transition case
-   * below; the seed's job is a frame nothing in jsdom can observe.
-   */
-  it('is open when the run arrives already narrowed', async () => {
-    await renderBrush({ window: { fromMs: 10_000, toMs: 30_000 } });
-    expect(details().open).toBe(true);
-  });
+    // No disclosure at all: nothing to open, so nothing can be shut over an
+    // applied window.
+    const brush = screen.getByTestId('time-brush');
+    expect(brush.querySelector('details')).toBeNull();
+    expect(screen.queryByTestId('time-window-toggle')).toBeNull();
 
-  /**
-   * THE TRANSITION, not either endpoint. Mounting each state separately cannot
-   * catch this: the defect lives in a window arriving at a component that is
-   * already mounted and already shut, which is what a tab change or a pasted
-   * URL produces. Same shape as the live-to-terminal cases CLAUDE.md records
-   * for `RunTelemetry` and `RunCompare`.
-   */
-  it('opens itself when a window arrives after it is already closed', async () => {
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const view = render(
-      <QueryClientProvider client={client}>
-        <TimeBrush runId={RUN} runDurationMs={63_161} window={null} onChange={() => undefined} />
-      </QueryClientProvider>,
-    );
-    await waitFor(() => expect(setOptionSpy).toHaveBeenCalled());
-    expect(details().open).toBe(false);
+    // The section is named by a real heading — `sr-only`, so a sighted reader
+    // sees no second title over the range line, and a screen-reader user
+    // navigating by heading still reaches it.
+    const heading = screen.getByRole('heading', { level: 2, name: 'Time window' });
+    expect(heading).toHaveClass('sr-only');
+    expect(screen.getByRole('region', { name: 'Time window' })).toBe(brush);
 
-    view.rerender(
-      <QueryClientProvider client={client}>
-        <TimeBrush
-          runId={RUN}
-          runDurationMs={63_161}
-          /* `bucketWidthMs` is REQUIRED on `Window` and `renderBrush` hides
-             that behind an `as never`; this case builds the prop by hand, so
-             the compiler sees it. The suite was green while it was missing —
-             vitest does not typecheck, which is why the gate's first command
-             is the only thing that catches a test constructing a prop wrong. */
-          window={{ fromMs: 10_000, toMs: 30_000, bucketWidthMs: 1_000 }}
-          onChange={() => undefined}
-        />
-      </QueryClientProvider>,
-    );
-
-    await waitFor(() => expect(details().open).toBe(true));
-  });
-
-  /** Shut, the always-visible range line still says which stretch the numbers describe. */
-  it('names the applied window from the outside', async () => {
-    await renderBrush({ window: { fromMs: 10_000, toMs: 30_000 } });
-    const range = screen.getByTestId('window-range');
-    // No provider, so no anchor: the ends are elapsed clock time.
-    expect(range).toHaveTextContent('00:00:10 → 00:00:30');
-    expect(range).toHaveTextContent('20s');
-    expect(screen.getByTestId('time-window-toggle').textContent ?? '').not.toMatch(/whole run/i);
-    // OUTSIDE the collapsible timeline, so a shut timeline never hides which
-    // stretch the numbers describe (review M01's safety property).
-    expect(details()).not.toContainElement(screen.getByTestId('window-range'));
-    expect(details()).not.toContainElement(screen.getByTestId('time-axis-mode'));
+    // And what was folded is on screen: the precision fields and the steps.
+    expect(screen.getByTestId('window-from')).toBeVisible();
+    expect(screen.getByTestId('window-to')).toBeVisible();
+    expect(screen.getByTestId('window-step-zoom-in')).toBeVisible();
   });
 });
 

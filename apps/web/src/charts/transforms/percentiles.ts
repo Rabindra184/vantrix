@@ -205,10 +205,20 @@ const NOTHING_MEASURED: Record<Outcome, string> = {
  */
 export function toPercentiles(
   series: SeriesResponse,
-  bands: readonly Band[] = BANDS,
-  outcome: Outcome = 'ok',
-  opts: { readonly x?: 'index' | 'ms' } = {},
+  opts: {
+    /**
+     * REQUIRED, no default: the empty sentence is a claim about the whole run
+     * unless the reader asked about a window, and a wrong value is silent. The
+     * Report passes `window !== null`; the Summary and the drill-downs pass
+     * `false`.
+     */
+    readonly windowSelected: boolean;
+    readonly bands?: readonly Band[];
+    readonly outcome?: Outcome;
+    readonly x?: 'index' | 'ms';
+  },
 ): ChartData {
+  const { bands = BANDS, outcome = 'ok' } = opts;
   const pairs = opts.x === 'ms';
   const selected = BANDS.filter((b) => bands.includes(b));
   // ALL TEN. Not `selected` — see the docstring above.
@@ -220,7 +230,11 @@ export function toPercentiles(
       axisLabels: [],
       columns,
       rows: [],
-      empty: 'No response times were recorded for this run.',
+      // A window that selects nothing reads the same payload, and "recorded
+      // for this run" is then false of a run that recorded plenty elsewhere.
+      empty: opts.windowSelected
+        ? 'No response times fall in the selected window.'
+        : 'No response times were recorded for this run.',
     };
   }
 

@@ -41,16 +41,25 @@ export default function PercentileDistributionChart({
   distribution,
   id = 'percentile-distribution',
   title = 'Response time percentiles distribution',
+  windowSelected,
 }: {
   readonly distribution: DistributionResponse;
   readonly id?: string;
   readonly title?: string;
+  /**
+   * Did the reader narrow the Report to a time window? REQUIRED, no default: a
+   * window that selects nothing and a run that recorded nothing draw the same
+   * empty payload, and the sentence under the figure must not claim a fact about
+   * the RUN when the reader asked about a WINDOW. The Report passes
+   * `window !== null`; the Summary and the drill-downs pass `false`.
+   */
+  readonly windowSelected: boolean;
 }) {
   const [outcome, setOutcome] = useState<Outcome>('ok');
 
   const data = useMemo(
-    () => toPercentileDistribution(distribution, outcome),
-    [distribution, outcome],
+    () => toPercentileDistribution(distribution, outcome, { windowSelected }),
+    [distribution, outcome, windowSelected],
   );
 
   // In the option effect's dependency list, so it must not be a fresh array

@@ -2,7 +2,7 @@ import type { UsersResponse } from '@perfportal/contracts';
 import { useMemo } from 'react';
 import Chart from './Chart';
 import type { TimeDomainMs } from './types';
-import { toConcurrentUsers, toUserStartRate } from './transforms/users';
+import { toConcurrentUsers, toUserEndRate, toUserStartRate } from './transforms/users';
 
 /**
  * §13.2 ⑦ concurrent users over time (Appendix A G-18/G-19) and ⑦ᵇ users
@@ -42,11 +42,20 @@ export interface UsersChartProps {
    * Travels with `domainMs` because it is a fact about the same axis.
    */
   readonly warmupMs?: number;
+  /**
+   * Did the reader narrow the Report to a time window? REQUIRED, no default: a
+   * window that selects nothing and a run that recorded nothing draw the same
+   * empty payload, and the sentence under the figure must not claim a fact about
+   * the RUN when the reader asked about a WINDOW. The Report passes
+   * `window !== null`. On the interface the three charts share, so none can
+   * leave it out.
+   */
+  readonly windowSelected: boolean;
 }
 
 /** ⑦ — the concurrency curve. Plots `maxConcurrent`; see `toConcurrentUsers`. */
-export function ConcurrentUsersChart({ users, group, domainMs, warmupMs }: UsersChartProps) {
-  const data = useMemo(() => toConcurrentUsers(users, { x: 'ms' }), [users]);
+export function ConcurrentUsersChart({ users, group, domainMs, warmupMs, windowSelected }: UsersChartProps) {
+  const data = useMemo(() => toConcurrentUsers(users, { x: 'ms', windowSelected }), [users, windowSelected]);
 
   return (
     <Chart
@@ -81,8 +90,8 @@ export function ConcurrentUsersChart({ users, group, domainMs, warmupMs }: Users
 }
 
 /** ⑦ᵇ — the arrival rate. Plots `started` per second; see `toUserStartRate`. */
-export function UserStartRateChart({ users, group, domainMs, warmupMs }: UsersChartProps) {
-  const data = useMemo(() => toUserStartRate(users, { x: 'ms' }), [users]);
+export function UserStartRateChart({ users, group, domainMs, warmupMs, windowSelected }: UsersChartProps) {
+  const data = useMemo(() => toUserStartRate(users, { x: 'ms', windowSelected }), [users, windowSelected]);
 
   return (
     <Chart
@@ -104,6 +113,26 @@ export function UserStartRateChart({ users, group, domainMs, warmupMs }: UsersCh
         max: domainMs?.[1],
         warmupMs,
       }}
+      unit="users/s"
+    />
+  );
+}
+
+/** GE's "Users Termination Rate". Plots `ended` per second; see `toUserEndRate`. */
+export function UserEndRateChart({ users, group, domainMs, warmupMs, windowSelected }: UsersChartProps) {
+  const data = useMemo(() => toUserEndRate(users, { x: 'ms', windowSelected }), [users, windowSelected]);
+
+  return (
+    <Chart
+      id="user-end-rate"
+      title="Users ended per second"
+      data={data}
+      group={group}
+      yAxis={{ name: 'Users/s' }}
+      // A value axis in ms, labelled as clock time, for the reason
+      // `UserStartRateChart` gives: the shared crosshair syncs by the number.
+      pairValue="y"
+      xAxis={{ type: 'value', tickUnit: 'ms-as-s', min: domainMs?.[0], max: domainMs?.[1], warmupMs }}
       unit="users/s"
     />
   );
