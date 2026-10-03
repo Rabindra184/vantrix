@@ -553,7 +553,43 @@ is the second full run.** The first collected 184 and failed ONE:
 inactive" — the intermittent this file already records three times, in a chart
 this branch does not touch; that file alone then passed **35 of 35** (five
 repeats), and the whole suite ran clean. The early cross-browser dispatch is
-above; the final head's dispatch is recorded in the commit that follows this one.
+above.
+
+**THE FINAL HEAD'S DISPATCH FAILED THE SAME WEBKIT CASE, SO IT WAS SETTLED BY A
+RATE RATHER THAN AN ARGUMENT.** Dispatched on `b58a0ad` (code identical to
+`4a8e5d1`, which the gates measured): 552 collected (184 × 3), 546 passed, 5
+skipped, 1 failed — the reader-wins case again, both attempts, the reader at 1550
+and 1504 against a reveal at 1447. Eleven `e2e-cross-browser` jobs in all:
+
+```
+  main f68212e    6 of 6 passed    its push run and five dispatches
+  this branch     3 of 5 passed    08ffbad failed, passed on re-run; b58a0ad
+                                   failed, then passed three times running
+```
+
+Fisher's exact test on that table is p ≈ 0.18 — no evidence the branch moves the
+rate — and the case reads nothing this branch changed: its spec, its two fixtures
+(`seedAdmin`, `seedRunWithData`), the Summary page and `AppShell`'s keeper are
+byte-identical to `main`. Both failures came in PAIRS inside one job, and their
+traces show WebKit's own `mouse.move` taking 620-810 ms and `mouse.wheel` 730-860
+ms, the network released 1.4-1.7 s after the reveal: slow runners.
+
+**AND IT IS PLAUSIBLY A PRODUCT RACE, NOT ONLY A TEST ONE.** The reader was pulled
+BACK past where the reveal left them — the keeper correcting a scroll it did not
+make. Its four input listeners are `passive`, so the browser scrolls without
+waiting for them, and a correction that runs between the reader's scroll and the
+`wheel` listener reads that scroll as drift; the event that would have stopped the
+keeper arrives after it has already moved them. That is the likeliest mechanism,
+read from the traces and the listener options, NOT reproduced. It is the same
+code on `main` (whose six passes are the race being won), and it is taken as its
+own task: a keeper that stops on any scroll it did not cause, rather than on the
+events that usually precede one.
+
+**DISPATCH BRANCH RUNS ONE AT A TIME.** CI's concurrency group is keyed on the
+ref for every branch but `main`, with cancel-in-progress, so a second dispatch
+on a branch cancels the first — one of the rate runs here was lost that way.
+`main` runs each get their own group, which is why its dispatches survived
+side by side.
 
 The sla-values-rounded branch added no unit FILE and 18 cases — 12 to
 `packages/contracts/test/rules.test.ts`, 2 each to
