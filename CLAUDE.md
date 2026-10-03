@@ -577,16 +577,40 @@ byte-identical to `main`. Both failures came in PAIRS inside one job, and their
 traces show WebKit's own `mouse.move` taking 620-810 ms and `mouse.wheel` 730-860
 ms, the network released 1.4-1.7 s after the reveal: slow runners.
 
-**AND IT IS PLAUSIBLY A PRODUCT RACE, NOT ONLY A TEST ONE.** The reader was pulled
-BACK past where the reveal left them — the keeper correcting a scroll it did not
-make. Its four input listeners are `passive`, so the browser scrolls without
-waiting for them, and a correction that runs between the reader's scroll and the
-`wheel` listener reads that scroll as drift; the event that would have stopped the
-keeper arrives after it has already moved them. That is the likeliest mechanism,
-read from the traces and the listener options, NOT reproduced. It is the same
-code on `main` (whose six passes are the race being won), and it is taken as its
-own task: a keeper that stops on any scroll it did not cause, rather than on the
-events that usually precede one.
+**AND THE TRACE SAYS THE READER'S WHEEL NEVER LANDED — A TEST TIMING DEFECT, NOT
+A PRODUCT RACE.** The first version of this paragraph read the pull-back as the
+keeper correcting a scroll it did not make, through its `passive` listeners. The
+trace of the merged head's failure (run 37102458223) says otherwise. Every DOM
+snapshot from the reveal (1152 ms) to the end of `mouse.wheel(0, -600)` (2110 ms)
+is the same document with its scroll top at **1442**, and NO frame was painted
+during the 496 ms wheel. The two frames either side show the same view, with only
+the errors table filling in (`/errors` is not held), on a busy WebKit main
+thread. So the wheel had not scrolled the page when the test released the held
+requests, and the reader never took over. The final 1497 is a small drift after
+the page grew 2162 to 2553; a pull-back to the target's rest would sit near
+1824. **The case's guards check that the reveal scrolled and that the page grew,
+never that the wheel moved anything**, so a wheel that did not land reads as the
+keeper winning. The fix is in the test (wait for the reader's scroll before
+releasing), and the hardening task filed for the keeper was corrected to say so.
+
+**RE-MEASURED AFTER MERGING `main`**, where the test-app-loopback and
+runner-status-codes branches had both landed: `typecheck` and `lint` exit 0;
+`test:unit` **194 / 2667**, zero `Errors` lines; `test:integration` **182 / 2353,
+exit 0, zero failures**; `pnpm test:e2e` **184 passed, exit 0** — each the three
+branches' arithmetic, predicted before the run, on the same scratch stores, at
+`84060cf`. The final merge of `main` (`7a72182`, the runner-status PR's merge
+commit) changed no byte: `84060cf` and the head after it share tree `0e9c154`.
+**Two things moved with the merge.** `packages.integration.test.ts`' two
+hand-built request helpers bound the app's server themselves (`listen(0,
+'127.0.0.1')`) and closed it afterwards; against `createTestApp`'s server, now
+listening before it returns, that is a second listen and a close that would end
+every later request in the test, so both read the port they were given and close
+nothing. And the retry case's comment, that the document "declares 200" for
+retry, is true no longer. The three-engine dispatch on `84060cf` collected 552,
+passed 546, skipped 5 and failed the same WebKit case, both attempts (1497 vs
+1442, 1544 vs 1447): the twelfth job of the tally above, which now reads FAILED 3 of 6
+on this branch against 0 of 6 on `main` (Fisher p ≈ 0.09), and the one whose trace is read in
+the paragraph above.
 
 **DISPATCH BRANCH RUNS ONE AT A TIME.** CI's concurrency group is keyed on the
 ref for every branch but `main`, with cancel-in-progress, so a second dispatch
