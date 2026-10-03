@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, open, rename, stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
-import { Controller, Get, Inject, Param, Post, Req } from '@nestjs/common';
+import { Controller, Get, HttpCode, Inject, Param, Post, Req } from '@nestjs/common';
 import type { Request } from 'express';
 import {
   RunnerJobActionResponseSchema,
@@ -149,7 +149,13 @@ export class RunnerController {
     });
   }
 
+  // 200, NOT Nest's 201 default for @Post: a cancel changes the state of a
+  // job that already exists and creates nothing, so there is no resource for
+  // a 201 to announce. Retry below keeps the default, because it does create
+  // one. openapi.integration.test.ts derives every handler's status from this
+  // metadata and holds the document to it.
   @Post('runs/:jobId/cancel')
+  @HttpCode(200)
   @Scopes('runner')
   async cancel(
     @Param('slug') slug: string,
@@ -186,6 +192,11 @@ export class RunnerController {
     });
   }
 
+  // 201, Nest's default for @Post, and it is the honest answer: the retry
+  // INSERTs a new job and returns that job, complete and addressable (the
+  // list carries it and its logs endpoint takes its id) before the response
+  // is sent — the standard openapi.integration.test.ts's 201 list holds every
+  // create to.
   @Post('runs/:jobId/retry')
   @Scopes('runner')
   async retry(

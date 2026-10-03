@@ -180,3 +180,53 @@ describe('POST /v1/projects/:slug/runner/runs artifact checks', () => {
     expect(res.status).toBe(201);
   });
 });
+
+/**
+ * ═══ CANCEL AND RETRY ANSWER WHAT THE DOCUMENT SAYS THEY ANSWER ═══
+ *
+ * Both answered 201 — Nest's default for a `@Post` — while the published
+ * document declared 200 for each, so a generated client branching on the
+ * declared status treated every success as an error. They differ now on
+ * purpose: a cancel changes a job that already exists (200), a retry creates
+ * a new one (201).
+ *
+ * The case reads the DOCUMENT rather than restating either number twice: the
+ * claim is that the server and its contract agree, and that is asserted first,
+ * before which number it is. It also proves the 201 is honest — the retried
+ * job is a new id, queued, and the very next list read carries it.
+ */
+describe('cancel and retry on a runner job', () => {
+  it('answer the success status the document declares: 200 for a cancel, 201 for the job a retry creates', async () => {
+    const server = ctx.app.getHttpServer();
+    const auth = { Authorization: `Bearer ${runnerToken}` };
+    const doc = (await request(server).get('/v1/openapi.json')).body as {
+      paths: Record<string, { post: { responses: Record<string, unknown> } }>;
+    };
+    const declaredSuccess = (action: 'cancel' | 'retry'): string[] =>
+      Object.keys(doc.paths[`/v1/projects/{slug}/runner/runs/{jobId}/${action}`]!.post.responses).filter((c) =>
+        c.startsWith('2'),
+      );
+
+    const queued = await upload(await thinJar('example.BasicSimulation'), {
+      simulationClass: 'example.BasicSimulation',
+    });
+    expect(queued.status).toBe(201);
+    const jobId: string = queued.body.job.id;
+
+    const cancelled = await request(server).post(`/v1/projects/checkout/runner/runs/${jobId}/cancel`).set(auth);
+    expect(cancelled.body.job?.status, JSON.stringify(cancelled.body)).toBe('cancelled');
+    expect(declaredSuccess('cancel')).toEqual([String(cancelled.status)]);
+    expect(cancelled.status).toBe(200);
+
+    const retried = await request(server).post(`/v1/projects/checkout/runner/runs/${jobId}/retry`).set(auth);
+    expect(retried.body.job?.status, JSON.stringify(retried.body)).toBe('queued');
+    expect(retried.body.job.id).not.toBe(jobId);
+    expect(declaredSuccess('retry')).toEqual([String(retried.status)]);
+    expect(retried.status).toBe(201);
+
+    // What makes 201 the honest answer: the job it announces exists now.
+    const listed = await request(server).get('/v1/projects/checkout/runner/runs').set(auth);
+    expect(listed.status).toBe(200);
+    expect((listed.body.items as { job: { id: string } }[]).map((i) => i.job.id)).toContain(retried.body.job.id);
+  });
+});

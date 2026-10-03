@@ -146,6 +146,104 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The runner-status-codes branch added no unit FILE and no unit case — unit
+stays **188 / 2526** — and one case each to
+`apps/api/test/openapi.integration.test.ts` and
+`apps/api/test/runner.integration.test.ts`, from **173 / 2187 to
+173 / 2189**. **e2e stays 180.**
+
+**TWO RUNNER ENDPOINTS ANSWERED A STATUS THEIR CONTRACT DID NOT DECLARE.**
+`POST …/runner/runs/{jobId}/cancel` and `…/retry` carry no `@HttpCode`, so Nest
+answered both with its `@Post` default, **201**, while `document.ts` declared
+**200** for each. A generated client branching on the declared status took its
+error path on every successful cancel and retry. The browser never noticed:
+`apiFetch` checks `res.ok`, and nothing in `clients/` or `agent/` calls either.
+
+**THEY DIFFER NOW ON PURPOSE, AND THE TEST IS WHAT EACH ONE CREATES.** A cancel
+moves a job that already exists to `cancelled` and creates nothing, so it takes
+`@HttpCode(200)` — the document was right and the code changes. A retry
+`INSERT`s a NEW job (its own id, `queued`, every field the operator chose) and
+returns it after re-reading it, so it is complete and addressable when the
+response is sent: the list carries it in the next read. That is the standard
+the 201 allowlist already holds `POST …/runner/runs` to, so retry KEEPS 201 —
+the code was right, the document changes, and the allowlist names it with the
+measurement. Changing the wire for retry to match a wrong document would have
+broken every client that already saw 201 to buy agreement with a sentence
+nobody had checked.
+
+**NOTHING COMPARED A HANDLER'S STATUS WITH ITS DOCUMENT, AND THE 201 LIST LOOKS
+LIKE IT DOES.** That case asks only whether an operation is ALLOWED to declare
+201; it never asks what the handler sends, so a POST declaring 200 while
+answering 201 sails past it. The path-param sweep is GET-only. **So the status
+is derived**, from the same metadata the route-coverage cases already walk:
+`@HttpCode`, else Nest's own default (201 for POST, 200 otherwise,
+`RouterResponseController.setStatus`). A handler that returns normally can send
+exactly one 2xx, so its operation must declare exactly that one — a wrong code
+and a spare one fail alike. A handler taking `@Res()` without passthrough
+writes its own status (the run state machine's 200/202/422, the live protocol's
+202) and is out of scope, read off `ROUTE_ARGS_METADATA` on the CLASS, keyed by
+method name. **On the tree before this branch it named exactly these two and
+nothing else** — measured by a probe of every operation's declared 2xx before
+it was written, so the guard ships with no exemptions.
+
+**THE VACUITY GUARDS COUNT THE CONSTRUCT.** `@Res()` handlers FOUND (six) and
+`@HttpCode` handlers FOUND (five), never how many agree — and `@HttpCode`
+presence, not "status differs from the default", because `@HttpCode(201)` on a
+POST changes nothing and three handlers carry exactly that.
+
+**AND A BEHAVIOURAL CASE HOLDS THE REAL RESPONSES TO THE DOCUMENT.** It queues a
+real job, cancels it, retries the cancelled job, and asserts each observed
+status EQUALS the document's declared 2xx before it asserts which number —
+the claim is agreement, and a case that restated 200 and 201 by hand would pass
+the day both drifted together. The list read afterwards is what makes the 201
+honest.
+
+**RED-VERIFIED FROM THE CHECKPOINT COMMIT**, each mutation's replacement count
+asserted, the two files run, and the tree clean after each — every failure read
+at the assertion it landed on, not just counted:
+
+```
+  main as it is (cancel default,     the derived case naming BOTH ("cancel: sends 201,
+    retry documented 200)            declares 200", "retry: sends 201, declares 200"), the
+                                     201 list (retry listed, declares no 201) and the
+                                     behavioural case at the cancel agreement
+  cancel's @HttpCode(200) removed    the derived case naming cancel alone, and the
+                                     behavioural case at the cancel agreement
+  retry documented 200 again         the derived case naming retry alone, the 201 list,
+                                     and the behavioural case at the retry agreement
+  BOTH wrong together (cancel        the derived case PASSES — code and document agree;
+    sends and documents 201)         the 201 list catches it (cancel is not a create),
+                                     and the behavioural case at toBe(200)
+  @Res() never recognised            the derived case alone, at its vacuity guard
+                                     ("found no @Res() handlers")
+  the @HttpCode key misread (2 sites) the derived case alone, at its vacuity guard
+                                     ("found no @HttpCode handlers")
+```
+
+**THE FOURTH ROW IS WHY THE BEHAVIOURAL CASE PINS THE NUMBER AFTER THE
+AGREEMENT.** A cancel that sends 201 AND documents 201 satisfies the derived
+case perfectly; only the 201 list's "is this a create" and the behavioural
+case's 200 stand between that and a client told a cancel created something.
+
+**AND `feat/packages` EDITS BOTH FILES.** `runner.controller.ts` and
+`document.ts` change there too; whichever lands second resolves the conflict,
+and the derived case is what says whether the resolution kept the statuses.
+
+**WHAT WAS RUN.** `typecheck` and `lint` exit 0 by their own exit codes; `test:unit` **188 / 2526**,
+unchanged as predicted, zero `Errors` lines; `test:integration` **173 / 2189, exit
+0, zero failures**, the prediction exactly (2187 plus the two cases); `pnpm
+test:e2e` **180 passed, exit 0** — against a SCRATCH DATABASE
+(`perfportal_runnerstatus`), a scratch Redis INDEX (db 6) and e2e port 4400.
+Integration started at a 1-minute load of 7.72.
+
+**RE-MEASURED AFTER MERGING `main`**, where the test-app-loopback branch had
+landed underneath it: `typecheck` and `lint` exit 0; `test:unit` **189 / 2530**,
+zero `Errors` lines; `test:integration` **175 / 2194, exit 0, zero failures** —
+loopback's 175 / 2192 plus this branch's two; `pnpm test:e2e` **180 passed, exit
+0**. Each total predicted before the run, on the same scratch stores; the two
+cases here hand supertest the server `createTestApp` now listens on, so the
+guard that branch added has nothing to refuse.
+
 The test-app-loopback branch added ONE unit file — `apps/api/test/loopback.test.ts`
 (4, one of them macOS-only) — from **188 / 2526 to 189 / 2530**. Integration
 gains that file and `apps/api/test/test-app-loopback.integration.test.ts` (1),
