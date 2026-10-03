@@ -12,6 +12,7 @@ import { AuthModule } from '../src/auth/auth.module.js';
 import { Scopes } from '../src/auth/scopes.decorator.js';
 import { ProblemFilter } from '../src/common/problem.filter.js';
 import { createTestApp, type TestContext } from './support/app.js';
+import { listenNestOnLoopback } from './support/loopback.js';
 
 let ctx: TestContext;
 
@@ -179,7 +180,7 @@ describe('AuthMiddleware — infrastructure failures during authentication', () 
       .compile();
     const app = moduleRef.createNestApplication();
     app.useGlobalFilters(new ProblemFilter());
-    await app.init();
+    await listenNestOnLoopback(app);
 
     try {
       const res = await request(app.getHttpServer())
@@ -214,7 +215,7 @@ describe('global AuthGuard — scope enforcement cannot be forgotten', () => {
     }).compile();
     const app = moduleRef.createNestApplication();
     app.useGlobalFilters(new ProblemFilter());
-    await app.init();
+    await listenNestOnLoopback(app);
 
     const prisma = app.get(PrismaClient);
     const org = await prisma.org.create({ data: { slug: `org-${randomUUID().slice(0, 8)}`, name: 'Test' } });

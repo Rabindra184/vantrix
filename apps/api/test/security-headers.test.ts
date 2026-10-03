@@ -1,12 +1,14 @@
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type http from 'node:http';
 import { brotliCompressSync, gzipSync } from 'node:zlib';
 import express from 'express';
 import request from 'supertest';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { inlineScriptHashes, mountSecurityHeaders } from '../src/security-headers.js';
 import { mountSpa } from '../src/spa.js';
+import { listenOnLoopback } from './support/loopback.js';
 
 /**
  * A real Express app over a real (tiny) dist directory. No Nest, no database:
@@ -24,9 +26,14 @@ const INDEX_HTML = `<!doctype html><html><head><script>${INLINE_SCRIPT}</script>
 const APP_JS = `console.log(${JSON.stringify('x'.repeat(4096))});\n`;
 
 let app: express.Express;
+// supertest is handed a server already listening on 127.0.0.1, never the bare
+// Express app: given one, it calls `listen(0)` on the wildcard address per
+// request, which ./support/loopback-guard.ts refuses and ./support/loopback.ts
+// explains.
+let server: http.Server;
 let distDir: string;
 
-beforeAll(() => {
+beforeAll(async () => {
   distDir = mkdtempSync(join(tmpdir(), 'perfportal-spa-'));
   mkdirSync(join(distDir, 'assets'));
   writeFileSync(join(distDir, 'index.html'), INDEX_HTML);
@@ -42,6 +49,11 @@ beforeAll(() => {
   app.get('/v1/ping', (_req, res) => void res.json({ ok: true }));
   // Stands in for SwaggerModule.setup's page.
   app.get('/v1/docs', (_req, res) => void res.type('html').send('<html></html>'));
+  server = await listenOnLoopback(app);
+});
+
+afterAll(async () => {
+  await new Promise<void>((done) => server.close(() => done()));
 });
 
 describe('inlineScriptHashes', () => {
@@ -67,7 +79,7 @@ describe('inlineScriptHashes', () => {
 
 describe('security headers', () => {
   it('sends the full set on an API response', async () => {
-    const res = await request(app).get('/v1/ping').expect(200);
+    const res = await request(server).get('/v1/ping').expect(200);
     expect(res.headers['x-content-type-options']).toBe('nosniff');
     expect(res.headers['x-frame-options']).toBe('DENY');
     expect(res.headers['referrer-policy']).toBe('no-referrer');
@@ -79,24 +91,24 @@ describe('security headers', () => {
   it('sends them on the SPA document too, not only on the API', async () => {
     // The regression this catches is mounting the middleware after the static
     // handler, which would leave every asset and the index document bare.
-    const res = await request(app).get('/runs/abc').expect(200);
+    const res = await request(server).get('/runs/abc').expect(200);
     expect(res.headers['x-content-type-options']).toBe('nosniff');
     expect(res.headers['content-security-policy']).toContain("script-src 'self'");
   });
 
   it('never names the framework', async () => {
-    const res = await request(app).get('/v1/ping').expect(200);
+    const res = await request(server).get('/v1/ping').expect(200);
     expect(res.headers['x-powered-by']).toBeUndefined();
   });
 
   it('carries the index.html script hash, so the theme script still runs', async () => {
     const [hash] = inlineScriptHashes(INDEX_HTML);
-    const res = await request(app).get('/').expect(200);
+    const res = await request(server).get('/').expect(200);
     expect(res.headers['content-security-policy']).toContain(hash);
   });
 
   it("forbids inline script on the app's own policy", async () => {
-    const res = await request(app).get('/').expect(200);
+    const res = await request(server).get('/').expect(200);
     const csp = res.headers['content-security-policy'] ?? '';
     const scriptSrc = csp.split(';').find((d) => d.trim().startsWith('script-src'));
     expect(scriptSrc).toBeDefined();
@@ -106,8 +118,8 @@ describe('security headers', () => {
   });
 
   it('gives /v1/docs its own, looser policy — and only /v1/docs', async () => {
-    const docs = await request(app).get('/v1/docs').expect(200);
-    const other = await request(app).get('/v1/ping').expect(200);
+    const docs = await request(server).get('/v1/docs').expect(200);
+    const other = await request(server).get('/v1/ping').expect(200);
     expect(docs.headers['content-security-policy']).toContain("script-src 'self' 'unsafe-inline'");
     expect(other.headers['content-security-policy']).not.toContain(
       "script-src 'self' 'unsafe-inline'",
@@ -115,10 +127,10 @@ describe('security headers', () => {
   });
 
   it('withholds HSTS over plain HTTP and sends it behind a TLS-terminating proxy', async () => {
-    const plain = await request(app).get('/v1/ping').expect(200);
+    const plain = await request(server).get('/v1/ping').expect(200);
     expect(plain.headers['strict-transport-security']).toBeUndefined();
 
-    const proxied = await request(app)
+    const proxied = await request(server)
       .get('/v1/ping')
       .set('X-Forwarded-Proto', 'https')
       .expect(200);
@@ -128,7 +140,7 @@ describe('security headers', () => {
 
 describe('static asset delivery', () => {
   it('serves brotli when the client accepts it, with the original content type', async () => {
-    const res = await request(app)
+    const res = await request(server)
       .get('/assets/app.js')
       .set('Accept-Encoding', 'br, gzip')
       // supertest/superagent decodes the body, so this asserts the wire
@@ -143,7 +155,7 @@ describe('static asset delivery', () => {
   });
 
   it('falls back to gzip for a client that does not take brotli', async () => {
-    const res = await request(app)
+    const res = await request(server)
       .get('/assets/app.js')
       .set('Accept-Encoding', 'gzip, deflate')
       .expect(200);
@@ -151,13 +163,13 @@ describe('static asset delivery', () => {
   });
 
   it('serves the identity bytes when nothing is accepted', async () => {
-    const res = await request(app).get('/assets/app.js').set('Accept-Encoding', '').expect(200);
+    const res = await request(server).get('/assets/app.js').set('Accept-Encoding', '').expect(200);
     expect(res.headers['content-encoding']).toBeUndefined();
     expect(res.text).toBe(APP_JS);
   });
 
   it('serves an asset with no precompressed variant unchanged', async () => {
-    const res = await request(app)
+    const res = await request(server)
       .get('/assets/plain.js')
       .set('Accept-Encoding', 'br')
       .expect(200);
@@ -165,15 +177,15 @@ describe('static asset delivery', () => {
   });
 
   it('marks a fingerprinted asset immutable and index.html no-cache', async () => {
-    const asset = await request(app).get('/assets/plain.js').expect(200);
+    const asset = await request(server).get('/assets/plain.js').expect(200);
     expect(asset.headers['cache-control']).toBe('public, max-age=31536000, immutable');
 
     // The failure this pins: index.html's URL is stable while its content
     // names the current fingerprints, so an immutable copy points at assets
     // the next deploy deleted and the app is blank until a hard reload.
-    const doc = await request(app).get('/').expect(200);
+    const doc = await request(server).get('/').expect(200);
     expect(doc.headers['cache-control']).toBe('no-cache');
-    const deepLink = await request(app).get('/runs/abc').expect(200);
+    const deepLink = await request(server).get('/runs/abc').expect(200);
     expect(deepLink.headers['cache-control']).toBe('no-cache');
   });
 
@@ -193,7 +205,7 @@ describe('static asset delivery', () => {
     '/assets/%2e%2e/%2e%2e/etc/passwd.js',
     '/assets/..%2f..%2fetc/passwd.js',
   ])('never serves a precompressed variant for the traversal path %s', async (path) => {
-    const res = await request(app).get(path);
+    const res = await request(server).get(path);
     expect(res.headers['content-encoding']).toBeUndefined();
     expect(res.text).not.toContain('root:');
   });
@@ -217,9 +229,10 @@ describe('static asset delivery', () => {
  */
 describe('a dist under a dotted directory', () => {
   let dotted: express.Express;
+  let dottedServer: http.Server;
   let dottedDist: string;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     dottedDist = join(mkdtempSync(join(tmpdir(), 'perfportal-spa-')), '.hidden', 'dist');
     mkdirSync(join(dottedDist, 'assets'), { recursive: true });
     writeFileSync(join(dottedDist, 'index.html'), INDEX_HTML);
@@ -228,6 +241,11 @@ describe('a dist under a dotted directory', () => {
     dotted = express();
     mountSecurityHeaders(dotted, dottedDist);
     mountSpa(dotted, dottedDist);
+    dottedServer = await listenOnLoopback(dotted);
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((done) => dottedServer.close(() => done()));
   });
 
   it('really is dotted — or every case below proves nothing', () => {
@@ -235,14 +253,14 @@ describe('a dist under a dotted directory', () => {
   });
 
   it.each(['/', '/runs/abc'])('serves index.html for %s', async (path) => {
-    const res = await request(dotted).get(path).expect(200);
+    const res = await request(dottedServer).get(path).expect(200);
     expect(res.headers['content-type']).toContain('text/html');
     expect(res.text).toContain('<div id="root">');
     expect(res.headers['cache-control']).toBe('no-cache');
   });
 
   it('serves its assets, which the absolute-path defect never reached', async () => {
-    const res = await request(dotted).get('/assets/plain.js').expect(200);
+    const res = await request(dottedServer).get('/assets/plain.js').expect(200);
     expect(res.text).toBe('export default 1;\n');
   });
 });

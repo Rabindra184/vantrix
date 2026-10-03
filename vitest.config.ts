@@ -42,7 +42,9 @@ export default defineConfig({
     // `apps/web/test/setup.ts` for why a 30s test containing a 1s `findByRole` is a
     // flake generator rather than a preference. It configures ONLY that; in
     // particular it deliberately does not register a global `cleanup`.
-    setupFiles: ['./apps/web/test/setup.ts'],
+    // The second refuses a test server that listens on the wildcard address
+    // with an ephemeral port — see apps/api/test/support/loopback-guard.ts.
+    setupFiles: ['./apps/web/test/setup.ts', './apps/api/test/support/loopback-guard.ts'],
 
     /**
      * ═══ TWO PROJECTS, BECAUSE ONE OF THEM NEEDS A DOCUMENT ═══
