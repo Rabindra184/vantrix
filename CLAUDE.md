@@ -146,6 +146,124 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The wheel-lands branch (`rb/brave-hamilton-sxydmy`) added no unit FILE, no
+unit case and no e2e case: unit stays **194 / 2667**, integration
+**182 / 2353**, **e2e stays 184**. It changes one test,
+`run-summary-report.spec.ts`' reader-wins case, which was red on WebKit on
+`main` (run 37105185085, on `46a7979`, both attempts).
+
+**THE CASE RELEASED THE PAGE BEFORE THE READER HAD MOVED IT.** Its own comment
+said the order was "reveal, wheel, release, settle, and each step waits on the
+one before it", and the wheel step did not wait: `mouse.wheel` resolves without
+waiting for the scroll it asks for, and the held requests were released the
+moment it returned. On the slow runner whose trace the packages entry reads,
+the scroll top sat at the reveal's 1442 through the whole 496 ms wheel. The
+comment also listed a guard, "the wheel must have moved it back up from there",
+that no line of the case checked. Both are true now. After the wheel the case
+waits (`raf` polling, bounded at 10 s) until the scroll is at least HALF the
+600 px wheel above the reveal, and fails under its own name if it never gets
+there: "the wheel must have scrolled the page, or the reader never took over".
+Only then does it release.
+
+**REPRODUCED ON DEMAND, BECAUSE A SLOW RUNNER CANNOT BE.** The trace's shape is
+a wheel the keeper HEARS but that does not scroll the page, and a synthetic
+`WheelEvent` dispatched on `document` is exactly that: it reaches the capture
+listener and moves nothing. Swapped for `mouse.wheel` in `main`'s case, it
+failed with **`Expected: < 1442, Received: 1442`**, the CI failure's message,
+blaming a keeper that had already stopped. **AND IT PASSED 4 RUNS OF 9.** The
+reveal is read while the errors table is still filling in, so it was sometimes
+1447 on a 2167 px document, and the section settling 5 px shorter clamps the
+scroll to 1442 with no reader at all; `1442 < 1447` passed the final check.
+**`main`'s case could pass with a wheel that never scrolled**, which is why the
+guard asks for half the wheel and not "anywhere above the reveal".
+
+**A REAL PULL-BACK READS 1824, AND CI'S NUMBERS ARE NEITHER THAT NOR THE
+REVEAL.** With `wheel` dropped from `READER_INPUTS` the case fails 6 of 6. Each
+time the new guard passes (the wheel landed) and the final check reads
+**1824**: the keeper followed the growth to the target's rest, at the page's
+new maximum. The five failing finals the packages entry records were 1490,
+1497, 1504, 1544 and 1550.
+**The packages entry reads them as drift because a pull-back "would sit near
+1824". That holds only for a keeper that stays on through the whole growth.**
+A correction lands at the page's maximum AT THAT MOMENT, so a pull-back that
+the wheel's listener stopped part-way through the growth would land anywhere
+between 1442 and 1824. The final number does not tell the two readings apart.
+The trace's frames do, and the guard now checks the same thing they showed. If
+WebKit fails this case again with the guard passing, the wheel landed and the
+keeper took it back. That is the product race, with evidence, and it is its own
+branch.
+
+**NOT CHANGED: THE KEEPER.** The original brief proposed stopping on ANY scroll
+the keeper did not cause. It was not built: nothing reproduced the race it
+answers. And this branch measured a scroll the keeper did not cause that comes
+from no reader: the 5 px clamp above, during the very settle the keeper exists
+for. Scroll anchoring, in the engines that have it, also moves the scroll when
+content above the anchor grows (by design, not measured here). A keeper that
+stopped on "not mine" would let go of the page while it settles. A version that
+works would have to tell a reader's scroll from a clamp and from an anchoring
+adjustment. The target's position in the DOCUMENT stays still under a reader's
+scroll and under a clamp below it, and moves with an anchoring adjustment, so
+the clamp is the hard one. That is its own design, with a red unit case first.
+
+**RED-VERIFIED FROM THE CHECKPOINT COMMIT (`91aa93d`)**, each mutation's
+replacement count asserted, the tree clean after each, Chromium:
+
+```
+  reproduce   main's case, a heard wheel that never      FAILED 5 of 9 at the final check (Received 1442,
+              scrolls (synthetic WheelEvent)             the CI message), PASSED 4 of 9 on the 5 px clamp
+  m1          the same wheel, against this case          6 of 6 at the new guard; the final check never runs
+  m2          the wheel removed                          3 of 3 at the new guard
+  m3          m1 + the guard's margin removed            PASSED 4 of 9, failed 5 at the guard: the clamp
+              (revealedAt - 1, not - WHEEL / 2)          passes a bare "above the reveal"
+  m4          'wheel' dropped from READER_INPUTS         6 of 6 at the final check, Received 1824, the
+              (AppShell.tsx)                             guard passing each time
+```
+
+**WHAT WAS RUN**, on `91aa93d`, Node 22, against a SCRATCH DATABASE
+(`perfportal_keeper`), a scratch Redis INDEX (db 5), e2e port 3900 and a MinIO
+container from CI's own pinned image. `pnpm build`, `typecheck` and `lint` exit
+0 by their own exit codes. `test:unit` **194 / 2667**, exit 0, zero `Errors`
+lines (2666 passed and 1 skipped: `loopback.test.ts`' macOS-only case, on
+Linux). `pnpm test:e2e` **184 passed, exit 0**, through the untracked config
+below. Every count is the prediction, unchanged from `main`.
+**`test:integration` collected 182 / 2353 and exited 1 on ONE case:**
+`blobs.integration.test.ts`' multi-megabyte upload, "Test timed out in
+30000ms". That is the wall-clock budget this file already records failing on a
+loaded machine, and here the machine was not loaded. Isolated, at a 1-minute
+load of 1.46, it failed again at 40.6 s. With the budget raised to 120 s
+(local only, reverted) it RESOLVED in 39.3 s: slow, not the hang it guards
+against. A 6 MB multipart upload to this container's MinIO takes longer than
+30 s. No file under `packages/`, `apps/api`, `apps/worker` or `apps/runner`
+differs from `main`. CI's `build` job on the same commit passed `test:unit`,
+`test:integration` and `test:e2e` on clean containers (run 37121085293), so the
+timeout is this container's MinIO and nothing this branch did.
+
+**THE THREE-ENGINE DISPATCH ON `91aa93d` (run 37121085293)** collected 552,
+passed 546, skipped 5 and failed none. It was flaky on ONE case,
+`[firefox] auth.spec.ts:23`: `page.goto('/login')` ran past the 20 s navigation
+timeout and passed on retry. That is the navigation stall this file already
+records, in a spec this branch does not touch. **The WebKit reader-wins case
+passed on its first attempt**, in 6.1 s. One job is a data point and not a
+rate. The tally it joins is `main` 6 of 6 before the packages merge and 0 of 1
+after it (run 37105185085, both attempts red), and the packages branch 3 of 6.
+
+**KNOWN AND LEFT, EACH A DECISION RATHER THAN AN OVERSIGHT:**
+
+  - The narrow race the brief described is untested. In it, a scroll lands
+    before its passive `wheel` listener runs and a layout change falls between
+    the two. Waiting for the scroll before the release also gives the wheel's
+    DOM event time to reach the keeper before the page grows, so this case can
+    no longer show it. It was never reproduced, only read from final positions,
+    which (above) cannot settle it.
+  - A scroll that raises none of the four inputs (a Firefox scrollbar drag,
+    assistive technology) can still be pulled back inside the settle window.
+    That is the summary-report entry's known gap, unchanged. Closing it is the
+    keeper change above.
+  - Firefox and WebKit cannot run in this container. Its Chromium is revision
+    1194, Playwright 1.62.1 expects 1234, and `playwright install` is not
+    allowed here. Local e2e ran through an untracked config that sets
+    `executablePath`. Every WebKit figure in this entry is CI's.
+
 The packages branch added FIVE unit files —
 `apps/api/test/package-files.test.ts` (14), `apps/web/test/ProjectPackages.test.tsx`
 (37), `apps/web/test/packagesApi.test.ts` (17), `apps/web/test/runnerApi.test.ts`

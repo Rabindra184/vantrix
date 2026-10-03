@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { errors, expect, test, type Page } from '@playwright/test';
 import { seedAdmin, seedRunWithData } from './fixtures.js';
 import { plot, signIn } from './helpers.js';
 import { runPath, runReportPath } from '../src/routes/paths.js';
@@ -361,16 +361,28 @@ test('changing the Investigate filter after an old /errors link keeps the reader
  * THE TIMING IS HELD, NOT WAITED FOR. The tiles and the two charts arrive over
  * ~75ms after the reveal — too short a window to land a wheel in by luck — so
  * the four requests that grow the page above the table are paused at the
- * network until the wheel has been delivered, and then released. Nothing here
- * sleeps: the order is reveal, wheel, release, settle, and each step waits on
- * the one before it.
+ * network until the reader's scroll has LANDED, and then released. Nothing here
+ * sleeps: the order is reveal, wheel, scroll landed, release, settle, and each
+ * step waits on the one before it.
+ *
+ * "THE WHEEL WAS DELIVERED" IS NOT "THE READER SCROLLED", AND WEBKIT TOLD THEM
+ * APART. `mouse.wheel` resolves without waiting for the scroll it asks for. On
+ * a slow CI runner every DOM snapshot from the reveal to the end of a 496ms
+ * wheel had the scroll top at 1442, with no frame painted in between (run
+ * 37102458223), so the requests were released into a page the reader had never
+ * moved, and the failure read as the keeper winning. The step waits for the
+ * scroll, and a wheel that never lands fails here, under its own name.
  *
  * THREE GUARDS AGAINST A VACUOUS PASS, because "the page was not pulled back"
  * is also true of a page that was never scrolled, never grew, or never asked:
  *
  *   - the reveal must have scrolled the page (`revealedAt > 0`) and the wheel
- *     must have moved it back up from there, or the case proves nothing about
- *     the reader taking over;
+ *     must have moved it at least half its 600px back up from there before the
+ *     release, or the case proves nothing about the reader taking over. HALF
+ *     THE WHEEL, not "anywhere above": the reveal is read while the errors
+ *     table is still filling in, and a section 5px shorter clamps the scroll
+ *     from 1447 to 1442 with no reader at all. Against a wheel that never
+ *     scrolled, the old final check passed on exactly that, 4 runs of 9;
  *   - the document must have GROWN after the release, or there was nothing to
  *     correct and the reader "winning" is free;
  *   - the check waits for the Summary to finish arriving and then two animation
@@ -384,6 +396,8 @@ test('changing the Investigate filter after an old /errors link keeps the reader
  */
 test('an old /errors link does not pull back a reader who has started scrolling', async ({ page }) => {
   const runId = await seeded(page);
+  /** How far the reader scrolls up, in CSS pixels. */
+  const WHEEL = 600;
 
   let release!: () => void;
   const held = new Promise<void>((resolve) => {
@@ -409,7 +423,20 @@ test('an old /errors link does not pull back a reader who has started scrolling'
   }));
 
   await page.mouse.move(640, 360);
-  await page.mouse.wheel(0, -600);
+  await page.mouse.wheel(0, -WHEEL);
+  // `raf` for the same reason as the reveal: the release belongs inside the
+  // keeper's settle window. Bounded, so a wheel that never lands is named
+  // below rather than spent against the test's whole budget.
+  const landed = await page
+    .waitForFunction((y) => window.scrollY <= y, before.revealedAt - WHEEL / 2, { polling: 'raf', timeout: 10_000 })
+    .then(
+      () => true,
+      (error: unknown) => {
+        if (error instanceof errors.TimeoutError) return false;
+        throw error;
+      },
+    );
+  expect(landed, 'the wheel must have scrolled the page, or the reader never took over').toBe(true);
   release();
 
   await summarySettled(page);
