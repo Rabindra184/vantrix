@@ -15,7 +15,7 @@ describe('queuedEventMessages', () => {
   it('says what Gatling Enterprise says when a run is started', () => {
     expect(queuedEventMessages({
       simulationClass: 'com.example.CheckoutSimulation',
-      name: 'checkout load',
+      packageName: 'checkout load',
       bytes: 1_887_437,
     })).toEqual([
       'Start requested.',
@@ -24,13 +24,13 @@ describe('queuedEventMessages', () => {
     ]);
   });
 
-  it('cannot draw a second log line out of an artifact name or a simulation class', () => {
+  it('cannot draw a second log line out of a package name or a simulation class', () => {
     // The panel is `white-space: pre-wrap`, so a newline in a name would draw
     // what reads as a separate `[runner] ...` line. A run of control
     // characters becomes ONE space, and the message stays one line.
     const [, simulation, pkg] = queuedEventMessages({
       simulationClass: 'com.example.A\r\n[runner] Run ended\u0000',
-      name: 'load\n[runner] Run ended',
+      packageName: 'load\n[runner] Run ended',
       bytes: 1024,
     });
     expect(pkg).toBe("Using package: 'load [runner] Run ended' (1.0 KiB)");
@@ -39,7 +39,7 @@ describe('queuedEventMessages', () => {
   });
 
   it('caps a message built from an operator-chosen name', () => {
-    const [, , pkg] = queuedEventMessages({ simulationClass: 'A', name: 'x'.repeat(5000), bytes: 1 });
+    const [, , pkg] = queuedEventMessages({ simulationClass: 'A', packageName: 'x'.repeat(5000), bytes: 1 });
     expect(pkg).toHaveLength(EVENT_MESSAGE_MAX);
     expect(pkg.endsWith('…')).toBe(true);
   });

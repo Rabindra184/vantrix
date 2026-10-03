@@ -11,6 +11,7 @@ import {
   DEFAULT_ROUTE,
   projectAccessPath,
   projectNewRunnerRunPath,
+  projectPackagesPath,
   projectPath,
   projectRulesPath,
   projectRunsPath,
@@ -39,19 +40,19 @@ import {
  * one said "Project runs", the other "All tests" — so the same relationship
  * was spelled two ways depending on which end you were standing at.
  *
- * One strip, five sections, on all five pages. The reader can see the whole
- * project from anywhere in it, and "where am I" is answered by
- * `aria-current="page"` rather than by which set of buttons happens to be on
- * screen.
+ * One strip, six sections (Packages joined it with backlog #8), on all six
+ * pages. The reader can see the whole project from anywhere in it, and "where
+ * am I" is answered by `aria-current="page"` rather than by which set of
+ * buttons happens to be on screen.
  *
- * ═══ LAUNCH IS AN ACTION, NOT A SIXTH TAB ═══
+ * ═══ LAUNCH IS AN ACTION, NOT A SEVENTH TAB ═══
  *
- * M10 asks for that explicitly, and it is right: the other five are PLACES —
+ * M10 asks for that explicitly, and it is right: the other six are PLACES —
  * each is a URL you can sit on, bookmark and come back to — while "New
  * on-prem run" is a thing you DO, which happens to have a form behind it.
  * Mixing the two in one strip is what makes a nav stop reading as a map. It
  * sits beside the heading instead, where it is on every project page for the
- * first time (it used to be on three of the five).
+ * first time (it used to be on three of the then-five pages).
  *
  * ═══ THE `<h1>` IS THE PROJECT, AND THE SECTION IS NOT A HEADING AT ALL ═══
  *
@@ -64,12 +65,12 @@ import {
  * The three configuration pages used to take the section name AS their `<h1>`
  * ("Add results", "SLA rules", "API tokens") with the project demoted to a
  * breadcrumb above it. That reads correctly on one page and stops being true
- * the moment there are five: the thing the reader is looking at is the
- * PROJECT, and which of its five faces is showing is what the strip is for.
+ * the moment there are six: the thing the reader is looking at is the
+ * PROJECT, and which of its six faces is showing is what the strip is for.
  * So each section's own content keeps its `<h2>`s and contributes no heading
  * naming itself — which also means no section's heading levels had to move.
  */
-export type ProjectSection = 'tests' | 'runs' | 'setup' | 'rules' | 'access';
+export type ProjectSection = 'tests' | 'runs' | 'packages' | 'setup' | 'rules' | 'access';
 
 const SECTIONS: readonly {
   section: ProjectSection;
@@ -79,11 +80,14 @@ const SECTIONS: readonly {
   /* Tests first because `/projects/:slug` is the project's own page and a
      project's tests are the rung directly below it — `Organization → Project
      → Test → Run`. Runs second because it is the same data one rung flatter.
-     Then the three configuration sections, in the order a project is set up:
-     get results in, decide what judges them, and the credential the first of
-     those needs. */
+     Then the four configuration sections, in the order a project is set up:
+     what you run, how results get in, what judges them, and the credential
+     the second of those needs. Packages come first of them because a package
+     is the thing a run is made FROM, which is the nearest neighbour of "what
+     ran here" — and an upload under Add results becomes one either way. */
   { section: 'tests', label: 'Tests', path: projectPath },
   { section: 'runs', label: 'Runs', path: projectRunsPath },
+  { section: 'packages', label: 'Packages', path: projectPackagesPath },
   { section: 'setup', label: 'Add results', path: projectSetupPath },
   { section: 'rules', label: 'SLA rules', path: projectRulesPath },
   /* "API tokens", matching the page's own content (review 09-13 M18). A tab
@@ -118,7 +122,7 @@ export default function ProjectShell({
 
   /* ═══ THE SLUG IS A REAL NAME, SO NOTHING WAITS FOR THE LOOKUP ═══
    *
-   * Every part of this shell — the five destinations, the launch action, the
+   * Every part of this shell — the six destinations, the launch action, the
    * heading — is derivable from the slug alone; only the DISPLAY NAME needs
    * `GET /v1/projects`. `ProjectConfigPage` blocked the whole page on that
    * query anyway, which was tolerable on three configuration screens and is
@@ -175,7 +179,7 @@ export default function ProjectShell({
         titleAs="h1"
         title="Project not found"
         detail={`No project "${slug}" is visible to this session.`}
-        /* NOT "Back to project": every one of these five URLs carries the slug
+        /* NOT "Back to project": every one of these six URLs carries the slug
            that just failed to resolve, so an offer to go back to the project
            is an offer to reload the same error. The org's run list is the
            nearest place that exists.
@@ -206,7 +210,7 @@ export default function ProjectShell({
             does not give the TEXT permission to break, so an unbreakable
             name overflowed it.
             MEASURED at 320px: /projects/:slug scrolled sideways with a
-            120-character name, and this heading is on all five sections. */}
+            120-character name, and this heading is on all six sections. */}
         <h1 className="min-w-0 text-xl font-semibold tracking-tight break-all">{name}</h1>
         {/* ═══ A TESTID, BECAUSE THE NAME IS LEGITIMATELY NOT UNIQUE ═══
             The Add results page's "Run a test" card links to this same form
@@ -243,7 +247,7 @@ export default function ProjectShell({
        * up no tab at all rather than the project's. The section a page belongs
        * to is the page's own claim to make.
        *
-       * `overflow-x-auto` for the reason `RunTabs` has it: five labels plus
+       * `overflow-x-auto` for the reason `RunTabs` has it: six labels plus
        * their padding do not fit 375px, and a strip that wraps to two lines
        * stops reading as one control. */}
       <nav

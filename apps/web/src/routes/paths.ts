@@ -111,8 +111,33 @@ export function projectTestPath(slug: string, testSlug: string): string {
   return `${projectPath(slug)}/tests/${encodeURIComponent(testSlug)}`;
 }
 
-export function projectNewRunnerRunPath(slug: string): string {
-  return `${projectPath(slug)}/run/new`;
+/**
+ * The launch form, optionally told which package to run.
+ *
+ * `?package=` is a QUERY and not a path segment on purpose: the form is one
+ * page whether or not a package was chosen for it, and a segment would make
+ * "the form with a package" a different route from "the form", which
+ * `App.tsx` would then have to declare twice. The id is encoded because it
+ * arrives from the API and is therefore data, the rule every helper here
+ * follows for a value it did not write itself.
+ */
+export function projectNewRunnerRunPath(slug: string, packageId?: string): string {
+  const path = `${projectPath(slug)}/run/new`;
+  return packageId === undefined ? path : `${path}?package=${encodeURIComponent(packageId)}`;
+}
+
+/**
+ * A project's packages — the named, reusable Gatling artifacts a run is
+ * started from.
+ *
+ * Its own page rather than a block on Add results: a package is something you
+ * come back to (upload a new version, see what has run from it, retire it),
+ * where Add results is a first-run choice. The segment is a literal
+ * SECOND-level one, so the slug-shadowing rule `paths.test.ts` enforces —
+ * about a literal where `:slug` itself goes — does not reach it.
+ */
+export function projectPackagesPath(slug: string): string {
+  return `${projectPath(slug)}/packages`;
 }
 
 /**

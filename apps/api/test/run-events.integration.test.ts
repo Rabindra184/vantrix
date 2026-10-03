@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { afterEach, describe, expect, it } from 'vitest';
 import { RunEventsResponseSchema } from '@perfportal/contracts';
-import { RunnerRepository } from '@perfportal/persistence';
+import { PackageRepository, RunnerRepository } from '@perfportal/persistence';
 import { createTestApp, type TestContext } from './support/app.js';
 
 /**
@@ -36,33 +36,45 @@ async function openLive(): Promise<string> {
   return res.body.runId as string;
 }
 
-/** A runner job queued through the real repository, owning `runId`, with the
- *  runner's first two events recorded after the API's three. */
-async function runnerJobFor(runId: string): Promise<string> {
+/** A runner job queued through the real repositories on a version of a
+ *  package of its own, owning `runId`, with the runner's first two events
+ *  recorded after the API's three. Answers the package's name, which carries a
+ *  random suffix: a project refuses a second package of one name, so a fixed
+ *  one would make a second call fail for a reason unrelated to the test. */
+async function runnerJobFor(runId: string): Promise<{ jobId: string; packageName: string }> {
+  const packages = new PackageRepository(ctx.prisma);
+  const packageName = `checkout load ${randomUUID().slice(0, 8)}`;
+  const pkg = await packages.create({
+    id: randomUUID(), orgId: ctx.orgId, projectId: ctx.projectId, name: packageName, kind: 'gatling_jar',
+  });
+  const added = await packages.addVersion(ctx.orgId, ctx.projectId, pkg.id, {
+    artifactId: randomUUID(), filename: 'checkout.jar', gatlingVersion: '3.15.1',
+    sha256: 'a'.repeat(64), bytes: 1_887_437, simulations: ['example.ParitySimulation'],
+    storagePath: `runner-artifacts/${randomUUID()}.jar`,
+  });
+  if (!added) throw new Error('package version not added');
   const runner = new RunnerRepository(ctx.prisma);
   const created = await runner.createQueued({
-    artifact: {
-      id: randomUUID(), orgId: ctx.orgId, projectId: ctx.projectId, name: 'checkout load',
-      filename: 'checkout.jar', kind: 'gatling_jar', simulationClass: 'example.ParitySimulation',
-      gatlingVersion: '3.15.1', sha256: 'a'.repeat(64), bytes: 1_887_437,
-      storagePath: `runner-artifacts/${randomUUID()}.jar`,
-    },
+    orgId: ctx.orgId,
+    projectId: ctx.projectId,
+    artifactId: added.version.artifactId,
     job: {
-      id: randomUUID(), requestedBy: 'events-test', environment: null, branch: null,
-      commitSha: null, testSlug: null, javaOptions: null, systemProperties: {},
+      id: randomUUID(), requestedBy: 'events-test', name: 'nightly', simulationClass: 'example.ParitySimulation',
+      environment: null, branch: null, commitSha: null, testSlug: null, javaOptions: null, systemProperties: {},
     },
   });
+  if (!created) throw new Error('createQueued refused the version');
   await ctx.prisma.runnerJob.update({ where: { id: created.job.id }, data: { runId, status: 'running' } });
   await runner.recordRunnerEvent(created.job.id, { message: "Claimed by the runner on 'node-1'" });
   await runner.recordRunnerEvent(created.job.id, { phase: 'Deploying' });
-  return created.job.id;
+  return { jobId: created.job.id, packageName };
 }
 
 describe('GET /v1/runs/{id}/events', () => {
   it('answers a runner run’s events in the order they happened', async () => {
     ctx = await createTestApp();
     const runId = await openLive();
-    await runnerJobFor(runId);
+    const { packageName } = await runnerJobFor(runId);
 
     const res = await readEvents(runId);
     expect(res.status).toBe(200);
@@ -72,7 +84,7 @@ describe('GET /v1/runs/{id}/events', () => {
     expect(body.events.map((e) => e.phase ?? e.message)).toEqual([
       'Start requested.',
       "Starting the simulation: 'example.ParitySimulation'",
-      "Using package: 'checkout load' (1.8 MiB)",
+      `Using package: '${packageName}' (1.8 MiB)`,
       "Claimed by the runner on 'node-1'",
       'Deploying',
     ]);

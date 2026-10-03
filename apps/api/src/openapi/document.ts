@@ -421,6 +421,39 @@ const parameters: Record<string, ParameterObject> = {
       'project or organisation answers 404, the same as one that exists nowhere.',
     schema: { type: 'string', format: 'uuid' },
   },
+  PackageProjectSlug: {
+    name: 'slug',
+    in: 'path',
+    required: true,
+    description:
+      'The project whose packages these are. A slug outside the caller\'s organisation answers ' +
+      '404, never 403, and so does a slug naming a different project than the bearer token was ' +
+      'minted for — the same rule every project-scoped route here follows.',
+    schema: { type: 'string' },
+  },
+  PackageId: {
+    name: 'packageId',
+    in: 'path',
+    required: true,
+    description:
+      'A package id, as returned by the create and list responses. Not a UUID is a 400 (code ' +
+      'INVALID_ID) rather than a 404, so a malformed id is distinguishable from one that simply ' +
+      'names no package. A package belonging to another project or organisation answers 404, the ' +
+      'same as one that exists nowhere.',
+    schema: { type: 'string', format: 'uuid' },
+  },
+  PackageFilename: {
+    name: 'filename',
+    in: 'query',
+    description:
+      'The name the uploaded file is stored under, whose extension must suit the package\'s kind ' +
+      '(.jar for a Gatling jar; .zip, .tgz or .tar.gz for a runnable bundle). The kind check ' +
+      'reads THIS filename, before the body is read, so a wrong extension here never costs the ' +
+      'upload. Optional: when omitted the file is stored as the package\'s own name plus its ' +
+      'own kind\'s extension (.jar or .zip), so there is no extension to check and the body is ' +
+      'taken as the package\'s kind.',
+    schema: { type: 'string' },
+  },
   StreamOffset: {
     name: 'X-Stream-Offset',
     in: 'header',
@@ -495,14 +528,70 @@ const responses: Record<string, ResponseObject> = {
   },
   RunnerArtifactRejected: {
     description:
-      'The upload was refused before any job was queued — code INVALID_RUNNER_METADATA (the ' +
-      '"metadata" part is missing a field or fails its schema), RUNNER_ARTIFACT_NOT_A_JAR (the ' +
-      'file could not be read as a jar), SIMULATION_CLASS_NOT_IN_ARTIFACT (the jar\'s own ' +
-      'manifest declares no such simulation — refused HERE rather than minutes later on the ' +
-      'node with no simulation.log to show for it), or BUNDLE_NOT_ARCHIVE / BUNDLE_EMPTY. ' +
-      'DELIBERATELY NOT the same response as an ingest 400: there is no run to persist the ' +
-      'rejection on, so nothing here is ever readable from GET /v1/runs/{id} afterwards. ' +
+      'The start was refused before any job was queued — code INVALID_RUNNER_METADATA (the ' +
+      '"metadata" part, or a JSON body, is missing a field or fails its schema; a JSON body is ' +
+      'strict, so one that also carries artifactKind or gatlingVersion — a file\'s fields — is ' +
+      'refused rather than ignored), RUNNER_ARTIFACT_NOT_A_JAR (the file could not be read as a ' +
+      'jar), SIMULATION_CLASS_NOT_IN_ARTIFACT (the jar\'s own manifest — the uploaded one, or ' +
+      'the package\'s current version for a JSON start — declares no such simulation; refused ' +
+      'HERE rather than minutes later on the node with no simulation.log to show for it, and ' +
+      'never when the manifest declares none, which means unknown), PACKAGE_KIND_MISMATCH (the ' +
+      'file\'s extension does not suit "artifactKind", or the package the upload is filed in ' +
+      'holds the other kind), UPLOAD_ABORTED (the client closed the connection before the ' +
+      'upload was read), BUNDLE_EMPTY (no "artifact" part, or one with no bytes — an empty ' +
+      'bundle is never stored as a version), or BUNDLE_NOT_ARCHIVE. A refused upload leaves no file ' +
+      'and no package behind. DELIBERATELY NOT the same response as an ingest 400: there is no ' +
+      'run to persist the rejection on, so nothing here is ever readable from GET /v1/runs/{id} ' +
+      'afterwards. Always application/problem+json with a required "remediation".',
+    content: problem(),
+  },
+  RunnerStartConflict: {
+    description:
+      'Code PACKAGE_HAS_NO_FILE: the JSON body names a package that has no current version yet ' +
+      '(it was created empty). Upload one with PUT /v1/projects/{slug}/packages/{packageId}/content ' +
+      'and start again. application/problem+json with a required "remediation".',
+    content: problem(),
+  },
+  RunnerRetryConflict: {
+    description:
+      'Code PACKAGE_DELETED: the package the job ran was deleted, and its version\'s file with ' +
+      'it, so there is nothing to run again. A retry runs the job\'s own version, so a package ' +
+      'created later under the same name does not change this. application/problem+json with a ' +
+      'required "remediation".',
+    content: problem(),
+  },
+  PackageRejected: {
+    description:
+      'The request was refused before anything was stored — code INVALID_PACKAGE_METADATA (the ' +
+      '"metadata" part or the rename body is missing a field or fails its schema, or a create ' +
+      'was sent as JSON or any other body that is not multipart/form-data), ' +
+      'PACKAGE_KIND_MISMATCH (the file\'s extension does not suit the package\'s kind: a jar ' +
+      'package holds a .jar, a bundle package a .zip, .tgz or .tar.gz), RUNNER_ARTIFACT_NOT_A_JAR ' +
+      '(a file sent to a jar package could not be read as a jar), STREAM_BODY_CONSUMED (a PUT ' +
+      'sent with a Content-Type Express parses, such as application/json, had its body drained ' +
+      'before the handler ran — send application/octet-stream), BUNDLE_EMPTY (the file had no ' +
+      'bytes), UPLOAD_ABORTED (the client closed the connection before the upload was read), or ' +
+      'INVALID_ID (a malformed packageId). A refused upload leaves no file on disk. ' +
       'Always application/problem+json with a required "remediation".',
+    content: problem(),
+  },
+  PackageTooLarge: {
+    description:
+      'The file is larger than this node\'s upload limit, MAX_RUNNER_ARTIFACT_BYTES (512 MB by ' +
+      'default) — code BUNDLE_TOO_LARGE, with the limit in "meta.maxBytes". On a PUT a declared ' +
+      'Content-Length over the limit is refused before the body is read; a chunked body is cut ' +
+      'off as it crosses the limit, and either way no file is left on disk and no package or ' +
+      'version is created. This is the limit on ONE package file, not the decompressed-size ' +
+      'cap an ingested bundle is held to. application/problem+json with a required "remediation".',
+    content: problem(),
+  },
+  PackageConflict: {
+    description:
+      'The request is well-formed and the project is not in the state it assumes — code ' +
+      'PACKAGE_NAME_TAKEN (the project already has a package by this name, compared ignoring ' +
+      'case) or PACKAGE_IN_USE (a delete while a job of any of the package\'s versions is ' +
+      'queued, starting, running or closing; the count is in "detail"). ' +
+      'application/problem+json with a required "remediation" naming the way out.',
     content: problem(),
   },
   BadRequest: {
@@ -1587,24 +1676,33 @@ const paths: Record<string, PathItemObject> = {
   '/v1/projects/{slug}/runner/runs': {
     post: {
       operationId: 'startRunnerRun',
-      summary: 'Upload a Gatling artifact and queue it on an on-prem runner',
+      summary: 'Start a run on an on-prem runner, from a package or an uploaded artifact',
       tags: ['runner'],
       security: [{ bearerAuth: [] }],
       description:
-        'Requires the "runner" scope. Uploads a runnable Gatling artifact and queues a job an ' +
-        'on-prem runner node claims by polling — the platform never reaches out to the node. ' +
-        'The artifact is a thin jar from "gatlingEnterprisePackage" (the runner lends the ' +
-        'Gatling runtime) or a full bundle; "artifactKind" says which, and a jar whose manifest ' +
-        'does not name the requested "simulationClass" is refused here rather than failing ' +
-        'minutes later with no simulation.log.',
+        'Requires the "runner" scope. Queues a job an on-prem runner node claims by polling — ' +
+        'the platform never reaches out to the node. TWO BODIES, ONE ROUTE: an application/json ' +
+        'body starts from a package\'s CURRENT version and uploads nothing (404 when "packageId" ' +
+        'names no package in this project, including one deleted; 409 PACKAGE_HAS_NO_FILE when ' +
+        'the package has no version yet); a multipart/form-data body keeps uploading, and files ' +
+        'the artifact as a new version of a package — the one its metadata\'s "package" names, ' +
+        'compared ignoring case, or else the one named by the file\'s name without its ' +
+        'extension — created with the upload\'s kind when the project has none by that name. ' +
+        'Bytes the package already holds store nothing new: the earlier version is made current ' +
+        'and the job runs it. The artifact is a thin jar from "gatlingEnterprisePackage" (the ' +
+        'runner lends the Gatling runtime) or a full bundle; "artifactKind" says which. Either ' +
+        'way, a jar whose manifest names simulations but not the requested "simulationClass" is ' +
+        'refused here rather than failing minutes later with no simulation.log.',
       parameters: [parameters['RunnerProjectSlug']!],
       requestBody: {
         required: true,
         description:
-          'multipart/form-data with exactly two parts, "metadata" BEFORE "artifact" (the server ' +
-          'streams "artifact" to disk as soon as it arrives, so "metadata" must already have ' +
-          'been read).',
+          'application/json to start from a package\'s current version; or multipart/form-data ' +
+          'with exactly two parts, "metadata" BEFORE "artifact" (the server streams "artifact" ' +
+          'to disk as soon as it arrives, so "metadata" must already have been read), where ' +
+          '"metadata.package" names the package the file becomes a version of.',
         content: {
+          'application/json': { schema: schemaRef('RunnerStartByPackageRequest') },
           'multipart/form-data': {
             schema: {
               type: 'object',
@@ -1619,14 +1717,17 @@ const paths: Record<string, PathItemObject> = {
       },
       responses: {
         '201': {
-          description: 'Queued. The job and the artifact it will execute.',
+          description:
+            'Queued. The job — with the package its version belongs to — and the version it will ' +
+            'execute, whose "name" and "simulationClass" are the job\'s.',
           content: json(schemaRef('RunnerStartResponse')),
         },
         '400': ref('RunnerArtifactRejected'),
         '401': ref('Unauthorized'),
         '403': ref('Forbidden'),
         '404': ref('NotFound'),
-        '413': ref('BundleTooLarge'),
+        '409': ref('RunnerStartConflict'),
+        '413': ref('PackageTooLarge'),
       },
     },
     get: {
@@ -1705,10 +1806,12 @@ const paths: Record<string, PathItemObject> = {
       security: [{ bearerAuth: [] }],
       description:
         'Requires the "runner" scope. Queues a NEW job carrying everything the operator chose ' +
-        'for the original — the same artifact, environment, branch, commit sha, declared test, ' +
-        'java options and system properties — so a retry is the same job run again rather than ' +
-        'a similar one. ONLY A FAILED OR CANCELLED JOB CAN BE RETRIED; any other state answers ' +
-        '404, as does a job in another project.',
+        'for the original — the same package version (never whatever the package holds now, so a ' +
+        'retry runs byte for byte what failed), run name, simulation class, environment, branch, ' +
+        'commit sha, declared test, java options and system properties — so a retry is the same ' +
+        'job run again rather than a similar one. ONLY A FAILED OR CANCELLED JOB CAN BE RETRIED; ' +
+        'any other state answers 404, as does a job in another project. 409 PACKAGE_DELETED when ' +
+        'the job\'s package was deleted.',
       parameters: [parameters['RunnerProjectSlug']!, parameters['RunnerJobId']!],
       // 201, because a retry CREATES: the new job is written and returned
       // whole before the response is sent. This said 200 while the handler
@@ -1724,6 +1827,178 @@ const paths: Record<string, PathItemObject> = {
         '401': ref('Unauthorized'),
         '403': ref('Forbidden'),
         '404': ref('NotFound'),
+        '409': ref('RunnerRetryConflict'),
+      },
+    },
+  },
+
+  // ═══ A PROJECT'S PACKAGES ═══
+  //
+  // A package is a named, reusable Gatling artifact with a current version.
+  // Creating, uploading a version and renaming take the "runner" scope (the one
+  // that already authorises putting executable artifacts on this node); listing
+  // takes "read"; deleting is a person's.
+  '/v1/projects/{slug}/packages': {
+    get: {
+      operationId: 'listPackages',
+      summary: 'List a project\'s packages',
+      tags: ['packages'],
+      description:
+        'Requires the "read" scope. Most recently uploaded first. Each package carries its ' +
+        'current version (null until a file has been uploaded) and its usage: the distinct tests ' +
+        'and the runs that used any version, and the jobs still queued or running on one — the ' +
+        'number a delete is refused over. A version\'s "simulations" is null when UNKNOWN (a ' +
+        'bundle, or a jar whose manifest declares none), never an empty list standing in for it.',
+      parameters: [parameters['PackageProjectSlug']!],
+      responses: {
+        '200': {
+          description: 'This project\'s packages.',
+          content: json(schemaRef('PackageListResponse')),
+        },
+        '401': ref('Unauthorized'),
+        '403': ref('Forbidden'),
+        '404': ref('NotFound'),
+      },
+    },
+    post: {
+      operationId: 'createPackage',
+      summary: 'Create a package, optionally with its first version',
+      tags: ['packages'],
+      description:
+        'Requires the "runner" scope. A package\'s kind is fixed at creation — a jar package ' +
+        'cannot later hold a bundle. The "artifact" part is optional: without it the package is ' +
+        'created empty and given its first version with PUT .../content. With one, the file is ' +
+        'checked (a jar must open as a zip; its manifest\'s Gatling-Version and ' +
+        'Gatling-Simulations are recorded) BEFORE the package is created, so a refused file ' +
+        'leaves neither a package nor a file behind. The name is unique per project ignoring ' +
+        'case.',
+      parameters: [parameters['PackageProjectSlug']!],
+      requestBody: {
+        required: true,
+        description:
+          'multipart/form-data with a "metadata" part and, optionally, an "artifact" file part. ' +
+          '"metadata" must arrive BEFORE "artifact": the server streams the file to disk as soon ' +
+          'as it arrives.',
+        content: {
+          'multipart/form-data': {
+            schema: {
+              type: 'object',
+              required: ['metadata'],
+              properties: {
+                metadata: schemaRef('CreatePackageRequest'),
+                artifact: { type: 'string', format: 'binary' },
+              },
+            },
+          },
+        },
+      },
+      responses: {
+        '201': {
+          description: 'Created. The package, with its first version when a file was sent.',
+          content: json(schemaRef('Package')),
+        },
+        '400': ref('PackageRejected'),
+        '401': ref('Unauthorized'),
+        '403': ref('Forbidden'),
+        '404': ref('NotFound'),
+        '409': ref('PackageConflict'),
+        '413': ref('PackageTooLarge'),
+      },
+    },
+  },
+
+  '/v1/projects/{slug}/packages/{packageId}/content': {
+    put: {
+      operationId: 'uploadPackageContent',
+      summary: 'Upload a new version of a package',
+      tags: ['packages'],
+      description:
+        'Requires the "runner" scope. The raw file is the request body, streamed to disk and ' +
+        'hashed as it arrives — it is never buffered, so a 500 MB package costs no memory. The ' +
+        'new version becomes the current one. IDENTICAL BYTES STORE NOTHING NEW: when the ' +
+        'package already holds a version with this SHA-256, that earlier version is made current ' +
+        'again and the file just written is removed, so re-uploading an old jar is a rollback ' +
+        'and not a duplicate. Send Content-Type: application/octet-stream — a type Express ' +
+        'parses (application/json) is drained before the handler runs and answers ' +
+        'STREAM_BODY_CONSUMED.',
+      parameters: [
+        parameters['PackageProjectSlug']!,
+        parameters['PackageId']!,
+        parameters['PackageFilename']!,
+      ],
+      requestBody: {
+        required: true,
+        description: 'The package file\'s bytes, as application/octet-stream.',
+        content: {
+          'application/octet-stream': { schema: { type: 'string', format: 'binary' } },
+        },
+      },
+      responses: {
+        '200': {
+          description: 'Uploaded. The package, whose "current" is the version now in force.',
+          content: json(schemaRef('Package')),
+        },
+        '400': ref('PackageRejected'),
+        '401': ref('Unauthorized'),
+        '403': ref('Forbidden'),
+        '404': ref('NotFound'),
+        '413': ref('PackageTooLarge'),
+      },
+    },
+  },
+
+  '/v1/projects/{slug}/packages/{packageId}': {
+    patch: {
+      operationId: 'renamePackage',
+      summary: 'Rename a package',
+      tags: ['packages'],
+      description:
+        'Requires the "runner" scope. Only the name can change — a package\'s kind is fixed. ' +
+        'The new name is unique per project ignoring case, so renaming "Soak" to "SOAK" while ' +
+        'another package is called "soak" is a 409.',
+      parameters: [parameters['PackageProjectSlug']!, parameters['PackageId']!],
+      requestBody: {
+        required: true,
+        description: 'The new name, 1 to 120 characters after trimming.',
+        content: json(schemaRef('RenamePackageRequest')),
+      },
+      responses: {
+        '200': {
+          description: 'Renamed. The package as it now stands.',
+          content: json(schemaRef('Package')),
+        },
+        '400': ref('PackageRejected'),
+        '401': ref('Unauthorized'),
+        '403': ref('Forbidden'),
+        '404': ref('NotFound'),
+        '409': ref('PackageConflict'),
+      },
+    },
+    delete: {
+      operationId: 'deletePackage',
+      summary: 'Delete a package',
+      tags: ['packages'],
+      // The cookieAuth-only override, for the reason the rule and token
+      // deletes carry it: SessionOnlyGuard refuses every bearer token, so
+      // advertising bearerAuth would document an authentication the handler
+      // always rejects.
+      security: [{ cookieAuth: [] }],
+      description:
+        'Requires a signed-in session — refused for ANY bearer token regardless of scopes (see ' +
+        'SessionOnlyGuard and the 403 response below): a delete removes the files every job ' +
+        'history on this package points at, and a leaked CI credential must not be able to. ' +
+        'REFUSED WITH 409 (PACKAGE_IN_USE) WHILE A JOB OF ANY OF ITS VERSIONS IS QUEUED, ' +
+        'STARTING, RUNNING OR CLOSING — the count is in "detail". Otherwise every version\'s ' +
+        'file is removed. The version rows stay, as the record of what past jobs ran, and the ' +
+        'runs that used the package keep their own history.',
+      parameters: [parameters['PackageProjectSlug']!, parameters['PackageId']!],
+      responses: {
+        '204': { description: 'Deleted, and every version\'s file removed. No body.' },
+        '400': ref('PackageRejected'),
+        '401': ref('Unauthorized'),
+        '403': ref('SessionRequired'),
+        '404': ref('NotFound'),
+        '409': ref('PackageConflict'),
       },
     },
   },

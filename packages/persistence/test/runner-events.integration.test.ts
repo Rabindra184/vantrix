@@ -1,10 +1,12 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   createPool,
   createPrisma,
+  PackageRepository,
   RunnerRepository,
   type CreateRunnerJobInput,
+  type RunnerJobWithArtifact,
 } from '../src/index.js';
 import { requireDatabaseUrl, resetDatabase } from './support/db.js';
 
@@ -20,6 +22,7 @@ const url = requireDatabaseUrl();
 const pool = createPool(url);
 const prisma = createPrisma(url);
 const repo = new RunnerRepository(prisma);
+const packages = new PackageRepository(prisma);
 
 async function seedProject(slug = 'acme'): Promise<{ orgId: string; projectId: string }> {
   const org = await prisma.org.create({ data: { slug, name: slug } });
@@ -29,30 +32,42 @@ async function seedProject(slug = 'acme'): Promise<{ orgId: string; projectId: s
   return { orgId: org.id, projectId: project.id };
 }
 
-function queueInput(
+/**
+ * A job queued on a version of a package of its own, through the real
+ * repositories, answered with the package's name for the assertions on the
+ * Using package line. The name carries a random suffix because a project
+ * refuses a second package of one name, and a helper that throws on its
+ * second call fails a test for a reason unrelated to it. The JOB is named
+ * `nightly` on purpose: the queue events name the package, and a run name
+ * sharing its words could not tell the two apart.
+ */
+async function queue(
   orgId: string,
   projectId: string,
   job: Partial<CreateRunnerJobInput['job']> = {},
-  artifact: Partial<CreateRunnerJobInput['artifact']> = {},
-): CreateRunnerJobInput {
-  return {
-    artifact: {
-      id: randomUUID(),
-      orgId,
-      projectId,
-      name: 'checkout load',
-      filename: 'checkout.jar',
-      kind: 'gatling_jar',
-      simulationClass: 'com.example.CheckoutSimulation',
-      gatlingVersion: '3.15.1',
-      sha256: 'a'.repeat(64),
-      bytes: 4096,
-      storagePath: `runner-artifacts/${randomUUID()}.jar`,
-      ...artifact,
-    },
+  version: { bytes?: number; storagePath?: string } = {},
+): Promise<RunnerJobWithArtifact & { packageName: string }> {
+  const packageName = `checkout load ${randomUUID().slice(0, 8)}`;
+  const pkg = await packages.create({ id: randomUUID(), orgId, projectId, name: packageName, kind: 'gatling_jar' });
+  const added = await packages.addVersion(orgId, projectId, pkg.id, {
+    artifactId: randomUUID(),
+    filename: 'checkout.jar',
+    gatlingVersion: '3.15.1',
+    sha256: createHash('sha256').update(randomUUID()).digest('hex'),
+    bytes: version.bytes ?? 4096,
+    simulations: ['com.example.CheckoutSimulation'],
+    storagePath: version.storagePath ?? `runner-artifacts/${randomUUID()}.jar`,
+  });
+  if (!added) throw new Error('package version not added');
+  const created = await repo.createQueued({
+    orgId,
+    projectId,
+    artifactId: added.version.artifactId,
     job: {
       id: randomUUID(),
       requestedBy: 'tester',
+      name: 'nightly',
+      simulationClass: 'com.example.CheckoutSimulation',
       environment: 'staging',
       branch: null,
       commitSha: null,
@@ -61,7 +76,9 @@ function queueInput(
       systemProperties: {},
       ...job,
     },
-  };
+  });
+  if (!created) throw new Error('createQueued refused the version');
+  return { ...created, packageName };
 }
 
 /** A queued job, written straight into the tables — so the constraint cases
@@ -69,13 +86,16 @@ function queueInput(
 async function bareJob(orgId: string, projectId: string): Promise<string> {
   const artifact = await prisma.runnerArtifact.create({
     data: {
-      orgId, projectId, name: 'bare', filename: 'bare.jar', kind: 'gatling_jar',
-      simulationClass: 'com.example.Bare', sha256: 'b'.repeat(64), bytes: BigInt(1),
+      orgId, projectId, filename: 'bare.jar', kind: 'gatling_jar',
+      sha256: 'b'.repeat(64), bytes: BigInt(1),
       storagePath: `runner-artifacts/${randomUUID()}.jar`,
     },
   });
   const job = await prisma.runnerJob.create({
-    data: { orgId, projectId, artifactId: artifact.id, status: 'queued', requestedBy: 'tester' },
+    data: {
+      orgId, projectId, artifactId: artifact.id, status: 'queued', requestedBy: 'tester',
+      name: 'bare', simulationClass: 'com.example.Bare',
+    },
   });
   return job.id;
 }
@@ -156,10 +176,10 @@ describe('runner_job_event — it goes with its job', () => {
   });
 });
 
-const QUEUED = (simulationClass: string, name: string, size: string) => [
+const QUEUED = (simulationClass: string, packageName: string, size: string) => [
   'Start requested.',
   `Starting the simulation: '${simulationClass}'`,
-  `Using package: '${name}' (${size})`,
+  `Using package: '${packageName}' (${size})`,
 ];
 
 /** The transaction id that wrote a row. Equal ids mean one transaction. */
@@ -185,30 +205,32 @@ async function runFor(orgId: string, projectId: string): Promise<string> {
 describe('the queue events — written with the job, by the same statement', () => {
   it('writes Start requested, the simulation and the package when a job is queued', async () => {
     const { orgId, projectId } = await seedProject();
-    const created = await repo.createQueued(queueInput(orgId, projectId, {}, { bytes: 1_887_437 }));
+    const created = await queue(orgId, projectId, {}, { bytes: 1_887_437 });
     const events = await eventsOf(created.job.id);
-    expect(events.map((e) => e.message)).toEqual(QUEUED('com.example.CheckoutSimulation', 'checkout load', '1.8 MiB'));
+    expect(events.map((e) => e.message)).toEqual(QUEUED('com.example.CheckoutSimulation', created.packageName, '1.8 MiB'));
     expect(events.every((e) => e.source === 'perfportal' && e.phase === null)).toBe(true);
     expect(await writersOf('runner_job_event', created.job.id)).toEqual(await writersOf('runner_job', created.job.id));
   });
 
   it('writes a retry’s own three against the NEW job, leaving the source job’s alone', async () => {
     const { orgId, projectId } = await seedProject();
-    const source = await repo.createQueued(queueInput(orgId, projectId));
+    const source = await queue(orgId, projectId);
     await prisma.runnerJob.update({ where: { id: source.job.id }, data: { status: 'failed' } });
     const retryId = randomUUID();
     const retried = await repo.retry({ id: retryId, orgId, projectId, sourceJobId: source.job.id, requestedBy: 'tester' });
-    expect(retried?.job.id).toBe(retryId);
-    expect((await eventsOf(retryId)).map((e) => e.message)).toEqual(QUEUED('com.example.CheckoutSimulation', 'checkout load', '4.0 KiB'));
+    if (retried.kind !== 'retried') throw new Error(`expected a retry, got ${retried.kind}`);
+    expect(retried.row.job.id).toBe(retryId);
+    expect((await eventsOf(retryId)).map((e) => e.message)).toEqual(QUEUED('com.example.CheckoutSimulation', source.packageName, '4.0 KiB'));
     expect(await writersOf('runner_job_event', retryId)).toEqual(await writersOf('runner_job', retryId));
     expect(await eventsOf(source.job.id)).toHaveLength(3);
   });
 
   it('writes nothing for a retry it refuses', async () => {
     const { orgId, projectId } = await seedProject();
-    const source = await repo.createQueued(queueInput(orgId, projectId));   // still queued: not retryable
+    const source = await queue(orgId, projectId);   // still queued: not retryable
     const retryId = randomUUID();
-    expect(await repo.retry({ id: retryId, orgId, projectId, sourceJobId: source.job.id, requestedBy: 'tester' })).toBeNull();
+    expect(await repo.retry({ id: retryId, orgId, projectId, sourceJobId: source.job.id, requestedBy: 'tester' }))
+      .toEqual({ kind: 'not_retryable' });
     expect(await prisma.runnerJob.findUnique({ where: { id: retryId } })).toBeNull();
     expect(await eventsOf(retryId)).toEqual([]);
   });
@@ -216,11 +238,11 @@ describe('the queue events — written with the job, by the same statement', () 
   it('never names a job parameter the page must not show', async () => {
     const { orgId, projectId } = await seedProject();
     const storagePath = `runner-artifacts/${randomUUID()}.jar`;
-    const created = await repo.createQueued(queueInput(
+    const created = await queue(
       orgId, projectId,
       { javaOptions: '-Xmx7g -Dleak.secret=PARAM-LEAK-7f3a', systemProperties: { 'leak.key': 'PARAM-LEAK-91c2' } },
       { storagePath },
-    ));
+    );
     const text = (await eventsOf(created.job.id)).map((e) => e.message ?? '').join('\n');
     for (const leak of ['PARAM-LEAK', '-Xmx7g', 'leak.', storagePath, 'runner-artifacts/']) {
       expect(text, `an event carries "${leak}"`).not.toContain(leak);
@@ -231,7 +253,7 @@ describe('the queue events — written with the job, by the same statement', () 
 describe('cancel — one event for a job it actually moved', () => {
   it('writes Cancel requested once, and nothing for a cancel that changes nothing', async () => {
     const { orgId, projectId } = await seedProject();
-    const created = await repo.createQueued(queueInput(orgId, projectId));
+    const created = await queue(orgId, projectId);
     expect(await repo.cancel(orgId, projectId, created.job.id, { recordRequest: true })).not.toBeNull();
     expect(await repo.cancel(orgId, projectId, created.job.id, { recordRequest: true })).not.toBeNull();   // already cancelled: a no-op
     const cancels = (await eventsOf(created.job.id)).filter((e) => e.message === 'Cancel requested.');
@@ -241,7 +263,7 @@ describe('cancel — one event for a job it actually moved', () => {
 
   it('writes nothing for a job it cannot cancel', async () => {
     const { orgId, projectId } = await seedProject();
-    const created = await repo.createQueued(queueInput(orgId, projectId));
+    const created = await queue(orgId, projectId);
     await prisma.runnerJob.update({ where: { id: created.job.id }, data: { status: 'complete' } });
     expect(await repo.cancel(orgId, projectId, created.job.id, { recordRequest: true })).toBeNull();
     expect((await eventsOf(created.job.id)).map((e) => e.message)).not.toContain('Cancel requested.');
@@ -251,11 +273,11 @@ describe('cancel — one event for a job it actually moved', () => {
     // The runner's own shutdown cancels its active job; that is a node
     // restarting, not somebody pressing Cancel, so the log must not say so.
     const { orgId, projectId } = await seedProject();
-    const created = await repo.createQueued(queueInput(orgId, projectId));
+    const created = await queue(orgId, projectId);
     const moved = await repo.cancel(orgId, projectId, created.job.id, { recordRequest: false });
     expect(moved?.job.status).toBe('cancelled');
     expect((await eventsOf(created.job.id)).map((e) => e.message)).toEqual(
-      QUEUED('com.example.CheckoutSimulation', 'checkout load', '4.0 KiB'),
+      QUEUED('com.example.CheckoutSimulation', created.packageName, '4.0 KiB'),
     );
   });
 });
@@ -287,7 +309,7 @@ describe('recordRunnerEvent — the runner’s own writer', () => {
 describe('listEventsForRun — what the run page reads', () => {
   it('answers the run’s job and its events, oldest first', async () => {
     const { orgId, projectId } = await seedProject();
-    const created = await repo.createQueued(queueInput(orgId, projectId));
+    const created = await queue(orgId, projectId);
     const runId = await runFor(orgId, projectId);
     await prisma.runnerJob.update({ where: { id: created.job.id }, data: { runId, status: 'running' } });
     await repo.recordRunnerEvent(created.job.id, { message: "Claimed by the runner on 'node-1'" });
@@ -296,7 +318,7 @@ describe('listEventsForRun — what the run page reads', () => {
     const found = await repo.listEventsForRun(orgId, projectId, runId);
     expect(found?.jobId).toBe(created.job.id);
     expect(found?.events.map((e) => e.phase ?? e.message)).toEqual([
-      ...QUEUED('com.example.CheckoutSimulation', 'checkout load', '4.0 KiB'),
+      ...QUEUED('com.example.CheckoutSimulation', created.packageName, '4.0 KiB'),
       "Claimed by the runner on 'node-1'",
       'Deploying',
     ]);
@@ -312,7 +334,7 @@ describe('listEventsForRun — what the run page reads', () => {
   it('answers null for another organisation’s run', async () => {
     const mine = await seedProject('acme');
     const theirs = await seedProject('globex');
-    const created = await repo.createQueued(queueInput(theirs.orgId, theirs.projectId));
+    const created = await queue(theirs.orgId, theirs.projectId);
     const runId = await runFor(theirs.orgId, theirs.projectId);
     await prisma.runnerJob.update({ where: { id: created.job.id }, data: { runId } });
     expect(await repo.listEventsForRun(mine.orgId, mine.projectId, runId)).toBeNull();

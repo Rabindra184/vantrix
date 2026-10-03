@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto';
-import { createWriteStream } from 'node:fs';
+import { createWriteStream, type WriteStream } from 'node:fs';
 import { unlink } from 'node:fs/promises';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { ingestError } from '@perfportal/core';
 import busboy from 'busboy';
 import type { Request } from 'express';
+import { assertClientStillConnected, whenClosed } from './raw-upload.js';
 
 export interface RunnerUpload {
   metadataRaw: string;
@@ -14,12 +15,32 @@ export interface RunnerUpload {
   bytes: number;
 }
 
+/**
+ * `fileRequired` is REQUIRED and has no default, because its wrong value is
+ * silent: a caller that meant "a file must arrive" and got `false` would accept
+ * an empty request as a success. The start route passes `true`; package
+ * creation passes `false`, since a package may be created empty and given its
+ * first version later. When it is false and no file part arrived, the upload
+ * resolves with `filename: ''`, `sha256: ''` and `bytes: 0` — the caller treats
+ * `bytes === 0 && filename === ''` as "no file", and removes whatever was
+ * written to `targetPath`.
+ */
 export function readRunnerMultipart(
   req: Request,
   targetPath: string,
   maxBytes: number,
+  options: { readonly fileRequired: boolean },
 ): Promise<RunnerUpload> {
   return new Promise((resolve, reject) => {
+    // Before anything is attached: see assertClientStillConnected. The callers
+    // await lookups first, so the abort may already have happened, and the
+    // 'aborted' listener below would never hear it.
+    try {
+      assertClientStillConnected(req);
+    } catch (err) {
+      reject(err);
+      return;
+    }
     let settled = false;
     let bb: busboy.Busboy;
     try {
@@ -40,14 +61,15 @@ export function readRunnerMultipart(
     let bytes = 0;
     const hash = createHash('sha256');
     let fileWritten: Promise<void> | null = null;
+    let sink: WriteStream | null = null;
     let fileSeen = false;
     let fileTooLarge = false;
 
     const tooLargeError = () =>
       ingestError('BUNDLE_TOO_LARGE', {
-        message: `This runner artifact exceeds the ${maxBytes}-byte upload limit.`,
+        message: `This artifact file exceeds the ${maxBytes}-byte upload limit.`,
         remediation:
-          'Upload a smaller runnable Gatling artifact, or raise MAX_RUNNER_ARTIFACT_BYTES for this on-prem node.',
+          'Upload a smaller Gatling artifact (a jar or a runnable bundle), or raise MAX_RUNNER_ARTIFACT_BYTES for this on-prem node.',
         detail: { maxBytes },
       });
 
@@ -56,9 +78,17 @@ export function readRunnerMultipart(
       settled = true;
       req.unpipe(bb);
       req.resume();
-      void unlink(targetPath).catch(() => undefined).finally(() => {
-        reject(err);
-      });
+      // THE FILE IS REMOVED ONLY AFTER ITS STREAM HAS CLOSED. createWriteStream
+      // opens lazily, so an unlink issued the moment the cap trips (the first
+      // chunk) can run BEFORE the open, find nothing, and leave the file the
+      // open then creates — a `.part` per refused upload. Destroying the sink
+      // and waiting for 'close' makes the unlink come after the file exists.
+      void (sink === null ? Promise.resolve() : whenClosed(sink))
+        .then(() => unlink(targetPath))
+        .catch(() => undefined)
+        .finally(() => {
+          reject(err);
+        });
     };
 
     const complete = (upload: RunnerUpload) => {
@@ -77,7 +107,11 @@ export function readRunnerMultipart(
         return;
       }
       fileSeen = true;
-      filename = info.filename;
+      // busboy reports `undefined`, whatever its type says, for a part with an
+      // application/octet-stream type and an empty or absent filename — which
+      // is exactly what a browser sends for a file input left empty. Normalised
+      // here so every caller meets a string: "" means "no name was given".
+      filename = info.filename ?? '';
       stream.once('limit', () => {
         fileTooLarge = true;
         fail(tooLargeError());
@@ -93,7 +127,8 @@ export function readRunnerMultipart(
           callback(null, chunk);
         },
       });
-      fileWritten = pipeline(stream, meter, createWriteStream(targetPath));
+      sink = createWriteStream(targetPath);
+      fileWritten = pipeline(stream, meter, sink);
       void fileWritten.catch((err) => fail(err));
     });
 
@@ -102,6 +137,10 @@ export function readRunnerMultipart(
         try {
           if (settled) return;
           if (!fileSeen || fileWritten === null) {
+            if (!options.fileRequired) {
+              complete({ metadataRaw, filename: '', sha256: '', bytes: 0 });
+              return;
+            }
             throw ingestError('BUNDLE_EMPTY', {
               message: 'The request contained no "artifact" file part.',
               remediation:

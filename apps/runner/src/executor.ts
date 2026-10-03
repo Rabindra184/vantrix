@@ -114,7 +114,7 @@ export class RunnerExecutor {
     try {
       logger = await JobLogger.create(this.#config.logDir, jobId);
       await this.#runner.setLogPath(jobId, logger.path);
-      logger.info(`claimed job ${jobId} (${job.artifact.name})`);
+      logger.info(`claimed job ${jobId} (${job.job.name})`);
       await record({ message: `Claimed by the runner on '${os.hostname()}'` });
       await record({ phase: 'Deploying' });
 

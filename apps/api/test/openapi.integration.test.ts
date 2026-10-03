@@ -122,7 +122,7 @@ describe('OpenAPI document', () => {
   // `/rules/{ruleId}` — the PATCH and DELETE beside it work on the id in
   // that very response. Nothing about the rule is deferred; what is deferred
   // is only the next RUN it will judge, which is not this resource.
-  it('never declares a 201 response on any operation except token minting, opening a live run, creating a project, creating an SLA rule, and queueing or retrying a runner job, which really do create synchronously', async () => {
+  it('never declares a 201 response on any operation except token minting, opening a live run, creating a project, creating an SLA rule, queueing or retrying a runner job, and creating a package, which really do create synchronously', async () => {
     const doc = await fetchDoc();
     const CREATES_SYNCHRONOUSLY = [
       { path: '/v1/projects/{slug}/tokens', method: 'post' },
@@ -137,6 +137,13 @@ describe('OpenAPI document', () => {
       // is a different resource created asynchronously, which is exactly why
       // this response is the job and not a run.
       { path: '/v1/projects/{slug}/runner/runs', method: 'post' },
+      // MEASURED as 201 by packages.integration.test.ts's first case, not taken
+      // from Nest's default for @Post. A package is the resource created, and it
+      // is complete and addressable the moment the response is sent: it is
+      // listed at once, and PUT, PATCH and DELETE work on the id in that very
+      // response. A file posted with it is stored and inspected BEFORE the
+      // response, so nothing about the package is deferred.
+      { path: '/v1/projects/{slug}/packages', method: 'post' },
       // MEASURED the same way, and it is the same resource: a retry INSERTs a
       // NEW job (its own id, status queued) and returns it, and the list
       // carries it in the very next read — runner.integration.test.ts's

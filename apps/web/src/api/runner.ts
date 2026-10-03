@@ -6,6 +6,7 @@ import {
   type RunnerJobActionResponse,
   type RunnerJobListResponse,
   type RunnerJobLogsResponse,
+  type RunnerStartByPackageRequest,
   type RunnerStartMetadata,
   type RunnerStartResponse,
 } from '@perfportal/contracts';
@@ -43,6 +44,37 @@ export async function startRunnerRun({
   });
   if (!res.ok) throw await problemFrom(res);
   return RunnerStartResponseSchema.parse(await res.json());
+}
+
+/**
+ * Starts a run from a package's CURRENT version — a JSON body to the route the
+ * multipart upload-and-start above also posts to.
+ *
+ * ONE ROUTE, TWO SHAPES, AND THE `Content-Type` IS WHAT CHOOSES. The server
+ * reads `application/json` as "start from this package" and a multipart body
+ * as "here is a file", so the header is set by hand here — the opposite of
+ * `startRunnerRun`, which must NOT set one because `fetch` derives the
+ * multipart boundary from the `FormData` and a hand-written header would lose
+ * it. No file travels, so the start costs one small request however large the
+ * package is.
+ *
+ * Through `apiFetch`, which `startRunnerRun` is not: nothing here needs the raw
+ * response, and a refusal (a package that was deleted, a class the jar does not
+ * declare) becomes the same `ProblemError` the form already renders.
+ */
+export function startRunnerRunFromPackage(
+  slug: string,
+  request: RunnerStartByPackageRequest,
+): Promise<RunnerStartResponse> {
+  return apiFetch(
+    RunnerStartResponseSchema,
+    `/v1/projects/${encodeURIComponent(slug)}/runner/runs`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+    },
+  );
 }
 
 export function cancelRunnerJob(

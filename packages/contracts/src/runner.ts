@@ -1,7 +1,9 @@
 import { z } from 'zod';
 import { DeclaredTestSlugSchema } from './ingest.js';
+import { PackageKindSchema, PackageNameSchema } from './package.js';
 
-export const RunnerArtifactKindSchema = z.enum(['gatling_jar', 'gatling_bundle']);
+/** The same two kinds a package has: an artifact IS a package version. */
+export const RunnerArtifactKindSchema = PackageKindSchema;
 export type RunnerArtifactKind = z.infer<typeof RunnerArtifactKindSchema>;
 
 export const RunnerJobStatusSchema = z.enum([
@@ -51,8 +53,25 @@ export const RunnerStartMetadataSchema = OptionalRunMetadataSchema.extend({
   gatlingVersion: z.string().trim().min(1).max(40).optional(),
   javaOptions: z.string().trim().max(2_000).optional(),
   systemProperties: SystemPropertiesSchema.default({}),
+  /** Which package the uploaded file becomes a version of; absent means the
+   *  package named by the file's name stem. Created when it does not exist. */
+  package: PackageNameSchema.optional(),
 });
 export type RunnerStartMetadata = z.infer<typeof RunnerStartMetadataSchema>;
+
+/**
+ * Start a run from a package's CURRENT version — the JSON body of the same
+ * route the multipart upload-and-start uses. No `artifactKind` or
+ * `gatlingVersion`: both describe a file, and this request sends none.
+ */
+export const RunnerStartByPackageRequestSchema = OptionalRunMetadataSchema.extend({
+  packageId: z.string().uuid(),
+  name: z.string().trim().min(1).max(160),
+  simulationClass: z.string().trim().min(1).max(300),
+  javaOptions: z.string().trim().max(2_000).optional(),
+  systemProperties: SystemPropertiesSchema.default({}),
+}).strict();
+export type RunnerStartByPackageRequest = z.infer<typeof RunnerStartByPackageRequestSchema>;
 
 export const RunnerArtifactSchema = z.object({
   id: z.string().uuid(),
@@ -79,6 +98,14 @@ export const RunnerJobSchema = z.object({
   /** The test this job named, or null. Becomes the run's own declaration when
    *  the runner opens it. */
   testSlug: z.string().nullable(),
+  /** The run name and class this job runs. Optional and nullable: a pod that
+   *  predates packages sends neither, and the browser drops a body that fails
+   *  this schema — the rolling-deploy rule the run identity already follows. */
+  name: z.string().nullable().optional(),
+  simulationClass: z.string().nullable().optional(),
+  /** The package this job's version belongs to; null once it was deleted. */
+  packageId: z.string().uuid().nullable().optional(),
+  packageName: z.string().nullable().optional(),
   javaOptions: z.string().nullable(),
   systemProperties: z.record(z.string()),
   error: z.object({ code: z.string(), message: z.string(), remediation: z.string() }).nullable(),

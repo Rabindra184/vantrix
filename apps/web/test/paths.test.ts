@@ -4,6 +4,8 @@ import { PROJECT_SLUG_PATTERN } from '@perfportal/contracts';
 import {
   DEFAULT_ROUTE,
   NEW_PROJECT_ROUTE,
+  projectNewRunnerRunPath,
+  projectPackagesPath,
   projectPath,
   projectRunsPath,
   projectTestPath,
@@ -119,6 +121,32 @@ describe('the project → test → run hierarchy, as paths', () => {
 });
 
 /**
+ * A project's packages, and the launch form that can be told which one to run.
+ *
+ * `?package=` is a QUERY and not a path segment on purpose: the form at
+ * `run/new` is one page whether or not a package was chosen for it, and a
+ * segment would make "the form with a package" a different route from "the
+ * form" — which `App.tsx`'s one declaration of it could not serve. The id is
+ * ENCODED, because it arrives from the API and is therefore data.
+ */
+describe('packages, as paths', () => {
+  it('puts the Packages page one segment under the project', () => {
+    expect(projectPackagesPath('checkout')).toBe('/projects/checkout/packages');
+    expect(projectPackagesPath('a/b')).toBe('/projects/a%2Fb/packages');
+  });
+
+  it('offers the launch form with no package, or with one chosen', () => {
+    expect(projectNewRunnerRunPath('checkout')).toBe(`${projectPath('checkout')}/run/new`);
+    expect(projectNewRunnerRunPath('checkout', 'p-1')).toBe(
+      `${projectPath('checkout')}/run/new?package=p-1`,
+    );
+    expect(projectNewRunnerRunPath('checkout', 'a&b=c')).toBe(
+      `${projectPath('checkout')}/run/new?package=a%26b%3Dc`,
+    );
+  });
+});
+
+/**
  * NOTHING STATIC MAY SIT WHERE A PROJECT SLUG GOES.
  *
  * React Router ranks a static segment above a dynamic one, so a literal
@@ -228,6 +256,7 @@ describe('static routes cannot shadow a project slug', () => {
   it.each([
     ['the project run list', 'path="/projects/:slug/runs"'],
     ['a test’s run history', 'path="/projects/:slug/tests/:testSlug"'],
+    ['a project’s packages', 'path="/projects/:slug/packages"'],
   ])('declares a route for %s', (_what, declaration) => {
     expect(APP).toContain(declaration);
   });

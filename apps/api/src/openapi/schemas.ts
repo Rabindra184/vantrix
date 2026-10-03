@@ -33,11 +33,18 @@ import {
   StatsResponseSchema,
   StreamAcceptedSchema,
   StreamRejectedSchema,
+  RunnerStartByPackageRequestSchema,
   RunnerStartMetadataSchema,
   RunnerStartResponseSchema,
   RunnerJobListResponseSchema,
   RunnerJobActionResponseSchema,
   RunnerJobLogsResponseSchema,
+  PackageListResponseSchema,
+  PackageSchema,
+  PackageUsageSchema,
+  PackageVersionSchema,
+  CreatePackageRequestSchema,
+  RenamePackageRequestSchema,
   TelemetryBatchSchema,
   TelemetryResponseSchema,
   TokenListResponseSchema,
@@ -110,10 +117,18 @@ const SOURCE: Record<string, ZodTypeAny> = {
   // came to be absent from the document while it went on describing a
   // "runner" scope a token can hold.
   RunnerStartMetadata: RunnerStartMetadataSchema,
+  RunnerStartByPackageRequest: RunnerStartByPackageRequestSchema,
   RunnerStartResponse: RunnerStartResponseSchema,
   RunnerJobListResponse: RunnerJobListResponseSchema,
   RunnerJobActionResponse: RunnerJobActionResponseSchema,
   RunnerJobLogsResponse: RunnerJobLogsResponseSchema,
+  // PACKAGES: a project's named, reusable Gatling artifacts.
+  Package: PackageSchema,
+  PackageVersion: PackageVersionSchema,
+  PackageUsage: PackageUsageSchema,
+  PackageListResponse: PackageListResponseSchema,
+  CreatePackageRequest: CreatePackageRequestSchema,
+  RenamePackageRequest: RenamePackageRequestSchema,
 };
 
 /**

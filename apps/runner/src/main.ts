@@ -125,19 +125,22 @@ while (!stopping) {
 
 await stop('loop exited');
 
+/**
+ * Two passes, in this order: terminal jobs past the window first (with their
+ * logs), then the versions no job references any more — so a version whose last
+ * job pass 1 just removed goes in the same sweep. A package's current version is
+ * never swept, however old: it is what the next run starts from.
+ */
 async function cleanupExpiredArtifacts(): Promise<void> {
   if (config.artifactRetentionDays === 0) return;
   const retentionMs = config.artifactRetentionDays * 24 * 60 * 60 * 1000;
-  const rows = await runner.deleteTerminalArtifactsOlderThan(
-    config.scope,
-    new Date(Date.now() - retentionMs),
-  );
-  for (const row of rows) {
-    await removeIfUnder(config.artifactDir, row.storagePath);
-    for (const logPath of row.logPaths) await removeIfUnder(config.logDir, logPath);
-  }
-  if (rows.length > 0) {
-    console.log(`removed ${rows.length} expired runner artifact${rows.length === 1 ? '' : 's'}`);
+  const cutoff = new Date(Date.now() - retentionMs);
+  const jobs = await runner.deleteTerminalJobsOlderThan(config.scope, cutoff);
+  for (const job of jobs) if (job.logPath) await removeIfUnder(config.logDir, job.logPath);
+  const versions = await runner.deleteUnneededVersionsOlderThan(config.scope, cutoff);
+  for (const version of versions) await removeIfUnder(config.artifactDir, version.storagePath);
+  if (jobs.length + versions.length > 0) {
+    console.log(`removed ${jobs.length} expired runner job(s) and ${versions.length} unneeded package version(s)`);
   }
 }
 

@@ -2,19 +2,27 @@ import { Prisma, type PrismaClient } from '@prisma/client';
 import type { RunEventPhase, RunEventSource } from '@perfportal/contracts';
 import { capEventMessage, queuedEventMessages } from '../runner-events.js';
 
+/**
+ * One VERSION of a package: the exact file a job runs. The run name and the
+ * simulation class are the JOB's, not this row's — one version serves many jobs.
+ */
 export interface RunnerArtifactRecord {
   id: string;
   orgId: string;
   projectId: string;
-  name: string;
   filename: string;
   kind: string;
-  simulationClass: string;
   gatlingVersion: string | null;
   sha256: string;
   bytes: number;
   storagePath: string;
   createdAt: Date;
+  /** Null once the package was deleted; the row stays as the record of what
+   *  its jobs ran until retention removes it. */
+  packageId: string | null;
+  packageName: string | null;
+  /** The jar manifest's Gatling-Simulations; null when unknown. */
+  simulations: string[] | null;
 }
 
 export interface RunnerJobRecord {
@@ -37,6 +45,10 @@ export interface RunnerJobRecord {
   error: { code: string; message: string; remediation: string } | null;
   createdAt: Date;
   updatedAt: Date;
+  /** The RUN name the requester chose. */
+  name: string;
+  /** The class this job runs (`-s`). */
+  simulationClass: string;
 }
 
 export interface RunnerJobWithArtifact {
@@ -48,15 +60,18 @@ interface RunnerRow {
   artifactId: string;
   artifactOrgId: string;
   artifactProjectId: string;
-  name: string;
   filename: string;
   kind: string;
-  simulationClass: string;
   gatlingVersion: string | null;
   sha256: string;
   bytes: bigint;
   storagePath: string;
   artifactCreatedAt: Date;
+  packageId: string | null;
+  packageName: string | null;
+  simulations: string[] | null;
+  jobName: string;
+  jobSimulationClass: string;
   jobId: string;
   jobOrgId: string;
   jobProjectId: string;
@@ -76,23 +91,20 @@ interface RunnerRow {
   updatedAt: Date;
 }
 
+/**
+ * A job on an EXISTING version (`artifactId`) — the version is created by
+ * `PackageRepository.addVersion`, never here. The job names the run and the
+ * class it runs.
+ */
 export interface CreateRunnerJobInput {
-  artifact: {
-    id: string;
-    orgId: string;
-    projectId: string;
-    name: string;
-    filename: string;
-    kind: string;
-    simulationClass: string;
-    gatlingVersion: string | null;
-    sha256: string;
-    bytes: number;
-    storagePath: string;
-  };
+  orgId: string;
+  projectId: string;
+  artifactId: string;
   job: {
     id: string;
     requestedBy: string;
+    name: string;
+    simulationClass: string;
     environment: string | null;
     branch: string | null;
     commitSha: string | null;
@@ -121,11 +133,10 @@ export interface RunnerClaimScope {
   projectId?: string | null;
 }
 
-export interface DeletedRunnerArtifact {
-  artifactId: string;
-  storagePath: string;
-  logPaths: string[];
-}
+export type RetryRunnerJobResult =
+  | { kind: 'retried'; row: RunnerJobWithArtifact }
+  | { kind: 'not_retryable' }
+  | { kind: 'package_deleted' };
 
 /**
  * One event the RUNNER records (docs/superpowers/specs/2026-09-29-run-logs-design.md):
@@ -151,50 +162,53 @@ export interface RunnerJobEvents {
 export class RunnerRepository {
   constructor(private readonly prisma: PrismaClient) {}
 
-  async createQueued(input: CreateRunnerJobInput): Promise<RunnerJobWithArtifact> {
+  /**
+   * Queues a job on an existing version. Null when the version is not in this
+   * tenant, or its package was deleted — a version whose package is gone is a
+   * record of what earlier jobs ran, not something a new job may start from.
+   */
+  async createQueued(input: CreateRunnerJobInput): Promise<RunnerJobWithArtifact | null> {
+    const [version] = await this.prisma.$queryRaw<{ bytes: bigint; packageName: string }[]>`
+      SELECT a.bytes, p.name AS "packageName"
+      FROM runner_artifact a
+      JOIN package p ON p.id = a.package_id
+      WHERE a.id = ${input.artifactId}::uuid
+        AND a.org_id = ${input.orgId}::uuid
+        AND a.project_id = ${input.projectId}::uuid
+    `;
+    if (!version) return null;
+    const [start, simulation, pkg] = queuedEventMessages({
+      simulationClass: input.job.simulationClass,
+      packageName: version.packageName,
+      bytes: Number(version.bytes),
+    });
     const systemProperties = JSON.stringify(input.job.systemProperties);
-    const [start, simulation, pkg] = queuedEventMessages(input.artifact);
-    const [row] = await this.prisma.$queryRaw<RunnerRow[]>`
-      WITH artifact AS (
-        INSERT INTO runner_artifact (
-          id, org_id, project_id, name, filename, kind, simulation_class,
-          gatling_version, sha256, bytes, storage_path
-        )
-        VALUES (
-          ${input.artifact.id}::uuid,
-          ${input.artifact.orgId}::uuid,
-          ${input.artifact.projectId}::uuid,
-          ${input.artifact.name},
-          ${input.artifact.filename},
-          ${input.artifact.kind},
-          ${input.artifact.simulationClass},
-          ${input.artifact.gatlingVersion},
-          ${input.artifact.sha256},
-          ${input.artifact.bytes},
-          ${input.artifact.storagePath}
-        )
-        RETURNING *
+    const inserted = await this.prisma.$queryRaw<{ id: string }[]>`
+      WITH version AS (
+        -- FOR SHARE OF the package: a delete locks the package FOR UPDATE
+        -- before it counts active jobs, so it waits for this statement and
+        -- then sees the job it queued. A version whose package is already
+        -- gone matches no row, and nothing is queued.
+        SELECT a.id, a.org_id, a.project_id
+        FROM runner_artifact a
+        JOIN package p ON p.id = a.package_id
+        WHERE a.id = ${input.artifactId}::uuid
+          AND a.org_id = ${input.orgId}::uuid
+          AND a.project_id = ${input.projectId}::uuid
+        FOR SHARE OF p
       ),
       job AS (
         INSERT INTO runner_job (
-          id, org_id, project_id, artifact_id, status, requested_by,
+          id, org_id, project_id, artifact_id, status, requested_by, name, simulation_class,
           environment, branch, commit_sha, test_slug, java_options, system_properties
         )
         SELECT
-          ${input.job.id}::uuid,
-          artifact.org_id,
-          artifact.project_id,
-          artifact.id,
-          'queued',
-          ${input.job.requestedBy},
-          ${input.job.environment},
-          ${input.job.branch},
-          ${input.job.commitSha},
-          ${input.job.testSlug},
-          ${input.job.javaOptions},
-          ${systemProperties}::jsonb
-        FROM artifact
-        RETURNING *
+          ${input.job.id}::uuid, version.org_id, version.project_id, version.id, 'queued',
+          ${input.job.requestedBy}, ${input.job.name}, ${input.job.simulationClass},
+          ${input.job.environment}, ${input.job.branch}, ${input.job.commitSha},
+          ${input.job.testSlug}, ${input.job.javaOptions}, ${systemProperties}::jsonb
+        FROM version
+        RETURNING id, org_id, project_id
       ),
       -- The three queue events, IN THIS STATEMENT: a job never exists without
       -- them, and a job insert that fails leaves none. ORDER BY is what makes
@@ -206,40 +220,15 @@ export class RunnerRepository {
         CROSS JOIN (VALUES (1, ${start}::text), (2, ${simulation}::text), (3, ${pkg}::text)) AS m(ord, message)
         ORDER BY m.ord
       )
-      SELECT
-        artifact.id AS "artifactId",
-        artifact.org_id AS "artifactOrgId",
-        artifact.project_id AS "artifactProjectId",
-        artifact.name,
-        artifact.filename,
-        artifact.kind,
-        artifact.simulation_class AS "simulationClass",
-        artifact.gatling_version AS "gatlingVersion",
-        artifact.sha256,
-        artifact.bytes,
-        artifact.storage_path AS "storagePath",
-        artifact.created_at AS "artifactCreatedAt",
-        job.id AS "jobId",
-        job.org_id AS "jobOrgId",
-        job.project_id AS "jobProjectId",
-        job.artifact_id AS "jobArtifactId",
-        job.run_id AS "runId",
-        job.status,
-        job.requested_by AS "requestedBy",
-        job.environment,
-        job.branch,
-        job.commit_sha AS "commitSha",
-        job.test_slug AS "testSlug",
-        job.java_options AS "javaOptions",
-        job.system_properties AS "systemProperties",
-        job.log_path AS "logPath",
-        job.error,
-        job.created_at AS "jobCreatedAt",
-        job.updated_at AS "updatedAt"
-      FROM artifact, job
+      SELECT id FROM job
     `;
-    if (!row) throw new Error('runner job insert returned no row');
-    return mapRow(row);
+    if (inserted.length !== 1) return null;
+    // Null means "version refused", so it must never stand for a job that WAS
+    // queued and then could not be read back — that is an invariant broken,
+    // and it says so, naming the job, the way retry does.
+    const row = await this.find(input.orgId, input.projectId, input.job.id);
+    if (!row) throw new Error(`runner job ${input.job.id} was queued but could not be read back`);
+    return row;
   }
 
   async listRecent(orgId: string, projectId: string, limit = 20): Promise<RunnerJobWithArtifact[]> {
@@ -248,15 +237,18 @@ export class RunnerRepository {
         a.id AS "artifactId",
         a.org_id AS "artifactOrgId",
         a.project_id AS "artifactProjectId",
-        a.name,
         a.filename,
         a.kind,
-        a.simulation_class AS "simulationClass",
         a.gatling_version AS "gatlingVersion",
         a.sha256,
         a.bytes,
         a.storage_path AS "storagePath",
         a.created_at AS "artifactCreatedAt",
+        a.package_id AS "packageId",
+        p.name AS "packageName",
+        a.simulations,
+        j.name AS "jobName",
+        j.simulation_class AS "jobSimulationClass",
         j.id AS "jobId",
         j.org_id AS "jobOrgId",
         j.project_id AS "jobProjectId",
@@ -276,6 +268,7 @@ export class RunnerRepository {
         j.updated_at AS "updatedAt"
       FROM runner_job j
       JOIN runner_artifact a ON a.id = j.artifact_id
+      LEFT JOIN package p ON p.id = a.package_id
       WHERE j.org_id = ${orgId}::uuid AND j.project_id = ${projectId}::uuid
       ORDER BY j.created_at DESC, j.id DESC
       LIMIT ${limit}
@@ -314,15 +307,18 @@ export class RunnerRepository {
         a.id AS "artifactId",
         a.org_id AS "artifactOrgId",
         a.project_id AS "artifactProjectId",
-        a.name,
         a.filename,
         a.kind,
-        a.simulation_class AS "simulationClass",
         a.gatling_version AS "gatlingVersion",
         a.sha256,
         a.bytes,
         a.storage_path AS "storagePath",
         a.created_at AS "artifactCreatedAt",
+        a.package_id AS "packageId",
+        (SELECT name FROM package WHERE id = a.package_id) AS "packageName",
+        a.simulations,
+        j.name AS "jobName",
+        j.simulation_class AS "jobSimulationClass",
         j.id AS "jobId",
         j.org_id AS "jobOrgId",
         j.project_id AS "jobProjectId",
@@ -345,12 +341,23 @@ export class RunnerRepository {
   }
 
   async markRunOpened(jobId: string, runId: string): Promise<boolean> {
-    const updated = await this.prisma.$executeRaw`
-      UPDATE runner_job
-      SET run_id = ${runId}::uuid, status = 'running', updated_at = now()
-      WHERE id = ${jobId}::uuid AND status = 'starting'
+    // The run is stamped with its package in the same statement that attaches
+    // it: Used-by counts read run.package_id, which survives the job's retention.
+    const rows = await this.prisma.$queryRaw<{ id: string }[]>`
+      WITH job AS (
+        UPDATE runner_job
+        SET run_id = ${runId}::uuid, status = 'running', updated_at = now()
+        WHERE id = ${jobId}::uuid AND status = 'starting'
+        RETURNING id, artifact_id
+      ),
+      stamped AS (
+        UPDATE run r SET package_id = a.package_id
+        FROM job JOIN runner_artifact a ON a.id = job.artifact_id
+        WHERE r.id = ${runId}::uuid
+      )
+      SELECT id FROM job
     `;
-    return updated === 1;
+    return rows.length === 1;
   }
 
   async setLogPath(jobId: string, logPath: string): Promise<void> {
@@ -412,71 +419,115 @@ export class RunnerRepository {
     `;
   }
 
-  async deleteTerminalArtifactsOlderThan(
+  /** Pass 1: terminal jobs past the window go, with their events (cascade); the
+   *  caller removes their log files. Their versions are pass 2's question. */
+  async deleteTerminalJobsOlderThan(
     scope: RunnerClaimScope,
     cutoff: Date,
     limit = 25,
-  ): Promise<DeletedRunnerArtifact[]> {
+  ): Promise<{ jobId: string; logPath: string | null }[]> {
+    const projectPredicate = scope.projectId
+      ? Prisma.sql`AND project_id = ${scope.projectId}::uuid`
+      : Prisma.empty;
+    return this.prisma.$queryRaw<{ jobId: string; logPath: string | null }[]>`
+      DELETE FROM runner_job
+      WHERE id IN (
+        SELECT id FROM runner_job
+        WHERE org_id = ${scope.orgId}::uuid
+          ${projectPredicate}
+          AND status IN ('complete', 'failed', 'cancelled')
+          AND updated_at < ${cutoff}
+        ORDER BY updated_at ASC, id ASC
+        LIMIT ${limit}
+        FOR UPDATE SKIP LOCKED
+      )
+      RETURNING id AS "jobId", log_path AS "logPath"
+    `;
+  }
+
+  /**
+   * Pass 2: a version goes with its file when it is NOT any package's current
+   * version, NO job references it any more, and it was uploaded before the
+   * window. A package's current version is never swept.
+   *
+   * ═══ LOCK, THEN RE-CHECK: TWO STATEMENTS IN ONE TRANSACTION ═══
+   *
+   * One statement cannot do this safely. Its NOT EXISTS predicates are read on
+   * the statement's snapshot, and FOR UPDATE SKIP LOCKED does not re-check them
+   * when it takes the lock — EvalPlanQual re-checks only a row that was itself
+   * UPDATEd, and nothing updates a version row: an upload that REUSES an
+   * existing version (same bytes) only KEY SHARE locks it, through the
+   * current_artifact_id foreign key. So an upload that made a version current,
+   * committing after the snapshot but before the lock, was deleted anyway: ON
+   * DELETE SET NULL silently emptied the package's current version and the
+   * runner removed the file. A job inserted in the same window instead tripped
+   * runner_job's ON DELETE RESTRICT and failed the whole batch.
+   *
+   * So statement 1 only CHOOSES and LOCKS (FOR UPDATE OF a SKIP LOCKED), and
+   * statement 2 — a separate statement, so under READ COMMITTED it takes a
+   * fresh snapshot — deletes only the locked versions that are STILL unneeded.
+   * Anything committed before the lock, statement 2 sees. After the lock,
+   * nothing can make a locked version current or point a job at it: both need
+   * a KEY SHARE lock on the version, which waits behind FOR UPDATE. And a
+   * writer already holding one when statement 1 runs makes it skip that row.
+   *
+   * THE RESIDUAL: a writer that reaches a version AFTER statement 1 locked it —
+   * a queue or a retry inserting a job on it, an upload of the same bytes
+   * making it current — waits for this transaction, then fails on its own
+   * foreign key (23503) once the row is gone. Loud, and on that one request:
+   * the sweep completes, and nothing is deleted or emptied silently.
+   *
+   * WHAT IS PINNED, AND THE ONE THING ONLY ARGUED. The tests park this
+   * transaction between its statements. There, a writer that needs a lock on
+   * the version waits and fails ("cannot make a version current while the sweep
+   * holds it", "cannot point a job at a version while the sweep holds it"); and
+   * a commit that takes NO lock on the version, made in replica mode, rebuilds
+   * the state the race leaves, which statement 2's re-check must catch
+   * ("re-checks the current version in statement 2", "re-checks job references
+   * in statement 2"). Statement 1's own predicates are pinned at limit 1
+   * ("chooses only versions that are not current", "chooses only versions no
+   * job needs"). What remains ARGUED, not pinned, is two things. The race's
+   * real interleaving: the commit landing INSIDE statement 1, between its
+   * snapshot and its row locks, which nothing outside the database can force.
+   * And statement 1 SKIPPING a row a writer already holds when it runs — SKIP
+   * LOCKED passing over that writer's KEY SHARE lock, the last sentence of the
+   * paragraph above: every parked case takes the sweep's lock FIRST and brings
+   * the writer after it, so no case holds a writer's lock on a version while
+   * statement 1 chooses. It rests on FOR UPDATE conflicting with KEY SHARE,
+   * which is PostgreSQL's row-lock table, not this code's.
+   */
+  async deleteUnneededVersionsOlderThan(
+    scope: RunnerClaimScope,
+    cutoff: Date,
+    limit = 25,
+  ): Promise<{ artifactId: string; storagePath: string }[]> {
     const projectPredicate = scope.projectId
       ? Prisma.sql`AND a.project_id = ${scope.projectId}::uuid`
       : Prisma.empty;
-
-    return this.prisma.$transaction(async (tx) => {
-      const rows = await tx.$queryRaw<{
-        artifactId: string;
-        storagePath: string;
-        logPaths: string[] | null;
-      }[]>`
-        WITH eligible AS (
-          SELECT
-            a.id,
-            max(j.updated_at) AS last_updated,
-            COALESCE(array_remove(array_agg(j.log_path ORDER BY j.created_at), NULL), ARRAY[]::text[]) AS log_paths
-          FROM runner_artifact a
-          JOIN runner_job j
-            ON j.artifact_id = a.id
-           AND j.org_id = a.org_id
-           AND j.project_id = a.project_id
+    return this.prisma.$transaction(
+      async (tx) => {
+        const locked = await tx.$queryRaw<{ id: string }[]>`
+          SELECT a.id FROM runner_artifact a
           WHERE a.org_id = ${scope.orgId}::uuid
             ${projectPredicate}
-          GROUP BY a.id
-          HAVING bool_and(j.status IN ('complete', 'failed', 'cancelled'))
-             AND max(j.updated_at) < ${cutoff}
-        )
-        SELECT
-          a.id AS "artifactId",
-          a.storage_path AS "storagePath",
-          e.log_paths AS "logPaths"
-        FROM eligible e
-        JOIN runner_artifact a ON a.id = e.id
-        ORDER BY e.last_updated ASC, a.id ASC
-        LIMIT ${limit}
-        FOR UPDATE OF a
-      `;
-      if (rows.length === 0) return [];
-
-      const ids = rows.map((row) => row.artifactId);
-      await tx.runnerJob.deleteMany({
-        where: {
-          orgId: scope.orgId,
-          projectId: scope.projectId ? scope.projectId : undefined,
-          artifactId: { in: ids },
-        },
-      });
-      await tx.runnerArtifact.deleteMany({
-        where: {
-          orgId: scope.orgId,
-          projectId: scope.projectId ? scope.projectId : undefined,
-          id: { in: ids },
-        },
-      });
-
-      return rows.map((row) => ({
-        artifactId: row.artifactId,
-        storagePath: row.storagePath,
-        logPaths: row.logPaths ?? [],
-      }));
-    });
+            AND a.created_at < ${cutoff}
+            AND NOT EXISTS (SELECT 1 FROM package p WHERE p.current_artifact_id = a.id)
+            AND NOT EXISTS (SELECT 1 FROM runner_job j WHERE j.artifact_id = a.id)
+          ORDER BY a.created_at ASC, a.id ASC
+          LIMIT ${limit}
+          FOR UPDATE OF a SKIP LOCKED
+        `;
+        if (locked.length === 0) return [];
+        return tx.$queryRaw<{ artifactId: string; storagePath: string }[]>`
+          DELETE FROM runner_artifact a
+          WHERE a.id = ANY(${locked.map((row) => row.id)}::uuid[])
+            AND NOT EXISTS (SELECT 1 FROM package p WHERE p.current_artifact_id = a.id)
+            AND NOT EXISTS (SELECT 1 FROM runner_job j WHERE j.artifact_id = a.id)
+          RETURNING a.id AS "artifactId", a.storage_path AS "storagePath"
+        `;
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted },
+    );
   }
 
   async status(jobId: string): Promise<string | null> {
@@ -583,27 +634,57 @@ export class RunnerRepository {
     return moved.length === 1 ? this.find(orgId, projectId, jobId) : null;
   }
 
-  async retry(input: RetryRunnerJobInput): Promise<RunnerJobWithArtifact | null> {
-    // The queue events name the ARTIFACT the retry runs, so they are built
-    // from its row. Read with no status predicate: whether the source job may
-    // be retried is decided by the INSERT below, which writes the events in
-    // the same statement, so a refused retry writes neither.
-    const [artifact] = await this.prisma.$queryRaw<{ simulationClass: string; name: string; bytes: bigint }[]>`
-      SELECT a.simulation_class AS "simulationClass", a.name, a.bytes
+  /**
+   * Queues the source job again, on the SAME version it ran — never whatever
+   * its package holds now, so a retry runs byte for byte what failed — under
+   * the source's own name and class. `package_deleted` when that version's
+   * package is gone: its file is gone with it, so there is nothing to run.
+   */
+  async retry(input: RetryRunnerJobInput): Promise<RetryRunnerJobResult> {
+    // The queue events name the JOB's class and its version's PACKAGE, so they
+    // are built from those rows. Read with no status predicate: whether the
+    // source job may be retried is decided by the INSERT below, which writes
+    // the events in the same statement, so a refused retry writes neither.
+    const [source] = await this.prisma.$queryRaw<{
+      simulationClass: string;
+      packageId: string | null;
+      packageName: string | null;
+      bytes: bigint;
+    }[]>`
+      SELECT j.simulation_class AS "simulationClass", a.package_id AS "packageId",
+        p.name AS "packageName", a.bytes
       FROM runner_job j
       JOIN runner_artifact a ON a.id = j.artifact_id
+      LEFT JOIN package p ON p.id = a.package_id
       WHERE j.org_id = ${input.orgId}::uuid
         AND j.project_id = ${input.projectId}::uuid
         AND j.id = ${input.sourceJobId}::uuid
     `;
-    if (!artifact) return null;
+    if (!source) return { kind: 'not_retryable' };
+    if (source.packageId === null || source.packageName === null) return { kind: 'package_deleted' };
     const [start, simulation, pkg] = queuedEventMessages({
-      simulationClass: artifact.simulationClass,
-      name: artifact.name,
-      bytes: Number(artifact.bytes),
+      simulationClass: source.simulationClass,
+      packageName: source.packageName,
+      bytes: Number(source.bytes),
     });
     const inserted = await this.prisma.$queryRaw<{ id: string }[]>`
-      WITH job AS (
+      WITH source AS (
+        -- FOR SHARE OF the package, for the reason createQueued takes it: a
+        -- retry is a start too, and a package delete that counts active jobs
+        -- must either wait for this statement and see the job it queues, or
+        -- have committed first, leaving no package row to join, so nothing is
+        -- queued on a version whose file the delete handed back for removal.
+        SELECT j.*
+        FROM runner_job j
+        JOIN runner_artifact a ON a.id = j.artifact_id
+        JOIN package p ON p.id = a.package_id
+        WHERE j.org_id = ${input.orgId}::uuid
+          AND j.project_id = ${input.projectId}::uuid
+          AND j.id = ${input.sourceJobId}::uuid
+          AND j.status IN ('failed', 'cancelled')
+        FOR SHARE OF p
+      ),
+      job AS (
         -- ═══ EVERY FIELD THE OPERATOR CHOSE, INCLUDING test_slug ═══
         --
         -- A retry is the SAME JOB run again, so it carries the whole of what
@@ -618,12 +699,17 @@ export class RunnerRepository {
         -- Found by retrying a real job on a real runner. Nothing could have
         -- caught it: no test in this repository called this method.
         --
+        -- The run name and the simulation class are per-job fields now (one
+        -- version serves many jobs), so they are copied here with the rest;
+        -- and artifact_id is the SOURCE's, which is what makes a retry run
+        -- the bytes that failed rather than a newer upload.
+        --
         -- NO BACKTICKS IN THIS COMMENT. It sits inside a $queryRaw TEMPLATE
         -- LITERAL, so one would end the string and fail as TS1005 two lines
         -- down -- which is exactly how the first draft of it failed, and which
         -- CLAUDE.md already records happening twice before.
         INSERT INTO runner_job (
-          id, org_id, project_id, artifact_id, status, requested_by,
+          id, org_id, project_id, artifact_id, status, requested_by, name, simulation_class,
           environment, branch, commit_sha, test_slug, java_options, system_properties
         )
         SELECT
@@ -633,17 +719,15 @@ export class RunnerRepository {
           j.artifact_id,
           'queued',
           ${input.requestedBy},
+          j.name,
+          j.simulation_class,
           j.environment,
           j.branch,
           j.commit_sha,
           j.test_slug,
           j.java_options,
           j.system_properties
-        FROM runner_job j
-        WHERE j.org_id = ${input.orgId}::uuid
-          AND j.project_id = ${input.projectId}::uuid
-          AND j.id = ${input.sourceJobId}::uuid
-          AND j.status IN ('failed', 'cancelled')
+        FROM source j
         RETURNING id, org_id, project_id
       ),
       -- The retry's own three queue events, written by this statement for
@@ -658,7 +742,25 @@ export class RunnerRepository {
       )
       SELECT id FROM job
     `;
-    return inserted.length === 1 ? this.find(input.orgId, input.projectId, input.id) : null;
+    if (inserted.length === 1) {
+      const row = await this.find(input.orgId, input.projectId, input.id);
+      if (!row) throw new Error(`runner job ${input.id} was queued as a retry but could not be read back`);
+      return { kind: 'retried', row };
+    }
+    // Nothing was queued. Either the source is not retryable, or its package
+    // was deleted between the read above and the insert — which, holding the
+    // package FOR SHARE, then found no package row to join. Ask which.
+    const [after] = await this.prisma.$queryRaw<{ packageId: string | null }[]>`
+      SELECT a.package_id AS "packageId"
+      FROM runner_job j
+      JOIN runner_artifact a ON a.id = j.artifact_id
+      WHERE j.org_id = ${input.orgId}::uuid
+        AND j.project_id = ${input.projectId}::uuid
+        AND j.id = ${input.sourceJobId}::uuid
+    `;
+    return after !== undefined && after.packageId === null
+      ? { kind: 'package_deleted' }
+      : { kind: 'not_retryable' };
   }
 
   async find(orgId: string, projectId: string, jobId: string): Promise<RunnerJobWithArtifact | null> {
@@ -667,15 +769,18 @@ export class RunnerRepository {
         a.id AS "artifactId",
         a.org_id AS "artifactOrgId",
         a.project_id AS "artifactProjectId",
-        a.name,
         a.filename,
         a.kind,
-        a.simulation_class AS "simulationClass",
         a.gatling_version AS "gatlingVersion",
         a.sha256,
         a.bytes,
         a.storage_path AS "storagePath",
         a.created_at AS "artifactCreatedAt",
+        a.package_id AS "packageId",
+        p.name AS "packageName",
+        a.simulations,
+        j.name AS "jobName",
+        j.simulation_class AS "jobSimulationClass",
         j.id AS "jobId",
         j.org_id AS "jobOrgId",
         j.project_id AS "jobProjectId",
@@ -695,6 +800,7 @@ export class RunnerRepository {
         j.updated_at AS "updatedAt"
       FROM runner_job j
       JOIN runner_artifact a ON a.id = j.artifact_id
+      LEFT JOIN package p ON p.id = a.package_id
       WHERE j.org_id = ${orgId}::uuid
         AND j.project_id = ${projectId}::uuid
         AND j.id = ${jobId}::uuid
@@ -709,15 +815,16 @@ function mapRow(row: RunnerRow): RunnerJobWithArtifact {
       id: row.artifactId,
       orgId: row.artifactOrgId,
       projectId: row.artifactProjectId,
-      name: row.name,
       filename: row.filename,
       kind: row.kind,
-      simulationClass: row.simulationClass,
       gatlingVersion: row.gatlingVersion,
       sha256: row.sha256,
       bytes: Number(row.bytes),
       storagePath: row.storagePath,
       createdAt: row.artifactCreatedAt,
+      packageId: row.packageId,
+      packageName: row.packageName,
+      simulations: row.simulations,
     },
     job: {
       id: row.jobId,
@@ -737,6 +844,8 @@ function mapRow(row: RunnerRow): RunnerJobWithArtifact {
       error: row.error,
       createdAt: row.jobCreatedAt,
       updatedAt: row.updatedAt,
+      name: row.jobName,
+      simulationClass: row.jobSimulationClass,
     },
   };
 }

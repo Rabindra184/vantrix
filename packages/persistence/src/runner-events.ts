@@ -17,7 +17,7 @@ export function capEventMessage(message: string): string {
 }
 
 /**
- * An artifact's size the way Gatling Enterprise printed a package's on
+ * A package version's size the way Gatling Enterprise printed a package's on
  * 2026-09-29 (`1.8 MiB`): IEC units, one decimal, whole bytes below a KiB.
  */
 export function formatPackageSize(bytes: number): string {
@@ -34,7 +34,7 @@ export function formatPackageSize(bytes: number): string {
 
 /**
  * A run of control characters (C0, U+0000-U+001F, and DEL) becomes ONE space.
- * The Logs panel is `white-space: pre-wrap`, and an artifact's name or a
+ * The Logs panel is `white-space: pre-wrap`, and a package's name or a
  * simulation class is operator-chosen: without this a name with a newline in
  * it draws what reads as a separate `[runner] ...` line — a forged event.
  */
@@ -47,18 +47,21 @@ function oneLine(text: string): string {
 /**
  * What the API writes when a runner job is queued, and again when one is
  * retried — Gatling Enterprise's first three lines, in its words. They name
- * the simulation class and the artifact's own name and size, and NO other job
- * parameter: never the Java options, a system property or the storage key. The
- * two operator-chosen strings are collapsed to one line first (`oneLine`).
+ * the JOB's simulation class and the PACKAGE's name and its version's size, and
+ * NO other job parameter: never the run name, the Java options, a system
+ * property or the storage key. The two operator-chosen strings are collapsed to
+ * one line first (`oneLine`).
  */
-export function queuedEventMessages(artifact: {
+export function queuedEventMessages(input: {
   readonly simulationClass: string;
-  readonly name: string;
+  readonly packageName: string;
   readonly bytes: number;
 }): readonly [string, string, string] {
   return [
     'Start requested.',
-    capEventMessage(`Starting the simulation: '${oneLine(artifact.simulationClass)}'`),
-    capEventMessage(`Using package: '${oneLine(artifact.name)}' (${formatPackageSize(artifact.bytes)})`),
+    capEventMessage(`Starting the simulation: '${oneLine(input.simulationClass)}'`),
+    // The PACKAGE's name — Gatling Enterprise's `Using package: 'no-code'`.
+    // It read the artifact's "name", which was the RUN name from the form.
+    capEventMessage(`Using package: '${oneLine(input.packageName)}' (${formatPackageSize(input.bytes)})`),
   ];
 }

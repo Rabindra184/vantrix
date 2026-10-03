@@ -128,7 +128,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **189 files / 2530 tests**, it
+`nvm use` first, and if a run reports fewer than **194 files / 2667 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -145,6 +145,478 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The packages branch added FIVE unit files —
+`apps/api/test/package-files.test.ts` (14), `apps/web/test/ProjectPackages.test.tsx`
+(37), `apps/web/test/packagesApi.test.ts` (17), `apps/web/test/runnerApi.test.ts`
+(3) and `packages/contracts/test/package.test.ts` (12) — plus 50 cases to
+`NewRunnerRun.test.tsx` (13 → 63), one row to `ProjectShell.test.tsx` and three
+cases to `paths.test.ts`, from **188 / 2526 to 193 / 2663**. Integration gains the four
+`.ts` files above (all but `ProjectPackages.tsx`), three integration files —
+`apps/api/test/packages.integration.test.ts` (35),
+`packages/persistence/test/package.integration.test.ts` (26) and
+`packages/persistence/test/package-backfill.integration.test.ts` (9) — and 14
+cases in `apps/api/test/runner.integration.test.ts` and 26 in
+`packages/persistence/test/runner.integration.test.ts`, from **173 / 2187 to
+180 / 2346**, and **e2e rises to 184** (`apps/web/e2e/packages.spec.ts`, 4). It is
+backlog item #8 of the Gatling Enterprise comparison: a **package** is a
+project's named, reusable Gatling artifact — uploaded once, run many times,
+replaced by uploading a new build, and deleted when nothing is running from it.
+
+**THE DEVELOPER DATABASE HELD NINE ARTIFACT ROWS WITH ONE SHA-256 BETWEEN
+THEM.** Every on-prem run uploaded its jar again as a new `runner_artifact` tied
+to that one job, so the same jar was stored nine times and nothing could be run
+without uploading it once more.
+
+**MEASURED ON GATLING ENTERPRISE FIRST, READ-ONLY.** Sources › Packages: Name
+with a copyable id, Format (fixed at creation — "a JS package cannot replace a
+JVM package"), Team, Tests, Filename (name, size, Gatling-version badge), Last
+update, newest first; a row's Upload REPLACES the file with no visible history
+(`PUT /api/public/artifacts/<id>/content?filename=…` is the API shape copied
+here); Delete disabled while a test uses it. A test is a saved launch
+configuration whose step 1 is a Package dropdown and then a Simulation dropdown
+of the classes inside it. Copied: the columns without Team, the PUT shape, the
+fixed format, delete-refused-while-used, the two dropdowns. **Not copied, each a
+decision:** tests stay groupings of runs (launch configurations are their own
+item), "Used by" counts runs as well as tests (a test here is a grouping, so runs
+are the honest count), and delete is refused only while a job is queued or
+running — a finished run keeps the exact bytes it ran, because a re-upload keeps
+the old version underneath.
+
+**FOUR CORRECTIONS TO THE DESIGN AS DISCUSSED, FOUND BY READING THE CODE BEFORE
+THE SPEC.** `runner_artifact` held two PER-JOB fields (`simulation_class`, which
+the runner turned into `-s`, and the RUN name), which a version shared by many
+runs cannot hold, so both moved to `runner_job`; the retention sweep deleted an
+artifact WITH its jobs and could never see an artifact with none — exactly what a
+superseded `PUT` makes — so it split into two passes; "Used by" is counted over
+`run.package_id`, set when the runner opens the run, because counting through
+`runner_job` would shrink as retention removed jobs; and there was no run-page
+surface showing a package, so "package deleted" lands on the jobs table and the
+Logs line, which is written at queue time and keeps the name.
+
+**ONE VERSION OF RECORD, READ EVERYWHERE FROM THE JOB.** A job's `artifact_id`
+is the bytes it ran. The runner's `-cp`, its `-s` (now the job's own class), the
+Logs line (`Using package: '<package>'`, written at queue time), the job's
+`packageName`, a retry (`INSERT … SELECT` copies the source job's version, never
+the package's current one) and `run.package_id` all read it. A retry after a new
+upload runs the OLD bytes, pinned in persistence and in the API.
+
+**THE LOCK PROTOCOL IS THE PACKAGE ROW, AND EVERY WRITER TAKES IT.**
+`PackageRepository.delete` locks the package `FOR UPDATE` and only then counts
+active jobs, on a fresh READ COMMITTED snapshot; `createQueued` and `retry` take
+it `FOR SHARE` inside their CTE; `addVersion` takes it `FOR UPDATE` and reuses an
+existing version with the same SHA-256 rather than storing the bytes again. So a
+start and a delete serialise: the delete that wins makes the start find no
+package (404), the start that wins makes the delete count its job
+(`PACKAGE_IN_USE`). Measured both ways with a raw connection holding one lock and
+`pg_blocking_pids` observing the other queue — never with a sleep.
+
+**PRISMA'S INTERACTIVE TRANSACTION BUDGET RUNS FROM `BEGIN`, SO A LOCK WAIT
+SPENDS IT.** The four-way upload case failed once with "Transaction already
+closed … The timeout for this transaction was 5000 ms" on a loaded machine,
+because waiting for the package row counted against Prisma's default 5 s.
+`addVersion` and `delete` pass `LOCK_WAITING_TX = { maxWait: 10_000, timeout:
+30_000 }` — the only ceiling, since no `lock_timeout` is configured anywhere (a
+docstring that credited one was corrected). With the options removed from BOTH
+sites the 25-case file still passed, because its arrangements park a lock for
+milliseconds; a throwaway 6.5 s hold failed each site alone with P2028, and a
+committed guard now records each `$transaction`'s options and fails naming the
+call. **It checks what is passed, not that Prisma honours it** — that was proven
+once, by the throwaway hold.
+
+**`FOR UPDATE SKIP LOCKED` OVER A SNAPSHOT-EVALUATED `NOT EXISTS` DOES NOT
+RE-CHECK THE PREDICATE AFTER IT LOCKS.** The plan's single-statement retention
+pass 2 chose "not current, no job references it" on its snapshot and then locked;
+an `addVersion` reusing that version (same bytes uploaded again) committing in
+between made it current, the sweep deleted it anyway, and the `ON DELETE SET
+NULL` FK silently nulled `package.current_artifact_id`. The plan mandated the
+statement; the Opus task review found it. **It is lock-then-recheck now, in one
+READ COMMITTED transaction:** statement 1 chooses and locks
+(`FOR UPDATE OF a SKIP LOCKED`), statement 2 deletes `WHERE id = ANY(locked)` with
+both `NOT EXISTS` on a fresh snapshot. A writer arriving after the lock waits and
+then fails on its own FK — loud, one request, nothing deleted silently.
+
+**THE TWO RE-CHECKS MASKED EACH OTHER UNTIL A REPLICA-MODE COMMIT BUILT THE
+STATE.** Statement 2's checks look redundant beside statement 1's identical ones,
+which is exactly what a tidy-up deletes — and deleting either left the suite
+31/31 green, the defect restored. The post-window state cannot be reached by
+racing, so a test commits the change inside the pause between the two statements
+with `SET LOCAL session_replication_role = replica`: FK triggers do not fire, the
+commit takes no key-share lock and does not wait on the sweep's `FOR UPDATE`, and
+the state is exactly what the real race leaves. **It needs a superuser** (local
+and CI's service containers both are) **and fails loudly without one.**
+Statement 1's predicates are pinned the other way, at `limit = 1`: without them
+the sweep locks the same oldest current or job-referenced versions every tick,
+statement 2 keeps them all, and retention stalls for ever — a liveness bug the
+default limit hides. **What is only argued:** a commit landing INSIDE statement 1,
+and statement 1 skipping a row a writer already holds key-share; no harness can
+park either.
+
+**TWO GUARDS THAT AGREE ON EVERY REACHABLE STATE MASK EACH OTHER; EACH NEEDS A
+STATE ONLY IT CAN ANSWER.** Three more on this branch: `PackageRepository.find`
+dropping its project predicate left the package routes 34/34, because
+`resolveProject` refuses the cross-project case first and `createQueued`'s own
+predicate answers 404 for a package with a file — only an EMPTY package in
+another project (409 naming that package) pins the lookup; `list` dropping its
+org predicate survived because project ids are globally unique; and a plain
+`Promise.all` of four uploads passed 5 of 5 with `addVersion`'s lock removed,
+because the calls ran back to back fast enough that each saw the previous row.
+The four-way case holds the row lock on a raw connection, observes four uploads
+queued behind it with a RECURSIVE `pg_blocking_pids`, then commits.
+
+**PRISMA'S P2010 CARRIES THE SQLSTATE AND THE DETAIL LINE, NOT THE CONSTRAINT
+NAME.** A `$executeRaw` unique violation is P2010 with
+`{ code: '23505', message: 'Key (project_id, lower(name))=(...) already exists.' }`;
+`package_project_name_lower_key` is absent, so the brief's name-taken matcher
+matched nothing. It matches the constraint name OR (23505 AND the key expression)
+— deliberately not the word "Key", which Postgres translates — and a primary-key
+collision pins that nothing else is mapped to "taken".
+
+**THE BACKFILL GROUPS BY `lower(stem)` AND SUFFIXES WITH ` (n)`, BECAUSE `-n`
+ABORTED ITS OWN DEPLOY.** `load.jar`, `Load.jar` and `load-2.jar` reproduced a
+duplicate key on `(project_id, lower(name))` — which rolls the whole migration
+back — and exact-case grouping split `demo.jar` from `DEMO.jar` although uploads
+find packages ignoring case. ` (n)` cannot collide, because `sanitizeFilename`
+turns parentheses into `_`, so no stored stem contains one. **And the final review
+found the backfill did not TRIM its stem while the runtime does:** `my file .jar`
+became `my file ` in SQL and `my file` in JS, so a later upload of the same
+filename missed the backfilled package. Both stem expressions are
+`COALESCE(NULLIF(btrim(left(…,112)),''),'package')` now, edited before the
+migration ever left the branch, and a five-row case pins each against
+`packageNameFromFilename`. The backfill test runs the migration file's own
+statements between markers, in its own transaction; the full file was rehearsed
+through `prisma migrate deploy` in a throwaway database.
+
+**THREE WRITERS OF A PACKAGE'S VERSIONS, AND THE THIRD WAS ONE CHECK SHORT.** The
+package create and the `PUT` refused an empty file; the upload-and-start route
+stored a zero-byte archive as a package's current version (201, SHA-256
+`e3b0c442…`, reproduced by the mutation). `emptyFile(writer)` is one definition
+now, called by all three. The same review found the start route's wrong-extension
+refusal saying "which is what this package holds" about a package the caller
+never named — the kind there comes from `artifactKind` — so `extensionFor` takes a
+REQUIRED `decidedBy: 'package' | 'request'` with no default, this file's rule for
+a parameter whose wrong value is silent.
+
+**A PRE-ABORTED REQUEST HANGS A READER THAT ATTACHES ITS LISTENERS LATE, AND THE
+FIX FOR ONE DEFECT INTRODUCED IT.** Round 1 replaced `pipeline(req, meter, sink)`
+— which destroys the request on overflow, so the 413 reached the client as a
+connection reset (`read ECONNRESET`, deterministic once the drain was mutated
+back to `req.destroy()`) — with a hand-piped reader that drains. That reader then
+hung when the client aborted while the handler was still awaiting its project
+lookup: `close` had already fired, `req.pipe` on a destroyed request never flows,
+and the handler never returned, leaving an empty file and an open descriptor. The
+old `pipeline` had rejected in 3 ms. `readRunnerMultipart`, shared with the start
+route, hung the same way. `assertClientStillConnected` refuses a destroyed request
+before any file or listener exists, exempting one whose body was already read to
+its end (a finished request is destroyed too). The pin parks the handler behind a
+gate on its own lookup, destroys the socket, waits for the server-side `close`,
+then releases — no sleeps. **A fix that changes how a stream is consumed has to
+be re-tested against the abort it used to handle for free.**
+
+**A `.part` UNLINK RACES A LAZY `createWriteStream` OPEN, AND ONLY THE ORIGINAL
+TIMING REPRODUCES IT.** The multipart reader unlinked the moment the cap tripped,
+the stream then opened lazily and created the file: the create-over-cap case
+failed 6 of 6, and the runner start route leaked a `.part` per over-cap upload.
+Both readers unlink after the sink's `'close'` now. The same unlink one microtask
+later passed 8 of 8 — the race is timing, not ordering — so the pin is the
+original shape and the rest is argued.
+
+**AN HONEST `Content-Length` CANNOT TELL AN EARLY REJECT FROM THE MID-STREAM
+METER.** Removing the early reject left the honest-length and cap-plus-one cases
+green, because the body still tripped the meter; only a length that LIES (header
+over the cap, body under it) pins it. And `req.resume()` after the unpipe is
+NOT caught by the suite even at 128 MiB, while a bare http server stalls without
+it (measured with a 64 × 1 MiB client) — so the comment is the guard, and says so.
+
+**busboy HANDS BACK AN UNDEFINED FILENAME FOR AN EMPTY BROWSER FILE INPUT, AND A
+REPEATED QUERY PARAMETER IS AN ARRAY.** `info.filename` is `undefined`, its type
+notwithstanding, for exactly what a browser sends for an empty file input, so
+`path.basename(undefined)` was a latent 500 on the start route; `?filename=a&
+filename=b` made it a 500 too. Both found by cases the implementer added beyond
+the brief.
+
+**REACT REUSES A `<select>`'S DOM NODE IN THE SAME SLOT, SO A FOCUSED CONTROL
+SILENTLY CHANGED MEANING.** The New run form's Package select and the upload
+mode's Artifact type select were both `<Field><select>` in one slot. Choosing
+"Upload a new jar…" — which a keyboard user reaches just by arrowing, since a
+native select fires `change` on ArrowDown — kept focus on the SAME node, now
+named Artifact type, with the new required file input above it in tab order; the
+way back dropped focus to `<body>`. Distinct keys plus a focus effect keyed on the
+mode fix both; removing only the keys fails a node-identity case and NOT the two
+focus cases, because the effect focuses the right place whatever node React kept.
+The implementer's first report described the select direction wrongly; the
+review measured it. The file input's label wears a `has-[:focus-visible]`
+outline, which also fixes a pre-existing invisible tab stop — **verified in the
+emitted CSS, not seen in a browser.**
+
+**A CONDITIONAL LIVE REGION PER ROW IS RIGHT; AN ALWAYS-MOUNTED ONE PER ROW IS A
+DEFECT, AND `findByRole('alert')` FINDS THE EMPTY ONE.** The Packages page's
+upload status and the jobs table's refused-retry alert mount only while there is
+something to say; an empty `role="alert"` in every Actions cell broke the
+refused-retry and refused-cancel cases too, because the query resolved on an
+empty region first.
+
+**A GUARD CAN BE PROVEN DEAD BY READING THE DEPENDENCY.** The Packages page first
+carried an `onCloseAutoFocus` opt-out so Radix would not hand focus back to the
+menu trigger after Rename or Delete. Removing it failed nothing, even with the
+focus case strengthened; in `@radix-ui/react-dropdown-menu` a non-modal menu
+whose focus moves outside the content while closing sets
+`hasInteractedOutsideRef` and skips the return itself. Deleted, with the argument
+in a comment, and the review re-read the installed source to confirm it.
+
+**A DECOY PACKAGE IS WHAT MAKES `?package=` BINDING.** The New run form defaults
+to the first package with a file, so with one package a link that DROPS
+`?package=` still passes; the pre-decoy spec passed against the "form ignores
+`?package=`" mutant. Case 1 seeds a newer package, reloads, and asserts the decoy
+really sorts first before following the link.
+
+**A MUTATION WHOSE SUBSTITUTION DID NOT APPLY REPORTS GREEN, AND IT HAPPENED FOUR
+TIMES.** The final wave's first jar-to-bundle mutation was built with a bash
+`${OLD/…/…}` substitution that matched nothing — 35/35 green — and the mutation
+script now refuses an unchanged file. A task-8 mutation was ill-formed and
+passed; a task-3 probe used a non-uuid id, so the test's own query raised the
+error and the message was identical with and without the fix; a task-5 mutation
+broke the happy path as well. **Assert the replacement count, and distrust a
+mutation that should fail and passes before distrusting the test.**
+
+**AND THE RECURRING `501 {}` IS A LOCAL PROCESS, NOT LOAD.** Found while chasing
+one in the package routes: LogiPlugin (pid 82137) listens on
+`127.0.0.1:60503`, `:60505` and `:60507` and answers EVERY method with 501 and an
+empty body. `createTestApp` runs `app.init()` without `listen`, so supertest
+`listen(0)`s on `::` per request; macOS lets `::` take a port a `127.0.0.1`
+listener holds, and a request to `127.0.0.1:<port>` reaches the more specific
+listener. Measured: a `::` bind on 60503 succeeds and a POST to `127.0.0.1:60503`
+answers `501 ""`; `listen(0)` landed on a held port **3 times in 20,000** —
+3/16384, the ephemeral range. **Every "501 {}, the machine answering under load"
+in the entries below is this**, and so, plausibly, are some of the `socket hang
+up`s; "no test failed twice" was its signature all along. The fix — listen the
+test app on `127.0.0.1` explicitly — is its own branch: the test-app-loopback
+branch, which merged before this one.
+
+**THE EARLY CROSS-BROWSER RUN FAILED ONE WEBKIT CASE THIS BRANCH CANNOT REACH.**
+Dispatched on `08ffbad`: 549 collected (183 × 3), 543 passed, 5 skipped, 1
+failed — `[webkit] run-summary-report.spec.ts:385`, the reader-wins case, both
+attempts, with the reader pulled back to 1490 against a reveal at 1447. The job's
+re-run passed it, `main`'s own push run had passed it, and this branch touches no
+run-page or `AppShell` file. **Note the direction:** the keeper pulled the reader
+back, which is the PRODUCT failing, not the "machine too slow to land the wheel"
+direction the summary-report entry predicts for that case. Recorded as a
+pre-existing WebKit intermittent, not chased here.
+
+**THE FINAL WHOLE-BRANCH REVIEW (OPUS) FOUND TWO THINGS A PERSON WOULD HIT AND NO
+TASK REVIEW COULD.** Retry stayed offered on a job whose package was deleted, and
+the click answered 409 `PACKAGE_DELETED` with nothing on screen — the retry
+mutation had no error handling at all; Retry is withheld for a strict
+`packageId === null` now (an older pod's `undefined` keeps it), and a refused
+retry or cancel shows the API's detail and remediation in that row. And "New run
+from this package" on a package with no file opened the form on a DIFFERENT
+package, silently — the form's fallback for an unoffered `?package=` was ruled
+acceptable for a stale link and was one click away in the product's own menu;
+the item is disabled with its reason in text ("Upload a file to it first."), and
+the form says when a link's package could not be offered.
+
+**RED-VERIFIED LAYER BY LAYER**, every mutation from a checkpoint commit with its
+replacement count asserted — 232 across the branch, the ones that teach something
+below:
+
+```
+  migration   newest-is-current ordered ASC             the newest-is-current case alone
+  migration   group by the exact stem, not lower(stem)  the case-group cases (demo / DEMO (2)); the first version of this
+                                                        mutation failed on the unique index instead — the index was the guard
+  migration   " (n)" put back to "-n"                   the duplicate-key abort reproduced (load-2 meets load-2.jar)
+  migration   btrim dropped from the stem               the trailing-space row AND the cut-after-space row (one row is both)
+  contracts   job packageId loses .optional()           the older-pod case alone
+  contracts   job packageId loses .nullable()           the deleted-package case alone (added by the task review)
+  contracts   simulations loses .nullable()             the unknown-list case alone: unknown is null, never []
+  pkg repo    any 23505 read as "name taken"            the primary-key-collision case alone (added; P2010 has no name)
+  pkg repo    delete without FOR UPDATE                 the delete-behind-a-start case: deleted, where in_use / 1 expected
+  pkg repo    addVersion without FOR UPDATE             the four-way case 3 of 3 (4 rows where 1) — a plain Promise.all
+                                                        version passed 5 of 5 WITHOUT the lock, so the case was rebuilt
+  pkg repo    addVersion reads back after commit        both gap cases (another upload's id; a deleted package's crash)
+  pkg repo    list without its org predicate            SURVIVED the first case (project ids are global); cross-org added
+  pkg repo    $transaction budget removed, both sites   SURVIVED 25/25; a 6.5 s throwaway hold failed each with P2028; the
+                                                        options guard now fails naming the call
+  runner repo createQueued without FOR SHARE OF p       the queue race alone: "finished without waiting for the delete"
+  runner repo retry without FOR SHARE OF p              the retry race alone (beyond the brief: a retry is a start)
+  runner repo retry copies the package's current        the retry-after-upload case: v2 where v1 expected
+  retention   pass 2 back to one statement              both parked cases, structurally (the race itself is argued)
+  retention   statement 2's re-check removed (current)  SURVIVED 31/31; the replica-mode gap case: swept [v1] where []
+  retention   statement 2's re-check removed (job)      the replica-mode job case: 23503 from the sweep
+  retention   statement 1's predicates removed          SURVIVED (masked by statement 2); the limit=1 cases: [] — the stall
+  retention   pass 1 without its terminal-status test   the 40-day running-job case alone
+  routes      create inspects the file after inserting  the not-a-jar create: an empty package left, retry 409
+  routes      compensating delete removed               SURVIVED, case added, then red
+  routes      delete's containment check disabled       SURVIVED, case added, then red
+  routes      SessionOnlyGuard off DELETE               the bearer case AND the OpenAPI SessionRequired pairing
+  routes      resolveProject compares nothing           the cross-project case; the derived guard stays green (syntactic)
+  routes      kind checked after the body is written    VACUOUS at first (a bash substitution matched nothing, 35/35);
+                                                        hand-applied, the files-on-disk case
+  uploads     early Content-Length reject removed       ONLY the lying-length case: an honest length still trips the meter
+  uploads     drain replaced by req.destroy()           the chunked case, read ECONNRESET, deterministic
+  uploads     multipart unlink before the sink closes   the over-cap create 6 of 6; one microtask later: NOT CAUGHT 8 of 8
+  uploads     req.resume() removed                      NOT CAUGHT even at 128 MiB; a bare server stalls — the comment guards
+  uploads     the aborted-client guard removed          the aborted PUT / aborted create case alone, each
+  uploads     its readableEnded exemption removed       the JSON-create case alone: UPLOAD_ABORTED for a finished request
+  uploads     fileRequired ignored (always true)        the no-file start case alone (added)
+  start       'package' passed to extensionFor          the archive-without-artifactKind case alone (review Important)
+  start       empty-upload check removed                the empty-bundle case: 201, a zero-byte version stored
+  start       class check after the package is made     the no-package-left case alone (added)
+  start       queue on the new artifact, not the version the third (reused) start answers 404
+  start       byName compares exactly in JS             caught ONLY because both lookups share it
+  start       find drops its project predicate          the cross-project case ALONE (409 naming another project's package)
+  start       upload path before the req.is check       every JSON-start case: BUNDLE_NOT_ARCHIVE from busboy
+  page        refused Delete's reason in a title=       the reason-as-text cases
+  page        status region always mounted              the no-live-region-at-rest case + the upload case
+  page        onCloseAutoFocus opt-out removed          DEAD: nothing failed; Radix skips the return itself — deleted
+  page        empty package's New run still a Link      the disabled-item case alone, at "no href"
+  form        Simulation stays a text input             the dropdown case + 7 that need its first option (dependent)
+  form        mode follows the list, not decided once   the list-gains-a-package case alone (split from a bundled case)
+  form        a typed class survives the switch         SURVIVED both ways, two cases added
+  form        keys removed, focus effect kept           ONLY the node-identity case; both focus cases pass
+  form        maxLength 120 removed                     SURVIVED, case added
+  form        an empty role="alert" in every row        the at-rest case AND both refused-action cases
+  client      PUT sent without ?filename=               packagesApi's PUT case alone (the page tests mock the client)
+  browser     the form ignores ?package=                case 1 alone — the pre-decoy spec PASSED against this mutant
+  browser     package start takes the upload path       case 1: no job row
+  browser     the row's Upload PUT without ?filename=   case 4: "Checkout jar.jar"
+```
+
+**THE REAL RUN.** The developer database, with the API, worker and runner from
+this worktree on Node 22, Java 21, `RUNNER_GATLING_HOME` pointing at a local
+Gatling runtime, their own Redis index (db 15), and
+`RUNNER_ARTIFACT_RETENTION_DAYS=3650` so the sweep could not delete the
+database's month-old jobs. **The migration met real data first:** nine
+`runner_artifact` rows with ONE SHA-256 between them, all `bundle.tgz`, became two
+packages named `bundle` (one per project, eight versions and one), with job
+name and class backfilled on all nine jobs and `run.package_id` on all nine
+runs — the jobs table now names `bundle` on jobs older than the feature. Then a
+thin jar built by `gatlingEnterprisePackage` (the demo project plus
+`ParitySimulation`, whose target is a local server) became package "Parity jar"
+— 201, its manifest's three simulations listed. Two JSON starts with no upload
+put jobs A and B on the same version with one file on disk; A was cancelled 15 s
+into running, B completed. A `PUT` of a rebuilt jar (different SHA-256) made it
+current — 200, `usage` reading 1 test and 2 runs, both files kept. **The retry
+of A ran the OLD version**: its job's `artifact_id` and the runner's own
+`-cp …/916f5b1f-….jar:…/gatling-home/lib/*` both name it, while a fresh start
+afterwards ran the new one; every run carried the package's id, and each job's
+Logs opened `Start requested.` / `Starting the simulation:
+'example.ParitySimulation'` / `Using package: 'Parity jar' (1.8 MiB)`. The token
+minted for it was revoked and its file deleted; the processes were stopped by
+PID (the worker needed a second, harder signal); the package and its four runs
+stay as the database's newest real runs.
+
+**KNOWN AND LEFT, EACH A DECISION RATHER THAN AN OVERSIGHT:**
+
+  - Tests are not launch configurations, and there is no visible version history
+    or way to run an older version on purpose; no Format filter or column sorts
+    (a project holds a handful of packages); the Gradle-plugin and upload paths
+    carry no jar, so they have no package.
+  - A backfilled version has no simulation list (SQL cannot open a jar) until a
+    jar is uploaded again; the form falls back to typing, and says why.
+  - **The compose file mounts `runner-artifacts` read-only into the runner**, so
+    retention's removal of a superseded version's FILE fails and is only logged —
+    the row goes, the file stays. Pre-existing (the old artifact sweep did the
+    same); whether the API, which writes the files, should own their removal is
+    its own branch.
+  - Runner retry and cancel answer **201** while the OpenAPI document says 200;
+    neither handler has `@HttpCode`. Pre-existing, its own branch. Done by the
+    runner-status-codes branch, which merged before this one: cancel answers 200,
+    retry keeps 201 and the document now says so.
+  - An upload-and-start naming no package, whose stem's package holds the OTHER
+    kind, is refused `PACKAGE_KIND_MISMATCH` (the remediation names the `package`
+    field). A project that uploaded both `load.jar` and `load.zip` before this
+    change has `load` and `load (2)`, and the runtime never looks for the second,
+    so one of its two CI paths is refused at upgrade until it names a package.
+  - A `PUT` without `?filename=` takes the package's own kind, so nothing is
+    checked; the OpenAPI text says so now rather than overstating the check.
+  - The spec's sentence that older API pods keep writing the old start path
+    across a rolling deploy is false: `runner_job.name` and `simulation_class`
+    are NOT NULL. Compose upgrades in lockstep.
+  - Deviations from the spec: Packages sits between Runs and Add results (the
+    plan's position, argued in `ProjectShell`), the create's file part is
+    `artifact` (the existing reader's name), `simulations` is `jsonb`, and the
+    backfill suffix is ` (n)`.
+  - One stored row per (package, SHA-256) rests on the package row lock, with no
+    unique index — pre-feature duplicates would have aborted the backfill;
+    `updated_at = now()` is the transaction's start.
+  - A refused retry or cancel's alert stays until the next attempt and the jobs
+    list is not refetched; the ignored-link line on the New run form draws only
+    in package mode; ArrowDown on the Package select commits the switch to
+    upload; `NewRunnerRun.tsx` grew to about 1,470 lines.
+
+**WHAT WAS RUN.** `pnpm build`, `typecheck` and `lint` exit 0 by their own
+exit codes; `test:unit` **193 / 2663**, zero `Errors` lines; `test:integration`
+**180 / 2346, exit 0, zero failures**, started at a 1-minute load of 7.27; `pnpm
+test:e2e` **184 passed, exit 0** — every total the one counted from the source
+before any suite ran, against a SCRATCH DATABASE (`perfportal_packages`,
+dropped, recreated and migrated first), a scratch Redis INDEX (db 3 — db 9 held
+somebody else's keys) and e2e port 4200, on the final commit. **That e2e figure
+is the second full run.** The first collected 184 and failed ONE:
+`acceptance.spec.ts`'s keyboard-and-chart-table case, `toBeFocused` "Received:
+inactive" — the intermittent this file already records three times, in a chart
+this branch does not touch; that file alone then passed **35 of 35** (five
+repeats), and the whole suite ran clean. The early cross-browser dispatch is
+above.
+
+**THE FINAL HEAD'S DISPATCH FAILED THE SAME WEBKIT CASE, SO IT WAS SETTLED BY A
+RATE RATHER THAN AN ARGUMENT.** Dispatched on `b58a0ad` (code identical to
+`4a8e5d1`, which the gates measured): 552 collected (184 × 3), 546 passed, 5
+skipped, 1 failed — the reader-wins case again, both attempts, the reader at 1550
+and 1504 against a reveal at 1447. Eleven `e2e-cross-browser` jobs in all:
+
+```
+  main f68212e    6 of 6 passed    its push run and five dispatches
+  this branch     3 of 5 passed    08ffbad failed, passed on re-run; b58a0ad
+                                   failed, then passed three times running
+```
+
+Fisher's exact test on that table is p ≈ 0.18 — no evidence the branch moves the
+rate — and the case reads nothing this branch changed: its spec, its two fixtures
+(`seedAdmin`, `seedRunWithData`), the Summary page and `AppShell`'s keeper are
+byte-identical to `main`. Both failures came in PAIRS inside one job, and their
+traces show WebKit's own `mouse.move` taking 620-810 ms and `mouse.wheel` 730-860
+ms, the network released 1.4-1.7 s after the reveal: slow runners.
+
+**AND THE TRACE SAYS THE READER'S WHEEL NEVER LANDED — A TEST TIMING DEFECT, NOT
+A PRODUCT RACE.** The first version of this paragraph read the pull-back as the
+keeper correcting a scroll it did not make, through its `passive` listeners. The
+trace of the merged head's failure (run 37102458223) says otherwise. Every DOM
+snapshot from the reveal (1152 ms) to the end of `mouse.wheel(0, -600)` (2110 ms)
+is the same document with its scroll top at **1442**, and NO frame was painted
+during the 496 ms wheel. The two frames either side show the same view, with only
+the errors table filling in (`/errors` is not held), on a busy WebKit main
+thread. So the wheel had not scrolled the page when the test released the held
+requests, and the reader never took over. The final 1497 is a small drift after
+the page grew 2162 to 2553; a pull-back to the target's rest would sit near
+1824. **The case's guards check that the reveal scrolled and that the page grew,
+never that the wheel moved anything**, so a wheel that did not land reads as the
+keeper winning. The fix is in the test (wait for the reader's scroll before
+releasing), and the hardening task filed for the keeper was corrected to say so.
+
+**RE-MEASURED AFTER MERGING `main`**, where the test-app-loopback and
+runner-status-codes branches had both landed: `typecheck` and `lint` exit 0;
+`test:unit` **194 / 2667**, zero `Errors` lines; `test:integration` **182 / 2353,
+exit 0, zero failures**; `pnpm test:e2e` **184 passed, exit 0** — each the three
+branches' arithmetic, predicted before the run, on the same scratch stores, at
+`84060cf`. The final merge of `main` (`7a72182`, the runner-status PR's merge
+commit) changed no byte: `84060cf` and the head after it share tree `0e9c154`.
+**Two things moved with the merge.** `packages.integration.test.ts`' two
+hand-built request helpers bound the app's server themselves (`listen(0,
+'127.0.0.1')`) and closed it afterwards; against `createTestApp`'s server, now
+listening before it returns, that is a second listen and a close that would end
+every later request in the test, so both read the port they were given and close
+nothing. And the retry case's comment, that the document "declares 200" for
+retry, is true no longer. The three-engine dispatch on `84060cf` collected 552,
+passed 546, skipped 5 and failed the same WebKit case, both attempts (1497 vs
+1442, 1544 vs 1447): the twelfth job of the tally above, which now reads FAILED 3 of 6
+on this branch against 0 of 6 on `main` (Fisher p ≈ 0.09), and the one whose trace is read in
+the paragraph above.
+
+**DISPATCH BRANCH RUNS ONE AT A TIME.** CI's concurrency group is keyed on the
+ref for every branch but `main`, with cancel-in-progress, so a second dispatch
+on a branch cancels the first — one of the rate runs here was lost that way.
+`main` runs each get their own group, which is why its dispatches survived
+side by side.
 
 The runner-status-codes branch added no unit FILE and no unit case — unit
 stays **188 / 2526** — and one case each to
