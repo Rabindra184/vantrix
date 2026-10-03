@@ -21,6 +21,7 @@ import { mountSecurityHeaders } from '../../src/security-headers.js';
 import { mountSpa } from '../../src/spa.js';
 import { hashToken, mintToken } from '@perfportal/core';
 import { SCHEMA_TABLES } from '@perfportal/persistence';
+import { listenNestOnLoopback } from './loopback.js';
 
 const FIXTURE_WEB_DIST = resolve(import.meta.dirname, '../fixtures/web-dist');
 
@@ -78,7 +79,12 @@ export async function createTestApp(
 
   app.useGlobalFilters(new ProblemFilter());
   mountOpenApi(app);
-  await app.init();
+  // LISTENING, on 127.0.0.1, before anything else: supertest then reuses this
+  // server rather than calling `listen(0)` on the wildcard address per
+  // request, which can share a port another process holds on 127.0.0.1 and
+  // hand it the request — the `501 {}` CLAUDE.md long blamed on load. See
+  // ./loopback.ts. `listen` runs `init()` itself; `app.close()` stops it.
+  await listenNestOnLoopback(app);
 
   const prisma = app.get(PrismaClient);
   const pool = app.get(pg.Pool);

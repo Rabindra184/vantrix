@@ -44,16 +44,13 @@ afterEach(async () => {
 });
 
 /**
- * Every other suite here drives the app through supertest, which listens on
- * an ephemeral port per request. A WebSocket upgrade needs a URL, so this
- * one has to bind the server itself. `listen()` re-enters `init()` and Nest
- * makes that idempotent, so calling it after createTestApp() is safe, and
- * `ctx.close()` stops it again.
+ * A WebSocket upgrade needs a URL. createTestApp() already listens, on
+ * 127.0.0.1 (see ./support/loopback.ts), so this reads the port it was given
+ * rather than binding the server a second time; `ctx.close()` stops it.
  */
 async function start(): Promise<number> {
   ctx = await createTestApp();
   redis = new Redis(REDIS_URL);
-  await ctx.app.listen(0);
   return (ctx.app.getHttpServer().address() as AddressInfo).port;
 }
 

@@ -34,6 +34,9 @@ export default defineConfig({
     // Integration tests share one Postgres; running files in parallel would
     // let one file's truncate wipe another's fixtures mid-assertion.
     fileParallelism: false,
+    // Refuses a test server that listens on the wildcard address with an
+    // ephemeral port: apps/api/test/support/loopback-guard.ts says why.
+    setupFiles: ['./apps/api/test/support/loopback-guard.ts'],
     testTimeout: 120_000,
     hookTimeout: 120_000,
   },
