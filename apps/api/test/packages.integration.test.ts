@@ -171,71 +171,70 @@ function chunkedPut(
   gapMs: number,
 ): Promise<{ status: number; body: { code?: string } }> {
   return new Promise((resolve, reject) => {
-    const server = ctx.app.getHttpServer() as Server;
-    server.listen(0, '127.0.0.1', () => {
-      const { port } = server.address() as AddressInfo;
-      // keep-alive, so the server does not simply hang up once it has answered.
-      const agent = new Agent({ keepAlive: true });
-      let result: { status: number; body: { code?: string } } | null = null;
-      let finished = false;
-      let settled = false;
-      const done = (error?: Error): void => {
-        if (settled) return;
-        if (error === undefined && (result === null || !finished)) return;
-        settled = true;
-        clearTimeout(deadline);
-        agent.destroy();
-        server.close();
-        if (error !== undefined) reject(error);
-        else resolve(result!);
-      };
-      // The request DEADLINE: a hang fails here, not in the file's own timeout.
-      const deadline = setTimeout(
-        () =>
-          done(
-            new Error(
-              result === null
-                ? 'no response within 5s'
-                : 'the 413 arrived but the client could not finish sending: the server stopped reading the request',
-            ),
+    // createTestApp() is already listening on 127.0.0.1 (support/loopback.ts),
+    // so this opens its socket to THAT port rather than binding the server a
+    // second time, and leaves it listening for the rest of the test.
+    const { port } = (ctx.app.getHttpServer() as Server).address() as AddressInfo;
+    // keep-alive, so the server does not simply hang up once it has answered.
+    const agent = new Agent({ keepAlive: true });
+    let result: { status: number; body: { code?: string } } | null = null;
+    let finished = false;
+    let settled = false;
+    const done = (error?: Error): void => {
+      if (settled) return;
+      if (error === undefined && (result === null || !finished)) return;
+      settled = true;
+      clearTimeout(deadline);
+      agent.destroy();
+      if (error !== undefined) reject(error);
+      else resolve(result!);
+    };
+    // The request DEADLINE: a hang fails here, not in the file's own timeout.
+    const deadline = setTimeout(
+      () =>
+        done(
+          new Error(
+            result === null
+              ? 'no response within 5s'
+              : 'the 413 arrived but the client could not finish sending: the server stopped reading the request',
           ),
-        5_000,
-      );
-      const req = httpRequest(
-        {
-          host: '127.0.0.1',
-          port,
-          method: 'PUT',
-          path: pathAndQuery,
-          agent,
-          headers: { ...auth, 'Content-Type': 'application/octet-stream' },
-        },
-        (res) => {
-          const parts: Buffer[] = [];
-          res.on('data', (part: Buffer) => parts.push(part));
-          res.on('end', () => {
-            result = {
-              status: res.statusCode ?? 0,
-              body: JSON.parse(Buffer.concat(parts).toString('utf8') || '{}') as { code?: string },
-            };
-            done();
-          });
-        },
-      );
-      req.on('finish', () => {
-        finished = true;
-        done();
-      });
-      req.on('error', (err) => done(err));
-      void (async () => {
-        for (const chunk of chunks) {
-          if (req.destroyed) return;
-          req.write(chunk);
-          await new Promise((next) => setTimeout(next, gapMs));
-        }
-        if (!req.destroyed) req.end();
-      })();
+        ),
+      5_000,
+    );
+    const req = httpRequest(
+      {
+        host: '127.0.0.1',
+        port,
+        method: 'PUT',
+        path: pathAndQuery,
+        agent,
+        headers: { ...auth, 'Content-Type': 'application/octet-stream' },
+      },
+      (res) => {
+        const parts: Buffer[] = [];
+        res.on('data', (part: Buffer) => parts.push(part));
+        res.on('end', () => {
+          result = {
+            status: res.statusCode ?? 0,
+            body: JSON.parse(Buffer.concat(parts).toString('utf8') || '{}') as { code?: string },
+          };
+          done();
+        });
+      },
+    );
+    req.on('finish', () => {
+      finished = true;
+      done();
     });
+    req.on('error', (err) => done(err));
+    void (async () => {
+      for (const chunk of chunks) {
+        if (req.destroyed) return;
+        req.write(chunk);
+        await new Promise((next) => setTimeout(next, gapMs));
+      }
+      if (!req.destroyed) req.end();
+    })();
   });
 }
 
@@ -281,7 +280,7 @@ async function abortWhileParked(
     }
   };
   server.on('request', watch);
-  await new Promise<void>((listening) => server.listen(0, '127.0.0.1', listening));
+  // createTestApp() is already listening on 127.0.0.1 (support/loopback.ts).
   const { port } = server.address() as AddressInfo;
 
   let handlerParked!: () => void;
@@ -307,7 +306,6 @@ async function abortWhileParked(
         await vi.waitFor(() => expect(serverRes!.writableEnded).toBe(true), { timeout: 5_000, interval: 10 });
       } finally {
         server.off('request', watch);
-        server.close();
       }
       return { status: serverRes!.statusCode, body: JSON.parse(answered || '{}') as { code?: string } };
     },

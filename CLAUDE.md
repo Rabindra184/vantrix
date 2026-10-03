@@ -128,7 +128,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **193 files / 2663 tests**, it
+`nvm use` first, and if a run reports fewer than **194 files / 2667 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -390,7 +390,8 @@ answers `501 ""`; `listen(0)` landed on a held port **3 times in 20,000** —
 3/16384, the ephemeral range. **Every "501 {}, the machine answering under load"
 in the entries below is this**, and so, plausibly, are some of the `socket hang
 up`s; "no test failed twice" was its signature all along. The fix — listen the
-test app on `127.0.0.1` explicitly — is its own branch.
+test app on `127.0.0.1` explicitly — is its own branch: the test-app-loopback
+branch, which merged before this one.
 
 **THE EARLY CROSS-BROWSER RUN FAILED ONE WEBKIT CASE THIS BRANCH CANNOT REACH.**
 Dispatched on `08ffbad`: 549 collected (183 × 3), 543 passed, 5 skipped, 1
@@ -518,7 +519,9 @@ stay as the database's newest real runs.
     same); whether the API, which writes the files, should own their removal is
     its own branch.
   - Runner retry and cancel answer **201** while the OpenAPI document says 200;
-    neither handler has `@HttpCode`. Pre-existing, its own branch.
+    neither handler has `@HttpCode`. Pre-existing, its own branch. Done by the
+    runner-status-codes branch, which merged before this one: cancel answers 200,
+    retry keeps 201 and the document now says so.
   - An upload-and-start naming no package, whose stem's package holds the OTHER
     kind, is refused `PACKAGE_KIND_MISMATCH` (the remediation names the `package`
     field). A project that uploaded both `load.jar` and `load.zip` before this
@@ -590,6 +593,198 @@ ref for every branch but `main`, with cancel-in-progress, so a second dispatch
 on a branch cancels the first — one of the rate runs here was lost that way.
 `main` runs each get their own group, which is why its dispatches survived
 side by side.
+
+The runner-status-codes branch added no unit FILE and no unit case — unit
+stays **188 / 2526** — and one case each to
+`apps/api/test/openapi.integration.test.ts` and
+`apps/api/test/runner.integration.test.ts`, from **173 / 2187 to
+173 / 2189**. **e2e stays 180.**
+
+**TWO RUNNER ENDPOINTS ANSWERED A STATUS THEIR CONTRACT DID NOT DECLARE.**
+`POST …/runner/runs/{jobId}/cancel` and `…/retry` carry no `@HttpCode`, so Nest
+answered both with its `@Post` default, **201**, while `document.ts` declared
+**200** for each. A generated client branching on the declared status took its
+error path on every successful cancel and retry. The browser never noticed:
+`apiFetch` checks `res.ok`, and nothing in `clients/` or `agent/` calls either.
+
+**THEY DIFFER NOW ON PURPOSE, AND THE TEST IS WHAT EACH ONE CREATES.** A cancel
+moves a job that already exists to `cancelled` and creates nothing, so it takes
+`@HttpCode(200)` — the document was right and the code changes. A retry
+`INSERT`s a NEW job (its own id, `queued`, every field the operator chose) and
+returns it after re-reading it, so it is complete and addressable when the
+response is sent: the list carries it in the next read. That is the standard
+the 201 allowlist already holds `POST …/runner/runs` to, so retry KEEPS 201 —
+the code was right, the document changes, and the allowlist names it with the
+measurement. Changing the wire for retry to match a wrong document would have
+broken every client that already saw 201 to buy agreement with a sentence
+nobody had checked.
+
+**NOTHING COMPARED A HANDLER'S STATUS WITH ITS DOCUMENT, AND THE 201 LIST LOOKS
+LIKE IT DOES.** That case asks only whether an operation is ALLOWED to declare
+201; it never asks what the handler sends, so a POST declaring 200 while
+answering 201 sails past it. The path-param sweep is GET-only. **So the status
+is derived**, from the same metadata the route-coverage cases already walk:
+`@HttpCode`, else Nest's own default (201 for POST, 200 otherwise,
+`RouterResponseController.setStatus`). A handler that returns normally can send
+exactly one 2xx, so its operation must declare exactly that one — a wrong code
+and a spare one fail alike. A handler taking `@Res()` without passthrough
+writes its own status (the run state machine's 200/202/422, the live protocol's
+202) and is out of scope, read off `ROUTE_ARGS_METADATA` on the CLASS, keyed by
+method name. **On the tree before this branch it named exactly these two and
+nothing else** — measured by a probe of every operation's declared 2xx before
+it was written, so the guard ships with no exemptions.
+
+**THE VACUITY GUARDS COUNT THE CONSTRUCT.** `@Res()` handlers FOUND (six) and
+`@HttpCode` handlers FOUND (five), never how many agree — and `@HttpCode`
+presence, not "status differs from the default", because `@HttpCode(201)` on a
+POST changes nothing and three handlers carry exactly that.
+
+**AND A BEHAVIOURAL CASE HOLDS THE REAL RESPONSES TO THE DOCUMENT.** It queues a
+real job, cancels it, retries the cancelled job, and asserts each observed
+status EQUALS the document's declared 2xx before it asserts which number —
+the claim is agreement, and a case that restated 200 and 201 by hand would pass
+the day both drifted together. The list read afterwards is what makes the 201
+honest.
+
+**RED-VERIFIED FROM THE CHECKPOINT COMMIT**, each mutation's replacement count
+asserted, the two files run, and the tree clean after each — every failure read
+at the assertion it landed on, not just counted:
+
+```
+  main as it is (cancel default,     the derived case naming BOTH ("cancel: sends 201,
+    retry documented 200)            declares 200", "retry: sends 201, declares 200"), the
+                                     201 list (retry listed, declares no 201) and the
+                                     behavioural case at the cancel agreement
+  cancel's @HttpCode(200) removed    the derived case naming cancel alone, and the
+                                     behavioural case at the cancel agreement
+  retry documented 200 again         the derived case naming retry alone, the 201 list,
+                                     and the behavioural case at the retry agreement
+  BOTH wrong together (cancel        the derived case PASSES — code and document agree;
+    sends and documents 201)         the 201 list catches it (cancel is not a create),
+                                     and the behavioural case at toBe(200)
+  @Res() never recognised            the derived case alone, at its vacuity guard
+                                     ("found no @Res() handlers")
+  the @HttpCode key misread (2 sites) the derived case alone, at its vacuity guard
+                                     ("found no @HttpCode handlers")
+```
+
+**THE FOURTH ROW IS WHY THE BEHAVIOURAL CASE PINS THE NUMBER AFTER THE
+AGREEMENT.** A cancel that sends 201 AND documents 201 satisfies the derived
+case perfectly; only the 201 list's "is this a create" and the behavioural
+case's 200 stand between that and a client told a cancel created something.
+
+**AND `feat/packages` EDITS BOTH FILES.** `runner.controller.ts` and
+`document.ts` change there too; whichever lands second resolves the conflict,
+and the derived case is what says whether the resolution kept the statuses.
+
+**WHAT WAS RUN.** `typecheck` and `lint` exit 0 by their own exit codes; `test:unit` **188 / 2526**,
+unchanged as predicted, zero `Errors` lines; `test:integration` **173 / 2189, exit
+0, zero failures**, the prediction exactly (2187 plus the two cases); `pnpm
+test:e2e` **180 passed, exit 0** — against a SCRATCH DATABASE
+(`perfportal_runnerstatus`), a scratch Redis INDEX (db 6) and e2e port 4400.
+Integration started at a 1-minute load of 7.72.
+
+**RE-MEASURED AFTER MERGING `main`**, where the test-app-loopback branch had
+landed underneath it: `typecheck` and `lint` exit 0; `test:unit` **189 / 2530**,
+zero `Errors` lines; `test:integration` **175 / 2194, exit 0, zero failures** —
+loopback's 175 / 2192 plus this branch's two; `pnpm test:e2e` **180 passed, exit
+0**. Each total predicted before the run, on the same scratch stores; the two
+cases here hand supertest the server `createTestApp` now listens on, so the
+guard that branch added has nothing to refuse.
+
+The test-app-loopback branch added ONE unit file — `apps/api/test/loopback.test.ts`
+(4, one of them macOS-only) — from **188 / 2526 to 189 / 2530**. Integration
+gains that file and `apps/api/test/test-app-loopback.integration.test.ts` (1),
+from **173 / 2187 to 175 / 2192**, and **e2e stays 180**. **On Linux CI the
+macOS case is SKIPPED**, so its totals read `2529 passed | 1 skipped (2530)` and
+`2191 passed | 1 skipped (2192)`; the floor is the total, not the passes.
+
+**THE RECURRING `501 {}` WAS NEVER THE MACHINE. IT WAS ANOTHER PROCESS
+ANSWERING.** This file records it seven times as "the machine answering under
+load" — from the OpenAPI document, a telemetry sweep, a bearer read, a session
+setup, and once from a bare Express app with no database at all. Found while
+building the packages branch: LogiPlugin listens on `127.0.0.1:60503`,
+`:60505` and `:60507` and answers EVERY method with 501 and an empty body.
+`createTestApp` ran `app.init()` and never `listen()`, so every
+`request(ctx.app.getHttpServer())` made supertest call `listen(0)` — an
+ephemeral port on the WILDCARD address — and then connect to
+`127.0.0.1:<port>`. **macOS lets a wildcard bind share a port a specific
+`127.0.0.1` listener already holds, and the connection reaches the more
+specific listener.** Measured: a `::` bind on 60503 succeeds and a POST to
+`127.0.0.1:60503` answers `501 ""`; `listen(0)` landed on one of the three held
+ports **3 times in 20,000** — 3 / 16,384, the ephemeral range. With thousands
+of supertest requests per full integration run, that is roughly one failure per
+run, a different test each time, never the same test twice — which is exactly
+the signature this file kept recording, and why "no test failed twice" read as
+proof of load when it was proof of chance. Linux refuses the wildcard bind
+outright, so CI never saw one.
+
+**EVERY TEST SERVER NOW LISTENS ON 127.0.0.1, NAMED.** A server bound to
+`127.0.0.1` cannot be handed a port another `127.0.0.1` listener holds
+(`EADDRINUSE`, on both operating systems), so the collision is impossible
+rather than rare. `createTestApp` listens before it returns and supertest
+reuses that server; `auth.integration.test.ts`'s two hand-built apps and
+`security-headers.test.ts`'s bare Express apps go through the same helper
+(`apps/api/test/support/loopback.ts`), and `live-gateway.integration.test.ts`
+reads the port it was given instead of binding a second time.
+
+**AND THE SHAPE REFUSES ITSELF, BECAUSE A RULE EVERY SUITE MUST REMEMBER IS A
+RULE THE NEXT SUITE FORGETS.** `apps/api/test/support/loopback-guard.ts` is a
+setup file in BOTH vitest configs: `http.Server`'s `listen(0)` or bare
+`listen()` with no host throws, naming the helper. An explicit host, an
+explicit port or a socket path passes untouched, and only `http.Server` is
+patched — the class supertest creates. `loopback.test.ts`'s first case is the
+guard's own witness: it fails if the setup file is not loaded, in either
+config.
+
+**THE DEFECT IS KEPT AS A TEST, ON THE ONE PLATFORM THAT HAS IT.** The fourth
+case binds a 501 squatter on `127.0.0.1`, binds a wildcard listener on the same
+explicit port, and asserts a request to `127.0.0.1` gets the squatter's `501 ""`
+— `it.runIf(process.platform === 'darwin')`, because Linux refuses that bind.
+It passed BEFORE the fix, which is the point: it reproduces the mechanism, not
+a regression. The third case pins the property the fix rests on, `EADDRINUSE`
+for a loopback bind of a held port, everywhere.
+
+**RED-VERIFIED FROM A CHECKPOINT COMMIT**, each mutation's replacement count
+asserted and the tree clean after each:
+
+```
+  createTestApp back to init()           the integration case + every supertest call in
+                                         tests.integration (34 of 34), refused by the guard
+                                         with its own message
+  guard unregistered (integration config) the guard's witness case alone
+  guard unregistered (unit config)        the guard's witness case alone
+  guard never refuses                     the guard's witness case alone
+  one security-headers request on the     that case alone ("serves the identity bytes...")
+    bare Express app again
+  live-gateway binding listen(0) again    all 16 of its cases
+```
+
+**AND `Parse Error: Expected HTTP/, RTSP/ or ICE/` AND `socket hang up` ARE
+PLAUSIBLY THE SAME CLASS, NOT PROVEN.** Both are a supertest socket meeting
+something that is not this API — a non-HTTP listener on a shared port, or one
+that closes — and this file records both as transport noise under load. Only
+the 501 was measured; the guard closes all three shapes at once, so whether
+they recur is the evidence.
+
+**THE ENTRIES THAT READ THE 501 AS LOAD ARE CORRECTED IN PLACE**, each with a
+bracketed note pointing here, and their history kept: their reasoning about
+which tests a branch could reach was sound, and only the cause was wrong. Three
+notes say "very likely" rather than "was" — the `{}` bodies and the ZodErrors over
+every-field-undefined, which is what a `501 ""` reads as through supertest but
+whose status nobody recorded — and five say "plausibly", on the `socket hang up`
+and `Parse Error` sites, because those were never measured.
+
+**WHAT WAS RUN.** `typecheck` and `lint` exit 0 by their own exit codes; `test:unit` **189 / 2530**,
+zero `Errors` lines (on macOS, so the darwin case ran and all 2530 passed);
+`test:integration` **175 / 2192, exit 0, zero failures**; `pnpm test:e2e` **180
+passed, exit 0** — each total the one predicted before the run, against a SCRATCH
+DATABASE (`perfportal_loopback`), a scratch Redis INDEX (db 13) and e2e port 4300.
+Integration started at a 1-minute load of 6.88 with about 3,900 free pages and 92%
+of swap in use — the pressure this file would once have blamed for a 501 — and ran
+clean. **One clean run is consistent with the fix and is not proof of it**: the old
+rate was roughly one failure per run. What makes it proof is the guard, because the
+shape that produced the 501 can no longer be written.
 
 The sla-values-rounded branch added no unit FILE and 18 cases — 12 to
 `packages/contracts/test/rules.test.ts`, 2 each to
@@ -790,7 +985,7 @@ happens, fails that case alone. `typecheck` and `lint` exit 0; `test:unit`
 test:e2e` **180**, each the prediction exactly, with ONE failure apiece:
 `read.integration.test.ts`'s "is identical to omitting the parameter when a
 token names its own project", a body of `{}` — the non-2xx pressure shape this
-file records — and `acceptance.spec.ts`'s keyboard-and-chart-table case, the
+file records **[Corrected later: an empty `{}` body is what the measured `501 ""` from a local process on `127.0.0.1:605xx` reads as through supertest — very likely that, not load; the status was not recorded. See the test-app-loopback entry.]** — and `acceptance.spec.ts`'s keyboard-and-chart-table case, the
 menu item never appearing, the intermittent this file records three times.
 This branch changes how a value is formatted and reaches neither a run list
 nor a menu, and each file then passed alone **five times out of five** (39 / 39
@@ -1363,7 +1558,7 @@ which is what a real abandoned stream carries.
 **170 / 2088** — the prediction exactly — with ONE failure:
 `trends.integration.test.ts`'s "puts the asked-about run in its own cohort",
 a `ZodError` over a body with every field undefined, which is the non-2xx
-pressure shape this file records, in a run that STARTED at **3,622 free
+pressure shape this file records, **[Corrected later: an empty `{}` body is what the measured `501 ""` from a local process on `127.0.0.1:605xx` reads as through supertest — very likely that, not load; the status was not recorded. See the test-app-loopback entry.]** in a run that STARTED at **3,622 free
 pages**. That file then passed **20 / 20, five times out of five**, at a load
 of 17. This branch touches the sweeper and its test file and nothing an API
 read reaches. Against a SCRATCH DATABASE (`perfportal_sweeperkeep`), a scratch
@@ -1818,7 +2013,7 @@ the three zone-sensitive files 46/46 under `TZ=UTC`; `test:integration`
 COLLECTED **170 / 2086**, the prediction exactly, with ONE failure:
 `session-auth.integration.test.ts`'s "filters by project slug for a session",
 a **501** from `POST /v1/runs` in its SETUP — the machine-answering signature
-this file records — and the file then passed **19/19 five times out of five**
+this file records — **[Corrected later: this 501 was a local process on `127.0.0.1:605xx` answering a port supertest had bound on the wildcard address, not load — see the test-app-loopback entry.]** and the file then passed **19/19 five times out of five**
 alone; `pnpm test:e2e` **168 passed, exit 0**; the schema-matches-migrations
 guard exit 0. Integration and e2e ran on the tree before the border commit,
 which changes one `className` in a `.tsx` that no integration config includes
@@ -2037,7 +2232,7 @@ runs — which no case can park, since nothing blocks a LISTEN.
 `trends.integration.test.ts`'s "follows test_id rather than the simulation
 string when they disagree", a `TrendsResponseSchema.parse` over a body with
 every field undefined, which is the non-2xx body this file already records as
-the pressure shape. It seeds rows directly and issues one GET, so it never
+the pressure shape. **[Corrected later: an empty `{}` body is what the measured `501 ""` from a local process on `127.0.0.1:605xx` reads as through supertest — very likely that, not load; the status was not recorded. See the test-app-loopback entry.]** It seeds rows directly and issues one GET, so it never
 waits on the waiter, whose only part in it is `createTestApp` starting it — an
 argument, so the rate was measured too: that file **20 of 20, five times out
 of five**, at a 1-minute load of 14, higher than the failing run's. Against a
@@ -2050,7 +2245,7 @@ landed: unit **174 / 2233**, `pnpm test:e2e` **166 passed, exit 0**,
 typecheck and lint exit 0, and `test:integration` COLLECTED **162 / 2006** —
 the arithmetic, predicted — with ONE failure again, and a DIFFERENT one:
 `openapi.integration.test.ts`'s 201 case, on `GET /v1/openapi.json -> 501:
-{}`, the exact signature this file records for that endpoint under load.
+{}`, the exact signature this file records for that endpoint under load. **[Corrected later: this 501 was a local process on `127.0.0.1:605xx` answering a port supertest had bound on the wildcard address, not load — see the test-app-loopback entry.]**
 That file then passed **29 of 29, five times out of five**. Two full runs, a
 different failure in each, neither reachable from a waiter that no GET in
 either case ever waits on, and **no test failed twice** — this file's tell for
@@ -2933,7 +3128,7 @@ with ONE failure: `read.integration.test.ts`'s "clamps a negative limit",
 **a 501** on a bearer `GET /v1/projects/checkout/runs`, a route this branch
 does not touch, in a run that STARTED at a 1-minute load of 19. That is the
 signature this file already records as the machine answering rather than an
-endpoint, and the file then passed **39/39 five times out of five** alone.
+endpoint, **[Corrected later: this 501 was a local process on `127.0.0.1:605xx` answering a port supertest had bound on the wildcard address, not load — see the test-app-loopback entry.]** and the file then passed **39/39 five times out of five** alone.
 `pnpm test:e2e` collected **159** with ONE failure: `acceptance.spec.ts`'s
 keyboard-and-chart-table case, the intermittent this file records twice
 already, which no bearer-side change can reach — the browser never sends a
@@ -3769,12 +3964,12 @@ it produced stays as the database's tenth real run.
 
 **AND INTEGRATION FLAKED ONCE PER RUN, ON A DIFFERENT FILE EACH TIME, NEITHER
 REACHABLE.** Four full runs. The first failed `openapi.integration.test.ts`'s
-path-param sweep on `socket hang up` — 28/28 five times alone, and the next
+path-param sweep on `socket hang up` **[Corrected later: plausibly not load either — a supertest request whose wildcard-bound port a local process shares on `127.0.0.1` fails at the transport like this. Only the 501 was measured; see the test-app-loopback entry.]** — 28/28 five times alone, and the next
 full run clean. The third failed `security-headers.test.ts`'s "forbids inline
 script on the app's own policy" with a **501** from a supertest server over a
 temp directory: no database, no queue, nothing this branch touches, and it had
 passed in both unit runs of the same gate run — 18/18 five times alone, and the
-fourth full run clean. **No test failed twice.** The 501 is worth
+fourth full run clean. **No test failed twice.** **[Corrected later: this 501 was a local process on `127.0.0.1:605xx` answering a port supertest had bound on the wildcard address, not load — see the test-app-loopback entry.]** The 501 is worth
 recognising: this file records it before from the OpenAPI document and from
 the telemetry probe, always under load, and here it came from a bare Express
 app — so it is the machine answering, not an endpoint.
@@ -3953,7 +4148,7 @@ named" — `expected 403 to be 201` on a session-authenticated
 times before, always fetching `GET /v1/openapi.json` itself under contention
 (401, then 400, then 501) — this is a FOURTH occurrence and a different call
 site, the sweep's own probe against a real route rather than the document
-fetch, but the same transient-under-pressure shape. This branch touches
+fetch, but the same transient-under-pressure shape. **[Corrected later: this 501 was a local process on `127.0.0.1:605xx` answering a port supertest had bound on the wildcard address, not load — see the test-app-loopback entry.]** This branch touches
 nothing under `apps/api`, so neither failing file is reachable by its diff.
 **No test failed twice**, which is this file's own tell for the flake rather
 than the defect: a third full run, on a freshly re-checked machine, collected
@@ -5340,7 +5535,7 @@ exactly that COLLECTION twice, which is the number that matters. **Both runs
 carried one failure and they were different failures**: the first was this
 branch rotting an existing test (a real defect, fixed — see below); the second
 was `project-ingest.integration.test.ts` on `Error: socket hang up`, a
-TRANSPORT failure this file already records by signature, which passes **8/8
+TRANSPORT failure this file already records by signature, **[Corrected later: plausibly not load either — a supertest request whose wildcard-bound port a local process shares on `127.0.0.1` fails at the transport like this. Only the 501 was measured; see the test-app-loopback entry.]** which passes **8/8
 in isolation** and which a diff of one migration, two test files and two
 documents cannot reach — the reference run is dated 2026, so the new
 partitions are not even in its path. **No test failed twice**, which is the
@@ -6228,7 +6423,7 @@ passed with ONE failure:
 in the live protocol. Isolated, that file is **33 passed, exit 0**.
 
 **AND `socket hang up` IS THE SIGNATURE THIS FILE ALREADY NAMES ONE CODE
-OVER.** It records `Parse Error: Expected HTTP/, RTSP/ or ICE/` as a shape that
+OVER.** **[Corrected later: plausibly not load either — a supertest request whose wildcard-bound port a local process shares on `127.0.0.1` fails at the transport like this. Only the 501 was measured; see the test-app-loopback entry.]** It records `Parse Error: Expected HTTP/, RTSP/ or ICE/` as a shape that
 "cannot be produced by any application-level diff"; a hang-up is the same seam
 reached from the other side — the connection died rather than delivering
 something unparseable. It landed on the one case in that file whose defect is a
@@ -8240,6 +8435,8 @@ failed twice**:
           window-bench          1088ms against a 500ms budget
 ```
 
+**[Corrected later: this 501 was a local process on `127.0.0.1:605xx` answering a port supertest had bound on the wildcard address, not load — see the test-app-loopback entry.]**
+
 All six pass in isolation (102/102 and 31/31). Two are shapes this file
 already names by signature — a socket receiving non-HTTP bytes "cannot be
 produced by any application-level diff", and a wall-clock budget missed by 2x
@@ -8268,7 +8465,7 @@ entry) and **501** here. Three codes, one endpoint, every occurrence transient
 and under memory pressure — which retires the "mechanism undiagnosed" wording
 those two entries carry. A document defect does not change its status code per
 run, and the file passes 23/23 alone every time; this is the API failing to
-serve while the machine is contended. Check `vm_stat` before opening it.
+serve while the machine is contended. Check `vm_stat` before opening it. **[Corrected later: this 501 was a local process on `127.0.0.1:605xx` answering a port supertest had bound on the wildcard address, not load — see the test-app-loopback entry.]**
 
 **AND PORT 3000 WAS HELD BY THE SAME UNRELATED CHECKOUT AS LAST TIME.**
 `pnpm test:e2e` refused before a single spec; the holder was a `remotion`
@@ -9141,7 +9338,7 @@ suite. `vm_stat` said **4,856 free pages** with 17,007 MB of 18,432 MB of swap
 gone, which is worse than the 4,390 this file already calls untrustworthy, at
 a load average of 6.18 — the low-load-high-swap combination this file warns
 reads as health. Re-run alone, the two files pass **29 / 29**. CI's clean
-containers are the arbiter.
+containers are the arbiter. **[Corrected later: plausibly not load either — a supertest request whose wildcard-bound port a local process shares on `127.0.0.1` fails at the transport like this. Only the 501 was measured; see the test-app-loopback entry.]**
 
 The conditional-spread-sweep branch added no unit FILE, no unit case and no
 spec — unit stays **154 / 1951**, integration **137 / 1758** and **e2e stays
@@ -14355,7 +14552,7 @@ pressure, not either side of a change. The tell that should have redirected the
 search sooner is the ERROR CLASS — among them a
 `Parse Error: Expected HTTP/, RTSP/ or ICE/`, which is a socket receiving
 non-HTTP bytes and cannot be produced by any application-level diff, let alone
-one touching only `apps/web`.
+one touching only `apps/web`. **[Corrected later: plausibly not load either — a supertest request whose wildcard-bound port a local process shares on `127.0.0.1` fails at the transport like this. Only the 501 was measured; see the test-app-loopback entry.]**
 
 The review-0913-majors branch added ONE unit file —
 `apps/web/test/ToolAssertions.test.tsx` (9) — and 14 cases (12 to
