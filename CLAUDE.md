@@ -236,6 +236,14 @@ test:e2e` **180 passed, exit 0** — against a SCRATCH DATABASE
 (`perfportal_runnerstatus`), a scratch Redis INDEX (db 6) and e2e port 4400.
 Integration started at a 1-minute load of 7.72.
 
+**RE-MEASURED AFTER MERGING `main`**, where the test-app-loopback branch had
+landed underneath it: `typecheck` and `lint` exit 0; `test:unit` **189 / 2530**,
+zero `Errors` lines; `test:integration` **175 / 2194, exit 0, zero failures** —
+loopback's 175 / 2192 plus this branch's two; `pnpm test:e2e` **180 passed, exit
+0**. Each total predicted before the run, on the same scratch stores; the two
+cases here hand supertest the server `createTestApp` now listens on, so the
+guard that branch added has nothing to refuse.
+
 The test-app-loopback branch added ONE unit file — `apps/api/test/loopback.test.ts`
 (4, one of them macOS-only) — from **188 / 2526 to 189 / 2530**. Integration
 gains that file and `apps/api/test/test-app-loopback.integration.test.ts` (1),
