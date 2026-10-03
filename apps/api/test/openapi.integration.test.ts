@@ -4,7 +4,14 @@ import { validate } from '@readme/openapi-parser';
 import request from 'supertest';
 import { afterEach, describe, expect, it } from 'vitest';
 import { RequestMethod } from '@nestjs/common';
-import { GUARDS_METADATA, METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants.js';
+import {
+  GUARDS_METADATA,
+  HTTP_CODE_METADATA,
+  METHOD_METADATA,
+  PATH_METADATA,
+  ROUTE_ARGS_METADATA,
+} from '@nestjs/common/constants.js';
+import { RouteParamtypes } from '@nestjs/common/enums/route-paramtypes.enum.js';
 import { AppModule } from '../src/app.module.js';
 import { SessionOnlyGuard } from '../src/auth/session-only.guard.js';
 import { createTestApp, type TestContext } from './support/app.js';
@@ -115,7 +122,7 @@ describe('OpenAPI document', () => {
   // `/rules/{ruleId}` — the PATCH and DELETE beside it work on the id in
   // that very response. Nothing about the rule is deferred; what is deferred
   // is only the next RUN it will judge, which is not this resource.
-  it('never declares a 201 response on any operation except token minting, opening a live run, creating a project, creating an SLA rule, and queueing a runner job, which really do create synchronously', async () => {
+  it('never declares a 201 response on any operation except token minting, opening a live run, creating a project, creating an SLA rule, and queueing or retrying a runner job, which really do create synchronously', async () => {
     const doc = await fetchDoc();
     const CREATES_SYNCHRONOUSLY = [
       { path: '/v1/projects/{slug}/tokens', method: 'post' },
@@ -130,6 +137,13 @@ describe('OpenAPI document', () => {
       // is a different resource created asynchronously, which is exactly why
       // this response is the job and not a run.
       { path: '/v1/projects/{slug}/runner/runs', method: 'post' },
+      // MEASURED the same way, and it is the same resource: a retry INSERTs a
+      // NEW job (its own id, status queued) and returns it, and the list
+      // carries it in the very next read — runner.integration.test.ts's
+      // cancel-and-retry case asserts both. It answered 201 all along while
+      // the document said 200; what changed is that the document stopped
+      // saying otherwise. Cancel, beside it, creates nothing and answers 200.
+      { path: '/v1/projects/{slug}/runner/runs/{jobId}/retry', method: 'post' },
     ];
     for (const { path, method, op } of operations(doc)) {
       if (CREATES_SYNCHRONOUSLY.some((c) => c.path === path && c.method === method)) {
@@ -639,10 +653,32 @@ describe('the document covers exactly the routes Nest registers', () => {
     /** Whether SessionOnlyGuard sits on this handler or its controller class
      *  — read off Nest's own `@UseGuards` metadata, the same way the path is. */
     sessionOnly?: boolean;
+    /** The status Nest sends when the handler returns normally: its
+     *  `@HttpCode`, else Nest's own default — 201 for POST, 200 for anything
+     *  else (RouterResponseController.setStatus). */
+    successStatus?: number;
+    /** Whether `@HttpCode` is set at all — the construct the vacuity guard
+     *  counts, since an explicit `@HttpCode(201)` on a POST changes nothing. */
+    hasHttpCode?: boolean;
+    /** Whether the handler takes `@Res()` without passthrough, i.e. writes its
+     *  own status. Nest sends nothing for those, so `successStatus` describes
+     *  nothing they do. */
+    ownsResponse?: boolean;
   }
 
   const guardedBySessionOnly = (target: object): boolean =>
     ((Reflect.getMetadata(GUARDS_METADATA, target) as unknown[] | undefined) ?? []).includes(SessionOnlyGuard);
+
+  /** `@Res()` is recorded on the CLASS, keyed by method name, as
+   *  `"<paramtype>:<index>"` entries; passthrough leaves Nest sending. */
+  const takesOwnResponse = (ctor: object, key: string): boolean =>
+    Object.entries(
+      (Reflect.getMetadata(ROUTE_ARGS_METADATA, ctor, key) as Record<string, { data?: unknown }> | undefined) ?? {},
+    ).some(
+      ([argKey, arg]) =>
+        argKey.split(':')[0] === String(RouteParamtypes.RESPONSE) &&
+        (arg.data as { passthrough?: boolean } | undefined)?.passthrough !== true,
+    );
 
   /** Path params are compared by POSITION, not by name: `{id}` and `{runId}`
    *  are the same route shape, and the document is free to name them
@@ -674,6 +710,11 @@ describe('the document covers exactly the routes Nest registers', () => {
             method: String(RequestMethod[verb]).toLowerCase(),
             path: joined.replace(/:([A-Za-z0-9_]+)/g, '{$1}'),
             sessionOnly: classSessionOnly || guardedBySessionOnly(fn),
+            successStatus:
+              (Reflect.getMetadata(HTTP_CODE_METADATA, fn) as number | undefined) ??
+              (verb === RequestMethod.POST ? 201 : 200),
+            hasHttpCode: Reflect.getMetadata(HTTP_CODE_METADATA, fn) !== undefined,
+            ownsResponse: takesOwnResponse(c as object, key),
           });
         }
       }
@@ -764,5 +805,53 @@ describe('the document covers exactly the routes Nest registers', () => {
     const unguarded = [...declaring].filter((r) => !guarded.has(r)).sort();
     expect(undeclared, 'SessionOnlyGuard routes whose documented 403 is not SessionRequired').toEqual([]);
     expect(unguarded, 'operations documenting SessionRequired that no SessionOnlyGuard protects').toEqual([]);
+  });
+
+  /**
+   * ═══ A HANDLER SENDS ONE SUCCESS STATUS, AND THE DOCUMENT NAMES THAT ONE ═══
+   *
+   * Cancel and retry on a runner job both answered 201 — Nest's default for a
+   * `@Post` with no `@HttpCode` — while the document declared 200 for each. A
+   * generated client branching on the declared status took its error path on
+   * every success, and nothing here compared the two: the 201 list above only
+   * asks whether an operation is ALLOWED to declare 201, never what its handler
+   * actually sends.
+   *
+   * So the status is DERIVED from the same metadata Nest reads when it
+   * answers: `@HttpCode`, else 201 for POST and 200 for everything else. A
+   * handler that returns normally can send exactly that one 2xx, so its
+   * operation must declare exactly that one — which catches a wrong code and a
+   * spare one alike. A handler taking `@Res()` writes its own status (the run
+   * state machine's 200/202/422, the live protocol's 202) and is out of scope:
+   * Nest sends nothing for it, so there is nothing to derive.
+   */
+  it('declares, for every handler Nest answers for, exactly the success status Nest sends', async () => {
+    const doc = await fetchDoc();
+    const routes = registeredRoutes();
+    const answered = routes.filter((r) => !r.ownsResponse);
+
+    // VACUITY GUARDS, counting the construct rather than the verdict. A
+    // route-args walk that misreads `@Res()` would put every handler in or out
+    // of scope, and an `@HttpCode` key Nest renamed would make every status a
+    // default — under which this case could pass while checking nothing real.
+    expect(routes.length - answered.length, 'found no @Res() handlers — the route-args walk has rotted').toBeGreaterThan(3);
+    expect(answered.length).toBeGreaterThan(20);
+    expect(
+      routes.filter((r) => r.hasHttpCode).length,
+      'found no @HttpCode handlers — the HTTP_CODE_METADATA read has rotted',
+    ).toBeGreaterThan(3);
+
+    const declaredSuccess = new Map(
+      operations(doc).map(({ path, method, op }) => [
+        shape({ method, path }),
+        Object.keys(op.responses ?? {}).filter((code) => code.startsWith('2')).sort(),
+      ]),
+    );
+    const mismatched = answered
+      .map((r) => ({ route: shape(r), sends: [String(r.successStatus)], declares: declaredSuccess.get(shape(r)) }))
+      .filter((m) => m.declares !== undefined && JSON.stringify(m.declares) !== JSON.stringify(m.sends))
+      .map((m) => `${m.route}: sends ${m.sends[0]}, declares ${m.declares!.join('/') || 'no 2xx'}`)
+      .sort();
+    expect(mismatched, 'handlers whose documented success status is not the one Nest sends').toEqual([]);
   });
 });

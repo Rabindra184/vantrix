@@ -1710,9 +1710,14 @@ const paths: Record<string, PathItemObject> = {
         'a similar one. ONLY A FAILED OR CANCELLED JOB CAN BE RETRIED; any other state answers ' +
         '404, as does a job in another project.',
       parameters: [parameters['RunnerProjectSlug']!, parameters['RunnerJobId']!],
+      // 201, because a retry CREATES: the new job is written and returned
+      // whole before the response is sent. This said 200 while the handler
+      // answered 201 — Nest's @Post default — and nothing compared the two;
+      // openapi.integration.test.ts now derives every handler's status from
+      // Nest's own metadata and holds this document to it.
       responses: {
-        '200': {
-          description: 'Queued again. The NEW job, with its own id.',
+        '201': {
+          description: 'Queued again. The NEW job, with its own id, complete and addressable now.',
           content: json(schemaRef('RunnerJobActionResponse')),
         },
         '400': ref('BadRequest'),
