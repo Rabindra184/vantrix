@@ -9,6 +9,8 @@ import { ChevronLeftIcon, ChevronRightIcon, FilterIcon, PlusIcon } from '../comp
 import { SkeletonTable } from '../components/Skeleton';
 import { EmptyState, ErrorState, LoadingState } from '../components/States';
 import InfoTip from '../components/InfoTip';
+import RunTally from './RunTally';
+import SimulationName from './SimulationName';
 import TableFrame from '../components/TableFrame';
 import { INPUT, ROW, TABLE, TD, TH, THEAD } from '../components/tableStyles';
 import { ProblemError } from '../api/fetch';
@@ -28,7 +30,7 @@ import {
 // Marked's plain inline text. Same for the start-time formatter: the two
 // screens must agree about when a run started, and one definition is the
 // only way that is guaranteed.
-import { formatInstant } from './format';
+import { formatInstant, formatListInstant, zoneLabel } from './format';
 import { STATUS, VERDICT } from './marks';
 import { NEW_PROJECT_ROUTE, runPath } from './paths';
 import useDocumentTitle from '../useDocumentTitle';
@@ -52,8 +54,8 @@ type RunListItem = RunListResponse['items'][number];
  *
  * THE TABLE'S NAME IS "Runs" AND ITS CAVEAT IS BEHIND AN INFO (clean UI).
  * The caption used to be a paragraph printed above the list — what "Started"
- * means, what Focus is — met on every visit. It is the frame's `InfoTip` now,
- * the same on both layouts, and the sentence that only restated the scope
+ * means, and what the since-removed Focus column was — met on every visit. It
+ * is the frame's `InfoTip` now, the same on both layouts, and the sentence that only restated the scope
  * ("Every run in this project, newest first") is gone.
  *
  * Filters are URL state and API parameters. That is the important boundary:
@@ -194,9 +196,9 @@ export default function RunList({
               (the 09-13 review's acceptance list: slow loading)
 
               This said `columns={6}` while the table it stands in for renders
-              NINE on the org-wide list — Project, Simulation, Status, Verdict,
-              p95, Errors, Focus, Started, Environment — and eight on a
-              project's, where the constant Project column is dropped. A
+              EIGHT on the org-wide list — Project, Simulation, Status, Verdict,
+              p95, Errors, Started, Environment — and seven on a project's,
+              where the constant Project column is dropped. A
               placeholder whose shape is not the arriving content's is a
               layout jump dressed as a loading state: the whole point of
               drawing one is that nothing moves when the data lands.
@@ -205,7 +207,7 @@ export default function RunList({
               (`projectSlug === null`), so the two cannot drift — a literal
               here is what let it be wrong by three for as long as it was,
               through two column changes that never thought to look at it. */}
-          <SkeletonTable columns={projectSlug === null ? 9 : 8} rows={6} />
+          <SkeletonTable columns={projectSlug === null ? 8 : 7} rows={6} />
         </LoadingState>
       </div>
     );
@@ -236,6 +238,13 @@ export default function RunList({
   }
 
   const { items, nextCursor } = runs.data;
+  /* THE ZONE ONCE, IN STARTED'S HEADER (clean UI, PR 3). Every cell used to
+     carry it, and the year — 239px of a table that needed 1078. The header
+     names the first row's zone; a row in another (a daylight-saving change
+     between two runs) keeps its own beside its time. Empty when there are no
+     rows, which is when no table is drawn. */
+  const headerZone =
+    items[0] === undefined ? '' : zoneLabel(items[0].toolStartedAt ?? items[0].startedAt);
 
   /* What a reader needs to read two of the columns, behind the list's info
      (the clean-UI text rule). True of every scope, which is why no caller
@@ -244,8 +253,7 @@ export default function RunList({
   const info = (
     <>
       “Started” is the load test’s own start time; rows marked <em>ingest time</em> have not been
-      parsed yet, so they fall back to when PerfPortal received the run. Focus is the first
-      operational action to take from the row.
+      parsed yet, so they fall back to when PerfPortal received the run.
     </>
   );
 
@@ -271,8 +279,8 @@ export default function RunList({
         />
       ) : (
         <>
-          <RunListHealth items={items} />
-          {/* ═══ NINE COLUMNS DO NOT FIT ON A PHONE, AND SCROLLING THEM
+          <RunTally items={items} showTotal={!showHeading} />
+          {/* ═══ EIGHT COLUMNS DO NOT FIT ON A PHONE, AND SCROLLING THEM
               SIDEWAYS IS NOT A FIX (review M18) ═══
 
               The TABLE scrolls horizontally inside its box — so a reader
@@ -342,44 +350,29 @@ export default function RunList({
                     <th scope="col" className={TH}>
                       Errors
                     </th>
+                    {/* ═══ CONTEXT AFTER TRIAGE ═══
+                        (review 09-13's acceptance list; clean UI, PR 3)
+
+                        The table wanted 1078px on the org-wide list and fitted
+                        only at 1440, so it scrolled sideways on most screens —
+                        allowed ("table-local horizontal scroll is acceptable
+                        when row identity, headers, and controls remain
+                        usable"), as long as p95 and Errors are not what falls
+                        off the end. So identity, outcome and the two
+                        measurements come first, and WHEN and WHERE are what a
+                        reader scrolls to.
+
+                        Removing Focus and shortening Started (the zone once,
+                        in its header; the year only when it is not this
+                        year's) took it down to the width MEASURED on the
+                        developer database's real runs: 896px on All runs and
+                        828px on a project's list. It fits without scrolling at
+                        1280 (950px of box) and 1440 (1110); at 1100 (770) and
+                        1024 (694, where the project rail opens) it still
+                        scrolls, with Errors' right edge at 596px on All runs —
+                        on screen. Collapsing the rail returns ~270px. */}
                     <th scope="col" className={TH}>
-                      Focus
-                    </th>
-                    {/* ═══ CONTEXT AFTER TRIAGE, BECAUSE THIS TABLE SCROLLS ═══
-                        (review 09-13's acceptance list)
-
-                        MEASURED on the org-wide list: the table wants 1078px
-                        and the content column gives it 726 at 768, 858 at 900,
-                        694 at 1024 (the rail appears at `lg:` and takes ~270),
-                        770 at 1100 and 950 at 1280. It fits at 1440 and
-                        NOWHERE BELOW — so this table has always scrolled
-                        sideways on most real screens.
-
-                        The scroll itself is allowed: the review says
-                        "table-local horizontal scroll is acceptable when row
-                        identity, headers, and controls remain usable". What
-                        was not allowed is WHICH columns fell off the end.
-                        Started alone is 239px — 22% of the table for a
-                        timestamp carrying a year and a zone — so p95 and
-                        Errors sat at 823 and 889px cumulative and were off
-                        every screen narrower than 1440. Those two are the
-                        columns triage turns on; `mobile.spec.ts` says so in as
-                        many words for the phone layout.
-
-                        So identity, outcome, the two measurements and the
-                        suggested action come first — 742px, which is on screen
-                        at 768, 900, 1100 and 1280 — and WHEN and WHERE, which
-                        are context rather than triage, are what a reader
-                        scrolls to. Nothing is hidden and no column is dropped.
-
-                        1024 IS THE ONE WIDTH THIS DOES NOT FULLY FIX, and it
-                        is worth knowing why: 694px there is less than 900 gets,
-                        because the project rail opens at exactly that
-                        breakpoint. Collapsing the rail — a control that already
-                        exists — returns ~270px and the whole triage set with
-                        it. */}
-                    <th scope="col" className={TH}>
-                      Started
+                      Started ({headerZone})
                     </th>
                     <th scope="col" className={TH}>
                       Environment
@@ -393,6 +386,7 @@ export default function RunList({
                       run={run}
                       showProject={projectSlug === null}
                       identifyByRunId={testSlug !== null}
+                      headerZone={headerZone}
                     />
                   ))}
                 </tbody>
@@ -650,186 +644,6 @@ function RunListControls({
 }
 
 /**
- * The four counts, and THE SENTENCE THAT MAKES THEM TRUE.
- *
- * These reduce over `items` — one keyset page — and nothing about a page of
- * 25 rows tells you anything about the 400 behind it. Shipped as "Run list
- * health" with only the fourth tile disclosing its scope, this said "Needs
- * attention: 2" over an org with 90 failed runs. That is the same defect as
- * the client-side search this component's own docstring rejects: a
- * page-local number presented as a statement about the list.
- *
- * The scope is stated ONCE, in the section's accessible name and in a line
- * above the tiles, rather than repeated into four `detail` strings — the
- * details are what each count MEANS, and a caveat repeated four times reads
- * as decoration by the third.
- *
- * `hasMore` is deliberately gone. It only says whether a NEXT page exists,
- * so it was never the right test anyway: on page three of five it is true
- * and on page five it is false, and the counts are page-local in both.
- */
-function RunListHealth({ items }: { readonly items: readonly RunListItem[] }) {
-  const summary = healthSummary(items);
-
-  return (
-    <section
-      aria-label="Run health on this page"
-      /* ═══ A PAGE-LOCAL TALLY, DRAWN AS ONE ═══
-       *
-       * These counts are honest about being page-local and then took
-       * dashboard-card treatment anyway — four large tiles above the work
-       * list, in the position an organisation-wide health summary occupies.
-       * An overview should not change meaning when the reader presses Next,
-       * and this one does.
-       *
-       * Computing them across the filtered SET is the other repair the review
-       * offers and it needs an endpoint that counts — keyset pagination never
-       * learns a total, which is the same reason the heading says "6 runs" and
-       * not "6 of 42". So the tally is demoted rather than inflated: the same
-       * four numbers, at the weight of a caption, beside the list they
-       * describe instead of above it as a dashboard. */
-      className="rounded-lg border border-default bg-surface px-4 py-3"
-    >
-      {/* THE SECOND CAVEAT IS THE ONE THAT CHANGES A DECISION. The first says
-          the counts are page-local. This one says WHICH SYSTEMS they count:
-          execution state and the platform SLA verdict, which is all
-          `GET /v1/runs` returns — `RunListResponseSchema` picks nine fields
-          and none of them carries the simulation's own assertions.
-
-          Without it, "Needs attention: 0" sat above a run whose simulation had
-          a failing check, and a tile reading zero is a claim an engineer
-          triages on. Counting those here needs a field the list endpoint does
-          not have; saying so does not. */}
-      {/* ═══ THE SCOPE VISIBLE, THE METHODOLOGY ONE TAP AWAY ═══
-          (review 09-13, "Copy changes to make immediately")
-
-          The row is "Long run-health caveat" -> "`On this page` + accessible
-          `How counts work` disclosure with the corrected definition", under a
-          preamble that says to "move methodology out of the primary reading
-          path".
-
-          M18 built half of this: below 768px the caveat became a `<details>`,
-          because 117px of prose above four tiles on a 375px screen was pushing
-          the first run row to y=908. On a DESKTOP it stayed a paragraph, on
-          the reasoning that two lines there read as part of the tally — and
-          that is the half the copy table is objecting to, on the 1440x900
-          viewport the review was written against. The correctness fix that
-          landed since made it longer, not shorter: 45 rendered words became
-          67.
-
-          ONE SHAPE AT EVERY WIDTH NOW. The SCOPE is the fact a reader needs
-          without asking — these four numbers are about this page, not the
-          list — so it is visible, short, and beside the counts it qualifies.
-          Everything else is methodology and sits behind the disclosure, which
-          is what "accessible" asks for: a native `<summary>` is a real control
-          with real keyboard behaviour, and it contributes an ARIA group rather
-          than a heading, so no page's heading outline moves.
-
-          Nothing is deleted. Both caveats are load-bearing — one says the
-          counts are page-local, the other says WHICH systems they count, and
-          the second is why "Needs attention: 0" is not a claim about a
-          simulation's own assertions. */}
-      <p className="text-[0.75rem] font-medium text-muted" data-testid="health-scope">
-        {HEALTH_SCOPE(items.length)}
-      </p>
-      <details className="group mt-1">
-        <summary className="w-fit cursor-pointer list-none text-[0.75rem] font-medium text-accent hover:underline hover:underline-offset-2">
-          <span className="group-open:hidden">How counts work</span>
-          <span className="hidden group-open:inline">Hide how counts work</span>
-        </summary>
-        <p className="pt-1.5 text-[0.75rem] leading-relaxed text-muted">{HEALTH_CAVEAT()}</p>
-      </details>
-      {/* TWO ACROSS FROM THE NARROWEST WIDTH, not one. Measured at 375px:
-          stacked one per row these four tiles were 326px, and they sit between
-          the heading and the list the page is for — so the first run card
-          began at y=561 on an 812px screen. Two columns halves that for four
-          counts that are each a word and a number. */}
-      <div className="mt-2 grid grid-cols-2 gap-2 xl:grid-cols-4">
-        <HealthTile
-          label="Needs attention"
-          value={summary.needsAttention}
-          // The FOURTH condition was missing here too — see `needsAttention`,
-          // which has read a simulation's own checks since M02 widened the
-          // list contract.
-          detail="Failed, incomplete, SLA failed, or a failed check"
-          colour="var(--color-status-failed)"
-        />
-        <HealthTile
-          label="In flight"
-          value={summary.inFlight}
-          detail="Pending, parsing, or live"
-          colour="var(--color-status-pending)"
-        />
-        <HealthTile
-          label="Passed gates"
-          value={summary.passed}
-          detail="SLA verdict passed"
-          colour="var(--color-status-passed)"
-        />
-        <HealthTile
-          label="Unjudged"
-          value={summary.unjudged}
-          detail="No verdict, or not evaluated"
-          colour="var(--color-status-not-applicable)"
-        />
-      </div>
-    </section>
-  );
-}
-
-function HealthTile({
-  label,
-  value,
-  detail,
-  colour,
-}: {
-  readonly label: string;
-  readonly value: number;
-  readonly detail: string;
-  readonly colour: string;
-}) {
-  return (
-    /* One line per count, not a card. The number leads and stays coloured —
-       it is still the thing being read — but at the weight of a caption
-       rather than a dashboard tile, because it describes this PAGE. */
-    /* `flex-wrap` so the three parts stack rather than spilling: at a 32px
-       root "Unjudged / No verdict, or not evaluated" is wider than the tile's
-       share of the row, and an unwrapped flex row pushed it past the viewport
-       and widened the document (measured: the run list at 1338 of 1280). The
-       row-gap is deliberately tighter than the column-gap — wrapped, these are
-       continuations of one line rather than separate rows. */
-    <div
-      /* A HANDLE, because the three spans below carry no role and no accessible
-         name of their own: the count, its label and its detail are siblings, so
-         a query for the LABEL has to climb to a parent indistinguishable from
-         the row wrapping it -- which resolves to two elements under strict
-         mode. `health-scope` just above already takes this shape. Derived from
-         the label so the two cannot drift, the way `EntryCard` derives its
-         own; grep for the derived value, not only the label. */
-      data-testid={`health-${label.toLowerCase().replace(/\s+/g, '-')}`}
-      className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5"
-      style={{ color: colour }}
-    >
-      <span className="font-mono text-base font-semibold tabular-nums text-primary">{value}</span>
-      <span className="text-[0.75rem] text-primary">{label}</span>
-      <span className="text-[0.6875rem] text-muted">{detail}</span>
-    </div>
-  );
-}
-
-function healthSummary(items: readonly RunListItem[]) {
-  return items.reduce(
-    (next, run) => ({
-      needsAttention: next.needsAttention + (needsAttention(run) ? 1 : 0),
-      inFlight: next.inFlight + (isInFlight(run) ? 1 : 0),
-      passed: next.passed + (run.verdict === 'passed' ? 1 : 0),
-      unjudged: next.unjudged + (run.verdict === null || run.verdict === 'not_evaluated' ? 1 : 0),
-    }),
-    { needsAttention: 0, inFlight: 0, passed: 0, unjudged: 0 },
-  );
-}
-
-/**
  * The page's `<h1>` and, when there is a list under it, how much of one.
  *
  * The count is deliberately "6 runs" and not "6 of 42": keyset pagination
@@ -990,55 +804,6 @@ function isVerdictFilter(value: string | null): value is RunListVerdictFilter {
 }
 
 /**
- * The tally's two caveats, as one string both layouts render.
- *
- * A function rather than a constant because the first clause counts the page.
- * Shared so the collapsed and the expanded form cannot drift — the failure
- * that would hide is a phone quietly reading a WEAKER caveat than a desktop,
- * which nobody would notice until somebody triaged on it.
- */
-/**
- * ═══ THIS SENTENCE WENT STALE UNDER ITS OWN FEATURE (review 09-13 C05) ═══
- *
- * It used to read "They count execution state and this platform's SLA verdict
- * — NOT the assertions a simulation declares for itself", and that was exactly
- * right when it was written: `RunListResponseSchema` picked nine fields and
- * none of them carried a simulation's own outcomes, so the count genuinely
- * could not see them.
- *
- * M02 then put `checks` on the list and `needsAttention` started reading it —
- * which is the whole point of that work, and is what makes "Needs attention"
- * usable. The caveat was never revisited, so the page spent two branches
- * telling the reader the opposite of what the number beneath it meant. The
- * sample makes it obvious: one complete run, no SLA verdict, "Needs attention
- * 1", under a paragraph swearing checks are not counted.
- *
- * Worse, the M18 branch MOVED this paragraph and pinned it with a test
- * asserting "the words are not weakened" — preserving a sentence that had
- * already become false. **Prose that describes a calculation has to be re-read
- * against the calculation, not carried across intact.** This file already
- * records the same lesson for `tokens.test.ts`, one layer down: a stale
- * comment naming an old spelling is exactly as misleading as a stale class.
- *
- * ═══ AND THE FOUR ARE NOT A PARTITION ═══
- *
- * Said out loud now rather than left to be discovered. `needsAttention` and
- * `unjudged` are independent questions — "is something wrong" and "did a gate
- * judge it" — so the run in the sample is counted by both, correctly. Four
- * numbers sitting in a row read as a breakdown that sums to the page, and this
- * one does not.
- */
-const HEALTH_SCOPE = (count: number): string =>
-  `On this page · ${count} ${count === 1 ? 'run' : 'runs'}`;
-
-const HEALTH_CAVEAT = (): string =>
-  'Paging or filtering changes these; they are not totals for the whole list. A run can be ' +
-  'counted more than once — “Needs attention” asks whether anything failed, and “Unjudged” asks ' +
-  'whether a gate reached a verdict, which are different questions. Failures counted here are ' +
-  'execution state, this platform’s SLA verdict, and the checks a simulation declares for ' +
-  'itself.';
-
-/**
  * The filter form, folded away on a phone — review M18.
  *
  * ═══ WHY THIS IS A DISCLOSURE AND NOT A CLASS ═══
@@ -1105,12 +870,12 @@ function CompactFilters({
  * ======================================================================== */
 
 /**
- * One card per run, for viewports where nine columns cannot be columns.
+ * One card per run, for viewports where eight columns cannot be columns.
  *
  * ═══ THE SAME FIELDS, RE-STACKED — NOTHING IS DROPPED ═══
  *
- * Started, project, simulation, status, verdict, p95, errors, environment and
- * focus are all here. A phone list that quietly showed fewer facts than a
+ * Started, project, simulation, status, verdict (with any failed simulation
+ * assertion), p95, errors and environment are all here. A phone list that quietly showed fewer facts than a
  * desktop one would be the harder failure to notice: the reader has no way to
  * know what they are not being shown, and triage decisions would differ by
  * device.
@@ -1174,12 +939,12 @@ function RunCards({
  * narrow — MEASURED, with both removed: p95/Errors still land at 500/565 of
  * 726 px visible at 768, 500/565 of 694 at 1024, and 612/678 of 1110 at
  * 1440. What actually holds the column is that the note WRAPS: prose breaks
- * between words (`[word-break:normal]`, because the simulation cell above it
- * is `break-all` and `word-break` is inherited — a class name has no break
- * opportunity, but prose should break between words), inside a cell
- * (`run-simulation`, above) that is already `min-w-0 break-all` — so this
- * cell's min-content is tiny, and the table's automatic layout shrinks the
- * column and wraps the note to fit rather than growing the table.
+ * between words (`[word-break:normal]`, kept from when the cell above it was
+ * `break-all` and `word-break` was inherited; harmless now that the name is
+ * drawn in no-wrap pieces), inside a `min-w-0` cell (`run-simulation`, above)
+ * — so this note's min-content is tiny, and the table's automatic layout
+ * shrinks the column and wraps the note to fit rather than growing the
+ * table.
  *
  * AN UNBROKEN TOKEN — A URL, A STACK-TRACE FRAGMENT, A PATH — IS THE HAZARD,
  * AND IT WAS REAL, MEASURED IN A BROWSER RATHER THAN ASSUMED. A 300-character
@@ -1226,8 +991,9 @@ function NoteLine({ note }: { readonly note: string | null | undefined }) {
  * 19 to 24 px taller at every width from 768 to 1440 while p95 and Errors did
  * not move: the button fell onto a line of its own. Below ~1400px this table
  * is wider than its box, so every column sits at its MINIMUM, and the
- * Simulation column's minimum is its header word ("Simulation", 61px,
- * `whitespace-nowrap`) — a `break-all` name can shrink to one character. The
+ * Simulation column's minimum was its header word ("Simulation", 61px,
+ * `whitespace-nowrap`), because a `break-all` name could shrink to one
+ * character. The
  * column never grew for the button, so the button took its width out of the
  * name's.
  *
@@ -1236,7 +1002,13 @@ function NoteLine({ note }: { readonly note: string | null | undefined }) {
  * minimum; this grid gives the button a track the name cannot flow under, so
  * the name keeps exactly the width it had. The grid ALONE measured worse: the
  * name lost 28 of its 61px and rows at 768 went from 75 to 134px.
- * `minmax(0, 1fr)` is what still lets a long class break.
+ *
+ * `minmax(min-content, 1fr)`, NOT `minmax(0, 1fr)` (clean UI, PR 3). The name
+ * was `break-all`, so a zero minimum let it break anywhere to fit. It is drawn
+ * in no-wrap pieces now (`SimulationName`), and a zero minimum let the widest
+ * piece run under the button — "simulations." did, at 768. The track's
+ * minimum is its longest piece instead, which is about one word: the column
+ * can still shrink as far as a line that ends between words allows.
  *
  * WHAT IT STILL COSTS, measured with the 56-character class beside short ones:
  *
@@ -1246,11 +1018,16 @@ function NoteLine({ note }: { readonly note: string | null | undefined }) {
  *   375, cards   the name shares a line with the badges; a card whose name
  *                wraps once more grows 15px (155 -> 170)
  *
+ * Those figures predate the clean-UI pass, whose package line puts every
+ * simulation name on at least two lines; re-measure before quoting them.
+ *
  * Inherent to putting the button beside the name, which is where a reader
  * looks for the id of the thing they are reading.
  */
 function IdentityCell({ children }: { readonly children: ReactNode }) {
-  return <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start">{children}</div>;
+  return (
+    <div className="grid grid-cols-[minmax(min-content,1fr)_auto] items-start">{children}</div>
+  );
 }
 
 function RunCard({
@@ -1268,11 +1045,13 @@ function RunCard({
   const startedAt = run.toolStartedAt ?? run.startedAt;
   const isIngestTime = run.toolStartedAt == null;
   const label =
-    identifyByRunId && run.runNumber !== null && run.runNumber !== undefined
-      ? runName(run.runNumber)
-      : identifyByRunId || run.simulation === null || run.simulation === undefined
-        ? run.id.slice(0, 8)
-        : run.simulation;
+    identifyByRunId && run.runNumber !== null && run.runNumber !== undefined ? (
+      runName(run.runNumber)
+    ) : identifyByRunId || run.simulation === null || run.simulation === undefined ? (
+      run.id.slice(0, 8)
+    ) : (
+      <SimulationName name={run.simulation} />
+    );
 
   return (
     <li
@@ -1286,7 +1065,7 @@ function RunCard({
             <Link
               to={runPath(run.id)}
               aria-label={`View run ${run.id}`}
-              className="transition-ui font-medium break-all text-accent hover:underline hover:underline-offset-2"
+              className="transition-ui font-medium text-accent hover:underline hover:underline-offset-2"
             >
               {label}
             </Link>
@@ -1296,15 +1075,23 @@ function RunCard({
           </IdentityCell>
           <NoteLine note={run.note} />
         </div>
-        <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-          <Badge mark={STATUS[run.status]} />
-          <Badge mark={VERDICT[run.verdict ?? 'none']} />
+        {/* A COLUMN: the badges in a row, a failed assertion's line under them
+            (final review). In one flex-wrap row the line's text widened the
+            group to ~300px, so on a phone it fell below the name — on most
+            real runs, which carry a failed assertion. The column is as wide as
+            its widest child, so it sits beside the name as it always did. */}
+        <div data-testid="run-badges" className="flex shrink-0 flex-col items-end">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Badge mark={STATUS[run.status]} />
+            <Badge mark={VERDICT[run.verdict ?? 'none']} />
+          </div>
+          <AssertionLine checks={run.checks} />
         </div>
       </div>
 
-      {/* THE TWO TRIAGE NUMBERS, SIDE BY SIDE AND FIRST. On the table these
-          are columns 6 and 7 and a phone had to scroll sideways to reach
-          them; they are the whole reason a reader looks at this list without
+      {/* THE TWO TRIAGE NUMBERS, SIDE BY SIDE AND FIRST. On the table they
+          follow identity and outcome, and a phone had to scroll sideways to
+          reach them; they are the whole reason a reader looks at this list without
           opening a run. `—` rather than `0` for anything unavailable, exactly
           as in `RunRow`: a zero in a latency column is a measurement. */}
       <dl className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-[0.8125rem]">
@@ -1336,12 +1123,6 @@ function RunCard({
             )}
           </dd>
         </div>
-        <div className="flex items-baseline gap-1.5">
-          <dt className="text-muted">Focus</dt>
-          <dd>
-            <FocusHint focus={focusFor(run)} runId={run.id} />
-          </dd>
-        </div>
       </dl>
 
       {/* PROVENANCE LAST: which project, which environment, and when. The
@@ -1350,7 +1131,7 @@ function RunCard({
       <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[0.75rem] text-muted">
         {showProject && (
           <>
-            {/* `break-all`, for the reason the simulation link above it has it:
+            {/* `break-all`, because unlike a class name it has no word to break at:
                 a project name is free text up to 120 characters and may
                 contain no space at all, and this card is the WHOLE layout
                 below 768px. MEASURED at 320px with a 120-character unbroken
@@ -1380,6 +1161,7 @@ function RunRow({
   run,
   showProject,
   identifyByRunId,
+  headerZone,
 }: {
   readonly run: RunListItem;
   /** False on a project-scoped list, where every row's project is the same. */
@@ -1391,6 +1173,8 @@ function RunRow({
    * tells two runs of one test apart.
    */
   readonly identifyByRunId: boolean;
+  /** The zone Started's header names; this row shows its own only if it differs. */
+  readonly headerZone: string;
 }) {
   // The value the API ORDERS BY, spelled the same way here — RunRepository.list
   // sorts on COALESCE(tool_started_at, started_at) DESC. Displaying anything
@@ -1398,6 +1182,7 @@ function RunRow({
   // mis-sorted, which is worse than an obvious bug because nothing looks broken.
   const startedAt = run.toolStartedAt ?? run.startedAt;
   const isIngestTime = run.toolStartedAt == null;
+  const rowZone = zoneLabel(startedAt);
 
   return (
     <tr data-testid="run-row" data-run-id={run.id} className={ROW}>
@@ -1406,28 +1191,23 @@ function RunRow({
           e2e suite and `helpers.ts` reach for it as "the cell holding the row's
           link to its run", which is what it has always been and still is. What
           changes is the value shown, not the cell's job. */}
-      {/* ═══ `break-all`, BECAUSE A CLASS NAME CANNOT WRAP ═══
-          (the 09-13 review's acceptance list: long names)
+      {/* ═══ A CLASS NAME CANNOT WRAP, SO IT IS DRAWN IN PIECES ═══
+          (the 09-13 review's acceptance list: long names; clean UI, PR 3)
 
-          UAX#14 gives no break opportunity after a full stop followed by a
-          letter, so `com.acme.checkout.simulations.CheckoutPeakLoadSimulation`
-          is one unbreakable 56-character word — the widest string this product
-          renders. In a plain cell it took its width out of the columns beside
-          it: MEASURED at 768px, it pushed the Errors column's right edge to
-          885px of 726px visible, undoing the reorder that put the triage
-          columns on screen in the first place. That reorder was measured
-          against the reference bundle's `example.ParitySimulation`, 24
-          characters, which is why nothing caught it.
+          UAX#14 gives no break after a full stop followed by a letter, so
+          `com.acme.checkout.simulations.CheckoutPeakLoadSimulation` is one
+          56-character word. In a plain cell it took its width out of the
+          columns beside it — MEASURED at 768px it pushed Errors' right edge to
+          885px of 726px visible. `break-all` fixed that and broke the name
+          anywhere ("example.P / aritySimul / ation"). `SimulationName` breaks
+          it only between whole pieces — after a package dot or between
+          camelCase words — so the column is no wider than `break-all` let it
+          be and a line never ends mid-word.
 
-          `min-w-0` is the other half and is not optional: a table cell's
-          min-content width is its longest unbreakable run, so without it the
-          cell refuses to shrink no matter what the text inside is allowed to
-          do.
-
-          The mobile CARD for this same value has carried `break-all` since it
-          was written (`RunCard` above) — the asymmetry was visible in one
-          file, which is the shape CLAUDE.md keeps recording. */}
-      <td data-testid="run-simulation" className={`${TD} min-w-0 break-all`}>
+          `min-w-0` is not optional: a table cell's min-content width is its
+          longest unbreakable run, and without it the cell refuses to shrink
+          whatever the text inside allows. */}
+      <td data-testid="run-simulation" className={`${TD} min-w-0`}>
         {/* The simulation is what a reader is looking for, so it is the
             link. Falls back to the short id for a run the worker has not
             parsed (or never will), which is what this column showed before
@@ -1462,7 +1242,7 @@ function RunRow({
             ) : identifyByRunId || run.simulation === null || run.simulation === undefined ? (
               <code className="text-[0.75rem]">{run.id.slice(0, 8)}</code>
             ) : (
-              run.simulation
+              <SimulationName name={run.simulation} />
             )}
           </Link>
           {/* The FULL id, whatever the link shows: a test's list displays its
@@ -1478,6 +1258,7 @@ function RunRow({
       </td>
       <td className={TD}>
         <Badge mark={VERDICT[run.verdict ?? 'none']} />
+        <AssertionLine checks={run.checks} />
       </td>
 
       {/* ═══ THE TRIAGE CELLS ═══
@@ -1510,21 +1291,6 @@ function RunRow({
           </span>
         )}
       </td>
-      {/* PLAIN COLOURED TEXT, NOT A BADGE, and the distinction is what the
-          column means. Status and Verdict beside it are STATES the platform
-          recorded — a stamp is right for those, and the pill is what makes
-          them scannable down the column. Focus is not a state; it is the
-          ACTION this row suggests, derived here rather than stored. Drawing
-          it as a third pill made every row read as three equal stamps and
-          buried the two that came from the run itself.
-
-          The WORD carries the meaning — investigate / watch live / clear are
-          different words, not one word in different colours — so the colour
-          is emphasis rather than information, and WCAG 1.4.1 is satisfied
-          without the glyph the badge used to add. */}
-      <td className={TD}>
-        <FocusHint focus={focusFor(run)} runId={run.id} />
-      </td>
       <td data-testid="run-started" className={`${TD} whitespace-nowrap`}>
         {/* <time dateTime> carries the machine-readable instant next to the
             human one. That is the correct markup for a rendered date
@@ -1533,8 +1299,13 @@ function RunRow({
             localised and does not sort. The attribute is the API's own ISO
             string, unmodified. */}
         <time dateTime={startedAt} className="tabular-nums">
-          {formatInstant(startedAt)}
+          {formatListInstant(startedAt)}
         </time>
+        {rowZone !== headerZone && (
+          <span data-testid="run-started-zone" className="ml-1 text-muted">
+            {rowZone}
+          </span>
+        )}
         {isIngestTime && <span className="ml-2 text-[0.75rem] text-muted">ingest time</span>}
       </td>
       <td className={TD} data-testid="run-environment">
@@ -1545,83 +1316,30 @@ function RunRow({
 }
 
 /**
- * ═══ IT LOOKS LIKE AN ACTION, SO IT IS ONE (review 09-13 M14) ═══
+ * ═══ THE ONE FACT FOCUS CARRIED THAT NOTHING ELSE DID (clean UI, PR 3) ═══
  *
- * The caption calls Focus "the first operational action to take from the row",
- * and `investigate` was drawn in the failed-status colour with medium
- * weight — every affordance of a link, on a `<span>` nothing happens when you
- * click.
+ * Focus read "investigate" when a run failed, stopped early, failed its SLA
+ * verdict, or its SIMULATION had a failing assertion — and the first three are
+ * what Status and Verdict already say, on every row. Only the fourth was
+ * Focus's own: a platform verdict of "passed" over a Gatling assertion that
+ * failed. So Focus is gone and that fact sits under the verdict it qualifies,
+ * drawn only when it happened.
  *
- * The review offers both repairs: make it real, or rename it so it stops
- * pretending. Real is better here because the destination exists and is
- * exactly where the reader was going — the run, which opens on the decision
- * band that names the failed check and links to it. The other four states are
- * genuinely statuses (there is nothing to do about "processing"), so they stay
- * text: a row's Focus cell is a link exactly when it is worth following.
- *
- * The accessible name carries the RUN, not the word: "investigate" repeated
- * down a column names nothing, which is the same reason the simulation cell's
- * link spells out `View run ${id}`.
+ * `checks` is null for a run that reported no assertions, which is not a
+ * failure. The colour is the status palette's own route — those tokens live on
+ * `:root` and not in `@theme`, so a `text-status-failed` utility emits
+ * nothing. `basis-full` puts it on its own line inside the card's badge group;
+ * in a table cell it is simply a block.
  */
-function FocusHint({ focus, runId }: { readonly focus: Focus; readonly runId: string }) {
-  const { label, colour } = FOCUS_MARKS[focus];
-  if (focus !== 'investigate') {
-    return (
-      <span className="font-medium whitespace-nowrap" style={{ color: colour }}>
-        {label}
-      </span>
-    );
-  }
+function AssertionLine({ checks }: { readonly checks: RunListItem['checks'] }) {
+  if (checks == null || checks.failed <= 0) return null;
   return (
-    <Link
-      to={runPath(runId)}
-      aria-label={`Investigate run ${runId}`}
-      className="font-medium whitespace-nowrap underline-offset-2 hover:underline"
-      style={{ color: colour }}
+    <span
+      data-testid="run-assertions-failed"
+      className="mt-1 block basis-full text-[0.75rem] font-medium"
+      style={{ color: 'var(--color-status-failed)' }}
     >
-      {label}
-    </Link>
+      {checks.failed} {checks.failed === 1 ? 'assertion' : 'assertions'} failed
+    </span>
   );
-}
-
-type Focus = 'investigate' | 'watch' | 'processing' | 'clear' | 'review';
-
-/**
- * `glyph` is gone with the badge — see `FocusHint`. The remaining pair is
- * deliberately the same SHAPE as a `Mark` minus that field, so the colours
- * still come from the status text palette every other signal on this page
- * reads, rather than becoming a fourth place colour is decided.
- */
-const FOCUS_MARKS: Record<Focus, { label: string; colour: string }> = {
-  investigate: { label: 'investigate', colour: 'var(--color-status-failed)' },
-  watch: { label: 'watch live', colour: 'var(--color-status-pending)' },
-  processing: { label: 'processing', colour: 'var(--color-status-pending)' },
-  clear: { label: 'clear', colour: 'var(--color-status-passed)' },
-  review: { label: 'review', colour: 'var(--color-status-not-applicable)' },
-};
-
-function focusFor(run: RunListItem): Focus {
-  if (needsAttention(run)) return 'investigate';
-  if (run.status === 'running') return 'watch';
-  if (isInFlight(run)) return 'processing';
-  if (run.verdict === 'passed') return 'clear';
-  return 'review';
-}
-
-function needsAttention(run: RunListItem): boolean {
-  return (
-    run.status === 'failed' ||
-    run.status === 'incomplete' ||
-    run.verdict === 'failed' ||
-    // THE CHECK THIS TILE USED TO MISS ENTIRELY. A run whose platform verdict
-    // passed while its simulation's own assertion failed is exactly what
-    // "Needs attention: 0" was hiding — the list endpoint never sent the
-    // outcomes, so the count could not see them. `checks` is null for a run
-    // that reported none, which is not a failure.
-    (run.checks != null && run.checks.failed > 0)
-  );
-}
-
-function isInFlight(run: RunListItem): boolean {
-  return run.status === 'pending' || run.status === 'parsing' || run.status === 'running';
 }

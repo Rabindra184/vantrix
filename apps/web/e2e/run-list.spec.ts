@@ -277,6 +277,10 @@ test('offers exactly one New project link on the org-wide list', async ({ page }
  * Those two are what triage turns on; `mobile.spec.ts` says exactly that for
  * the phone layout, one breakpoint down.
  *
+ * Since the clean-UI pass (PR 3) Focus is gone and Started is short — the
+ * zone once in its header — so the table needs 896px and fits at 1280 and
+ * 1440; this case still guards the widths where it scrolls.
+ *
  * MEASURED, NOT COUNTED IN COLUMNS, because that is the claim: a reader can
  * see the two numbers without dragging the table sideways. A column-order
  * assertion would pass against a layout that pushed them off anyway.
@@ -291,7 +295,9 @@ test('p95 and Errors are on screen without scrolling the table sideways', async 
      is 694 there against 858 at 900. Measured after the reorder, p95 ends at
      587px and Errors at 652px at every width below 1440 — inside even the
      narrowest box. Before it, at 768: p95 at 826 and Errors at 892 against 726
-     visible, which is the failure this case was written from. */
+     visible, which is the failure this case was written from. (After the
+     clean-UI pass, on the developer database's runs, Errors ends at 596px at
+     1024 and 1100.) */
   for (const width of [768, 900, 1024, 1100, 1280, 1440]) {
   await page.setViewportSize({ width, height: 800 });
   await page.goto('/runs');
@@ -398,14 +404,19 @@ test('the run list scales with the reader’s font size, not just its headings',
  * ending at 587px against only 694px of box at 1024. Nobody had re-measured
  * it with a name a real project would produce.
  *
- * The mobile CARD for the same value already carries `break-all`
- * (`RunList.tsx`'s `RunCard`); the desktop cell did not, and the asymmetry was
- * visible in one file.
+ * The cell was `break-all` for this; since the clean-UI pass it draws the
+ * name in no-wrap pieces (`SimulationName`) that break only after a package
+ * dot or between camelCase words — and the case below asserts that too.
  */
 test('a real simulation class does not push the triage columns off screen', async ({ page }) => {
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await renameSimulation(runId, 'com.acme.checkout.simulations.CheckoutPeakLoadSimulation');
+  /* AND ONE WITH NO camelCase AT ALL (final review, Important 1): snake_case
+     has no lower-to-upper boundary, so before pieces split after `_` it was one
+     45-character no-wrap piece setting the column's minimum to its length. */
+  const snakeId = await seedRunWithData(admin.orgId);
+  await renameSimulation(snakeId, 'com.acme.checkout_peak_load_simulation_for_the_storefront');
 
   await signIn(page, admin);
 
@@ -444,6 +455,43 @@ test('a real simulation class does not push the triage columns off screen', asyn
        to (the review says so); the document is not, and an unbreakable string
        is exactly what breaks that distinction. */
     expect(docOverflows, `the document scrolls sideways at ${width}`).toBe(false);
+  }
+
+  /* ═══ AND THE NAME NEVER BREAKS MID-WORD (clean UI, PR 3) ═══
+     `SimulationName` draws each package segment and each camelCase word as a
+     no-wrap piece, so a line can end only between two pieces. jsdom lays out
+     nothing; this asks a browser, in the table and on a phone's card, that
+     every piece is ONE line box — and that no piece runs past its track under
+     the copy button, which a no-wrap piece wider than its column would. */
+  for (const width of [768, 1024, 375, 320]) {
+    await page.setViewportSize({ width, height: 812 });
+    await page.goto('/runs');
+    await expect(page.getByTestId('run-row')).toHaveCount(2);
+    const seen = await page.evaluate(() => ({
+      pieces: Array.from(document.querySelectorAll('[data-testid="run-simulation"]')).flatMap((cell) => {
+        const button = cell.querySelector('[data-testid="copy-id"]')!.getBoundingClientRect();
+        return Array.from(cell.querySelectorAll('[data-name-piece]')).map((piece) => ({
+          text: piece.textContent,
+          lines: piece.getClientRects().length,
+          overlapsButton: piece.getBoundingClientRect().right > button.left + 0.5,
+        }));
+      }),
+      /* WHAT A COPY OR A FIND-IN-PAGE SEES (final review): `innerText` is the
+         rendered text, and a BLOCK package line put a line break inside it. */
+      names: Array.from(document.querySelectorAll('[data-testid="run-simulation"] a')).map(
+        (a) => ({ rendered: (a as HTMLElement).innerText, text: a.textContent }),
+      ),
+      docOverflows: document.documentElement.scrollWidth > window.innerWidth,
+    }));
+    expect(seen.pieces.length, `the long names were drawn in pieces at ${width}`).toBeGreaterThan(8);
+    for (const piece of seen.pieces) {
+      expect(piece.lines, `at ${width}px "${piece.text}" broke across ${piece.lines} lines`).toBe(1);
+      expect(piece.overlapsButton, `at ${width}px "${piece.text}" runs under the copy button`).toBe(false);
+    }
+    for (const name of seen.names) {
+      expect(name.rendered, `at ${width}px the name renders with a break inside it`).toBe(name.text);
+    }
+    expect(seen.docOverflows, `the document scrolls sideways at ${width}`).toBe(false);
   }
 });
 

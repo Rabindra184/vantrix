@@ -15,7 +15,7 @@ afterEach(cleanup);
 function renderList(
   items: RunListResponse['items'],
   initialEntry = '/runs',
-  props: { projectSlug?: string; testSlug?: string } = {},
+  props: { projectSlug?: string; testSlug?: string; showHeading?: boolean } = {},
 ) {
   const fetchSpy = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(() =>
     Promise.resolve(
@@ -61,36 +61,54 @@ const ROWS: RunListResponse['items'] = [
 ];
 
 /* ======================================================================== *
- * REVIEW 09-13 M14 — FOCUS LOOKED LIKE AN ACTION AND WAS A SPAN
+ * CLEAN UI, PR 3 — FOCUS IS GONE, AND THE ONE FACT ONLY IT CARRIED MOVED
  * ======================================================================== */
 
-describe('RunList — the Focus cell', () => {
-  /**
-   * The caption calls Focus "the first operational action to take from the
-   * row", and `investigate` was drawn in the failed-status colour with medium
-   * weight — every affordance of a link, on a `<span>` that does nothing.
-   *
-   * Made real rather than renamed, because the destination exists and is where
-   * the reader was going: the run, which opens on the decision band that names
-   * the failed check. The accessible name carries the RUN, since "investigate"
-   * repeated down a column names nothing.
-   */
-  it('links investigate to the run, named by the run', async () => {
-    renderList([{ ...ROWS[0]!, status: 'failed', verdict: 'failed' }]);
-    const link = await screen.findByRole('link', { name: `Investigate run ${ROWS[0]!.id}` });
-    expect(link).toHaveAttribute('href', `/runs/${ROWS[0]!.id}`);
-    expect(link).toHaveTextContent('investigate');
+/**
+ * Focus read "investigate" on every row that failed, stopped early, failed its
+ * SLA verdict — or whose SIMULATION had a failing assertion. Status and
+ * Verdict already say the first three. The fourth only Focus said, so it moves
+ * into the Verdict cell: a second line under the badge, and only when it
+ * happened, so most rows look as they always did.
+ */
+describe('RunList — a failed simulation assertion in the Verdict cell', () => {
+  const ASSERTED = {
+    id: '66666666-6666-4666-8666-666666666666',
+    status: 'complete' as const,
+    verdict: 'passed' as const,
+    tool: 'gatling',
+    startedAt: '2026-08-16T09:00:00.000Z',
+    toolStartedAt: '2026-08-16T09:00:00.000Z',
+    project: { id: '55555555-5555-4555-8555-555555555555', slug: 'catalog', name: 'Catalog' },
+    simulation: 'example.CatalogSimulation',
+    checks: { failed: 1, total: 3 },
+  };
+
+  it('names a failed simulation assertion in the Verdict cell, and only then', async () => {
+    renderList([
+      ASSERTED,
+      { ...ASSERTED, id: '77777777-7777-4777-8777-777777777777', checks: { failed: 0, total: 3 } },
+      { ...ASSERTED, id: '88888888-8888-4888-8888-888888888888', checks: null },
+    ]);
+    const lines = await screen.findAllByTestId('run-assertions-failed');
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toHaveTextContent(/^1 assertion failed$/);
+    expect(lines[0]!.closest('tr')).toHaveAttribute('data-run-id', ASSERTED.id);
   });
 
-  /**
-   * AND THE OTHER STATES STAY TEXT, which is the half that keeps the first
-   * one meaningful. There is nothing to do about "processing", so a link there
-   * would be the same false affordance pointing somewhere else.
-   */
-  it('leaves a status-only focus as plain text', async () => {
-    renderList([{ ...ROWS[0]!, status: 'complete', verdict: 'passed' }]);
-    expect(await screen.findByText('clear')).toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: /investigate/i })).toBeNull();
+  it('counts failed assertions in the plural', async () => {
+    renderList([{ ...ASSERTED, checks: { failed: 2, total: 3 } }]);
+    expect(await screen.findByTestId('run-assertions-failed')).toHaveTextContent(
+      /^2 assertions failed$/,
+    );
+  });
+
+  it('draws no Focus column', async () => {
+    renderList([...ROWS, { ...ASSERTED, verdict: 'failed' }]);
+    await screen.findByRole('columnheader', { name: 'Simulation' });
+    expect(screen.queryByRole('columnheader', { name: 'Focus' })).toBeNull();
+    expect(screen.queryByText('investigate')).toBeNull();
+    expect(screen.queryByText('processing')).toBeNull();
   });
 });
 
@@ -100,7 +118,11 @@ describe('RunList columns', () => {
     expect(await screen.findByRole('columnheader', { name: 'Project' })).toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: 'Simulation' })).toBeInTheDocument();
     expect(screen.getAllByText('Checkout')).toHaveLength(2);
-    expect(screen.getByText('example.ParitySimulation')).toBeInTheDocument();
+    // The link's TEXT, not `getByText`: the name is drawn in pieces (package
+    // line, then the class's words), which together still read as one string.
+    expect(
+      screen.getByRole('link', { name: 'View run 11111111-1111-4111-8111-111111111111' }),
+    ).toHaveTextContent(/^example\.ParitySimulation$/);
   });
 
   /**
@@ -170,13 +192,75 @@ describe('RunList columns', () => {
     ).toHaveTextContent('33333333');
   });
 
+  /** The split name is for a SIMULATION. A run the worker has not parsed keeps
+   *  its short id, and a test's list keeps "Run n" — neither is a class, so
+   *  neither grows a package line (clean UI, PR 3). */
+  it('keeps the short id and "Run n" as they were, with no package line', async () => {
+    renderList(ROWS);
+    const unparsed = await screen.findByRole('link', {
+      name: 'View run 33333333-3333-4333-8333-333333333333',
+    });
+    expect(unparsed).toHaveTextContent(/^33333333$/);
+    expect(unparsed.querySelector('[data-name-package]')).toBeNull();
+
+    cleanup();
+    renderList([{ ...ROWS[0]!, runNumber: 3 }], '/projects/checkout/tests/parity', {
+      projectSlug: 'checkout',
+      testSlug: 'parity',
+    });
+    const numbered = await screen.findByRole('link', {
+      name: 'View run 11111111-1111-4111-8111-111111111111',
+    });
+    expect(numbered).toHaveTextContent(/^Run 3$/);
+    expect(numbered.querySelector('[data-name-package]')).toBeNull();
+  });
+
+  /** Clean UI, PR 3: Focus gone, Started after the measurements, its zone in
+   *  the header once rather than on every row. */
+  it('orders the columns identity, outcome, measurements, then when and where', async () => {
+    renderList(ROWS);
+    await screen.findByRole('columnheader', { name: 'Project' });
+    const headers = screen.getAllByRole('columnheader').map((h) => h.textContent?.trim() ?? '');
+    expect(headers.slice(0, 6)).toEqual(['Project', 'Simulation', 'Status', 'Verdict', 'p95', 'Errors']);
+    expect(headers[6]).toMatch(/^Started \(.+\)$/);
+    expect(headers[7]).toBe('Environment');
+    expect(headers).toHaveLength(8);
+  });
+
+  /** A page can straddle a daylight-saving change. The header names the first
+   *  row's zone; a row in another keeps its own, so no time reads under the
+   *  wrong zone (Review Focus 1). */
+  it('keeps a row’s own zone when it differs from the header’s', async () => {
+    const original = process.env.TZ;
+    try {
+      process.env.TZ = 'America/New_York';
+      expect(new Date('2026-01-15T12:00:00Z').getHours()).toBe(7);
+      renderList([
+        { ...ROWS[0]!, toolStartedAt: '2026-04-01T15:00:00.000Z' },
+        { ...ROWS[0]!, id: '99999999-9999-4999-8999-999999999999', toolStartedAt: '2026-03-01T15:00:00.000Z' },
+      ]);
+      const header = await screen.findByRole('columnheader', { name: /^Started \(/ });
+      const headerZone = /\((.+)\)/.exec(header.textContent ?? '')![1]!;
+      const suffixes = screen.getAllByTestId('run-started-zone');
+      expect(suffixes).toHaveLength(1);
+      expect(suffixes[0]!.textContent?.trim()).not.toBe(headerZone);
+      expect(suffixes[0]!.closest('tr')).toHaveAttribute(
+        'data-run-id',
+        '99999999-9999-4999-8999-999999999999',
+      );
+    } finally {
+      if (original === undefined) delete process.env.TZ;
+      else process.env.TZ = original;
+    }
+  });
+
   it('has no Tool column — TOOL_IDS has one member, so it read "gatling" on every row', async () => {
     renderList(ROWS);
     await screen.findByRole('columnheader', { name: 'Project' });
     expect(screen.queryByRole('columnheader', { name: 'Tool' })).toBeNull();
   });
 
-  it('summarizes the current page and adds a focus signal after verdict', async () => {
+  it('summarizes the current page', async () => {
     renderList([
       ...ROWS,
       {
@@ -200,22 +284,13 @@ describe('RunList columns', () => {
     // THE COUNTS SAY WHAT THEY COUNT. They reduce over one keyset page, and
     // shipped under the name "Run list health" with only the fourth tile
     // disclosing that — so an org with 90 failed runs read "Needs attention:
-    // 2" off its first page. The denominator is derived from the rows on
-    // screen rather than written down, so a fixture change moves both sides.
-    //
-    // The scope is its own visible line now rather than the opening sentence
-    // of a paragraph (review 09-13's copy table); the CLAIM is unchanged and
-    // is what this asserts — the reader is told, without opening anything,
-    // that these four numbers cover this page and how many runs that is.
-    const rows = screen.getAllByTestId('run-row');
-    expect(within(health).getByTestId('health-scope')).toHaveTextContent(
-      new RegExp(`on this page · ${rows.length} runs`, 'i'),
+    // 2" off its first page. The scope stays visible, beside the counts it
+    // qualifies; the run total it used to repeat is the heading's (clean UI,
+    // PR 3), so the line says "On this page" and nothing more.
+    expect(within(health).getByTestId('health-scope')).toHaveTextContent(/^On this page$/);
+    expect(screen.getByRole('heading', { level: 1 }).parentElement).toHaveTextContent(
+      `${screen.getAllByTestId('run-row').length} runs`,
     );
-
-    expect(screen.getByRole('columnheader', { name: 'Focus' })).toBeInTheDocument();
-    expect(screen.getByText('investigate')).toBeInTheDocument();
-    expect(screen.getByText('processing')).toBeInTheDocument();
-    expect(screen.getByText('clear')).toBeInTheDocument();
   });
 
   it('falls back to the short id when the run has no simulation yet', async () => {
@@ -342,28 +417,43 @@ describe('RunList columns', () => {
 });
 
 /**
- * REVIEW C02 — THE HEALTH TILES COUNT TWO SYSTEMS, NOT THREE.
+ * REVIEW C02 — THE COUNTS SAY WHICH SYSTEMS THEY COUNT.
  *
- * "Needs attention: 0" sat above a list containing a run whose simulation had
- * a failing assertion. The tiles are not wrong — they count execution state
- * and the platform SLA verdict, which is all `GET /v1/runs` returns
- * (`RunListResponseSchema` picks id, project, status, verdict, tool,
- * startedAt, toolStartedAt, simulation and nothing else). But a tile labelled
- * "Needs attention" reading zero is a claim about the run, and an engineer
- * triaging a list acts on it.
- *
- * Counting simulation checks here needs a field the list endpoint does not
- * have, so this states the boundary rather than inventing the number. The
- * caveat is the fix that is available today; the count is a backend change.
+ * "Needs attention: 0" once sat above a run whose simulation had a failing
+ * assertion, because the list endpoint did not send the outcomes. M02 put
+ * `checks` on the contract and the count reads it; the tally's ⓘ says so, and
+ * still says the counts are page-local (clean UI, PR 3: the caveat moved from
+ * a disclosure to the ⓘ, its claims unchanged).
  */
+/**
+ * FINAL REVIEW, IMPORTANT 2: the scope line dropped the run total because "the
+ * heading already says it" — true on All runs, false on a project's list and a
+ * test's page, which hide the list's heading (`showHeading={false}`). There
+ * the scope line is the page's only count, so it keeps it.
+ */
+describe('RunList — the tally counts the page where no heading does', () => {
+  it('says how many runs are on the page when the heading is hidden, and not when it is shown', async () => {
+    renderList([...ROWS], '/projects/checkout/runs', { projectSlug: 'checkout', showHeading: false });
+    const hidden = await screen.findByRole('region', { name: 'Run health on this page' });
+    expect(within(hidden).getByTestId('health-scope')).toHaveTextContent(/^On this page · 2 runs$/);
+    expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
+
+    cleanup();
+    renderList([...ROWS]);
+    const shown = await screen.findByRole('region', { name: 'Run health on this page' });
+    expect(within(shown).getByTestId('health-scope')).toHaveTextContent(/^On this page$/);
+  });
+});
+
 describe('RunList — the health summary says which systems it counted', () => {
-  it('names what the counts do not include', async () => {
+  it('says the counts include simulation assertions and cover this page only', async () => {
     renderList([...ROWS]);
     const health = await screen.findByRole('region', { name: 'Run health on this page' });
-    expect(health).toHaveTextContent(/simulation/i);
+    const info = within(health).getByRole('button', { name: 'About these counts' });
+    expect(info).toHaveAccessibleDescription(/simulation/i);
     // And still says it is page-local — the new caveat must not replace the
     // one that was already there.
-    expect(health).toHaveTextContent(/not totals for the whole list/i);
+    expect(info).toHaveAccessibleDescription(/this page only/i);
   });
 });
 

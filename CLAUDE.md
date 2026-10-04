@@ -128,7 +128,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **197 files / 2711 tests**, it
+`nvm use` first, and if a run reports fewer than **199 files / 2733 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -145,6 +145,106 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The clean-UI run-lists branch (`feat/clean-ui-run-lists`, PR 3 of four in
+`docs/superpowers/specs/2026-10-04-clean-ui-design.md`, its own spec
+`docs/superpowers/specs/2026-10-04-clean-ui-run-lists-design.md`) added TWO
+unit files — `apps/web/test/SimulationName.test.tsx` (7) and
+`apps/web/test/RunTally.test.tsx` (4) — and 11 cases net elsewhere, from
+**197 / 2711 to 199 / 2733**. Integration moves with `format.test.ts`' four
+new cases, **182 / 2353 to 182 / 2357**, and **e2e stays 188** (every browser
+assertion went inside an existing case). The three run lists are one
+component: the class leads each name with its package in a small line above,
+breaking only between whole words; Focus is gone, its one unique fact (a
+failed simulation assertion) a line under the verdict; the tally is one line
+of counts with one ⓘ; Started is short, its zone once in the header.
+
+**MEASURED BEFORE AND AFTER** (developer database, 1440x900, words inside
+`<main>`): All runs **503 -> 468** (page height 2154 -> 1765), a project's
+runs **380 -> 348**, a test's page **351 -> 319**. The run table needs
+**896px** on All runs and **828px** on a project's list, down from 1078: it
+no longer scrolls at 1280 and 1440, and still does at 1100 and 1024 with
+Errors on screen (596px).
+
+**A NO-WRAP PIECE HAS TO BE BOUNDED, OR THE COLUMN IS.** `break-all` broke a
+class anywhere ("example.P / aritySimul / ation"). `SimulationName` draws each
+break-free piece as a `whitespace-nowrap` span joined by `<wbr>`, so a line
+ends only between pieces — and the column's minimum becomes the longest piece.
+Splitting at dots and camelCase alone left a snake_case class as ONE
+45-character piece: measured, it pushed Errors to **833px of 726px** at 768.
+Pieces also split after `_` and `-`, and any piece is cut at 20 characters:
+the one case a name breaks mid-word. The final review (Opus) found it by
+asking what has no camelCase.
+
+**AND A ZERO-MINIMUM GRID TRACK LET A NO-WRAP PIECE RUN UNDER ITS NEIGHBOUR.**
+`IdentityCell` was `minmax(0, 1fr)`, which `break-all` made safe; without it
+"simulations." ran under the copy button at 768. It is
+`minmax(min-content, 1fr)`, and the browser case asserts every piece is one
+line box AND stops short of the button — the one-line check alone passes
+against the overlap.
+
+**`display: block` PUTS A LINE BREAK INTO THE RENDERED TEXT.** The package
+line was a block, so Chromium's `innerText` read
+"com.acme.checkout.simulations.\nCheckoutPeakLoadSimulation" — what a copy
+and a find-in-page see — against the spec's promise that both read the full
+name. `textContent` was right throughout, so every unit case passed. It is
+`inline-block w-full`: still a line of its own, no break in the text. **To
+check what a reader copies, read `innerText` in a browser, never
+`textContent`.**
+
+**FLEX WRAPS BY EACH ITEM'S WIDEST SIZE.** "1 assertion failed" in one
+flex-wrap row with a card's two badges widened the group to ~300px, so it
+fell below the name. The first guard asserted "beside the name" at 375 and
+could never pass: the fixture's ordinary name (~215px with its copy button)
+plus two badges (~150) already exceed the card's ~319px there, so the badges
+sat below the name before this branch too. At 480 they fit, and only the
+widened group pushed them down — that is where `mobile.spec.ts` asserts it.
+Badges and line are a right-aligned column now.
+
+**"THE HEADING ALREADY SAYS IT" WAS TRUE ON ONE LIST OF THREE.** The tally's
+scope line dropped its run total for that reason; a project's list and a
+test's page pass `showHeading={false}`, so there the line was the page's only
+count. `RunTally` takes a REQUIRED `showTotal` — no default, this file's rule
+for a parameter whose wrong value is silent.
+
+**A MODULE-SCOPE FORMATTER CANNOT BE COMPARED UNDER A PINNED ZONE.**
+`formatInstant` builds its `Intl.DateTimeFormat` at import, so a test pinning
+`America/New_York` compared two clocks. `format.test.ts` checks the spelling
+match in the runner's own zone and the daylight-saving difference separately;
+`formatListInstant` and `zoneLabel` are built per call. `zoneLabel` is not
+`formatZoneOffset`: that is the time axis's spelling (`GMT-4`), this is
+`formatInstant`'s (`EDT`), so the list's header and the run page's chip agree.
+
+**AND A STOPWATCH TEST FAILED ON A LOADED MACHINE AND PASSED ALONE.**
+`window-bench`'s 50-endpoint budget took 3700ms during the full integration
+run, with load at 80-102 and swap 94% used by other work on the machine; run
+alone behind a load AND free-memory gate (load 7.5, 17,766 free pages) it
+passed. Gating on load alone is not enough — memory was the slower to recover.
+
+**RULINGS, EACH A DECISION RATHER THAN AN OVERSIGHT:**
+
+  - The column order keeps Started after the measurements; at 1100 the table
+    still scrolls (measured), and the spec's "near enough" is recorded as not
+    met rather than claimed.
+  - Cards keep `formatInstant` (one time per card, no shared header).
+  - The ⓘ's definitions use the Status words ("incomplete", "running"), not
+    the spec's "stopped early" and "live" — one word per thing.
+
+**KNOWN AND LEFT, EACH A DECISION RATHER THAN AN OVERSIGHT:**
+
+  - The table builds two `Intl.DateTimeFormat`s per row per render
+    (negligible at 25 rows).
+  - `Started ()` would print if `zoneLabel` ever returned no zone name.
+
+**WHAT WAS RUN.** `typecheck` and `lint` exit 0 by their own exit codes;
+`test:unit` **199 / 2733**, zero `Errors` lines, after the final review's fix
+pass; `test:integration` COLLECTED **182 / 2357** on the tree before that pass
+(which changed only comments in the two `.ts` files that config runs; their
+file, `format.test.ts`, then passed 31/31 under the integration config) with
+the one loaded-machine failure above, which passed alone; `pnpm test:e2e`
+**188 passed, exit 0** — every total the one predicted from the source, against
+a SCRATCH DATABASE (`perfportal_cleanui3`), a scratch Redis INDEX (db 4) and
+e2e port 3800.
 
 The clean-UI run-page branch (`feat/clean-ui-run-page`, PR 2 of four in
 `docs/superpowers/specs/2026-10-04-clean-ui-design.md`, its own spec

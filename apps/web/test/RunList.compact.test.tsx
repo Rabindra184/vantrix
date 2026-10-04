@@ -193,6 +193,18 @@ describe('RunList — cards carry every field the row did', () => {
     expect(first.textContent ?? '').toContain('failed');
   });
 
+  /** A card shows a failed simulation assertion under its verdict, as the
+   *  table's Verdict cell does, and carries no Focus row (clean UI, PR 3). */
+  it('names a failed simulation assertion under the verdict, with no Focus row', async () => {
+    renderList([{ ...ROWS[0]!, checks: { failed: 2, total: 5 } }, ROWS[1]!] as unknown as RunListResponse['items']);
+    const cards = await screen.findAllByTestId('run-row');
+    expect(within(cards[0]!).getByTestId('run-assertions-failed')).toHaveTextContent(
+      /^2 assertions failed$/,
+    );
+    expect(within(cards[1]!).queryByTestId('run-assertions-failed')).toBeNull();
+    for (const card of cards) expect(within(card).queryByText('Focus')).toBeNull();
+  });
+
   /** An unparsed run has no p95 and no error rate. `—`, never `0` — a zero in
    *  a latency column is a measurement, which is the wrong claim entirely. */
   it('draws an absent measurement as an absence', async () => {
@@ -217,7 +229,10 @@ describe('RunList — cards carry every field the row did', () => {
     const section = await screen.findByRole('region', { name: 'Runs' });
 
     const info = within(section).getByRole('button', { name: 'About Runs' });
-    expect(info).toHaveAccessibleDescription(/Focus is the first operational action/i);
+    // Focus is gone (clean UI, PR 3), and so is the sentence explaining it;
+    // the Started caveat stays.
+    expect(info).not.toHaveAccessibleDescription(/Focus/);
+    expect(info).toHaveAccessibleDescription(/ingest time/i);
     expect(within(section).queryByText(/Every run in your organisation/i)).toBeNull();
   });
 });
@@ -232,15 +247,14 @@ describe('RunList — the tally keeps both caveats', () => {
    * caveat than a desktop is the failure this guards — nobody would notice
    * until somebody triaged on it.
    */
-  it('puts them behind a disclosure without shortening them', async () => {
+  it('puts them behind the info without shortening them', async () => {
     renderList();
     await screen.findAllByTestId('run-row');
 
     const section = screen.getByRole('region', { name: 'Run health on this page' });
-    const details = within(section).getByRole('group');
-    expect(details).not.toHaveAttribute('open');
-    expect(details.textContent ?? '').toMatch(/not totals for the whole list/i);
-    expect(details.textContent ?? '').toMatch(/checks a simulation declares/i);
+    const info = within(section).getByRole('button', { name: 'About these counts' });
+    expect(info).toHaveAccessibleDescription(/this page only/i);
+    expect(info).toHaveAccessibleDescription(/simulation assertion failed/i);
   });
 
   /**
@@ -271,7 +285,9 @@ describe('RunList — the tally keeps both caveats', () => {
     renderList();
     await screen.findAllByTestId('run-row');
     const section = screen.getByRole('region', { name: 'Run health on this page' });
-    expect(section.textContent ?? '').toMatch(/counted more than once/i);
+    expect(within(section).getByRole('button', { name: 'About these counts' })).toHaveAccessibleDescription(
+      /more than one count/i,
+    );
   });
 
   /**
@@ -298,19 +314,17 @@ describe('RunList — the tally keeps both caveats', () => {
       const section = screen.getByRole('region', { name: 'Run health on this page' });
       const where = compact ? 'compact' : 'wide';
 
-      // The scope, visible and unfolded — the fact a reader needs without asking.
+      // The scope, visible and unfolded — the fact a reader needs without
+      // asking. Its run total went with the clean-UI pass: the heading says it.
       expect(within(section).getByTestId('health-scope').textContent, where).toMatch(
-        /^On this page · \d+ runs?$/,
+        /^On this page$/,
       );
-      // The methodology, behind a real control. A `<summary>` contributes an
-      // ARIA group, which is what this queries — and what the old case
-      // asserted was absent here.
-      expect(within(section).queryByRole('group'), where).not.toBeNull();
-      expect(within(section).getByText('How counts work'), where).toBeInTheDocument();
-      // jsdom keeps a closed `<details>`'s children, so this proves the words
-      // are still THERE, not that they are on screen — the geometry is
-      // `mobile.spec.ts`'s.
-      expect(section.textContent ?? '', where).toMatch(/not totals for the whole list/i);
+      // The methodology, behind the ⓘ at both widths — no disclosure any more.
+      expect(within(section).queryByRole('group'), where).toBeNull();
+      expect(
+        within(section).getByRole('button', { name: 'About these counts' }),
+        where,
+      ).toHaveAccessibleDescription(/this page only/i);
     }
   });
 });
