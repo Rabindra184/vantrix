@@ -6,7 +6,6 @@ import {
   type ChangeEvent,
   type Dispatch,
   type FormEvent,
-  type ReactNode,
   type SetStateAction,
 } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
@@ -24,6 +23,7 @@ import type {
 } from '@perfportal/contracts';
 import Button, { linkButtonClasses } from '../components/Button';
 import Card from '../components/Card';
+import FormField, { errorId, hintId, noticeId } from '../components/FormField';
 import { EmptyState, ErrorState, LoadingState } from '../components/States';
 import TableFrame from '../components/TableFrame';
 import { ChevronLeftIcon, PlayIcon, RefreshIcon, StopIcon, UploadIcon } from '../components/icons';
@@ -149,7 +149,7 @@ const ARTIFACT_HINTS: Record<RunnerArtifactKind, string> = {
 const UPLOAD_OPTION = '__upload__';
 
 /** Said under the typed Simulation field when a package's list is UNKNOWN. */
-const SIMULATIONS_UNKNOWN_HINT = "This package's simulations aren't known yet — type the class.";
+const SIMULATIONS_UNKNOWN_NOTICE = "This package's simulations aren't known yet — type the class.";
 
 /**
  * A package that has a file. One without cannot be started, so it is not
@@ -188,7 +188,7 @@ function knownSimulations(pkg: OfferedPackage | null): readonly string[] | null 
  * without the extension (`.tar.gz` counted as one), at most 112 characters.
  *
  * A COPY of the server's rule, which is the authority — this only previews it,
- * in the field's placeholder and the Review group, so a reader can see the name
+ * in the Package name field's placeholder, so a reader can see the name
  * that WOULD be used before the start uses it. The two have to agree for the
  * preview to be true, and one table of cases pins both copies.
  *
@@ -526,16 +526,17 @@ function NewRunnerRunProject({
               `<fieldset>`/`<legend>` rather than headings: a legend groups
               CONTROLS, which is what these are, and it contributes nothing to
               the document's heading outline. This page already has an `<h1>`;
-              three more headings inside one form would make the outline claim
-              the form is three sections of the page rather than three parts of
-              one control.
+              more headings inside one form would make the outline claim the
+              form is sections of the page rather than parts of one control.
 
               AND THE NUMBERS ARE GONE (review M11). "1 · Artifact", "2 ·
               Execution", "3 · Review" are "staged labels without staged
               interaction": an ordinal promises a flow that gates step 2 behind
               step 1, and this form has always shown all three at once and
               submitted in one go. The grouping is real and stays; only the
-              claim that it is a sequence goes. */}
+              claim that it is a sequence goes. And since clean UI PR 4 there
+              are two: the third, Review, read every field back and is gone —
+              see the note above Queue run. */}
           <form className="flex flex-col gap-6" onSubmit={submit}>
             <fieldset className="flex flex-col gap-4">
               {/* ═══ THE GROUP WAS "ARTIFACT" AND IS "PACKAGE" ═══
@@ -578,7 +579,7 @@ function NewRunnerRunProject({
 
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 {mode === 'upload' ? (
-                  <Field
+                  <FormField
                     key="artifact-kind"
                     label="Artifact type"
                     id="runner-kind"
@@ -587,14 +588,14 @@ function NewRunnerRunProject({
                     <select
                       id="runner-kind"
                       className={INPUT}
-                      aria-describedby="runner-kind-hint"
+                      aria-describedby={hintId('runner-kind')}
                       value={form.artifactKind}
                       onChange={update('artifactKind', setForm)}
                     >
                       <option value="gatling_jar">Gatling jar</option>
                       <option value="gatling_bundle">Runnable bundle</option>
                     </select>
-                  </Field>
+                  </FormField>
                 ) : (
                   /* DISTINCT KEYS for the two controls that share this slot.
                      Without them React sees a `Field` holding a `select` in
@@ -602,7 +603,7 @@ function NewRunnerRunProject({
                      Package select silently becomes focus on `Artifact type`
                      — a native select fires `change` on ArrowDown, so a
                      keyboard user gets there just by arrowing. */
-                  <Field key="package-select" label="Package" id="runner-package">
+                  <FormField key="package-select" label="Package" id="runner-package">
                     <select
                       id="runner-package"
                       ref={packageSelectRef}
@@ -635,7 +636,7 @@ function NewRunnerRunProject({
                         </>
                       )}
                     </select>
-                  </Field>
+                  </FormField>
                 )}
                 <SimulationField
                   mode={mode}
@@ -654,7 +655,7 @@ function NewRunnerRunProject({
                       different kind, so the server refuses it with a
                       remediation naming the metadata's "package" field; typing
                       a different name here is how the upload goes elsewhere. */}
-                  <Field label="Package name" id="runner-package-name" optional>
+                  <FormField label="Package name" id="runner-package-name" optional>
                     <input
                       id="runner-package-name"
                       className={INPUT}
@@ -665,7 +666,7 @@ function NewRunnerRunProject({
                       placeholder={artifact === null ? undefined : packageNameFromFile(artifact.name)}
                       onChange={update('packageName', setForm)}
                     />
-                  </Field>
+                  </FormField>
                   {offered.length > 0 && (
                     <button
                       type="button"
@@ -686,18 +687,18 @@ function NewRunnerRunProject({
               <legend className={LEGEND}>Execution</legend>
 
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <Field label="Run name" id="runner-name">
+                <FormField label="Run name" id="runner-name">
                   <input id="runner-name" className={INPUT} value={form.name} onChange={update('name', setForm)} required />
-                </Field>
-                <Field label="Environment" id="runner-environment" optional>
+                </FormField>
+                <FormField label="Environment" id="runner-environment" optional>
                   <input id="runner-environment" className={INPUT} value={form.environment} onChange={update('environment', setForm)} />
-                </Field>
+                </FormField>
               </div>
 
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <Field label="Branch" id="runner-branch" optional>
+                <FormField label="Branch" id="runner-branch" optional>
                   <input id="runner-branch" className={INPUT} value={form.branch} onChange={update('branch', setForm)} />
-                </Field>
+                </FormField>
                 <TestPicker slug={slug} form={form} setForm={setForm} />
               </div>
 
@@ -716,19 +717,19 @@ function NewRunnerRunProject({
                 </summary>
                 <div className="flex flex-col gap-4 pt-3">
                   <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                    <Field label="Commit SHA" id="runner-commit" optional>
+                    <FormField label="Commit SHA" id="runner-commit" optional>
                       <input id="runner-commit" className={INPUT} value={form.commitSha} onChange={update('commitSha', setForm)} />
-                    </Field>
+                    </FormField>
                     {mode === 'upload' && (
-                      <Field label="Gatling version" id="runner-gatling-version" optional>
+                      <FormField label="Gatling version" id="runner-gatling-version" optional>
                         <input id="runner-gatling-version" className={INPUT} value={form.gatlingVersion} onChange={update('gatlingVersion', setForm)} />
-                      </Field>
+                      </FormField>
                     )}
                   </div>
 
-                  <Field label="JVM options" id="runner-java-options" optional>
+                  <FormField label="JVM options" id="runner-java-options" optional>
                     <input id="runner-java-options" className={INPUT} value={form.javaOptions} onChange={update('javaOptions', setForm)} />
-                  </Field>
+                  </FormField>
 
                   {/* ═══ NOT EVERY SIMULATION READS THE SAME PROPERTIES ═══
 
@@ -737,56 +738,57 @@ function NewRunnerRunProject({
                       knobs of this product. They are not: a system property is
                       whatever the simulation's own code looks up, and two
                       simulations in one project need not share a single name.
-                      The hint says so, and the review summary below echoes
-                      back exactly what was typed rather than labelling any of
-                      it "target" or "load". */}
-                  <Field
+                      The hint (behind the field's ⓘ) says so; nothing on the
+                      page labels any of it "target" or "load". */}
+                  <FormField
                     label="System properties"
                     id="runner-system-properties"
                     optional
                     hint="One key=value per line, passed to the JVM as -Dkey=value. Which names mean anything is up to your simulation — PerfPortal does not interpret them."
+                    /* A malformed line is flagged HERE, as it is typed (clean UI
+                       PR 4). The Review group used to be the one place it showed
+                       while it could still be fixed cheaply; the submit still
+                       refuses it with the alert below. */
+                    error={parsedProperties.kind === 'error' ? parsedProperties.message : undefined}
                   >
                     <textarea
                       id="runner-system-properties"
                       className={`${INPUT} min-h-28 resize-y py-2 font-mono`}
-                      aria-describedby="runner-system-properties-hint"
+                      aria-describedby={
+                        parsedProperties.kind === 'error'
+                          ? `${hintId('runner-system-properties')} ${errorId('runner-system-properties')}`
+                          : hintId('runner-system-properties')
+                      }
+                      aria-invalid={parsedProperties.kind === 'error' || undefined}
                       value={form.systemProperties}
                       onChange={update('systemProperties', setForm)}
                     />
-                  </Field>
+                  </FormField>
                 </div>
               </details>
             </fieldset>
 
-            <fieldset className="flex flex-col gap-4">
-              <legend className={LEGEND}>Review</legend>
-              <ReviewSummary
-                form={form}
-                simulation={simulationClass}
-                source={
-                  mode === 'package' && chosenPackage !== null
-                    ? { kind: 'package', pkg: chosenPackage }
-                    : mode === 'upload'
-                      ? { kind: 'upload', artifact }
-                      : { kind: 'loading' }
-                }
-                properties={parsedProperties}
-              />
-
-              {(formError !== null || mutation.isError) && (
-                <div role="alert" className="rounded-lg border border-default bg-sunken p-3 text-[0.8125rem] text-primary">
-                  {formError ?? problem?.detail ?? mutationError?.message}
-                  {problem?.remediation && <p className="mt-1 text-muted">{problem.remediation}</p>}
-                </div>
-              )}
-
-              <div className="flex flex-wrap items-center gap-3">
-                <Button type="submit" variant="primary" loading={mutation.isPending} disabled={mode === 'loading'}>
-                  <PlayIcon className="h-3.5 w-3.5" />
-                  Queue run
-                </Button>
+            {/* ═══ NO REVIEW GROUP (clean UI PR 4) ═══
+                The form is its own review. The group that read every field
+                back sat between the last field and this button: the package
+                select already names the package, its file and its size, the
+                upload's default package name is that field's placeholder, a
+                missing required field is refused where it is, and a malformed
+                property is flagged under its own field. What stays is the
+                error alert and Queue run, outside any group. */}
+            {(formError !== null || mutation.isError) && (
+              <div role="alert" className="rounded-lg border border-default bg-sunken p-3 text-[0.8125rem] text-primary">
+                {formError ?? problem?.detail ?? mutationError?.message}
+                {problem?.remediation && <p className="mt-1 text-muted">{problem.remediation}</p>}
               </div>
-            </fieldset>
+            )}
+
+            <div className="flex flex-wrap items-center gap-3">
+              <Button type="submit" variant="primary" loading={mutation.isPending} disabled={mode === 'loading'}>
+                <PlayIcon className="h-3.5 w-3.5" />
+                Queue run
+              </Button>
+            </div>
           </form>
         </Card>
 
@@ -858,18 +860,19 @@ function TestPicker({
 
   if (tests.isError) {
     return (
-      <Field
+      <FormField
         label="Test"
         id="runner-test"
         optional
-        hint="This project’s tests could not be loaded, so the slug has to be typed. Lower case, hyphens, no spaces — a slug that names no test yet creates one."
+        notice="Tests couldn't be loaded — type the slug."
+        hint="Lower case, hyphens, no spaces — a slug that names no test yet creates one."
       >
         <input
           id="runner-test"
           className={INPUT}
           value={form.test}
           placeholder="checkout-soak"
-          aria-describedby="runner-test-hint"
+          aria-describedby={`${noticeId('runner-test')} ${hintId('runner-test')}`}
           onChange={(event) =>
             setForm((current) => ({
               ...current,
@@ -881,13 +884,13 @@ function TestPicker({
             }))
           }
         />
-      </Field>
+      </FormField>
     );
   }
 
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
-      <Field
+      <FormField
         label="Test"
         id="runner-test"
         hint="Which test this run belongs to. The default groups runs by their simulation class."
@@ -896,7 +899,7 @@ function TestPicker({
           id="runner-test"
           className={INPUT}
           value={value}
-          aria-describedby="runner-test-hint"
+          aria-describedby={hintId('runner-test')}
           onChange={onSelect}
         >
           <option value="">Group by simulation class (default)</option>
@@ -907,10 +910,10 @@ function TestPicker({
           ))}
           <option value={NEW}>Create a new test…</option>
         </select>
-      </Field>
+      </FormField>
 
       {form.testMode === 'new' && (
-        <Field
+        <FormField
           label="New test slug"
           id="runner-test-new"
           hint="Lower case, hyphens, no spaces. The server refuses a display name outright rather than slugifying it, which is what stops a typo becoming a second test."
@@ -920,11 +923,11 @@ function TestPicker({
             className={INPUT}
             value={form.test}
             placeholder="checkout-soak"
-            aria-describedby="runner-test-new-hint"
+            aria-describedby={hintId('runner-test-new')}
             onChange={(event) => setForm((current) => ({ ...current, test: event.target.value }))}
             required
           />
-        </Field>
+        </FormField>
       )}
     </div>
   );
@@ -969,17 +972,17 @@ function SimulationField({
 }) {
   if (mode === 'loading') {
     return (
-      <Field label="Simulation" id="runner-simulation">
+      <FormField label="Simulation" id="runner-simulation">
         <select id="runner-simulation" className={INPUT} disabled value="" onChange={() => undefined}>
           <option value="" />
         </select>
-      </Field>
+      </FormField>
     );
   }
 
   if (simulations !== null) {
     return (
-      <Field label="Simulation" id="runner-simulation">
+      <FormField label="Simulation" id="runner-simulation">
         <select
           id="runner-simulation"
           className={INPUT}
@@ -992,192 +995,26 @@ function SimulationField({
             </option>
           ))}
         </select>
-      </Field>
+      </FormField>
     );
   }
 
   return (
-    <Field
+    <FormField
       label="Simulation class"
       id="runner-simulation"
-      hint={mode === 'package' ? SIMULATIONS_UNKNOWN_HINT : undefined}
+      notice={mode === 'package' ? SIMULATIONS_UNKNOWN_NOTICE : undefined}
     >
       <input
         id="runner-simulation"
         className={INPUT}
         value={value}
         placeholder={mode === 'upload' ? 'example.BasicSimulation' : undefined}
-        aria-describedby={mode === 'package' ? 'runner-simulation-hint' : undefined}
+        aria-describedby={mode === 'package' ? noticeId('runner-simulation') : undefined}
         onChange={(event) => onChange(event.target.value)}
         required
       />
-    </Field>
-  );
-}
-
-/* ======================================================================== *
- * REVIEW — WHAT WILL ACTUALLY BE SENT
- * ======================================================================== */
-
-/**
- * The third group: everything the submit will carry, read back.
- *
- * ═══ IT SUMMARISES, IT DOES NOT LABEL ═══
- *
- * The review asks to "summarize target/load values when the artifact contract
- * exposes them; do not assume every simulation uses the same properties". The
- * artifact contract exposes none — a Gatling jar declares its simulations and
- * its version, and nothing about what any of them reads — so there is nothing
- * here that can honestly be called a target or a load.
- *
- * What CAN be shown is the exact set of `-D` properties the author typed, as
- * pairs, with a line saying that the simulation decides what they mean. That
- * is a summary of the launch rather than an interpretation of it, and it is
- * also the only place a mistyped key is visible before the run starts.
- */
-type ReviewRow = { readonly label: string; readonly value: string; readonly missing?: boolean };
-
-type ReviewSource =
-  | { readonly kind: 'loading' }
-  | { readonly kind: 'package'; readonly pkg: OfferedPackage }
-  | { readonly kind: 'upload'; readonly artifact: File | null };
-
-function ReviewSummary({
-  form,
-  simulation,
-  source,
-  properties,
-}: {
-  readonly form: FormState;
-  /** The simulation the start will carry — derived by the form, not read off
-   *  `form`, because from a package's list it may be the first one. */
-  readonly simulation: string;
-  readonly source: ReviewSource;
-  readonly properties: ReturnType<typeof parseSystemProperties>;
-}) {
-  /* ═══ ONLY THE ROWS THAT SAY SOMETHING — review M11 ═══
-   *
-   * The summary listed all eight fields always, so an untouched form showed
-   * four em dashes under "Environment", "Branch", "Commit" and "JVM options" —
-   * "an empty review present at once", which the finding names. A dash is not
-   * a fact about this run; it is the absence of an optional value nobody has
-   * chosen to set, and reading it takes a reader's attention for nothing.
-   *
-   * THE REQUIRED ROWS ARE NOT OPTIONAL ROWS AND DO NOT DISAPPEAR. Artifact,
-   * Simulation and Run name stay whether or not they are filled, drawn as
-   * MISSING — that is the whole job of this panel, to show the gap before the
-   * button is pressed rather than after the server refuses. Hiding them when
-   * unset would turn a checklist into a blank card at exactly the moment it is
-   * most useful.
-   *
-   * `Test` stays too, because its default is a real answer ("grouped by
-   * simulation class") rather than an absence. */
-  const optional = (label: string, value: string) =>
-    value.trim() === '' ? null : { label, value: value.trim() };
-
-  /* ═══ WHAT THE RUN WILL EXECUTE, IN THE TERMS OF ITS SOURCE ═══
-   *
-   * From a package the reader chose a NAME, and what a start runs is a FILE —
-   * the package's current version, which another upload can replace. So both
-   * are read back: the name, and the exact file and size, because two
-   * packages that differ in a letter are told apart by what they hold.
-   *
-   * For an upload, `Artifact` stays what it was, and `Package` says where it
-   * will be filed — the typed name, or the stem the server will use. It is an
-   * OPTIONAL row (nothing chosen, nothing typed, nothing to say), for the
-   * reason the rows below it are.
-   *
-   * While the packages list loads there is nothing true to say about either. */
-  const sourceRows: readonly (ReviewRow | null)[] =
-    source.kind === 'package'
-      ? [
-          { label: 'Package', value: source.pkg.name },
-          {
-            label: 'File',
-            value: `${source.pkg.current.filename} · ${formatBytes(source.pkg.current.bytes)}`,
-          },
-        ]
-      : source.kind === 'upload'
-        ? [
-            {
-              label: 'Artifact',
-              value: source.artifact?.name ?? 'none chosen',
-              missing: source.artifact === null,
-            },
-            optional(
-              'Package',
-              form.packageName.trim() ||
-                (source.artifact === null ? '' : packageNameFromFile(source.artifact.name)),
-            ),
-          ]
-        : [];
-
-  const rows: readonly ReviewRow[] = [
-    ...sourceRows,
-    { label: 'Simulation', value: simulation.trim() || 'not set', missing: simulation.trim() === '' },
-    { label: 'Run name', value: form.name.trim() || 'not set', missing: form.name.trim() === '' },
-    {
-      label: 'Test',
-      value:
-        form.testMode === 'default'
-          ? 'grouped by simulation class'
-          : form.test.trim() || 'not set',
-      missing: form.testMode !== 'default' && form.test.trim() === '',
-    },
-    optional('Environment', form.environment),
-    optional('Branch', form.branch),
-    optional('Commit', form.commitSha),
-    optional('JVM options', form.javaOptions),
-  ].filter((row): row is ReviewRow => row !== null);
-
-  return (
-    <div className="rounded-xl border border-default bg-sunken p-4" data-testid="review-summary">
-      <dl className="grid grid-cols-1 gap-x-6 gap-y-2 text-[0.8125rem] sm:grid-cols-2">
-        {rows.map((row) => (
-          <div key={row.label} className="flex min-w-0 items-baseline justify-between gap-3">
-            <dt className="text-muted">{row.label}</dt>
-            {/* A value the submit will REFUSE is drawn as missing rather than
-                as an empty cell: the summary's job is to make the gap visible
-                before the button is pressed, not after the server says no. */}
-            <dd
-              className={`min-w-0 truncate text-right ${row.missing === true ? 'italic' : 'text-primary'}`}
-              style={row.missing === true ? { color: 'var(--color-status-pending)' } : undefined}
-            >
-              {row.value}
-            </dd>
-          </div>
-        ))}
-      </dl>
-
-      <div className="mt-3 border-t border-divider pt-3">
-        <p className="text-[0.75rem] font-medium text-primary">System properties</p>
-        {properties.kind === 'error' ? (
-          // NOT a `role="alert"`: this text changes on every keystroke in the
-          // textarea above, and an assertive live region that re-announces per
-          // character is worse than silence. The submit's own alert is the one
-          // that speaks, once, when it matters.
-          <p className="mt-1 text-[0.75rem] leading-snug" style={{ color: 'var(--color-status-failed)' }}>
-            {properties.message}
-          </p>
-        ) : Object.keys(properties.value).length === 0 ? (
-          <p className="mt-1 text-[0.75rem] text-muted">None. The simulation runs on its own defaults.</p>
-        ) : (
-          <>
-            <ul className="mt-1 flex flex-col gap-0.5">
-              {Object.entries(properties.value).map(([key, value]) => (
-                <li key={key} className="font-mono text-[0.75rem] text-primary">
-                  -D{key}={value}
-                </li>
-              ))}
-            </ul>
-            <p className="mt-1.5 text-[0.75rem] leading-snug text-muted">
-              Passed to the JVM as written. Whether a simulation reads any of these is up to its own
-              code — PerfPortal does not interpret them.
-            </p>
-          </>
-        )}
-      </div>
-    </div>
+    </FormField>
   );
 }
 
@@ -1198,52 +1035,6 @@ function RunnerStatusCard({
     <Card headingLevel={2} title="Runner">
       <RunnerStatusLine query={query} />
     </Card>
-  );
-}
-
-function Field({
-  label,
-  id,
-  optional = false,
-  hint,
-  children,
-}: {
-  readonly label: string;
-  readonly id: string;
-  readonly optional?: boolean;
-  readonly hint?: string;
-  readonly children: ReactNode;
-}) {
-  return (
-    <div className="flex min-w-0 flex-col gap-1.5">
-      {/* ═══ THE ACCESSIBLE NAME IS THE WHOLE LABEL, CONCATENATED ═══
-       *
-       * `{label}{<span>optional</span>}` has no text node between the two, so
-       * the computed name was "Environmentoptional" — announced as one word,
-       * and matched by nothing a test or a user would think to write. The
-       * parentheses and the space are not decoration; they are what makes the
-       * name a phrase.
-       *
-       * Still one `<label>` rather than a label plus `aria-describedby`:
-       * "(optional)" qualifies WHICH field this is, not how to fill it in, and
-       * a describedby is announced after a pause — too late to stop someone
-       * filling in a field they could have skipped. `hint` below is the part
-       * that is genuinely a description. */}
-      <label htmlFor={id} className="text-[0.8125rem] font-medium text-primary">
-        {label}
-        {optional && <span className="ml-1 font-normal text-muted">(optional)</span>}
-      </label>
-      {children}
-      {/* The id is derived, not passed, so a caller cannot wire
-          `aria-describedby` to a hint that is not there — but the attribute
-          itself belongs on the CONTROL, which lives in `children` and only the
-          caller can reach. */}
-      {hint !== undefined && (
-        <p id={`${id}-hint`} className="text-[0.8125rem] leading-snug text-muted">
-          {hint}
-        </p>
-      )}
-    </div>
   );
 }
 
@@ -1491,7 +1282,7 @@ function RunnerLogsPanel({
 }) {
   const problem = query.error instanceof ProblemError ? query.error : null;
   return (
-    <Card headingLevel={2} title="Runner logs" description={jobId.slice(0, 8)}>
+    <Card headingLevel={2} title={`Runner logs · ${jobId.slice(0, 8)}`}>
       {query.isPending && <LoadingState label="Loading runner logs…" />}
       {query.isError && (
         <ErrorState

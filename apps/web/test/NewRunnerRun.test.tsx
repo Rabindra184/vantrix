@@ -270,13 +270,9 @@ describe('NewRunnerRun', () => {
     fireEvent.change(screen.getByLabelText(/artifact file/i), {
       target: { files: [new File(['alpha'], 'alpha.jar', { type: 'application/java-archive' })] },
     });
-    // TWICE now, deliberately: the upload control names the chosen file and
-    // the review group (M16's third section) reads back what will be sent. The
-    // assertion names the review, because that is the new claim — an
-    // unscoped `getByText` resolves two elements and fails.
-    expect(
-      within(screen.getByTestId('review-summary')).getByText(/alpha\.jar/i),
-    ).not.toBeNull();
+    // Once, on the upload control: the Review group that read it back a second
+    // time is gone (clean UI PR 4 — the form is its own review).
+    expect(screen.getByText(/alpha\.jar/i)).not.toBeNull();
 
     await act(async () => {
       await router.navigate('/projects/beta/run/new');
@@ -422,10 +418,10 @@ describe('NewRunnerRun', () => {
     noPackages();
     mount();
     const picker = await screen.findByLabelText('Test');
-    expect(screen.queryByLabelText(/new test slug/i)).toBeNull();
+    expect(screen.queryByLabelText(/^new test slug/i)).toBeNull();
 
     fireEvent.change(picker, { target: { value: '__new__' } });
-    const slug = screen.getByLabelText(/new test slug/i);
+    const slug = screen.getByLabelText(/^new test slug/i);
     fireEvent.change(slug, { target: { value: 'nightly-smoke' } });
 
     await fillRequired();
@@ -461,10 +457,62 @@ describe('NewRunnerRun', () => {
       test: 'checkout-soak',
     });
   });
+
+  /**
+   * ═══ A MALFORMED LINE IS FLAGGED UNDER ITS FIELD (clean UI PR 4) ═══
+   *
+   * The Review group was the only place a `key=value` mistake showed while it
+   * could still be fixed cheaply. With the group gone the message is the
+   * field's own error line, tied to the textarea, and it goes once the line
+   * is fixed. The submit still refuses a malformed set.
+   */
+  it('flags a malformed property under the field as it is typed, and still refuses it', async () => {
+    noPackages();
+    mount();
+    await fillRequired();
+    const field = screen.getByLabelText(/^system properties/i);
+
+    fireEvent.change(field, { target: { value: 'this line has no equals sign' } });
+    const message = screen.getByText(/must be key=value/i);
+    expect(message.closest('[hidden]')).toBeNull();
+    expect(descriptionOf(field)).toMatch(/must be key=value/i);
+    expect(field.getAttribute('aria-invalid')).toBe('true');
+
+    queue();
+    expect((await screen.findByRole('alert')).textContent).toMatch(/key=value/i);
+    expect(startRunnerRunMock).not.toHaveBeenCalled();
+
+    // Fixed, the field's own line goes (the submit's alert stays until the
+    // next attempt, as every refusal on this form does).
+    fireEvent.change(field, { target: { value: 'a=b' } });
+    expect(document.getElementById('runner-system-properties-error')).toBeNull();
+    expect(descriptionOf(field)).not.toMatch(/must be key=value/i);
+    expect(field.hasAttribute('aria-invalid')).toBe(false);
+  });
+
+  /**
+   * ═══ THE DEGRADED TEST FIELD SAYS WHY, AND KEEPS ITS RULE BEHIND ITS ⓘ ═══
+   *
+   * When the tests list cannot load, the notice is the one line a reader must
+   * act on — type the slug — so it is visible; the slug's format rule is the
+   * hint, behind the ⓘ. Both reach the control's description.
+   */
+  it('says why the slug is typed when the tests list cannot load', async () => {
+    noPackages();
+    fetchProjectTestsMock.mockRejectedValueOnce(new Error('tests unavailable'));
+    mount();
+    const typed = await screen.findByPlaceholderText('checkout-soak');
+
+    const notice = screen.getByText("Tests couldn't be loaded — type the slug.");
+    expect(notice.closest('[hidden]')).toBeNull();
+    expect(descriptionOf(typed)).toMatch(/Tests couldn't be loaded — type the slug\./);
+    expect(descriptionOf(typed)).toMatch(/Lower case, hyphens, no spaces/);
+    expect(document.getElementById('runner-test-hint')?.closest('[hidden]')).not.toBeNull();
+  });
 });
 
 /* ======================================================================== *
- * THE REVIEW GROUP, AND THE PANEL THAT REPLACED "NODE POLICY"
+ * WHAT THE FORM SAYS ABOUT ITS FIELDS, AND THE PANEL THAT REPLACED "NODE POLICY"
  * ======================================================================== */
 
 describe('NewRunnerRun — what will be sent, and what is known about the node', () => {
@@ -485,40 +533,19 @@ describe('NewRunnerRun — what will be sent, and what is known about the node',
   }
 
   /**
-   * THE SUMMARY ECHOES, IT DOES NOT INTERPRET.
+   * THE FIELD SAYS WHAT THE PROPERTIES ARE FOR, BEHIND ITS ⓘ (clean UI PR 4).
    *
-   * The review asks to summarise target and load "when the artifact contract
-   * exposes them" and not to assume every simulation uses the same properties.
-   * A Gatling jar exposes its simulations and its version and nothing about
-   * what any of them READS, so there is no honest "target" or "load" to show —
-   * what there is, is the exact `-D` set the author typed.
+   * The Review group read the `-D` set back with a sentence saying PerfPortal
+   * does not interpret them. The textarea is its own readback; the sentence —
+   * this product does not know which properties a simulation reads, and says
+   * so — rides behind the field's ⓘ and stays the control's description.
    */
-  it('reads back the system properties as they will be passed, without naming them', async () => {
+  it('says what the properties are for behind the field’s info', async () => {
     mount();
     await screen.findByLabelText(/run name/i);
-    fireEvent.change(screen.getByLabelText(/system properties/i), {
-      target: { value: 'baseUrl=https://svc.internal\nvirtualUsers=250' },
-    });
-
-    const summary = screen.getByTestId('review-summary');
-    expect(within(summary).getByText('-DbaseUrl=https://svc.internal')).toBeDefined();
-    expect(within(summary).getByText('-DvirtualUsers=250')).toBeDefined();
-    // Neither is labelled as a target or a load: this product does not know
-    // which properties a given simulation reads, and saying so is the point.
-    expect(summary.textContent ?? '').not.toMatch(/target|load/i);
-    expect(summary.textContent ?? '').toMatch(/does not interpret them/i);
-  });
-
-  /** A malformed line is shown where it was typed, before the submit refuses
-   *  it — the summary is the only place a `key=value` mistake is visible while
-   *  it can still be fixed cheaply. */
-  it('says which line is malformed rather than waiting for the submit', async () => {
-    mount();
-    await screen.findByLabelText(/run name/i);
-    fireEvent.change(screen.getByLabelText(/system properties/i), {
-      target: { value: 'this line has no equals sign' },
-    });
-    expect(within(screen.getByTestId('review-summary')).getByText(/must be key=value/i)).toBeDefined();
+    const tip = screen.getByRole('button', { name: 'About System properties' });
+    expect(descriptionOf(tip)).toMatch(/does not interpret them/);
+    expect(descriptionOf(screen.getByLabelText(/^system properties/i))).toMatch(/does not interpret them/);
   });
 
   /**
@@ -610,50 +637,9 @@ describe('NewRunnerRun — what will be sent, and what is known about the node',
     await screen.findByLabelText(/artifact file/i);
 
     const legends = [...document.querySelectorAll('legend')].map((l) => l.textContent?.trim());
-    expect(legends).toEqual(['Package', 'Execution', 'Review']);
+    expect(legends).toEqual(['Package', 'Execution']);
   });
 
-  /**
-   * ═══ AN EMPTY REVIEW IS NOT A REVIEW ═══
-   *
-   * Untouched, the summary listed all eight fields, four as em dashes. A dash
-   * is not a fact about this run — it is an optional value nobody chose to set.
-   *
-   * THE REQUIRED ROWS ARE NOT OPTIONAL ROWS. Artifact and Simulation stay
-   * whether or not they are filled, drawn as missing: showing the gap before
-   * the button is pressed is this panel's whole job, and hiding them when unset
-   * would blank the card exactly when it is most useful. Both halves are
-   * asserted, because either alone passes against the wrong design.
-   */
-  it('shows what is set and what is still needed, and nothing else', async () => {
-    noPackages();
-    mount();
-    await screen.findByLabelText(/artifact file/i);
-    const summary = screen.getByTestId('review-summary');
-
-    expect(within(summary).getByText('Artifact')).toBeDefined();
-    expect(within(summary).getByText('none chosen')).toBeDefined();
-    expect(within(summary).getByText('Simulation')).toBeDefined();
-
-    for (const label of ['Environment', 'Branch', 'Commit', 'JVM options']) {
-      expect(within(summary).queryByText(label)).toBeNull();
-    }
-    expect(within(summary).queryByText('—')).toBeNull();
-  });
-
-  /** And an optional value appears as soon as it is one. */
-  it('adds an optional row once it has something to say', async () => {
-    noPackages();
-    mount();
-    await screen.findByLabelText(/artifact file/i);
-
-    const summary = () => screen.getByTestId('review-summary');
-    expect(within(summary()).queryByText('Branch')).toBeNull();
-
-    fireEvent.change(screen.getByLabelText(/^branch\b/i), { target: { value: 'main' } });
-    expect(within(summary()).getByText('Branch')).toBeDefined();
-    expect(within(summary()).getByText('main')).toBeDefined();
-  });
 });
 
 /* ======================================================================== *
@@ -699,12 +685,6 @@ describe('NewRunnerRun — starting from a package', () => {
 
   const queue = () => fireEvent.click(screen.getByRole('button', { name: /queue run/i }));
   const advanced = () => screen.getByTestId('advanced').textContent ?? '';
-
-  /** One Review row's value — the `dd` beside the `dt` that names it. */
-  const reviewValue = (label: string): string | null => {
-    const term = within(screen.getByTestId('review-summary')).queryByText(label);
-    return term?.closest('div')?.querySelector('dd')?.textContent ?? null;
-  };
 
   const attach = (filename: string) =>
     fireEvent.change(screen.getByLabelText(/artifact file/i), {
@@ -793,7 +773,7 @@ describe('NewRunnerRun — starting from a package', () => {
     expect(screen.getByText(hint)).toBeDefined();
     // Tied to the control, so it is announced WITH it rather than read past.
     const describedBy = simulation.getAttribute('aria-describedby');
-    expect(describedBy).not.toBeNull();
+    expect(describedBy).toBe('runner-simulation-notice');
     expect(document.getElementById(describedBy ?? '')?.textContent).toBe(hint);
   });
 
@@ -1060,15 +1040,15 @@ describe('NewRunnerRun — starting from a package', () => {
     expect(advanced()).toMatch(/\(1 set\)/);
   });
 
-  it('groups the fields under the same three legends in either mode', async () => {
+  it('groups the fields under the same two legends in either mode', async () => {
     servePackages(CHECKOUT);
     mount();
     const select = await packageSelect();
     const legends = () => [...document.querySelectorAll('legend')].map((l) => l.textContent?.trim());
 
-    expect(legends()).toEqual(['Package', 'Execution', 'Review']);
+    expect(legends()).toEqual(['Package', 'Execution']);
     fireEvent.change(select, { target: { value: '__upload__' } });
-    expect(legends()).toEqual(['Package', 'Execution', 'Review']);
+    expect(legends()).toEqual(['Package', 'Execution']);
   });
 
   /* ---------------------------------------------------------------------- *
@@ -1178,7 +1158,7 @@ describe('NewRunnerRun — starting from a package', () => {
     fireEvent.change(screen.getByLabelText(/commit sha/i), { target: { value: 'abc1234' } });
     fireEvent.change(await screen.findByLabelText('Test'), { target: { value: 'checkout-soak' } });
     fireEvent.change(screen.getByLabelText(/jvm options/i), { target: { value: '-Xmx2g' } });
-    fireEvent.change(screen.getByLabelText(/system properties/i), { target: { value: 'users=5' } });
+    fireEvent.change(screen.getByLabelText(/^system properties/i), { target: { value: 'users=5' } });
     queue();
 
     await screen.findByText(/run queued/i);
@@ -1403,55 +1383,28 @@ describe('NewRunnerRun — starting from a package', () => {
   });
 
   /* ---------------------------------------------------------------------- *
-   * REVIEW
+   * NO REVIEW GROUP (clean UI PR 4)
    * ---------------------------------------------------------------------- */
 
-  it('reads back the package and the exact file in Review', async () => {
+  /**
+   * The form is its own review. The group that read every field back before
+   * the button is gone: the Package select's own option already names the
+   * package, its file and its size (`packageOptionLabel`), the upload's default
+   * package name is that field's placeholder, and a missing required field is
+   * refused where it is. What stays at the end of the form is the error alert
+   * and Queue run — outside any group.
+   */
+  it('has no review group — the form is its own review', async () => {
     servePackages(CHECKOUT, EMPTY);
-    mount();
-    await packageSelect();
-
-    expect(reviewValue('Package')).toBe('Checkout');
-    expect(reviewValue('File')).toBe(`${CHECKOUT_FILE} · 1.8 MB`);
-    // The package's file is not an "Artifact" the reader chose.
-    expect(reviewValue('Artifact')).toBeNull();
-    expect(reviewValue('Simulation')).toBe('example.BasicSimulation');
-  });
-
-  it('follows the package the reader picks', async () => {
-    servePackages(CHECKOUT, SEARCH);
     mount();
     const select = await packageSelect();
 
-    fireEvent.change(select, { target: { value: SEARCH_ID } });
-    expect(reviewValue('Package')).toBe('Search');
-    expect(reviewValue('File')).toBe('search-bundle.zip · 4.0 KB');
-    // Unknown list, nothing typed yet: drawn as missing, like any required row.
-    expect(reviewValue('Simulation')).toBe('not set');
-  });
-
-  it('reads back the file and the package an upload will be filed in', async () => {
-    noPackages();
-    mount();
-    await screen.findByLabelText(/artifact file/i);
-    attach('foo.jar');
-
-    expect(reviewValue('Artifact')).toBe('foo.jar');
-    expect(reviewValue('File')).toBeNull();
-    // The stem, until a name is typed — what the server will file it under.
-    expect(reviewValue('Package')).toBe('foo');
-
-    fireEvent.change(screen.getByLabelText(/^package name\b/i), { target: { value: 'foo-jar' } });
-    expect(reviewValue('Package')).toBe('foo-jar');
-  });
-
-  it('shows no Package row for an upload that has no file and no name yet', async () => {
-    noPackages();
-    mount();
-    await screen.findByLabelText(/artifact file/i);
-
-    expect(reviewValue('Artifact')).toBe('none chosen');
-    expect(reviewValue('Package')).toBeNull();
+    expect(screen.queryByTestId('review-summary')).toBeNull();
+    expect(screen.getByRole('button', { name: /queue run/i }).closest('fieldset')).toBeNull();
+    const chosen = select.selectedOptions[0]?.textContent ?? '';
+    expect(chosen).toContain('Checkout');
+    expect(chosen).toContain(CHECKOUT_FILE);
+    expect(chosen).toContain('1.8 MB');
   });
 });
 
