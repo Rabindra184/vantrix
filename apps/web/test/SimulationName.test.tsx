@@ -30,6 +30,38 @@ describe('namePieces', () => {
   it('splits after a digit as well as a lower-case letter', () => {
     expect(namePieces('v2Smoke').className).toEqual(['v2', 'Smoke']);
   });
+
+  /** FINAL REVIEW, IMPORTANT 1: a piece with no boundary was unbounded. Every
+   *  piece is no-wrap, so one long snake_case or kebab-case word set the
+   *  column's minimum to its whole length and nothing could shrink it. They
+   *  split after `_` and `-` too, keeping the separator on the left. */
+  it('splits after an underscore or a hyphen', () => {
+    expect(namePieces('com.acme.checkout_peak_load_simulation').className).toEqual([
+      'checkout_',
+      'peak_',
+      'load_',
+      'simulation',
+    ]);
+    expect(namePieces('checkout-flow-for-black-friday').className).toEqual([
+      'checkout-',
+      'flow-',
+      'for-',
+      'black-',
+      'friday',
+    ]);
+  });
+
+  /** And a piece with no boundary at all is cut every 20 characters — the one
+   *  place a name breaks mid-word, kept for names no reader would call one. */
+  it('cuts any piece longer than twenty characters, in the package too', () => {
+    const word = 'abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrs'; // 45
+    const pieces = namePieces(`${word}.${word}`);
+    for (const piece of [...pieces.package, ...pieces.className]) {
+      expect(piece.length, piece).toBeLessThanOrEqual(20);
+    }
+    expect(pieces.package.join('')).toBe(`${word}.`);
+    expect(pieces.className.join('')).toBe(word);
+  });
 });
 
 describe('SimulationName', () => {
