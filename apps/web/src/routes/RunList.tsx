@@ -351,39 +351,27 @@ export default function RunList({
                     <th scope="col" className={TH}>
                       Errors
                     </th>
-                    {/* ═══ CONTEXT AFTER TRIAGE, BECAUSE THIS TABLE SCROLLS ═══
-                        (review 09-13's acceptance list)
+                    {/* ═══ CONTEXT AFTER TRIAGE ═══
+                        (review 09-13's acceptance list; clean UI, PR 3)
 
-                        MEASURED on the org-wide list: the table wants 1078px
-                        and the content column gives it 726 at 768, 858 at 900,
-                        694 at 1024 (the rail appears at `lg:` and takes ~270),
-                        770 at 1100 and 950 at 1280. It fits at 1440 and
-                        NOWHERE BELOW — so this table has always scrolled
-                        sideways on most real screens.
+                        The table wanted 1078px on the org-wide list and fitted
+                        only at 1440, so it scrolled sideways on most screens —
+                        allowed ("table-local horizontal scroll is acceptable
+                        when row identity, headers, and controls remain
+                        usable"), as long as p95 and Errors are not what falls
+                        off the end. So identity, outcome and the two
+                        measurements come first, and WHEN and WHERE are what a
+                        reader scrolls to.
 
-                        The scroll itself is allowed: the review says
-                        "table-local horizontal scroll is acceptable when row
-                        identity, headers, and controls remain usable". What
-                        was not allowed is WHICH columns fell off the end.
-                        Started alone is 239px — 22% of the table for a
-                        timestamp carrying a year and a zone — so p95 and
-                        Errors sat at 823 and 889px cumulative and were off
-                        every screen narrower than 1440. Those two are the
-                        columns triage turns on; `mobile.spec.ts` says so in as
-                        many words for the phone layout.
-
-                        So identity, outcome, the two measurements and the
-                        suggested action come first — 742px, which is on screen
-                        at 768, 900, 1100 and 1280 — and WHEN and WHERE, which
-                        are context rather than triage, are what a reader
-                        scrolls to. Nothing is hidden and no column is dropped.
-
-                        1024 IS THE ONE WIDTH THIS DOES NOT FULLY FIX, and it
-                        is worth knowing why: 694px there is less than 900 gets,
-                        because the project rail opens at exactly that
-                        breakpoint. Collapsing the rail — a control that already
-                        exists — returns ~270px and the whole triage set with
-                        it. */}
+                        Removing Focus and shortening Started (the zone once,
+                        in its header; the year only when it is not this
+                        year's) took it down to the width MEASURED on the
+                        developer database's real runs: 896px on All runs and
+                        828px on a project's list. It fits without scrolling at
+                        1280 (950px of box) and 1440 (1110); at 1100 (770) and
+                        1024 (694, where the project rail opens) it still
+                        scrolls, with Errors' right edge at 596px on All runs —
+                        on screen. Collapsing the rail returns ~270px. */}
                     <th scope="col" className={TH}>
                       Started ({headerZone})
                     </th>
