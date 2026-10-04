@@ -275,8 +275,7 @@ export default function RunList({
           {/* ═══ NINE COLUMNS DO NOT FIT ON A PHONE, AND SCROLLING THEM
               SIDEWAYS IS NOT A FIX (review M18) ═══
 
-              `TableFrame` already stops the caption running off the side, but
-              the TABLE still scrolls horizontally inside its box — so a reader
+              The TABLE scrolls horizontally inside its box — so a reader
               at 375px sees Started and Project and has to drag to reach the
               two columns triage actually turns on, p95 and Errors. Measured
               there, the first row began at y=908 on an 812px screen: nothing
@@ -292,10 +291,8 @@ export default function RunList({
               info={info}
             />
           ) : (
-          /* ONE `caption` NODE, rendered visibly outside the scroll box and
-             programmatically inside the table — see `TableFrame`'s docstring for
-             why a `<caption>` inside `overflow-x-auto` stops wrapping and runs
-             off the side of a phone. */
+          /* The short name is the table's `sr-only` caption; the caveat rides
+             behind the frame's info — see `TableFrame`'s docstring. */
           <TableFrame name="Runs" label={`${heading} table`} info={info}>
               <table className={TABLE}>
                 <caption className="sr-only">Runs</caption>

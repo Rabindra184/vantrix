@@ -129,7 +129,7 @@ export default function RunLifecycle({
 
       <details data-testid="lifecycle-times" className="min-w-0 text-[0.75rem]">
         {/* The disclosure affordance every other `<summary>` in this app wears
-            (`TableFrame`, `RunStats`, `StatisticsTable`): accent, underline on
+            (`RunStats`, `StatisticsTable`): accent, underline on
             hover, no marker. */}
         <summary className="w-fit cursor-pointer list-none font-medium text-accent hover:underline hover:underline-offset-2">
           Step times
