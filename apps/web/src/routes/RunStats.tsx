@@ -320,7 +320,10 @@ function ComparisonNote({
       {differs.length > 0 && (
         <span
           data-testid="comparison-differs"
-          className="rounded-md border border-default bg-sunken px-2 py-0.5 font-medium"
+          /* On the CARD surface, not `bg-sunken`: the pending tone measures
+             4.44:1 on the sunken fill in the light theme, under AA's 4.5 for
+             text this size, and 5.02:1 on the card. */
+          className="rounded-md border border-default bg-surface px-2 py-0.5 font-medium"
           style={{ color: 'var(--color-status-pending)' }}
         >
           {summariseConditions(differs)}

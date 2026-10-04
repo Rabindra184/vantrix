@@ -9,6 +9,18 @@ import type { Assertion, StatsResponse, TrendRun } from '@perfportal/contracts';
 import { isResolvableSlaMetric } from '@perfportal/contracts';
 import reference from './fixtures/reference-run.json';
 import RunStats from '../src/routes/RunStats';
+import { STATUS_COLORS, SURFACE_TOKENS, type StatusRole, type SurfaceRole } from '../src/charts/theme';
+
+/** WCAG 2 contrast between two `#rrggbb` colours. */
+function contrastRatio(a: string, b: string): number {
+  const lum = (hex: string) => {
+    const n = Number.parseInt(hex.slice(1), 16);
+    const ch = (v: number) => { const c = v / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+    return 0.2126 * ch((n >> 16) & 0xff) + 0.7152 * ch((n >> 8) & 0xff) + 0.0722 * ch(n & 0xff);
+  };
+  const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+  return (hi! + 0.05) / (lo! + 0.05);
+}
 
 const stats = reference.stats as StatsResponse;
 const runRow = stats.stats.find((r) => r.scope === 'run')!;
@@ -714,6 +726,30 @@ describe('RunStats — clean tiles', () => {
     );
     expect(screen.queryByTestId('comparison-differs')).toBeNull();
     expect(screen.getByRole('button', { name: 'About the comparison with Run 10' })).toBeInTheDocument();
+  });
+
+  /** THE CHIP'S TEXT CLEARS AA ON THE GROUND IT ACTUALLY SITS ON. It drew
+   *  the pending tone on the sunken fill — 4.44:1 in the light theme, under
+   *  the 4.5 normal text needs — and `palette.test.ts` gates the status tones
+   *  only against the card. So this reads the ground off the chip's own class
+   *  and its colour off its own style, and measures that pair, both themes. */
+  it.each(['light', 'dark'] as const)('draws the differs chip legibly in %s mode', (mode) => {
+    renderStats(
+      <RunStats stats={stats} peakUsers={12} runStatus="complete"
+        current={trendRun({ ...shared, environment: 'staging' })}
+        baseline={trendRun({ ...shared, id: BASE_ID, runNumber: 10, environment: 'production' })} />,
+    );
+    const chip = screen.getByTestId('comparison-differs');
+    const GROUND: Record<string, SurfaceRole> = {
+      'bg-surface': 'card', 'bg-sunken': 'sunken', 'bg-page': 'page', 'bg-sidebar': 'sidebar',
+    };
+    const grounds = [...chip.classList].filter((c) => c in GROUND);
+    expect(grounds, 'the chip must name its own ground, or its contrast is unknown').toHaveLength(1);
+    const tone = /var\(--color-status-(\w+)\)/.exec(chip.style.color)?.[1] as StatusRole | undefined;
+    expect(tone, 'the chip draws one of the status text tones').toBeDefined();
+    expect(
+      contrastRatio(STATUS_COLORS[mode][tone!], SURFACE_TOKENS[mode][GROUND[grounds[0]!]!]),
+    ).toBeGreaterThanOrEqual(4.5);
   });
 
   it('renders no comparison row when the runs match on every condition', () => {
