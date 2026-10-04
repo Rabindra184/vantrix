@@ -445,6 +445,33 @@ test('a real simulation class does not push the triage columns off screen', asyn
        is exactly what breaks that distinction. */
     expect(docOverflows, `the document scrolls sideways at ${width}`).toBe(false);
   }
+
+  /* ═══ AND THE NAME NEVER BREAKS MID-WORD (clean UI, PR 3) ═══
+     `SimulationName` draws each package segment and each camelCase word as a
+     no-wrap piece, so a line can end only between two pieces. jsdom lays out
+     nothing; this asks a browser, in the table and on a phone's card, that
+     every piece is ONE line box — and that no piece runs past its track under
+     the copy button, which a no-wrap piece wider than its column would. */
+  for (const width of [768, 1024, 375]) {
+    await page.setViewportSize({ width, height: 812 });
+    await page.goto('/runs');
+    await expect(page.getByTestId('run-row').first()).toBeVisible();
+    const pieces = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('[data-testid="run-simulation"]')).flatMap((cell) => {
+        const button = cell.querySelector('[data-testid="copy-id"]')!.getBoundingClientRect();
+        return Array.from(cell.querySelectorAll('[data-name-piece]')).map((piece) => ({
+          text: piece.textContent,
+          lines: piece.getClientRects().length,
+          overlapsButton: piece.getBoundingClientRect().right > button.left + 0.5,
+        }));
+      }),
+    );
+    expect(pieces.length, `the long name was drawn in pieces at ${width}`).toBeGreaterThan(4);
+    for (const piece of pieces) {
+      expect(piece.lines, `at ${width}px "${piece.text}" broke across ${piece.lines} lines`).toBe(1);
+      expect(piece.overlapsButton, `at ${width}px "${piece.text}" runs under the copy button`).toBe(false);
+    }
+  }
 });
 
 /**

@@ -100,7 +100,11 @@ describe('RunList columns', () => {
     expect(await screen.findByRole('columnheader', { name: 'Project' })).toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: 'Simulation' })).toBeInTheDocument();
     expect(screen.getAllByText('Checkout')).toHaveLength(2);
-    expect(screen.getByText('example.ParitySimulation')).toBeInTheDocument();
+    // The link's TEXT, not `getByText`: the name is drawn in pieces (package
+    // line, then the class's words), which together still read as one string.
+    expect(
+      screen.getByRole('link', { name: 'View run 11111111-1111-4111-8111-111111111111' }),
+    ).toHaveTextContent(/^example\.ParitySimulation$/);
   });
 
   /**
@@ -168,6 +172,29 @@ describe('RunList columns', () => {
     expect(
       screen.getByRole('link', { name: 'View run 33333333-3333-4333-8333-333333333333' }),
     ).toHaveTextContent('33333333');
+  });
+
+  /** The split name is for a SIMULATION. A run the worker has not parsed keeps
+   *  its short id, and a test's list keeps "Run n" — neither is a class, so
+   *  neither grows a package line (clean UI, PR 3). */
+  it('keeps the short id and "Run n" as they were, with no package line', async () => {
+    renderList(ROWS);
+    const unparsed = await screen.findByRole('link', {
+      name: 'View run 33333333-3333-4333-8333-333333333333',
+    });
+    expect(unparsed).toHaveTextContent(/^33333333$/);
+    expect(unparsed.querySelector('[data-name-package]')).toBeNull();
+
+    cleanup();
+    renderList([{ ...ROWS[0]!, runNumber: 3 }], '/projects/checkout/tests/parity', {
+      projectSlug: 'checkout',
+      testSlug: 'parity',
+    });
+    const numbered = await screen.findByRole('link', {
+      name: 'View run 11111111-1111-4111-8111-111111111111',
+    });
+    expect(numbered).toHaveTextContent(/^Run 3$/);
+    expect(numbered.querySelector('[data-name-package]')).toBeNull();
   });
 
   it('has no Tool column — TOOL_IDS has one member, so it read "gatling" on every row', async () => {

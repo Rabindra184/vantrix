@@ -9,6 +9,7 @@ import { ChevronLeftIcon, ChevronRightIcon, FilterIcon, PlusIcon } from '../comp
 import { SkeletonTable } from '../components/Skeleton';
 import { EmptyState, ErrorState, LoadingState } from '../components/States';
 import InfoTip from '../components/InfoTip';
+import SimulationName from './SimulationName';
 import TableFrame from '../components/TableFrame';
 import { INPUT, ROW, TABLE, TD, TH, THEAD } from '../components/tableStyles';
 import { ProblemError } from '../api/fetch';
@@ -1236,7 +1237,13 @@ function NoteLine({ note }: { readonly note: string | null | undefined }) {
  * minimum; this grid gives the button a track the name cannot flow under, so
  * the name keeps exactly the width it had. The grid ALONE measured worse: the
  * name lost 28 of its 61px and rows at 768 went from 75 to 134px.
- * `minmax(0, 1fr)` is what still lets a long class break.
+ *
+ * `minmax(min-content, 1fr)`, NOT `minmax(0, 1fr)` (clean UI, PR 3). The name
+ * was `break-all`, so a zero minimum let it break anywhere to fit. It is drawn
+ * in no-wrap pieces now (`SimulationName`), and a zero minimum let the widest
+ * piece run under the button — "simulations." did, at 768. The track's
+ * minimum is its longest piece instead, which is about one word: the column
+ * can still shrink as far as a line that ends between words allows.
  *
  * WHAT IT STILL COSTS, measured with the 56-character class beside short ones:
  *
@@ -1250,7 +1257,9 @@ function NoteLine({ note }: { readonly note: string | null | undefined }) {
  * looks for the id of the thing they are reading.
  */
 function IdentityCell({ children }: { readonly children: ReactNode }) {
-  return <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start">{children}</div>;
+  return (
+    <div className="grid grid-cols-[minmax(min-content,1fr)_auto] items-start">{children}</div>
+  );
 }
 
 function RunCard({
@@ -1268,11 +1277,13 @@ function RunCard({
   const startedAt = run.toolStartedAt ?? run.startedAt;
   const isIngestTime = run.toolStartedAt == null;
   const label =
-    identifyByRunId && run.runNumber !== null && run.runNumber !== undefined
-      ? runName(run.runNumber)
-      : identifyByRunId || run.simulation === null || run.simulation === undefined
-        ? run.id.slice(0, 8)
-        : run.simulation;
+    identifyByRunId && run.runNumber !== null && run.runNumber !== undefined ? (
+      runName(run.runNumber)
+    ) : identifyByRunId || run.simulation === null || run.simulation === undefined ? (
+      run.id.slice(0, 8)
+    ) : (
+      <SimulationName name={run.simulation} />
+    );
 
   return (
     <li
@@ -1286,7 +1297,7 @@ function RunCard({
             <Link
               to={runPath(run.id)}
               aria-label={`View run ${run.id}`}
-              className="transition-ui font-medium break-all text-accent hover:underline hover:underline-offset-2"
+              className="transition-ui font-medium text-accent hover:underline hover:underline-offset-2"
             >
               {label}
             </Link>
@@ -1406,28 +1417,23 @@ function RunRow({
           e2e suite and `helpers.ts` reach for it as "the cell holding the row's
           link to its run", which is what it has always been and still is. What
           changes is the value shown, not the cell's job. */}
-      {/* ═══ `break-all`, BECAUSE A CLASS NAME CANNOT WRAP ═══
-          (the 09-13 review's acceptance list: long names)
+      {/* ═══ A CLASS NAME CANNOT WRAP, SO IT IS DRAWN IN PIECES ═══
+          (the 09-13 review's acceptance list: long names; clean UI, PR 3)
 
-          UAX#14 gives no break opportunity after a full stop followed by a
-          letter, so `com.acme.checkout.simulations.CheckoutPeakLoadSimulation`
-          is one unbreakable 56-character word — the widest string this product
-          renders. In a plain cell it took its width out of the columns beside
-          it: MEASURED at 768px, it pushed the Errors column's right edge to
-          885px of 726px visible, undoing the reorder that put the triage
-          columns on screen in the first place. That reorder was measured
-          against the reference bundle's `example.ParitySimulation`, 24
-          characters, which is why nothing caught it.
+          UAX#14 gives no break after a full stop followed by a letter, so
+          `com.acme.checkout.simulations.CheckoutPeakLoadSimulation` is one
+          56-character word. In a plain cell it took its width out of the
+          columns beside it — MEASURED at 768px it pushed Errors' right edge to
+          885px of 726px visible. `break-all` fixed that and broke the name
+          anywhere ("example.P / aritySimul / ation"). `SimulationName` breaks
+          it only between whole pieces — after a package dot or between
+          camelCase words — so the column is no wider than `break-all` let it
+          be and a line never ends mid-word.
 
-          `min-w-0` is the other half and is not optional: a table cell's
-          min-content width is its longest unbreakable run, so without it the
-          cell refuses to shrink no matter what the text inside is allowed to
-          do.
-
-          The mobile CARD for this same value has carried `break-all` since it
-          was written (`RunCard` above) — the asymmetry was visible in one
-          file, which is the shape CLAUDE.md keeps recording. */}
-      <td data-testid="run-simulation" className={`${TD} min-w-0 break-all`}>
+          `min-w-0` is not optional: a table cell's min-content width is its
+          longest unbreakable run, and without it the cell refuses to shrink
+          whatever the text inside allows. */}
+      <td data-testid="run-simulation" className={`${TD} min-w-0`}>
         {/* The simulation is what a reader is looking for, so it is the
             link. Falls back to the short id for a run the worker has not
             parsed (or never will), which is what this column showed before
@@ -1462,7 +1468,7 @@ function RunRow({
             ) : identifyByRunId || run.simulation === null || run.simulation === undefined ? (
               <code className="text-[0.75rem]">{run.id.slice(0, 8)}</code>
             ) : (
-              run.simulation
+              <SimulationName name={run.simulation} />
             )}
           </Link>
           {/* The FULL id, whatever the link shows: a test's list displays its
