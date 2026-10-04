@@ -111,7 +111,7 @@ test('a 120-character project name does not push any page sideways', async ({ pa
  * `mobile.spec.ts` is scoped to 375 by a file-level `test.use`, so the two
  * either side of it had never been drawn. 320 is the floor — the narrowest
  * viewport in common use — and it is where a `truncate`d rail, a two-column
- * chip grid and a nine-column table are all most likely to break out of the
+ * chip grid and an eight-column table are all most likely to break out of the
  * page.
  *
  * The claim is the same one `mobile.spec.ts` makes at 375 and the review makes

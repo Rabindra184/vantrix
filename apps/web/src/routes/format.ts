@@ -25,7 +25,10 @@
  * machines, and it is the API's own ISO-8601 string, unmodified.
  *
  * Constructed once at module scope rather than per render: `Intl.DateTimeFormat`
- * is comparatively expensive to build, and a run list renders one per row.
+ * is comparatively expensive to build. The price is that its zone is fixed at
+ * import — which is why the run list's table, which states a zone per row
+ * since the clean-UI pass, uses the per-call `formatListInstant` and
+ * `zoneLabel` instead (the phone cards still use this).
  */
 /**
  * A WALL TIME WITH NO ZONE IS TWO DIFFERENT FACTS.

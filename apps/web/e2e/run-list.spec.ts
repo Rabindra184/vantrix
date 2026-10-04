@@ -295,7 +295,9 @@ test('p95 and Errors are on screen without scrolling the table sideways', async 
      is 694 there against 858 at 900. Measured after the reorder, p95 ends at
      587px and Errors at 652px at every width below 1440 — inside even the
      narrowest box. Before it, at 768: p95 at 826 and Errors at 892 against 726
-     visible, which is the failure this case was written from. */
+     visible, which is the failure this case was written from. (After the
+     clean-UI pass, on the developer database's runs, Errors ends at 596px at
+     1024 and 1100.) */
   for (const width of [768, 900, 1024, 1100, 1280, 1440]) {
   await page.setViewportSize({ width, height: 800 });
   await page.goto('/runs');

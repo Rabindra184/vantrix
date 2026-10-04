@@ -60,7 +60,7 @@ test('the run list shows a run without scrolling, and does not scroll sideways',
   const firstCard = await topOf(page, '[data-testid="run-row"]');
   expect(firstCard, 'the first run is within the initial screen').toBeLessThan(700);
 
-  // A TABLE OF NINE COLUMNS IS NOT A MOBILE LAYOUT, and `overflow-x` on it is
+  // A TABLE OF EIGHT COLUMNS IS NOT A MOBILE LAYOUT, and `overflow-x` on it is
   // not a fix: p95 and Errors — the two columns triage turns on — were off the
   // right edge. The cards carry them, so no table is rendered at this width.
   await expect(page.locator('table')).toHaveCount(0);

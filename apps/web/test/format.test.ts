@@ -104,21 +104,10 @@ describe('formatOffset', () => {
 });
 
 /**
- * REVIEW M21 — A WALL-TIME WITH NO ZONE IS TWO DIFFERENT FACTS.
- *
- * `Started` rendered as a local date and minute with no timezone, so two
- * engineers looking at the same run saw different wall times and neither could
- * tell. On an incident call that is a real cost: "it started at 14:03" is not
- * a shared statement.
- *
- * The zone is appended rather than the value converted — a reader wants their
- * OWN clock, plus enough to say which clock it is.
- */
-/**
  * ═══ A RUN LIST'S STARTED CELL (clean UI, PR 3) ═══
  *
- * `formatInstant` repeats the year and the zone on every row — 239px of a
- * table that needs 1078px. The list states the zone once, in its column
+ * `formatInstant` repeated the year and the zone on every row — 239px of a
+ * table that needed 1078px. The list states the zone once, in its column
  * header (`zoneLabel`, spelled as `formatInstant` spells it), and each cell
  * drops the year when the run is from this year.
  */
@@ -157,6 +146,17 @@ describe('formatListInstant and zoneLabel — the run list’s Started column', 
     }));
 });
 
+/**
+ * REVIEW M21 — A WALL-TIME WITH NO ZONE IS TWO DIFFERENT FACTS.
+ *
+ * `Started` rendered as a local date and minute with no timezone, so two
+ * engineers looking at the same run saw different wall times and neither could
+ * tell. On an incident call that is a real cost: "it started at 14:03" is not
+ * a shared statement.
+ *
+ * The zone is appended rather than the value converted — a reader wants their
+ * OWN clock, plus enough to say which clock it is.
+ */
 describe('formatInstant — it says which clock it is on', () => {
   it('names the timezone', () => {
     const out = formatInstant('2026-08-14T10:43:49.546Z');
