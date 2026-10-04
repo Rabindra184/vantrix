@@ -417,22 +417,16 @@ describe('RunList columns', () => {
 });
 
 /**
- * REVIEW C02 — THE HEALTH TILES COUNT TWO SYSTEMS, NOT THREE.
+ * REVIEW C02 — THE COUNTS SAY WHICH SYSTEMS THEY COUNT.
  *
- * "Needs attention: 0" sat above a list containing a run whose simulation had
- * a failing assertion. The tiles are not wrong — they count execution state
- * and the platform SLA verdict, which is all `GET /v1/runs` returns
- * (`RunListResponseSchema` picks id, project, status, verdict, tool,
- * startedAt, toolStartedAt, simulation and nothing else). But a tile labelled
- * "Needs attention" reading zero is a claim about the run, and an engineer
- * triaging a list acts on it.
- *
- * Counting simulation checks here needs a field the list endpoint does not
- * have, so this states the boundary rather than inventing the number. The
- * caveat is the fix that is available today; the count is a backend change.
+ * "Needs attention: 0" once sat above a run whose simulation had a failing
+ * assertion, because the list endpoint did not send the outcomes. M02 put
+ * `checks` on the contract and the count reads it; the tally's ⓘ says so, and
+ * still says the counts are page-local (clean UI, PR 3: the caveat moved from
+ * a disclosure to the ⓘ, its claims unchanged).
  */
 describe('RunList — the health summary says which systems it counted', () => {
-  it('names what the counts do not include', async () => {
+  it('says the counts include simulation assertions and cover this page only', async () => {
     renderList([...ROWS]);
     const health = await screen.findByRole('region', { name: 'Run health on this page' });
     const info = within(health).getByRole('button', { name: 'About these counts' });

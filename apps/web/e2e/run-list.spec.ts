@@ -277,6 +277,10 @@ test('offers exactly one New project link on the org-wide list', async ({ page }
  * Those two are what triage turns on; `mobile.spec.ts` says exactly that for
  * the phone layout, one breakpoint down.
  *
+ * Since the clean-UI pass (PR 3) Focus is gone and Started is short — the
+ * zone once in its header — so the table needs 896px and fits at 1280 and
+ * 1440; this case still guards the widths where it scrolls.
+ *
  * MEASURED, NOT COUNTED IN COLUMNS, because that is the claim: a reader can
  * see the two numbers without dragging the table sideways. A column-order
  * assertion would pass against a layout that pushed them off anyway.
@@ -398,9 +402,9 @@ test('the run list scales with the reader’s font size, not just its headings',
  * ending at 587px against only 694px of box at 1024. Nobody had re-measured
  * it with a name a real project would produce.
  *
- * The mobile CARD for the same value already carries `break-all`
- * (`RunList.tsx`'s `RunCard`); the desktop cell did not, and the asymmetry was
- * visible in one file.
+ * The cell was `break-all` for this; since the clean-UI pass it draws the
+ * name in no-wrap pieces (`SimulationName`) that break only after a package
+ * dot or between camelCase words — and the case below asserts that too.
  */
 test('a real simulation class does not push the triage columns off screen', async ({ page }) => {
   const admin = await seedAdmin();

@@ -940,12 +940,12 @@ function RunCards({
  * narrow — MEASURED, with both removed: p95/Errors still land at 500/565 of
  * 726 px visible at 768, 500/565 of 694 at 1024, and 612/678 of 1110 at
  * 1440. What actually holds the column is that the note WRAPS: prose breaks
- * between words (`[word-break:normal]`, because the simulation cell above it
- * is `break-all` and `word-break` is inherited — a class name has no break
- * opportunity, but prose should break between words), inside a cell
- * (`run-simulation`, above) that is already `min-w-0 break-all` — so this
- * cell's min-content is tiny, and the table's automatic layout shrinks the
- * column and wraps the note to fit rather than growing the table.
+ * between words (`[word-break:normal]`, kept from when the cell above it was
+ * `break-all` and `word-break` was inherited; harmless now that the name is
+ * drawn in no-wrap pieces), inside a `min-w-0` cell (`run-simulation`, above)
+ * — so this note's min-content is tiny, and the table's automatic layout
+ * shrinks the column and wraps the note to fit rather than growing the
+ * table.
  *
  * AN UNBROKEN TOKEN — A URL, A STACK-TRACE FRAGMENT, A PATH — IS THE HAZARD,
  * AND IT WAS REAL, MEASURED IN A BROWSER RATHER THAN ASSUMED. A 300-character
@@ -992,8 +992,9 @@ function NoteLine({ note }: { readonly note: string | null | undefined }) {
  * 19 to 24 px taller at every width from 768 to 1440 while p95 and Errors did
  * not move: the button fell onto a line of its own. Below ~1400px this table
  * is wider than its box, so every column sits at its MINIMUM, and the
- * Simulation column's minimum is its header word ("Simulation", 61px,
- * `whitespace-nowrap`) — a `break-all` name can shrink to one character. The
+ * Simulation column's minimum was its header word ("Simulation", 61px,
+ * `whitespace-nowrap`), because a `break-all` name could shrink to one
+ * character. The
  * column never grew for the button, so the button took its width out of the
  * name's.
  *
@@ -1121,7 +1122,7 @@ function RunCard({
       <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[0.75rem] text-muted">
         {showProject && (
           <>
-            {/* `break-all`, for the reason the simulation link above it has it:
+            {/* `break-all`, because unlike a class name it has no word to break at:
                 a project name is free text up to 120 characters and may
                 contain no space at all, and this card is the WHOLE layout
                 below 768px. MEASURED at 320px with a 120-character unbroken
