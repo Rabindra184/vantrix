@@ -9,6 +9,7 @@ import { ChevronLeftIcon, ChevronRightIcon, FilterIcon, PlusIcon } from '../comp
 import { SkeletonTable } from '../components/Skeleton';
 import { EmptyState, ErrorState, LoadingState } from '../components/States';
 import InfoTip from '../components/InfoTip';
+import RunTally from './RunTally';
 import SimulationName from './SimulationName';
 import TableFrame from '../components/TableFrame';
 import { INPUT, ROW, TABLE, TD, TH, THEAD } from '../components/tableStyles';
@@ -272,7 +273,7 @@ export default function RunList({
         />
       ) : (
         <>
-          <RunListHealth items={items} />
+          <RunTally items={items} />
           {/* ═══ NINE COLUMNS DO NOT FIT ON A PHONE, AND SCROLLING THEM
               SIDEWAYS IS NOT A FIX (review M18) ═══
 
@@ -648,186 +649,6 @@ function RunListControls({
 }
 
 /**
- * The four counts, and THE SENTENCE THAT MAKES THEM TRUE.
- *
- * These reduce over `items` — one keyset page — and nothing about a page of
- * 25 rows tells you anything about the 400 behind it. Shipped as "Run list
- * health" with only the fourth tile disclosing its scope, this said "Needs
- * attention: 2" over an org with 90 failed runs. That is the same defect as
- * the client-side search this component's own docstring rejects: a
- * page-local number presented as a statement about the list.
- *
- * The scope is stated ONCE, in the section's accessible name and in a line
- * above the tiles, rather than repeated into four `detail` strings — the
- * details are what each count MEANS, and a caveat repeated four times reads
- * as decoration by the third.
- *
- * `hasMore` is deliberately gone. It only says whether a NEXT page exists,
- * so it was never the right test anyway: on page three of five it is true
- * and on page five it is false, and the counts are page-local in both.
- */
-function RunListHealth({ items }: { readonly items: readonly RunListItem[] }) {
-  const summary = healthSummary(items);
-
-  return (
-    <section
-      aria-label="Run health on this page"
-      /* ═══ A PAGE-LOCAL TALLY, DRAWN AS ONE ═══
-       *
-       * These counts are honest about being page-local and then took
-       * dashboard-card treatment anyway — four large tiles above the work
-       * list, in the position an organisation-wide health summary occupies.
-       * An overview should not change meaning when the reader presses Next,
-       * and this one does.
-       *
-       * Computing them across the filtered SET is the other repair the review
-       * offers and it needs an endpoint that counts — keyset pagination never
-       * learns a total, which is the same reason the heading says "6 runs" and
-       * not "6 of 42". So the tally is demoted rather than inflated: the same
-       * four numbers, at the weight of a caption, beside the list they
-       * describe instead of above it as a dashboard. */
-      className="rounded-lg border border-default bg-surface px-4 py-3"
-    >
-      {/* THE SECOND CAVEAT IS THE ONE THAT CHANGES A DECISION. The first says
-          the counts are page-local. This one says WHICH SYSTEMS they count:
-          execution state and the platform SLA verdict, which is all
-          `GET /v1/runs` returns — `RunListResponseSchema` picks nine fields
-          and none of them carries the simulation's own assertions.
-
-          Without it, "Needs attention: 0" sat above a run whose simulation had
-          a failing check, and a tile reading zero is a claim an engineer
-          triages on. Counting those here needs a field the list endpoint does
-          not have; saying so does not. */}
-      {/* ═══ THE SCOPE VISIBLE, THE METHODOLOGY ONE TAP AWAY ═══
-          (review 09-13, "Copy changes to make immediately")
-
-          The row is "Long run-health caveat" -> "`On this page` + accessible
-          `How counts work` disclosure with the corrected definition", under a
-          preamble that says to "move methodology out of the primary reading
-          path".
-
-          M18 built half of this: below 768px the caveat became a `<details>`,
-          because 117px of prose above four tiles on a 375px screen was pushing
-          the first run row to y=908. On a DESKTOP it stayed a paragraph, on
-          the reasoning that two lines there read as part of the tally — and
-          that is the half the copy table is objecting to, on the 1440x900
-          viewport the review was written against. The correctness fix that
-          landed since made it longer, not shorter: 45 rendered words became
-          67.
-
-          ONE SHAPE AT EVERY WIDTH NOW. The SCOPE is the fact a reader needs
-          without asking — these four numbers are about this page, not the
-          list — so it is visible, short, and beside the counts it qualifies.
-          Everything else is methodology and sits behind the disclosure, which
-          is what "accessible" asks for: a native `<summary>` is a real control
-          with real keyboard behaviour, and it contributes an ARIA group rather
-          than a heading, so no page's heading outline moves.
-
-          Nothing is deleted. Both caveats are load-bearing — one says the
-          counts are page-local, the other says WHICH systems they count, and
-          the second is why "Needs attention: 0" is not a claim about a
-          simulation's own assertions. */}
-      <p className="text-[0.75rem] font-medium text-muted" data-testid="health-scope">
-        {HEALTH_SCOPE(items.length)}
-      </p>
-      <details className="group mt-1">
-        <summary className="w-fit cursor-pointer list-none text-[0.75rem] font-medium text-accent hover:underline hover:underline-offset-2">
-          <span className="group-open:hidden">How counts work</span>
-          <span className="hidden group-open:inline">Hide how counts work</span>
-        </summary>
-        <p className="pt-1.5 text-[0.75rem] leading-relaxed text-muted">{HEALTH_CAVEAT()}</p>
-      </details>
-      {/* TWO ACROSS FROM THE NARROWEST WIDTH, not one. Measured at 375px:
-          stacked one per row these four tiles were 326px, and they sit between
-          the heading and the list the page is for — so the first run card
-          began at y=561 on an 812px screen. Two columns halves that for four
-          counts that are each a word and a number. */}
-      <div className="mt-2 grid grid-cols-2 gap-2 xl:grid-cols-4">
-        <HealthTile
-          label="Needs attention"
-          value={summary.needsAttention}
-          // The FOURTH condition was missing here too — see `needsAttention`,
-          // which has read a simulation's own checks since M02 widened the
-          // list contract.
-          detail="Failed, incomplete, SLA failed, or a failed check"
-          colour="var(--color-status-failed)"
-        />
-        <HealthTile
-          label="In flight"
-          value={summary.inFlight}
-          detail="Pending, parsing, or live"
-          colour="var(--color-status-pending)"
-        />
-        <HealthTile
-          label="Passed gates"
-          value={summary.passed}
-          detail="SLA verdict passed"
-          colour="var(--color-status-passed)"
-        />
-        <HealthTile
-          label="Unjudged"
-          value={summary.unjudged}
-          detail="No verdict, or not evaluated"
-          colour="var(--color-status-not-applicable)"
-        />
-      </div>
-    </section>
-  );
-}
-
-function HealthTile({
-  label,
-  value,
-  detail,
-  colour,
-}: {
-  readonly label: string;
-  readonly value: number;
-  readonly detail: string;
-  readonly colour: string;
-}) {
-  return (
-    /* One line per count, not a card. The number leads and stays coloured —
-       it is still the thing being read — but at the weight of a caption
-       rather than a dashboard tile, because it describes this PAGE. */
-    /* `flex-wrap` so the three parts stack rather than spilling: at a 32px
-       root "Unjudged / No verdict, or not evaluated" is wider than the tile's
-       share of the row, and an unwrapped flex row pushed it past the viewport
-       and widened the document (measured: the run list at 1338 of 1280). The
-       row-gap is deliberately tighter than the column-gap — wrapped, these are
-       continuations of one line rather than separate rows. */
-    <div
-      /* A HANDLE, because the three spans below carry no role and no accessible
-         name of their own: the count, its label and its detail are siblings, so
-         a query for the LABEL has to climb to a parent indistinguishable from
-         the row wrapping it -- which resolves to two elements under strict
-         mode. `health-scope` just above already takes this shape. Derived from
-         the label so the two cannot drift, the way `EntryCard` derives its
-         own; grep for the derived value, not only the label. */
-      data-testid={`health-${label.toLowerCase().replace(/\s+/g, '-')}`}
-      className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5"
-      style={{ color: colour }}
-    >
-      <span className="font-mono text-base font-semibold tabular-nums text-primary">{value}</span>
-      <span className="text-[0.75rem] text-primary">{label}</span>
-      <span className="text-[0.6875rem] text-muted">{detail}</span>
-    </div>
-  );
-}
-
-function healthSummary(items: readonly RunListItem[]) {
-  return items.reduce(
-    (next, run) => ({
-      needsAttention: next.needsAttention + (needsAttention(run) ? 1 : 0),
-      inFlight: next.inFlight + (isInFlight(run) ? 1 : 0),
-      passed: next.passed + (run.verdict === 'passed' ? 1 : 0),
-      unjudged: next.unjudged + (run.verdict === null || run.verdict === 'not_evaluated' ? 1 : 0),
-    }),
-    { needsAttention: 0, inFlight: 0, passed: 0, unjudged: 0 },
-  );
-}
-
-/**
  * The page's `<h1>` and, when there is a list under it, how much of one.
  *
  * The count is deliberately "6 runs" and not "6 of 42": keyset pagination
@@ -986,55 +807,6 @@ function isStatusFilter(value: string | null): value is RunListStatusFilter {
 function isVerdictFilter(value: string | null): value is RunListVerdictFilter {
   return VERDICT_FILTERS.some((option) => option.value === value);
 }
-
-/**
- * The tally's two caveats, as one string both layouts render.
- *
- * A function rather than a constant because the first clause counts the page.
- * Shared so the collapsed and the expanded form cannot drift — the failure
- * that would hide is a phone quietly reading a WEAKER caveat than a desktop,
- * which nobody would notice until somebody triaged on it.
- */
-/**
- * ═══ THIS SENTENCE WENT STALE UNDER ITS OWN FEATURE (review 09-13 C05) ═══
- *
- * It used to read "They count execution state and this platform's SLA verdict
- * — NOT the assertions a simulation declares for itself", and that was exactly
- * right when it was written: `RunListResponseSchema` picked nine fields and
- * none of them carried a simulation's own outcomes, so the count genuinely
- * could not see them.
- *
- * M02 then put `checks` on the list and `needsAttention` started reading it —
- * which is the whole point of that work, and is what makes "Needs attention"
- * usable. The caveat was never revisited, so the page spent two branches
- * telling the reader the opposite of what the number beneath it meant. The
- * sample makes it obvious: one complete run, no SLA verdict, "Needs attention
- * 1", under a paragraph swearing checks are not counted.
- *
- * Worse, the M18 branch MOVED this paragraph and pinned it with a test
- * asserting "the words are not weakened" — preserving a sentence that had
- * already become false. **Prose that describes a calculation has to be re-read
- * against the calculation, not carried across intact.** This file already
- * records the same lesson for `tokens.test.ts`, one layer down: a stale
- * comment naming an old spelling is exactly as misleading as a stale class.
- *
- * ═══ AND THE FOUR ARE NOT A PARTITION ═══
- *
- * Said out loud now rather than left to be discovered. `needsAttention` and
- * `unjudged` are independent questions — "is something wrong" and "did a gate
- * judge it" — so the run in the sample is counted by both, correctly. Four
- * numbers sitting in a row read as a breakdown that sums to the page, and this
- * one does not.
- */
-const HEALTH_SCOPE = (count: number): string =>
-  `On this page · ${count} ${count === 1 ? 'run' : 'runs'}`;
-
-const HEALTH_CAVEAT = (): string =>
-  'Paging or filtering changes these; they are not totals for the whole list. A run can be ' +
-  'counted more than once — “Needs attention” asks whether anything failed, and “Unjudged” asks ' +
-  'whether a gate reached a verdict, which are different questions. Failures counted here are ' +
-  'execution state, this platform’s SLA verdict, and the checks a simulation declares for ' +
-  'itself.';
 
 /**
  * The filter form, folded away on a phone — review M18.
@@ -1555,22 +1327,4 @@ function AssertionLine({ checks }: { readonly checks: RunListItem['checks'] }) {
       {checks.failed} {checks.failed === 1 ? 'assertion' : 'assertions'} failed
     </span>
   );
-}
-
-function needsAttention(run: RunListItem): boolean {
-  return (
-    run.status === 'failed' ||
-    run.status === 'incomplete' ||
-    run.verdict === 'failed' ||
-    // THE CHECK THIS TILE USED TO MISS ENTIRELY. A run whose platform verdict
-    // passed while its simulation's own assertion failed is exactly what
-    // "Needs attention: 0" was hiding — the list endpoint never sent the
-    // outcomes, so the count could not see them. `checks` is null for a run
-    // that reported none, which is not a failure.
-    (run.checks != null && run.checks.failed > 0)
-  );
-}
-
-function isInFlight(run: RunListItem): boolean {
-  return run.status === 'pending' || run.status === 'parsing' || run.status === 'running';
 }

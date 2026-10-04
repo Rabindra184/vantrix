@@ -245,16 +245,12 @@ describe('RunList columns', () => {
     // THE COUNTS SAY WHAT THEY COUNT. They reduce over one keyset page, and
     // shipped under the name "Run list health" with only the fourth tile
     // disclosing that — so an org with 90 failed runs read "Needs attention:
-    // 2" off its first page. The denominator is derived from the rows on
-    // screen rather than written down, so a fixture change moves both sides.
-    //
-    // The scope is its own visible line now rather than the opening sentence
-    // of a paragraph (review 09-13's copy table); the CLAIM is unchanged and
-    // is what this asserts — the reader is told, without opening anything,
-    // that these four numbers cover this page and how many runs that is.
-    const rows = screen.getAllByTestId('run-row');
-    expect(within(health).getByTestId('health-scope')).toHaveTextContent(
-      new RegExp(`on this page · ${rows.length} runs`, 'i'),
+    // 2" off its first page. The scope stays visible, beside the counts it
+    // qualifies; the run total it used to repeat is the heading's (clean UI,
+    // PR 3), so the line says "On this page" and nothing more.
+    expect(within(health).getByTestId('health-scope')).toHaveTextContent(/^On this page$/);
+    expect(screen.getByRole('heading', { level: 1 }).parentElement).toHaveTextContent(
+      `${screen.getAllByTestId('run-row').length} runs`,
     );
   });
 
@@ -400,10 +396,11 @@ describe('RunList — the health summary says which systems it counted', () => {
   it('names what the counts do not include', async () => {
     renderList([...ROWS]);
     const health = await screen.findByRole('region', { name: 'Run health on this page' });
-    expect(health).toHaveTextContent(/simulation/i);
+    const info = within(health).getByRole('button', { name: 'About these counts' });
+    expect(info).toHaveAccessibleDescription(/simulation/i);
     // And still says it is page-local — the new caveat must not replace the
     // one that was already there.
-    expect(health).toHaveTextContent(/not totals for the whole list/i);
+    expect(info).toHaveAccessibleDescription(/this page only/i);
   });
 });
 
