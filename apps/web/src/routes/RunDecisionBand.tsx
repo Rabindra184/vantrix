@@ -5,7 +5,7 @@ import { Link, useLocation } from 'react-router-dom';
 import Badge from '../components/Badge';
 import { CompareTabIcon, DownloadIcon } from '../components/icons';
 import Button, { linkButtonClasses } from '../components/Button';
-import { ASSERTION_OUTCOME, STATUS, VERDICT, type Mark } from './marks';
+import { STATUS, VERDICT, type Mark } from './marks';
 import { countAssertions, firstFailedAssertion, type AssertionCounts } from './assertions';
 import { decisionOf, releaseWord, rulesRan, type Decision } from './decision';
 import { runComparePath, runPath } from './paths';
@@ -101,7 +101,6 @@ export default function RunDecisionBand({
    * "Passed 0 Failed 0 N/A 0" — while the actual failure appeared once, in
    * 12px, below all of it. A fast scan finds the zeros and misses the failure.
    */
-  const judged = assertions !== undefined && assertions.length > 0;
   const counts = countAssertions(assertions ?? []);
   const simulation = summariseToolAssertions(toolAssertions);
   /* `evaluated` treats `[]` as evaluated, which is what produced "0 passed ·
@@ -115,15 +114,8 @@ export default function RunDecisionBand({
      its project; "not reported yet" would be false too, since it never will
      be. It gets its own words. */
   const ran = rulesRan(status, identity.durationMs);
-  const gatesText =
-    assertions === undefined
-      ? 'not reported yet'
-      : !ran
-        ? 'not evaluated — the run left nothing to judge'
-        : assertions.length === 0
-          ? 'not configured — no SLA rule judged this run'
-          : `${counts.passed} passed · ${counts.failed} failed`;
   const failed = firstFailedAssertion(assertions ?? []);
+  const gatesText = gatesOutcome(assertions, ran, counts, failed);
   const decision: Decision = decisionOf(verdict);
   /* ═══ "Not configured" IS NOT "Not evaluated" (review 09-13 copy table) ═══
    *
@@ -133,35 +125,20 @@ export default function RunDecisionBand({
    * came back not applicable. The first is a setup state the reader can act
    * on; the second is a real evaluation with nothing to say.
    *
-   * `gatesText` two lines up has drawn that distinction since C01 — "not
-   * configured — no SLA rule judged this run" — and the word above it
+   * The gates row has drawn that distinction since C01 — `gatesOutcome`
+   * says "not configured" for no rule — and the word above it
    * contradicted it. This is the same "grep for the siblings of a comment that
    * argues a distinction" lesson CLAUDE.md already records for this component,
    * met a third time.
    *
-   * KEYED ON THE ARRAY, NOT ON `judged`. `judged` is false for BOTH an empty
-   * list and an absent one, and an absent one is a run whose assertions have
+   * KEYED ON THE ARRAY, NOT ON "is there anything to count". That is false
+   * for BOTH an empty list and an absent one, and an absent one is a run whose assertions have
    * not been reported yet — "Not configured" would be a claim about a project
    * we have not heard from. */
   // The expression this comment argues lives in `releaseWord` (`decision.ts`)
   // now, so the lifecycle strip's Verdict step reads the same word by calling
   // the same function, rather than by agreeing with a copy of it.
   const word = releaseWord(verdict, assertions, ran);
-  /* RENDERED FROM THE FIELDS, NOT THE STORED MESSAGE. `failed.message` is
-     written by `packages/sla`'s own `describe` as the stored schema read
-     aloud — `error_rate of the run (response_time) ≤ 0.01 — actual
-     0.0223463687150838` — which review.md's copy table names verbatim as the
-     pattern to replace, and which this band renders at the largest size on
-     the page, directly above a gates table that has said "Whole-run error
-     rate / ≤ 1% / 2.23%" since review.md 1, 3 and 15 landed. Two vocabularies
-     for one fact, and the raw one was the prominent one.
-
-     The message survives as the fallback for exactly the case the fields
-     cannot describe: a `not_applicable` gate, where `describeSlaOutcome`
-     answers null and the evaluator's own words say why nothing was checked. */
-  const detail =
-    (failed ? (describeSlaOutcome(failed) ?? failed.message) : null) ??
-    decisionDetail(decision, counts, status, ran);
   const runId = identity.id;
   const exportRun = () =>
     downloadRunSummary(
@@ -257,79 +234,8 @@ export default function RunDecisionBand({
            * pending, so those are different claims and the badge is the
            * accurate one. Dropping it there would have deleted the only true
            * statement on the row — the same `unevaluated` IS NOT `none`
-           * distinction this file's own type comment opens with.
-           *
-           * The counts sentence is gated on `judged` rather than `evaluated`:
-           * a project with no rules has nothing to count, and
-           * "0 passed · 0 failed · 0 not applicable" over it is the
-           * three-zeros overclaim this file already fixed one row down. */}
+           * distinction this file's own type comment opens with. */}
           {decision === 'none' && <Badge mark={DECISION.none} />}
-          {judged && (
-            <p className="text-[0.75rem] font-medium text-muted">
-              {counts.passed} passed · {counts.failed} failed · {counts.not_applicable} not applicable
-            </p>
-          )}
-          {/* THE TICK STRIP — one tick per SLA rule, in the order the counts
-              sentence above reads them. `aria-hidden` because it repeats
-              exactly what that sentence already says; it is the sentence's
-              picture, not a second fact. Rendered only when `evaluated`, the
-              same gate as the sentence and the counts — a strip of grey
-              ticks over rules nobody has evaluated would be the three-zeros
-              overclaim in bar form. `flex-wrap`, no cap: a run with two
-              hundred rules wraps to more rows rather than silently showing
-              fewer ticks than rules ("no silent caps"). Tick colours are the
-              outcome marks' own, as data through style — the `Badge`
-              pattern. */}
-          {judged && (
-            <div aria-hidden="true" data-testid="gate-ticks" className="flex flex-wrap items-center gap-1">
-              {tickMarks(counts).map((mark, index) => (
-                // 10px × 32px, squared rather than pill: this is a TEST STRIP,
-                // and a strip's ticks are bars. At 4px wide and fully rounded
-                // they read as dots — a row of beads that says "some things
-                // happened" rather than "here is every rule, and these two
-                // failed". Width is what makes an individual tick findable.
-                <span
-                  key={index}
-                  className="h-8 w-2.5 rounded-sm"
-                  style={{ backgroundColor: mark.colour }}
-                />
-              ))}
-            </div>
-          )}
-          {/* ═══ WITHHELD ON A PHONE — review M02 ═══
-           *
-           * M02 asks the mobile band to "replace stacked repeated status prose
-           * with short labeled rows". The rows are the `<dl>` directly below,
-           * which C02 built — Platform gates and Simulation assertions now,
-           * Execution having moved to the lifecycle strip — each naming the
-           * system that answered. This paragraph is the PROSE half,
-           * and on this run it reads "This run completed, but no SLA rule
-           * produced a release verdict" while the row beneath says "Platform
-           * gates — not configured". One fact, twice, in the screen a phone
-           * reader has instead of a page.
-           *
-           * Measured at 375x812: 42px of the band's 424, and the band is the
-           * whole first screen — the run's own totals begin at y886 and p95 at
-           * y1198, so not one number was visible.
-           *
-           * A CLASS, NOT `useIsCompact`. The app's one JS breakpoint exists
-           * because a class can only HIDE the charts while the cost is
-           * MOUNTING them; nothing is mounted here that a phone would pay for,
-           * and the rows carry the same facts at every width. `max-sm:hidden`
-           * is the whole decision.
-           *
-           * NOT withheld when it is the one thing that says WHY. `failed`
-           * supplies its own message — the first failing gate's — and that is
-           * never a restatement of the rows: it names a rule. Only the
-           * generated summary is dropped. */}
-          <p
-            data-testid="decision-detail"
-            className={`max-w-3xl text-[0.8125rem] leading-relaxed text-muted${
-              failed == null ? ' max-sm:hidden' : ''
-            }`}
-          >
-            {detail}
-          </p>
 
           {/* TWO OUTCOMES, NAMED. Each row says which system answered, so no
               reader has to infer that "0 failed" meant one system's rules and
@@ -341,6 +247,7 @@ export default function RunDecisionBand({
               testId="outcome-gates"
               label="Platform gates"
               value={gatesText}
+              tone={counts.failed > 0 ? 'failed' : undefined}
             />
             <Outcome
               testId="outcome-simulation"
@@ -396,22 +303,6 @@ export default function RunDecisionBand({
         </div>
 
         <div className="flex min-w-0 flex-col justify-center gap-3 bg-sunken/45 p-4 @4xl:p-5">
-          {/* The counts, or nothing — never three zeros over a run whose
-              rules have not been evaluated, AND never over a run that has no
-              rules at all. `judged`, not `evaluated`: the review's "remove
-              empty SLA count tiles", which is the same correction the counts
-              sentence and the tick strip above just took. */}
-          {judged && (
-            <div className="flex flex-wrap gap-2">
-              <DecisionCount label="Passed" value={counts.passed} mark={ASSERTION_OUTCOME.passed} />
-              <DecisionCount label="Failed" value={counts.failed} mark={ASSERTION_OUTCOME.failed} />
-              <DecisionCount
-                label="N/A"
-                value={counts.not_applicable}
-                mark={ASSERTION_OUTCOME.not_applicable}
-              />
-            </div>
-          )}
           <div className="flex flex-wrap items-center gap-2">
             <Link to={runComparePath(runId)} className={linkButtonClasses}>
               <CompareTabIcon className="h-3.5 w-3.5" />
@@ -442,30 +333,7 @@ export default function RunDecisionBand({
   );
 }
 
-/**
- * The tick strip's marks, one per rule, in the counts sentence's own order —
- * passed, failed, not applicable — so the picture and the words agree about
- * sequence as well as number.
- */
-function tickMarks(counts: AssertionCounts): readonly Mark[] {
-  return [
-    ...Array.from({ length: counts.passed }, () => ASSERTION_OUTCOME.passed),
-    ...Array.from({ length: counts.failed }, () => ASSERTION_OUTCOME.failed),
-    ...Array.from({ length: counts.not_applicable }, () => ASSERTION_OUTCOME.not_applicable),
-  ];
-}
 
-function DecisionCount({ label, value, mark }: { readonly label: string; readonly value: number; readonly mark: Mark }) {
-  return (
-    <div
-      className="flex items-baseline gap-1.5 rounded-lg border border-default bg-surface px-2.5 py-1.5"
-      style={{ color: mark.colour }}
-    >
-      <p className="text-[0.75rem] font-medium text-muted">{label}</p>
-      <p className="font-mono text-base font-semibold leading-none tabular-nums text-primary">{value}</p>
-    </div>
-  );
-}
 
 /**
  * The word's colour, from mark DATA like every status colour in this app —
@@ -480,28 +348,33 @@ function decisionColour(decision: Decision, counts: AssertionCounts): string {
   return DECISION[decision].colour;
 }
 
-function decisionDetail(
-  decision: Decision,
-  counts: AssertionCounts,
-  status: RunResponse['status'],
-  /** `rulesRan` — see `gatesText`. */
-  ran: boolean,
-): string {
-  if (decision === 'failed') return 'One or more SLA rules failed. Start with the failed gates below.';
-  if (decision === 'passed') return 'All evaluated SLA rules passed for this run.';
-  if (decision === 'not_evaluated') {
-    // "This run completed" was said of incomplete runs too, and "no SLA rule
-    // produced a release verdict" of runs no rule ever ran against.
-    if (!ran) return 'The stream stopped before anything could be processed, so no SLA rule ran.';
-    return status === 'incomplete'
-      ? 'The stream stopped early, and no SLA rule produced a release verdict.'
-      : 'This run completed, but no SLA rule produced a release verdict.';
-  }
-  if (counts.failed > 0) return 'Gate results are available, but the run verdict is still resolving.';
-  if (decision === 'none') return 'This run carries no release verdict yet.';
-  return 'The run has not finished evaluation yet.';
-}
 
+
+/**
+ * What the platform gates concluded, in the fewest words that are true — the
+ * band's gates row (clean UI, PR 2). A failure is the failing gate's own
+ * sentence, and "and N more" when there were others, because that sentence is
+ * the one fact a reader of this band needs; the counts live once, in the gate
+ * cards below. "not configured" (no rule) and "not evaluated" (rules ran and
+ * judged nothing, or the run left nothing to judge) stay distinct: the first
+ * is a fact about the project, the second about this run.
+ */
+function gatesOutcome(
+  assertions: readonly Assertion[] | undefined,
+  ran: boolean,
+  counts: AssertionCounts,
+  failed: Assertion | undefined,
+): string {
+  if (assertions === undefined) return 'not reported yet';
+  if (!ran) return 'not evaluated';
+  if (assertions.length === 0) return 'not configured';
+  if (failed !== undefined) {
+    const sentence = describeSlaOutcome(failed) ?? failed.message;
+    return counts.failed > 1 ? `${sentence} and ${counts.failed - 1} more` : sentence;
+  }
+  if (counts.passed === 0) return 'not evaluated';
+  return 'passed';
+}
 
 /**
  * The simulation's own checks, reduced to one sentence and a target.
@@ -516,18 +389,14 @@ function summariseToolAssertions(
   toolAssertions: RunResponse['toolAssertions'],
 ): { text: string; failedCount: number; failedExpression: string | null } {
   if (toolAssertions === undefined || toolAssertions === null) {
-    return { text: 'not reported by this run', failedCount: 0, failedExpression: null };
+    return { text: 'not reported', failedCount: 0, failedExpression: null };
   }
   if (toolAssertions.length === 0) {
-    return { text: 'none declared by this simulation', failedCount: 0, failedExpression: null };
+    return { text: 'none declared', failedCount: 0, failedExpression: null };
   }
   const failed = toolAssertions.filter((a) => a.outcome === 'failed');
   if (failed.length === 0) {
-    return {
-      text: `all ${toolAssertions.length} passed`,
-      failedCount: 0,
-      failedExpression: null,
-    };
+    return { text: 'passed', failedCount: 0, failedExpression: null };
   }
   return {
     text: `${failed.length} failed — ${failed[0]!.expression}`,
