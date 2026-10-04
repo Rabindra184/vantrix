@@ -84,7 +84,10 @@ const FORMAT_OPTION: Readonly<Record<PackageKind, string>> = {
   gatling_bundle: 'Runnable bundle',
 };
 
-const CAPTION = "This project's packages: what each holds, and what has run from it.";
+/** The table's accessible name. It used to be a sentence restating the
+ *  section ("This project's packages: …"), printed above both layouts; under
+ *  the clean-UI text rule a name is a few words and the restatement is gone. */
+const TABLE_NAME = 'Packages';
 
 /** The one row that is in an armed state, if any — see `PackagesPanel`. */
 type Armed = { readonly id: string; readonly mode: 'rename' | 'delete' };
@@ -192,7 +195,6 @@ function PackagesPanel({ slug }: { readonly slug: string }) {
             </p>
           ) : compact ? (
             <section aria-label="Packages" className="flex flex-col gap-3">
-              <p className="text-[0.8125rem] leading-relaxed text-muted">{CAPTION}</p>
               <ul className="flex flex-col gap-2">
                 {visible.map((pkg) => (
                   <PackageCard
@@ -206,9 +208,9 @@ function PackagesPanel({ slug }: { readonly slug: string }) {
               </ul>
             </section>
           ) : (
-            <TableFrame caption={CAPTION} label="Packages table">
+            <TableFrame name={TABLE_NAME} label="Packages table">
               <table className={TABLE}>
-                <caption className="sr-only">{CAPTION}</caption>
+                <caption className="sr-only">{TABLE_NAME}</caption>
                 <thead className={THEAD}>
                   <tr>
                     <th className={TH}>Name</th>

@@ -58,12 +58,11 @@ test('a project lists its tests, and each test its own runs', async ({ page }) =
 
   // The project page is the TEST list — two rows, not four runs.
   await expect(page.getByTestId('test-row')).toHaveCount(2);
-  // A table's accessible name is its `<caption>`, and the caption is a
-  // SENTENCE — so the pattern has to be a phrase that sentence actually
-  // contains. `/tests/i` did not match it: the caption reads "Every test in
-  // this project", singular throughout, and the assertion failed as
-  // "element(s) not found" rather than as anything about the table.
-  await expect(page.getByRole('table', { name: /every test in this project/i })).toBeVisible();
+  // A table's accessible name is its `<caption>`, which is the short name
+  // "Tests" under the clean-UI text rule — it used to be a sentence ("Every
+  // test in this project…") that only restated the page. Exact, so a name
+  // that grew back into a sentence fails here rather than still matching.
+  await expect(page.getByRole('table', { name: 'Tests', exact: true })).toBeVisible();
 
   // The class is shown beside the name, because the two diverge the moment
   // anybody renames a test and only the class matches the simulation source.

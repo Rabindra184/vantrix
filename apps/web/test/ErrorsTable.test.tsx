@@ -77,6 +77,9 @@ const TOTAL = errors.errors.reduce((n, e) => n + e.count, 0);
 
 afterEach(cleanup);
 
+/** The Errors heading's info, whose description carries the denominator caveat. */
+const errorsInfo = () => screen.getByRole('button', { name: 'About Errors' });
+
 /* ======================================================================== *
  * helpers — nothing below names a row; every expectation is the payload's
  * ======================================================================== */
@@ -346,27 +349,28 @@ describe('ErrorsTable — the table itself', () => {
   });
 
   /**
-   * THE CAPTION NAMES THE DENOMINATOR, and it is the same `total` the shares
-   * are taken against, so the table cannot tell a reader it is showing shares
-   * of 24 errors while dividing by something else. It also says the shares are
-   * of the ERRORS and not of the run's requests — 24 of 895 requests failed,
-   * and "62.5%" beside a failure count invites exactly that misreading.
+   * THE HEADING'S INFO NAMES THE DENOMINATOR, and it is the same `total` the
+   * shares are taken against, so the table cannot tell a reader it is showing
+   * shares of 24 errors while dividing by something else. It also says the
+   * shares are of the ERRORS and not of the run's requests — 24 of 895
+   * requests failed, and "62.5%" beside a failure count invites exactly that
+   * misreading. (It was the table's caption until the clean-UI text rule moved
+   * the caveat behind an InfoTip; the claim is unchanged.)
    */
-  it('says in the caption what the percentages are a percentage of', () => {
+  it('says behind the heading’s info what the percentages are a percentage of', () => {
     render(<ErrorsTable errors={errors} />);
-    const caption = screen.getByRole('table').querySelector('caption');
-    expect(caption?.textContent).toMatch(/24 errors/);
-    expect(caption?.textContent).toMatch(/most frequent first/i);
+    expect(errorsInfo()).toHaveAccessibleDescription(/24 errors/);
+    expect(errorsInfo()).toHaveAccessibleDescription(/not of the requests it made/);
 
     cleanup();
     render(<ErrorsTable errors={payloadOf([100, 50, 30, 12, 8])} />);
-    expect(screen.getByRole('table').querySelector('caption')?.textContent).toMatch(/200 errors/);
+    expect(errorsInfo()).toHaveAccessibleDescription(/200 errors/);
   });
 
   /** One error is one error, not "1 errors". */
   it('counts the denominator in the singular when there is one of it', () => {
     render(<ErrorsTable errors={payloadOf([1])} />);
-    expect(screen.getByRole('table').querySelector('caption')?.textContent).toMatch(/1 error\b/);
+    expect(errorsInfo()).toHaveAccessibleDescription(/1 error\b/);
     expect(rows().map((row) => textIn(row, 'share'))).toEqual(['100%']);
   });
 });
@@ -489,10 +493,10 @@ describe('ErrorsTable — the empty state says what it actually checked', () => 
     expect(screen.getByRole('table', { name: /search/i })).toBeInTheDocument();
   });
 
-  it('keeps the run wording in the caption when unscoped', () => {
+  it('keeps the run wording in the caveat when unscoped', () => {
     render(<ErrorsTable errors={{ runId: RUN_ID, errors: [{ message: 'boom', count: 2 }] }} />);
-    const table = screen.getByRole('table');
-    expect(table.textContent).toMatch(/recorded in this run/i);
+    expect(screen.getByRole('table', { name: 'Errors' })).toBeInTheDocument();
+    expect(errorsInfo()).toHaveAccessibleDescription(/this run recorded/i);
   });
 });
 
@@ -591,18 +595,17 @@ describe('ErrorsTable — it distinguishes error types from occurrences', () => 
    * requests") passes against a tally that failed to render at all, and the
    * presence alone passes against one that says both.
    */
-  it('calls the occurrence count what the caption calls it, never failed requests', () => {
+  it('calls the occurrence count what the caveat calls it, never failed requests', () => {
     render(<ErrorsTable errors={two} />);
     const tally = screen.getByTestId('errors-tally');
-    const caption = screen.getByRole('table', { name: /errors/i }).textContent ?? '';
 
     expect(tally).toHaveTextContent(/24 recorded errors/i);
     expect(tally.textContent ?? '').not.toMatch(/failed requests?/i);
 
-    // The caption's own claim about the same number, unchanged by this fix —
-    // it is the half that was right.
-    expect(caption).toMatch(/24 errors/i);
-    expect(caption).toMatch(/not of the requests it made/i);
+    // The caveat's own claim about the same number, unchanged by this fix —
+    // it is the half that was right. It rides behind the heading's info now.
+    expect(errorsInfo()).toHaveAccessibleDescription(/24 errors/i);
+    expect(errorsInfo()).toHaveAccessibleDescription(/not of the requests it made/i);
   });
 
   it('says nothing at all when there are no errors', () => {

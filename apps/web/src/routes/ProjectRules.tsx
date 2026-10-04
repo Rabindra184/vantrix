@@ -1354,7 +1354,7 @@ function RulesPanel({
         <>
           <RulesTable
             items={own}
-            caption={`Rules written for this test, newest first. They judge its runs and no other test’s. A disabled rule stays here but is not evaluated.`}
+            info="These rules judge this test’s runs and no other test’s. A disabled rule stays here but is not evaluated."
             label="Test SLA rules"
             emptyNote="No rule has been written for this test yet — it is judged by the project-wide rules below."
             confirming={confirming}
@@ -1366,7 +1366,7 @@ function RulesPanel({
           />
           <RulesTable
             items={inherited}
-            caption="Project-wide rules, which judge every test here including this one. Deleting one changes every other test in the project."
+            info="Project-wide rules judge every test here, including this one. Deleting one changes every other test in the project."
             label="Inherited SLA rules"
             emptyNote="This project has no project-wide rules, so nothing is inherited."
             confirming={confirming}
@@ -1380,7 +1380,7 @@ function RulesPanel({
       ) : (
         <RulesTable
           items={all}
-          caption="Every SLA rule in this project, newest first. A disabled rule stays here but is not evaluated."
+          info="A disabled rule stays here but is not evaluated."
           label="SLA rules"
           showAppliesTo
           confirming={confirming}
@@ -1398,7 +1398,7 @@ function RulesPanel({
 /** One table of rules. See `RulesPanel` for why there can be two. */
 function RulesTable({
   items,
-  caption,
+  info,
   label,
   emptyNote,
   showAppliesTo = false,
@@ -1410,7 +1410,8 @@ function RulesTable({
   onDelete,
 }: {
   readonly items: readonly SlaRule[];
-  readonly caption: string;
+  /** The caveat behind the table's info; `label` is both its name and its scroll region's. */
+  readonly info: string;
   readonly label: string;
   /** Shown instead of the table when this group is empty. Splitting one list
    *  in two creates a state neither half had: a group with no rows, which is
@@ -1435,9 +1436,9 @@ function RulesTable({
   }
 
   return (
-      <TableFrame caption={caption} label={label}>
+      <TableFrame name={label} label={label} info={info}>
         <table className={TABLE}>
-          <caption className="sr-only">{caption}</caption>
+          <caption className="sr-only">{label}</caption>
           <thead className={THEAD}>
             <tr>
               <th className={TH}>Name</th>

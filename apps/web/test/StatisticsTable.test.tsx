@@ -1713,41 +1713,42 @@ describe('StatisticsTable — CSV export', () => {
  *
  * C06's second half is explicit — "Avoid duplicating the full prose as the
  * accessible name" — and a 94-word `<caption>` is met on arrival with no way
- * to skip it. So the name is "Statistics for every request and group in this
- * run" and the prose lives only in the disclosure.
+ * to skip it. The clean-UI text rule then took it the rest of the way: the
+ * name is "Statistics", the methodology is the section heading's info, and the
+ * restating summary line and its disclosure are gone.
  *
  * THE DISTINCTIVE WORD SURVIVES ON PURPOSE. Six specs find this table by
- * `getByRole('table', { name: /statistics/i })`; the visible summary does not
- * contain "statistics", so a shorter name that dropped it would have been a
- * rename smuggled in behind an accessibility fix.
+ * `getByRole('table', { name: /statistics/i })`, so the one-word name is that
+ * word.
  *
  * This entry is the "a test that pins prose verbatim protects it from
  * correction" lesson CLAUDE.md already records, met from the other side: the
  * pin was right when written and became the reason the defect survived.
  */
 describe('StatisticsTable — the prose is available rather than present', () => {
-  it('names the table concisely, without reciting the methodology', () => {
+  /** The heading's info, and the hidden description its trigger names. This
+   *  file has no jest-dom matchers, so the description is read directly. */
+  const infoText = (): string => {
+    const trigger = screen.getByRole('button', { name: 'About Statistics' });
+    return document.getElementById(trigger.getAttribute('aria-describedby') ?? '')?.textContent ?? '';
+  };
+
+  it('names the table with one word, without reciting the methodology', () => {
     renderTable();
     const name = screen.getByRole('table').querySelector('caption')?.textContent ?? '';
-    // Concise and useful, which is C06's own acceptance wording.
-    expect(name).toMatch(/^Statistics for every request and group in this run$/);
-    // The two pieces of methodology that used to be in the NAME are not.
-    expect(name).not.toMatch(/percentile|within 1%|never be added/i);
-    // PAIRED: they are still on the page, in the disclosure, so this is a move
-    // rather than a deletion — the whole of C06's "expose optional methodology
-    // as an accessible disclosure".
-    expect(document.body.textContent ?? '').toMatch(/within 1%/i);
+    // Concise and useful, which is C06's own acceptance wording — and the word
+    // six specs find this table by.
+    expect(name).toBe('Statistics');
+    // PAIRED: the methodology is still available, behind the heading's info,
+    // so this is a move rather than a deletion.
+    expect(infoText()).toMatch(/within 1%/i);
+    expect(infoText()).toMatch(/never be added together/i);
   });
 
-  it('shows a short line and puts the detail behind a disclosure', () => {
+  it('prints no restating line and opens nothing until asked', () => {
     renderTable();
-    // `getByText` throws when absent, so finding it IS the assertion — this
-    // file has no jest-dom matchers.
-    expect(screen.getByText(/with the run’s own totals first/i)).toBeTruthy();
-    // Closed by default: the point is that the prose is available, not present.
-    const disclosure = document.querySelector('details');
-    expect(disclosure).not.toBeNull();
-    expect((disclosure as HTMLDetailsElement).open).toBe(false);
+    expect(screen.queryByText(/with the run’s own totals first/i)).toBeNull();
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 });
 

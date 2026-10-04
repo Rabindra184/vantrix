@@ -1365,12 +1365,14 @@ function RecentJobs({ slug, query }: { readonly slug: string; readonly query: Us
   if (query.data.items.length === 0) {
     return <EmptyState title="No on-prem runs yet" body="Queued runner jobs for this project will appear here." />;
   }
-  const caption = 'Most recent on-prem runner jobs for this project.';
+  // The name, not a sentence restating it (clean-UI text rule); the e2e
+  // suite finds this table by "On-prem runner jobs".
+  const name = 'On-prem runner jobs';
   return (
     <div className="flex flex-col gap-4">
-      <TableFrame caption={caption} label="On-prem runner jobs table">
+      <TableFrame name={name} label="On-prem runner jobs table">
         <table className={TABLE}>
-          <caption className="sr-only">{caption}</caption>
+          <caption className="sr-only">{name}</caption>
           <thead className={THEAD}>
             <tr>
               <th scope="col" className={TH}>Created</th>

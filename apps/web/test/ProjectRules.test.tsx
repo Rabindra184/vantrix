@@ -872,9 +872,11 @@ describe('ProjectRules — on a test’s page', () => {
     // The column is gone from both, because within a group it says nothing.
     expect(screen.queryByTestId('rule-applies-to')).toBeNull();
 
-    // And the consequence of deleting an inherited rule is stated where the
-    // inherited rules are, not left to the reader to infer.
-    expect(inherited.textContent ?? '').toMatch(/every other test in the project/i);
+    // And the consequence of deleting an inherited rule is stated on the
+    // inherited table's own info, not left to the reader to infer.
+    expect(screen.getByRole('button', { name: 'About Inherited SLA rules' })).toHaveAccessibleDescription(
+      /every other test in the project/i,
+    );
   });
 
   /** On the PROJECT's own page there is one table and the column is back,

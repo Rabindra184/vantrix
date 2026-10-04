@@ -403,15 +403,19 @@ function TokenTable({
       />
     );
   }
-  const caption =
-    'Every API token in this project. The secret is shown once when the token is created and ' +
-    'never again — the Prefix column is what identifies it afterwards. To rotate one, create ' +
-    'its replacement first and revoke the old token once the new one is in use: nothing here ' +
-    'edits a token in place, because the secret cannot be re-read to hand over.';
+  // The name, and the caveats a reader needs before rotating a token behind
+  // the frame's info (the clean-UI text rule). "Every API token in this
+  // project." only restated the section, so it is gone.
+  const name = 'API tokens';
+  const info =
+    'The secret is shown once when the token is created and never again — the Prefix column is ' +
+    'what identifies it afterwards. To rotate one, create its replacement first and revoke the old ' +
+    'token once the new one is in use: a token cannot be edited in place, because the secret ' +
+    'cannot be re-read to hand over.';
   return (
-    <TableFrame caption={caption} label="Project tokens table">
+    <TableFrame name={name} label="Project tokens table" info={info}>
       <table className={TABLE}>
-        <caption className="sr-only">{caption}</caption>
+        <caption className="sr-only">{name}</caption>
         <thead className={THEAD}>
           <tr>
             <th scope="col" className={TH}>Name</th>

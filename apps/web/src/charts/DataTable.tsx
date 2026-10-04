@@ -127,9 +127,10 @@ export default function DataTable({
             wide as its table and a 60-bucket data table is far wider than a
             phone, so left inside `overflow-x-auto` this sentence scrolls away
             with the columns instead of wrapping. `aria-hidden` because the
-            real `<caption>` below is what assistive tech reads — the same
-            two-copies-one-source arrangement `TableFrame` documents at
-            length for the four full-width tables. */}
+            real `<caption>` below is what assistive tech reads. (`TableFrame`
+            used the same arrangement until the clean-UI text rule took its
+            visible captions away; this one stays, because it is a heading for
+            an opt-in table, not prose about one.) */}
         <p aria-hidden="true" className={CAPTION}>
           {caption} — every value this chart plots, as text.
         </p>

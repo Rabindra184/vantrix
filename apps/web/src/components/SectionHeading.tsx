@@ -40,6 +40,7 @@ export default function SectionHeading({
   id,
   level = 2,
   overline,
+  info,
 }: {
   readonly children: ReactNode;
   readonly id?: string;
@@ -58,24 +59,38 @@ export default function SectionHeading({
    * "Projects" label: nothing queries a `<p>` by accessible name.
    */
   readonly overline?: string;
+  /**
+   * An `InfoTip` carrying the caveat about what this section holds — a table's
+   * methodology once the table stops printing it (the clean-UI text rule).
+   *
+   * BESIDE the heading, never inside it. A heading's accessible name and its
+   * `textContent` are computed from its content, so a trigger inside would add
+   * "About …" to the name and the hidden description's words to the text — and
+   * `run-tables.spec.ts` pins each tab's heading outline by that text. With no
+   * `info` the markup is exactly what it was.
+   */
+  readonly info?: ReactNode;
 }) {
   const Heading = level === 3 ? 'h3' : 'h2';
   const size = level === 3 ? 'text-[0.9375rem]' : 'text-base';
-  if (overline === undefined) {
-    return (
-      <Heading id={id} className={`${size} font-semibold tracking-tight text-primary`}>
-        {children}
-      </Heading>
-    );
-  }
+  const heading = (
+    <Heading id={id} className={`${size} font-semibold tracking-tight text-primary`}>
+      {children}
+    </Heading>
+  );
+  const row = info === undefined ? heading : (
+    <div className="flex items-center gap-1.5">
+      {heading}
+      {info}
+    </div>
+  );
+  if (overline === undefined) return row;
   return (
     <div className="flex flex-col gap-1">
       <p className="text-[0.75rem] font-medium text-muted">
         {overline}
       </p>
-      <Heading id={id} className={`${size} font-semibold tracking-tight text-primary`}>
-        {children}
-      </Heading>
+      {row}
     </div>
   );
 }

@@ -290,12 +290,11 @@ describe('ProjectAccess', () => {
       renderSetup();
       await ready();
       /* The caption is the one that said "after minting", and it only renders
-         beside a real table. `findAllBy`, not `findBy`: `TableFrame` draws the
-         caption TWICE on purpose — a visible `aria-hidden` copy outside the
-         scroll box, and the real `sr-only` `<caption>` inside it, so the
-         sentence wraps at the viewport instead of scrolling sideways with the
-         columns. Either node proves the branch rendered. */
-      await screen.findAllByText(/every api token in this project/i);
+         beside a real table — so wait for the table itself. Its caveat now
+         rides behind the frame's info, as a hidden description that is still
+         in `document.body.textContent`, so the prose check below still reads
+         it. */
+      await screen.findByRole('table', { name: 'API tokens' });
 
       expect(prose()).not.toMatch(/\bmint/i);
       expect(prose()).not.toMatch(/\bscoped?s?\b/i);
