@@ -345,9 +345,14 @@ export default function TestRuns() {
             between each is what says they are two facts rather than one
             sentence that lost its punctuation. */}
         <div className="grid grid-cols-1 gap-x-4 gap-y-3 rounded-lg border border-default bg-surface px-4 py-3 font-mono text-[0.75rem] text-muted shadow-panel sm:flex sm:flex-wrap sm:items-start sm:gap-x-0 sm:gap-y-3 sm:divide-x sm:divide-default">
-          <Chip name="Simulation class" label={`Simulation class: ${row.simulationClass}`}>
-            {row.simulationClass}
-          </Chip>
+          {/* Not when the class IS the name — every test created from its
+              class — or the chip prints the heading again; the rule
+              `RunHeader` follows for its own class chip (clean UI, PR 3). */}
+          {row.simulationClass !== row.name && (
+            <Chip name="Simulation class" label={`Simulation class: ${row.simulationClass}`}>
+              {row.simulationClass}
+            </Chip>
+          )}
           {/* The test's WHOLE history, not a page of it: this endpoint is not
               paginated, so unlike the run list's own count this number needs
               no "on this page" caveat. */}

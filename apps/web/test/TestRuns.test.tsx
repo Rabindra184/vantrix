@@ -245,6 +245,20 @@ describe('TestRuns', () => {
     expect(screen.getByText('2 runs')).toBeInTheDocument();
   });
 
+  /** A test created from its class is NAMED after it, so the chip would print
+   *  the heading again — the rule `RunHeader` already follows for its own class
+   *  chip (clean UI, PR 3). The case above is the other half: a test someone
+   *  named keeps the chip, because there it says something new. */
+  it('omits the class chip when the class is the test’s own name', async () => {
+    stubFetch({ test: { ...TEST, name: 'example.CheckoutSimulation' } });
+    renderPage();
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'example.CheckoutSimulation' }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Simulation class')).toBeNull();
+    expect(screen.getByText('2 runs')).toBeInTheDocument();
+  });
+
   /**
    * A 404 is the likeliest arrival at this URL after a hand edit or a stale
    * link, and the server's own sentence names the slug it could not find —
