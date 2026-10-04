@@ -223,8 +223,8 @@ const LIVE_P95_INFO =
  *
  * `RunStats` reads a run-scope `StatRow`, and `LiveSummarySchema` has no
  * `StatRow`: this is not `RunStats` fed a partial payload, it is the same four
- * tiles built from what `count`/`okCount`/`koCount`/`errorRate`/`percentiles`/
- * `maxUsers` actually are.
+ * tiles built from what `count`/`errorRate`/`percentiles`/`maxUsers` actually
+ * are.
  *
  * ═══ THE SAME FOUR TILES AS THE FINISHED ROW, IN THE SAME PLACES ═══
  *

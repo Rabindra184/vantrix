@@ -197,11 +197,9 @@ test('a run’s Summary leads with its decision, and its numbers start on the fi
  * verdict" directly above a row saying "Platform gates — not configured". One
  * fact twice, in 42px of the 424px that WAS the whole first screen on a phone.
  *
- * WITHHELD ONLY WHERE IT IS A RESTATEMENT. When a gate has failed the band
- * shows that gate's own message instead, which names a rule and is never a
- * summary of the rows — so it survives at every width. That distinction is the
- * case below, and it is the one worth guarding: a blanket `max-sm:hidden`
- * would silently drop the one sentence that says WHY a run failed.
+ * GONE AT EVERY WIDTH SINCE THE CLEAN-UI PASS. A failed gate's own message —
+ * the one sentence that says WHY a run failed — is the gates row itself now,
+ * so dropping the paragraph loses nothing; the band's unit tests pin that row.
  */
 test('the phone’s band carries its two rows and no restating paragraph', async ({
   page,

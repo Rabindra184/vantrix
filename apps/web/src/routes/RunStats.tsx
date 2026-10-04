@@ -18,10 +18,10 @@ import { StatisticsEmpty, formatCount, formatMs } from '../tables/StatisticsTabl
  * whole-run. A tile that disagreed with the statistics table it summarises
  * would be worse than no tile, so nothing else is derived from anywhere else.
  *
- * The fields the three row-fed tiles read — `errorRate`, `koCount`, `count`,
- * `okCount` and `percentiles.p95` — are the run-scope row's own fields, read
- * straight off it as a headline value or a hint and never recombined into a
- * new quantity the row does not already carry.
+ * The fields the three row-fed tiles read — `errorRate`, `count` and
+ * `percentiles.p95` — are the run-scope row's own fields, read straight off
+ * it as a headline value and never recombined into a new quantity the row
+ * does not already carry.
  *
  * EVERY NUMBER IS WRITTEN DOWN THE SAME WAY THE TABLE WRITES IT: `formatCount`
  * and `formatMs` are imported from `StatisticsTable`, never re-derived here.
@@ -66,10 +66,10 @@ export default function RunStats({
   readonly runStatus: RunResponse['status'] | undefined;
   readonly baseline?: TrendRun | null;
   /**
-   * This run as its own cohort row, so the note under the tiles can say what
-   * the deltas are measured against and whether that run was comparable.
-   * Absent leaves the baseline NAMED and its conditions unstated — the
-   * identification is the half that must not depend on a second lookup.
+   * This run as its own cohort row, so the comparison row under the tiles
+   * can say whether the run each delta names was comparable. Absent leaves
+   * the baseline NAMED (every delta links it) and its conditions unstated —
+   * the identification is the half that must not depend on a second lookup.
    */
   readonly current?: TrendRun | null;
   /**
@@ -147,8 +147,8 @@ export default function RunStats({
        * Colour is reserved for SLA `tone`, which `StatTile`'s own docstring
        * argues at length ("colouring a number red is a JUDGEMENT, and the
        * platform has only made one where a rule exists"), and size would break
-       * the common baseline `mt-auto` on the hint exists to keep. Position IS
-       * the emphasis this grid has. First is first. */}
+       * the values' common baseline across the row. Position IS the emphasis
+       * this grid has. First is first. */}
       <dl className="grid grid-cols-2 gap-3 @xl:grid-cols-4">
         <StatTile
           label="Error rate"
@@ -237,10 +237,9 @@ function percentileValue(row: StatRow, key: string): string {
 /**
  * `ms`, or NOTHING when the value is the em dash.
  *
- * A unit beside a dash claims a measurement that was never taken — the same
- * overclaim `RunDecisionBand` refuses when it draws no counts for a run
- * nobody has evaluated. The two functions read the same field so they cannot
- * disagree about whether a number exists.
+ * A unit beside a dash claims a measurement that was never taken. The two
+ * functions read the same field so they cannot disagree about whether a
+ * number exists.
  */
 function percentileUnit(row: StatRow, key: string): string | undefined {
   const raw = row.percentiles[key];

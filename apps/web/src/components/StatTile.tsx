@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 /**
  * One headline number, in a bordered card: a label, its value, and an
- * optional hint line giving the reading behind it (§6's six run-page tiles).
+ * optional delta naming the run it compares against (the run page's tiles).
  *
  * `data-testid` lands on the `<dd>`, not the outer element: the `<dd>` is the
  * one node that holds the actual measurement, and a test reading it gets the

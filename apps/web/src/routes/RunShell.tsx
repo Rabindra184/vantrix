@@ -236,7 +236,7 @@ export default function RunShell({
            `editing`/`draft` state — AND an in-flight save's `useMutation`
            closure, still pointed at the OLD run id's `onSuccess` — would
            survive navigating from one run to another (Back, or the
-           baseline note's "vs previous" link). A same-instance reset can
+           link a tile's delta draws to the run it compares against). A same-instance reset can
            clear the draft but cannot re-point a save already in flight;
            the key forces a fresh instance instead, so a stale save's
            `onSuccess` writes into a component that is no longer mounted. */

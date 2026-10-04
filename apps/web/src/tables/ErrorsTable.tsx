@@ -108,7 +108,7 @@ export default function ErrorsTable({
    *
    * The component cannot know its own scope — the payload carries a runId and
    * nothing narrower — so the caller has to say. Leaving it undefined keeps
-   * the whole-run wording, which is what the two run-level call sites want.
+   * the whole-run wording, which is what the Summary's call site wants.
    */
   readonly scopeLabel?: string;
 }) {

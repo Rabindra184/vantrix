@@ -45,9 +45,9 @@ export default function RunDecisionBand({
   readonly verdict: RunResponse['verdict'] | undefined;
   /**
    * `undefined` until the run has been evaluated — NOT an empty array. The
-   * counts below are drawn only when this is present, for the same reason
-   * `RunShell` passes `null` rather than `0` for an error count that has not
-   * arrived: three zeros are three measurements, and nobody took them.
+   * gates row says "not reported yet" while it is undefined, for the same
+   * reason `RunShell` passes `null` rather than `0` for an error count that
+   * has not arrived: an empty list is a measurement, and nobody took it.
    */
   readonly assertions?: readonly Assertion[];
   /**
@@ -85,21 +85,18 @@ export default function RunDecisionBand({
      change. */
   const { search } = useLocation();
   /**
-   * ═══ THE DISTINCTION `gatesText` ALREADY MADE, NOW MADE EVERYWHERE
-   * (review 09-13 C01) ═══
+   * ═══ AN EMPTY LIST IS NOT A ROW OF ZEROS (review 09-13 C01) ═══
    *
    * `evaluated` is `assertions !== undefined`, so an EMPTY array counts as
-   * evaluated. The note on `gatesText` below already says why that is wrong
-   * for a row of counts — nothing judging a run is not the same as nothing
-   * failing — and fixed it for that row alone. Its two siblings, the counts
-   * SENTENCE and the count TILES, kept reading `evaluated` and kept printing
-   * three zeros.
+   * evaluated — and nothing judging a run is not the same as nothing failing.
+   * For a run with no SLA rules and one failed simulation check the band once
+   * said the same non-fact four times — the 48px word, a badge beside it, "0
+   * passed · 0 failed · 0 not applicable" and "Passed 0 Failed 0 N/A 0" —
+   * while the failure appeared once, in 12px, below all of it.
    *
-   * What that cost is the finding: for a run with no SLA rules and one failed
-   * simulation check, the band said the same non-fact four times — the 48px
-   * word, the badge beside it, "0 passed · 0 failed · 0 not applicable", and
-   * "Passed 0 Failed 0 N/A 0" — while the actual failure appeared once, in
-   * 12px, below all of it. A fast scan finds the zeros and misses the failure.
+   * The band draws no counts at all now (clean UI, PR 2); they live once, in
+   * the gate cards below. `counts` feeds only the gates row: its "and N more"
+   * and its choice between "passed" and "not evaluated".
    */
   const counts = countAssertions(assertions ?? []);
   const simulation = summariseToolAssertions(toolAssertions);

@@ -90,7 +90,7 @@ const CHIP_BASE =
 
 /**
  * A one-of-N control, drawn as joined segments so it cannot be mistaken for
- * the multi-select chips beside it.
+ * a multi-select control beside it (the percentile chart's Bands menu).
  *
  * Still `aria-pressed` buttons rather than radios, matching what the suites
  * already assert and what the chips use — the DIFFERENCE this draws is between

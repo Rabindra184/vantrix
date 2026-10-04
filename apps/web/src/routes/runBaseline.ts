@@ -18,9 +18,9 @@ import type { TrendRun, TrendsResponse } from '@perfportal/contracts';
  * `COALESCE(tool_started_at, started_at)`, spelled the same way here as in
  * `RunRepository.list` and `TRENDS_SQL`.
  *
- * STRICTLY BEFORE, WITH NO NEWER FALLBACK. The tiles say "vs previous", and
- * the newest run in a cohort has no previous — omitting the deltas is the
- * only reading of that phrase that stays true.
+ * STRICTLY BEFORE, WITH NO NEWER FALLBACK. Each tile's delta names the run
+ * before this one ("vs Run 10"), and the first run in a cohort has none —
+ * omitting the deltas is the only reading that stays true.
  *
  * "BEFORE" IS THE COMPOSITE KEY `(effective, id)`, NOT THE INSTANT ALONE,
  * because that is the total order the rest of the product already commits

@@ -619,8 +619,8 @@ function Comparability({ findings }: { readonly findings: readonly Comparability
           actionable for none of them — above six facts shown whether or not
           they said anything.
 
-          `summariseConditions` is the same sentence the run overview's
-          baseline note prints, off the same findings, so a reader moving
+          `summariseConditions` is the same sentence the Summary's
+          comparison chip prints, off the same findings, so a reader moving
           between the two pages meets one wording rather than two. */}
       <p role="status" className="text-[0.8125rem] leading-relaxed text-primary">
         {check
