@@ -467,9 +467,9 @@ export default function ProjectRules({
    * panel sits beside a run list and a title is the only thing telling the
    * two apart.
    *
-   * The DESCRIPTION is kept either way. It is the sentence that says what a
-   * rule does and that a run with none gets no verdict, and it is as true on
-   * a page as it is in a panel.
+   * There is no description either way (clean UI PR 4): the empty state says
+   * a run with no rules gets no verdict, and the tables' info icons say which
+   * runs each set judges.
    */
   readonly showTitle?: boolean;
   /**
@@ -650,7 +650,7 @@ export default function ProjectRules({
   const [formOpen, setFormOpen] = useState<boolean | null>(null);
 
   // THE PREFIX, not this panel's own key. A rule authored on a test's page
-  // changes what project setup shows too (and a project-wide one changes every
+  // changes what the project's SLA rules page shows too (and a project-wide one changes every
   // test's page), and TanStack matches keys by prefix — so invalidating
   // `['project-rules', slug]` refreshes every scoped variant at once rather
   // than leaving whichever page the reader visits next showing a list that

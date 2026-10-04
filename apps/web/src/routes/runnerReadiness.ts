@@ -60,7 +60,6 @@ export interface RunnerReadiness {
   readonly needsSetup: boolean;
 }
 
-/** The statuses that mean a runner has taken the job and is working on it. */
 /**
  * ═══ THE CAVEAT EVERY STATE SHARES, STATED ONCE (clean UI, PR 4) ═══
  *
@@ -73,6 +72,7 @@ export const RUNNER_STATUS_INFO =
   'so whether one is listening right now is known only once a job is claimed. A runner runs one ' +
   'job at a time.';
 
+/** The statuses that mean a runner has taken the job and is working on it. */
 const CLAIMED: ReadonlySet<RunnerJobStatus> = new Set(['starting', 'running', 'closing']);
 
 /**

@@ -391,9 +391,8 @@ function TokenTable({
     return (
       <EmptyState
         title="No tokens yet"
-        /* WHAT A TOKEN IS FOR, not a second copy of the intro above — which
-           already names the three consumers, and is on screen at the same time
-           as this. A browser session carries `read`, `ingest` and `runner`
+        /* WHAT A TOKEN IS FOR. (The page's intro, which named the consumers,
+           went in clean UI PR 4.) A browser session carries `read`, `ingest` and `runner`
            itself (`auth.middleware.ts`), so the honest distinction is not
            "nothing can post without a token": it is that a token is how a
            MACHINE gets in without one. */
