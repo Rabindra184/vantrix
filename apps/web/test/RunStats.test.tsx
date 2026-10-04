@@ -689,7 +689,14 @@ describe('RunStats — clean tiles', () => {
 
   it('shows no deltas and no comparison row on a test’s first run', () => {
     renderStats(<RunStats stats={stats} peakUsers={12} runStatus="complete" baseline={null} />);
+    // The paired positive: the tiles drew, so the absences below are not an
+    // empty section.
+    for (const id of ['stat-p95', 'stat-error-rate', 'stat-total-requests', 'stat-peak-users']) {
+      expect(screen.getByTestId(id)).toBeInTheDocument();
+    }
     expect(screen.queryByRole('link', { name: /^Run \d+$|^previous run$/ })).toBeNull();
+    // Nor a delta as plain text — a link is not the only way to draw one.
+    expect(screen.getByRole('region', { name: 'Run totals' })).not.toHaveTextContent(/% vs /);
     expect(screen.queryByTestId('comparison-note')).toBeNull();
   });
 
