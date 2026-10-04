@@ -201,7 +201,8 @@ describe('RunSummary — the baseline the stat tiles compare against', () => {
     const tile = await screen.findByTestId('stat-error-rate');
     await waitFor(() => expect(tile.parentElement).toHaveTextContent('+100.0% vs previous'));
 
-    const link = within(screen.getByTestId('baseline-note')).getByRole('link');
+    // The tile's own delta carries the link now (clean UI, PR 2).
+    const link = within(tile.parentElement!).getByRole('link');
     expect(link).toHaveAttribute('href', `/runs/${TRENDS.runs[1]!.id}`);
     expect(link).not.toHaveAttribute('href', `/runs/${RUN_ID}`);
   });

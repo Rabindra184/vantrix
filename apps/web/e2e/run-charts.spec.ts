@@ -1484,10 +1484,12 @@ test('the Summary’s percentile note names the whole run, with or without a win
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
 
-  const note = page.getByTestId('percentile-method');
+  // The note is the p95 tile's ⓘ now (clean UI, PR 2): its caveat is the
+  // trigger's accessible description.
+  const note = page.getByRole('button', { name: 'About p95', exact: true });
 
   await page.goto(runPath(runId));
-  await expect(note).toContainText(/sketch of the whole run/i);
+  await expect(note).toHaveAccessibleDescription(/sketch of the whole run/i);
 
   /* UNDER A WINDOW THE SENTENCE USED TO BE FALSE, so it was conditional: the
      sketch was rebuilt from the buckets the window selects, and a methodology
@@ -1498,6 +1500,6 @@ test('the Summary’s percentile note names the whole run, with or without a win
      leave the whole-run sentence and must not bring the old windowed one back. */
   await page.goto(`${runPath(runId)}?from=0&to=2000`);
   await expect(page.getByTestId('stat-total-requests')).toBeVisible();
-  await expect(note).toContainText(/sketch of the whole run/i);
-  await expect(note).not.toContainText(/sketch of the selected window/i);
+  await expect(note).toHaveAccessibleDescription(/sketch of the whole run/i);
+  await expect(note).not.toHaveAccessibleDescription(/sketch of the selected window/i);
 });

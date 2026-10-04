@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 /**
  * One headline number, in a bordered card: a label, its value, and an
  * optional hint line giving the reading behind it (§6's six run-page tiles).
@@ -38,7 +39,7 @@ export default function StatTile({
   label,
   value,
   unit,
-  hint,
+  info,
   tone,
   delta,
   'data-testid': testId,
@@ -47,7 +48,14 @@ export default function StatTile({
   readonly value: string;
   /** The noun after the number — `ms`, `req/s`. See the module docstring. */
   readonly unit?: string;
-  readonly hint?: string;
+  /**
+   * An `InfoTip` carrying the caveat about this number (p95's "estimate"),
+   * drawn beside the label inside the `<dt>`. The label sits in its own span,
+   * so a query for the label's text still finds it alone. Hint lines under
+   * the value are gone (clean UI, PR 2): a tile is a label, a value and a
+   * delta.
+   */
+  readonly info?: ReactNode;
   /**
    * How this metric stands against the SLA rule that targets it — and NOTHING
    * when no rule does.
@@ -59,14 +67,18 @@ export default function StatTile({
    */
   readonly tone?: 'breach' | 'near';
   readonly delta?: {
-    readonly label: string;
+    /** A node, so the run it compares against can be a link ("+7.7% vs Run 10"). */
+    readonly label: ReactNode;
     readonly tone: 'better' | 'worse' | 'neutral';
   };
   readonly 'data-testid'?: string;
 }) {
   return (
     <div className="flex flex-col rounded-xl border border-default bg-surface p-4 shadow-panel">
-      <dt className="text-[0.75rem] font-medium text-muted">{label}</dt>
+      <dt className="flex items-center gap-1 text-[0.75rem] font-medium text-muted">
+        <span>{label}</span>
+        {info}
+      </dt>
       {/* 24px — `text-2xl leading-8`, the size the redesign's own screens set
           this number at — and it is the unit SPLIT that pays for it. The old
           20px was measured against `14.40 req/s`, eleven monospace characters,
@@ -109,10 +121,6 @@ export default function StatTile({
           {delta.label}
         </p>
       )}
-      {/* `mt-auto` pins the hint to the bottom, so six tiles of differing hint
-          lengths in one grid row keep their VALUES on a common baseline
-          instead of each floating below its own label. */}
-      {hint !== undefined && <p className="mt-auto pt-2 text-[0.6875rem] leading-snug text-muted">{hint}</p>}
     </div>
   );
 }

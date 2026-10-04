@@ -114,16 +114,8 @@ describe('RunStats', () => {
     // be inferred from a plain string mismatch.
     expect(tile.textContent).not.toMatch(/,/);
 
-    /* Same rule applies to the hint text (`okCount`/`koCount`), the "lower
-       stakes" half of the same defect the review flagged.
-
-       THE WORDS MOVED AND THE CLAIM DID NOT. This read `${bigOk} OK, ${bigKo}
-       KO` until review N01 replaced Gatling's vocabulary with the product's
-       own on this tile — so the assertion is written against the NUMBERS and a
-       loose separator, which is what it was always about. Pinning the two
-       words here would have made the suite the reason they could not be
-       corrected, the trap CLAUDE.md records for the run-health caveat. */
-    expect(screen.getByText(new RegExp(`\\b${bigOk}\\b.*\\b${bigKo}\\b`))).toBeInTheDocument();
+    // The tile carries no successful/failed hint line any more (clean UI,
+    // PR 2), so the plain-digits rule is the value's alone.
     expect(screen.getByTestId('stat-total-requests').textContent).not.toMatch(/\bKO\b|\bOK\b/);
   });
 
@@ -171,8 +163,11 @@ describe('RunStats', () => {
       />,
     );
 
-    expect(screen.getAllByText('+100.0% vs previous').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('-50.0% vs previous').length).toBeGreaterThan(0);
+    // The delta names its run now, as a link: "vs previous run" for a baseline
+    // with no number, across the text and the link's own node.
+    const row = document.querySelector('section[aria-label="Run totals"]')!.textContent ?? '';
+    expect(row).toMatch(/\+100\.0% vs previous run/);
+    expect(row).toMatch(/-50\.0% vs previous run/);
   });
 
   /**
@@ -215,11 +210,12 @@ describe('RunStats', () => {
       />,
     );
 
-    const note = screen.getByTestId('baseline-differences');
-    expect(note).toHaveTextContent('Different environment, branch and build');
-    // The values are a click away, and they say which run is which — a list of
-    // bare values would leave the reader to guess the order.
-    expect(note).toHaveTextContent('this run staging, previous production');
+    // The chip names what differs, visibly; the values are behind its ⓘ, and
+    // they say which run is which (clean UI, PR 2).
+    expect(screen.getByTestId('comparison-differs')).toHaveTextContent('Different environment, branch and build');
+    expect(screen.getByRole('button', { name: 'About the comparison with previous run' })).toHaveAccessibleDescription(
+      /Environment: this run staging, previous run production/,
+    );
   });
 
   /**
@@ -232,7 +228,7 @@ describe('RunStats', () => {
    * unconditional — without it this would pass just as happily against a
    * component that rendered nothing at all.
    */
-  it('names the baseline by its number, with when it started', () => {
+  it('names the baseline by its number, linked from each delta', () => {
     renderStats(
       <RunStats
         stats={stats}
@@ -242,12 +238,10 @@ describe('RunStats', () => {
         baseline={trendRun({ id: '22222222-2222-4222-8222-222222222222', runNumber: 11 })}
       />,
     );
-    const note = screen.getByTestId('baseline-note');
-    expect(note).toHaveTextContent(/“vs previous” is Run 11 \(started /);
-    expect(screen.getByRole('link', { name: /^Run 11 \(started / })).toHaveAttribute(
-      'href',
-      '/runs/22222222-2222-4222-8222-222222222222',
-    );
+    // The delta names its run now, instead of a sentence under the row.
+    const links = screen.getAllByRole('link', { name: 'Run 11' });
+    expect(links.length).toBeGreaterThan(0);
+    for (const link of links) expect(link).toHaveAttribute('href', '/runs/22222222-2222-4222-8222-222222222222');
   });
 
   it('says nothing about conditions when the baseline matches on every one', () => {
@@ -262,8 +256,9 @@ describe('RunStats', () => {
       />,
     );
 
-    expect(screen.queryByTestId('baseline-differences')).toBeNull();
-    expect(screen.getByTestId('baseline-note')).toHaveTextContent('vs previous');
+    expect(screen.queryByTestId('comparison-note')).toBeNull();
+    // Positive anchor: the deltas still name the run they compare against.
+    expect(screen.getAllByRole('link', { name: 'previous run' }).length).toBeGreaterThan(0);
   });
 
   it('computes percentile deltas from the clamped values the tiles show', () => {
@@ -358,25 +353,19 @@ describe('RunStats', () => {
    * rather than a disclaimer: the tool's own percentiles are histogram
    * estimates and drift further.
    */
-  it('marks the percentile as an estimate without repeating the methodology', () => {
+  it('keeps the estimate caveat behind the p95 info, once', () => {
     renderStats(<RunStats stats={stats} peakUsers={12} runStatus="complete" />);
-
-    const tile = screen.getByTestId('stat-p95');
-    expect(tile.parentElement?.textContent ?? '').toMatch(/estimate/i);
-    // The sentence appears nowhere on the row any more...
-    expect(document.body.textContent ?? '').not.toMatch(/an estimate, accurate to within/i);
-    // ...and the 1% claim is still reachable, exactly once.
-    const method = screen.getByTestId('percentile-method');
-    expect(method.textContent ?? '').toMatch(/within 1%/);
+    // Behind the tile's ⓘ now (clean UI, PR 2), as its trigger's description —
+    // and still reachable exactly once, in the info's hidden copy.
+    expect(screen.getByRole('button', { name: 'About p95' })).toHaveAccessibleDescription(/estimated .* within 1%/);
     expect(document.body.textContent?.match(/within 1%/g) ?? []).toHaveLength(1);
   });
 
   /** NO HEADING. `RunSummary.test.tsx` asserts the Summary's heading outline
    *  verbatim, and a disclosure that contributed one would break it — the
    *  shell-must-not-add-an-h2 rule, one component over. */
-  it('adds the disclosure without contributing a heading', () => {
+  it('contributes no heading', () => {
     renderStats(<RunStats stats={stats} peakUsers={12} runStatus="complete" />);
-    expect(screen.getByTestId('percentile-method').tagName).toBe('DETAILS');
     expect(screen.queryAllByRole('heading')).toHaveLength(0);
   });
 
@@ -503,8 +492,10 @@ describe('RunStats', () => {
    */
   it('names the response-time tile after the metric a gate is authored against', () => {
     renderStats(<RunStats stats={stats} peakUsers={12} runStatus="complete" />);
+    // The label's own span: the `<dt>` also holds p95's ⓘ, whose hidden
+    // description would otherwise join the label's text.
     const labels = [...document.querySelectorAll('section[aria-label="Run totals"] dt')].map(
-      (dt) => (dt.textContent ?? '').trim(),
+      (dt) => (dt.querySelector('span')?.textContent ?? '').trim(),
     );
 
     // p95 is a resolvable percentile metric. (Mean and p99 had tiles that made
@@ -530,13 +521,15 @@ describe('RunStats', () => {
    * be diffing it against Gatling's own HTML report column by column. A totals
    * tile is not that surface, so it speaks the product's own language.
    */
-  it('states successes and failures in the product’s words, not the tool’s', () => {
+  it('never uses the tool’s OK/KO words', () => {
     renderStats(<RunStats stats={stats} peakUsers={12} runStatus="complete" />);
     const section = document.querySelector('section[aria-label="Run totals"]')!;
     const text = section.textContent ?? '';
 
-    expect(text).toMatch(/successful/i);
-    expect(text).toMatch(/failed/i);
+    // Positive anchor, so the absences below cannot pass against an empty row.
+    // (The "successful, failed" hint that used to carry the product's words
+    // here is gone — clean UI, PR 2.)
+    expect(text).toMatch(/Requests/);
     // As a WORD — `\b` so a future "OKAY" or a hex id cannot satisfy it.
     expect(text).not.toMatch(/\bOK\b/);
     expect(text).not.toMatch(/\bKO\b/);
@@ -575,7 +568,7 @@ describe('RunStats — the tile reading order', () => {
     expect(ids).toEqual(['stat-error-rate', 'stat-total-requests', 'stat-peak-users', 'stat-p95']);
     const labels = [
       ...document.querySelectorAll('section[aria-label="Run totals"] dt'),
-    ].map((dt) => (dt.textContent ?? '').trim());
+    ].map((dt) => (dt.querySelector('span')?.textContent ?? '').trim());
     expect(labels).toEqual(['Error rate', 'Requests', 'Peak users', 'p95']);
   });
 
@@ -649,5 +642,85 @@ describe('RunStats — the tile reading order', () => {
     const code = here.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
     expect(code).not.toMatch(/\border-\d/);
     expect(code).not.toMatch(/\bflex-col-reverse\b/);
+  });
+});
+
+/**
+ * CLEAN UI, PR 2 — A TILE IS A LABEL, A VALUE AND A DELTA THAT NAMES ITS RUN.
+ *
+ * The tiles used to carry a hint line each, and the deltas said "vs previous"
+ * with a sentence under the row explaining which run that was. The delta now
+ * names its run and links to it; the hints are gone; p95's caveat is behind an
+ * ⓘ; and the comparison row speaks only when there is something to say.
+ */
+describe('RunStats — clean tiles', () => {
+  const BASE_ID = '22222222-2222-4222-8222-222222222222';
+  const shared = { environment: 'staging', branch: 'main', commitSha: 'abcdef1234' };
+
+  it('names the run each delta compares against, as a link', () => {
+    renderStats(
+      <RunStats stats={stats} peakUsers={12} runStatus="complete" current={trendRun({ runNumber: 11 })}
+        baseline={trendRun({ id: BASE_ID, runNumber: 10 })} />,
+    );
+    const links = screen.getAllByRole('link', { name: 'Run 10' });
+    expect(links).toHaveLength(3); // error rate, requests, p95
+    for (const link of links) expect(link).toHaveAttribute('href', `/runs/${BASE_ID}`);
+    expect(screen.getByTestId('stat-error-rate').parentElement).toHaveTextContent(/% vs Run 10/);
+  });
+
+  it('says vs previous run when the baseline has no number', () => {
+    renderStats(
+      <RunStats stats={stats} peakUsers={12} runStatus="complete" current={trendRun()} baseline={trendRun({ id: BASE_ID })} />,
+    );
+    expect(screen.getAllByRole('link', { name: 'previous run' })).toHaveLength(3);
+  });
+
+  it('shows no deltas and no comparison row on a test’s first run', () => {
+    renderStats(<RunStats stats={stats} peakUsers={12} runStatus="complete" baseline={null} />);
+    expect(screen.queryByRole('link', { name: /^Run \d+$|^previous run$/ })).toBeNull();
+    expect(screen.queryByTestId('comparison-note')).toBeNull();
+  });
+
+  it('carries no hint lines and no percentile disclosure', () => {
+    renderStats(<RunStats stats={stats} peakUsers={12} runStatus="complete" />);
+    expect(screen.queryByText(/of [\d,]+ requests/)).toBeNull();
+    expect(screen.queryByText(/successful, .* failed/)).toBeNull();
+    expect(screen.queryByText(/busiest moment/)).toBeNull();
+    expect(screen.queryByText(/^estimate$/)).toBeNull();
+    expect(screen.queryByText(/How percentiles are measured/)).toBeNull();
+  });
+
+  it('puts the p95 caveat behind an info beside its label', () => {
+    renderStats(<RunStats stats={stats} peakUsers={12} runStatus="complete" />);
+    expect(screen.getByRole('button', { name: 'About p95' })).toHaveAccessibleDescription(/within 1%/);
+  });
+
+  it('shows the differs chip only when the runs differ, and the comparison info whenever a finding exists', () => {
+    renderStats(
+      <RunStats stats={stats} peakUsers={12} runStatus="complete"
+        current={trendRun({ ...shared, environment: 'staging', branch: null })}
+        baseline={trendRun({ ...shared, id: BASE_ID, runNumber: 10, environment: 'production' })} />,
+    );
+    expect(screen.getByTestId('comparison-differs')).toHaveTextContent('Different environment');
+    expect(screen.getByRole('button', { name: 'About the comparison with Run 10' })).toHaveAccessibleDescription(
+      /Branch: this run unknown, Run 10 main/,
+    );
+
+    cleanup();
+    renderStats(
+      <RunStats stats={stats} peakUsers={12} runStatus="complete"
+        current={trendRun({ ...shared, branch: null })}
+        baseline={trendRun({ ...shared, id: BASE_ID, runNumber: 10 })} />,
+    );
+    expect(screen.queryByTestId('comparison-differs')).toBeNull();
+    expect(screen.getByRole('button', { name: 'About the comparison with Run 10' })).toBeInTheDocument();
+  });
+
+  it('renders no comparison row when the runs match on every condition', () => {
+    renderStats(
+      <RunStats stats={stats} peakUsers={12} runStatus="complete" current={trendRun(shared)}
+        baseline={trendRun({ ...shared, id: BASE_ID, runNumber: 10 })} />,
+    );
+    expect(screen.queryByTestId('comparison-note')).toBeNull();
   });
 });
