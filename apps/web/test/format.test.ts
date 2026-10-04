@@ -5,10 +5,12 @@ import {
   formatElapsedClock,
   formatInstant,
   formatInstantSeconds,
+  formatListInstant,
   formatLogTime,
   formatOffset,
   formatZoneName,
   formatZoneOffset,
+  zoneLabel,
 } from '../src/routes/format';
 
 /**
@@ -112,6 +114,49 @@ describe('formatOffset', () => {
  * The zone is appended rather than the value converted — a reader wants their
  * OWN clock, plus enough to say which clock it is.
  */
+/**
+ * ═══ A RUN LIST'S STARTED CELL (clean UI, PR 3) ═══
+ *
+ * `formatInstant` repeats the year and the zone on every row — 239px of a
+ * table that needs 1078px. The list states the zone once, in its column
+ * header (`zoneLabel`, spelled as `formatInstant` spells it), and each cell
+ * drops the year when the run is from this year.
+ */
+describe('formatListInstant and zoneLabel — the run list’s Started column', () => {
+  it('drops the zone, and the year when it is this year', () =>
+    inZone('Asia/Kolkata', () => {
+      kolkataTook();
+      const out = formatListInstant('2026-10-02T14:14:00Z', new Date('2026-10-04T00:00:00Z'));
+      expect(out).toMatch(/Oct/);
+      expect(out).toMatch(/(7|19):44/);
+      expect(out).not.toMatch(/2026/);
+      expect(out).not.toMatch(/GMT|UTC/);
+    }));
+
+  it('keeps the year for a run from an earlier year', () =>
+    inZone('Asia/Kolkata', () => {
+      kolkataTook();
+      expect(formatListInstant('2025-12-30T10:00:00Z', new Date('2026-01-05T00:00:00Z'))).toMatch(
+        /2025/,
+      );
+    }));
+
+  /** Compared in the runner's OWN zone: `formatInstant` builds its formatter
+   *  at module scope, so its zone is fixed at import and a pinned zone would
+   *  compare two different clocks. */
+  it('names the zone formatInstant names', () => {
+    const at = '2026-10-02T14:14:00Z';
+    expect(zoneLabel(at)).not.toBe('');
+    expect(formatInstant(at).endsWith(zoneLabel(at))).toBe(true);
+  });
+
+  it('names two zones across a daylight-saving change', () =>
+    inZone('America/New_York', () => {
+      expect(new Date('2026-01-15T12:00:00Z').getHours()).toBe(7);
+      expect(zoneLabel('2026-03-01T15:00:00Z')).not.toBe(zoneLabel('2026-04-01T15:00:00Z'));
+    }));
+});
+
 describe('formatInstant — it says which clock it is on', () => {
   it('names the timezone', () => {
     const out = formatInstant('2026-08-14T10:43:49.546Z');

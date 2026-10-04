@@ -215,6 +215,45 @@ describe('RunList columns', () => {
     expect(numbered.querySelector('[data-name-package]')).toBeNull();
   });
 
+  /** Clean UI, PR 3: Focus gone, Started after the measurements, its zone in
+   *  the header once rather than on every row. */
+  it('orders the columns identity, outcome, measurements, then when and where', async () => {
+    renderList(ROWS);
+    await screen.findByRole('columnheader', { name: 'Project' });
+    const headers = screen.getAllByRole('columnheader').map((h) => h.textContent?.trim() ?? '');
+    expect(headers.slice(0, 6)).toEqual(['Project', 'Simulation', 'Status', 'Verdict', 'p95', 'Errors']);
+    expect(headers[6]).toMatch(/^Started \(.+\)$/);
+    expect(headers[7]).toBe('Environment');
+    expect(headers).toHaveLength(8);
+  });
+
+  /** A page can straddle a daylight-saving change. The header names the first
+   *  row's zone; a row in another keeps its own, so no time reads under the
+   *  wrong zone (Review Focus 1). */
+  it('keeps a row’s own zone when it differs from the header’s', async () => {
+    const original = process.env.TZ;
+    try {
+      process.env.TZ = 'America/New_York';
+      expect(new Date('2026-01-15T12:00:00Z').getHours()).toBe(7);
+      renderList([
+        { ...ROWS[0]!, toolStartedAt: '2026-04-01T15:00:00.000Z' },
+        { ...ROWS[0]!, id: '99999999-9999-4999-8999-999999999999', toolStartedAt: '2026-03-01T15:00:00.000Z' },
+      ]);
+      const header = await screen.findByRole('columnheader', { name: /^Started \(/ });
+      const headerZone = /\((.+)\)/.exec(header.textContent ?? '')![1]!;
+      const suffixes = screen.getAllByTestId('run-started-zone');
+      expect(suffixes).toHaveLength(1);
+      expect(suffixes[0]!.textContent?.trim()).not.toBe(headerZone);
+      expect(suffixes[0]!.closest('tr')).toHaveAttribute(
+        'data-run-id',
+        '99999999-9999-4999-8999-999999999999',
+      );
+    } finally {
+      if (original === undefined) delete process.env.TZ;
+      else process.env.TZ = original;
+    }
+  });
+
   it('has no Tool column — TOOL_IDS has one member, so it read "gatling" on every row', async () => {
     renderList(ROWS);
     await screen.findByRole('columnheader', { name: 'Project' });

@@ -54,6 +54,45 @@ export function formatInstant(iso: string): string {
 }
 
 /**
+ * A run list's Started cell: month, day and time, the year only when it is not
+ * `now`'s year, and NO zone (clean UI, PR 3).
+ *
+ * `formatInstant` carries the year and the zone on every row, which made
+ * Started 239px of a table that needed 1078px. The list states the zone once,
+ * in its column header (`zoneLabel`), and a reader does not need "2026" on
+ * every row of a list that is mostly this year's runs — but does on a run from
+ * last December, read in January. The year is compared in local time, the
+ * clock the cell is printed in. Built per call, never at module scope.
+ */
+export function formatListInstant(iso: string, now: Date = new Date()): string {
+  const at = new Date(iso);
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    ...(at.getFullYear() === now.getFullYear() ? {} : { year: 'numeric' as const }),
+  }).format(at);
+}
+
+/**
+ * The zone name `formatInstant` prints for an instant — `GMT+5:30`, `EST`,
+ * `EDT` — so a run list's `Started (…)` header and the run page's own Started
+ * chip spell one zone the same way.
+ *
+ * NOT `formatZoneOffset`, which is the time axis's and the Logs tab's
+ * spelling (`GMT-4`): a list headed "EDT" over a run page saying "GMT-4"
+ * would name one clock two ways. AT AN INSTANT, because a page can straddle a
+ * daylight-saving change and each row is labelled by its own. Built per call.
+ */
+export function zoneLabel(iso: string): string {
+  const parts = new Intl.DateTimeFormat(undefined, { timeZoneName: 'short' }).formatToParts(
+    new Date(iso),
+  );
+  return parts.find((part) => part.type === 'timeZoneName')?.value ?? '';
+}
+
+/**
  * `formatInstant` to the SECOND, for the ends of a time window.
  *
  * `formatInstant` stops at the minute, so both ends of a 30-second window

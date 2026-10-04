@@ -30,7 +30,7 @@ import {
 // Marked's plain inline text. Same for the start-time formatter: the two
 // screens must agree about when a run started, and one definition is the
 // only way that is guaranteed.
-import { formatInstant } from './format';
+import { formatInstant, formatListInstant, zoneLabel } from './format';
 import { STATUS, VERDICT } from './marks';
 import { NEW_PROJECT_ROUTE, runPath } from './paths';
 import useDocumentTitle from '../useDocumentTitle';
@@ -239,6 +239,13 @@ export default function RunList({
   }
 
   const { items, nextCursor } = runs.data;
+  /* THE ZONE ONCE, IN STARTED'S HEADER (clean UI, PR 3). Every cell used to
+     carry it, and the year — 239px of a table that needed 1078. The header
+     names the first row's zone; a row in another (a daylight-saving change
+     between two runs) keeps its own beside its time. Empty when there are no
+     rows, which is when no table is drawn. */
+  const headerZone =
+    items[0] === undefined ? '' : zoneLabel(items[0].toolStartedAt ?? items[0].startedAt);
 
   /* What a reader needs to read two of the columns, behind the list's info
      (the clean-UI text rule). True of every scope, which is why no caller
@@ -378,7 +385,7 @@ export default function RunList({
                         exists — returns ~270px and the whole triage set with
                         it. */}
                     <th scope="col" className={TH}>
-                      Started
+                      Started ({headerZone})
                     </th>
                     <th scope="col" className={TH}>
                       Environment
@@ -392,6 +399,7 @@ export default function RunList({
                       run={run}
                       showProject={projectSlug === null}
                       identifyByRunId={testSlug !== null}
+                      headerZone={headerZone}
                     />
                   ))}
                 </tbody>
@@ -1155,6 +1163,7 @@ function RunRow({
   run,
   showProject,
   identifyByRunId,
+  headerZone,
 }: {
   readonly run: RunListItem;
   /** False on a project-scoped list, where every row's project is the same. */
@@ -1166,6 +1175,8 @@ function RunRow({
    * tells two runs of one test apart.
    */
   readonly identifyByRunId: boolean;
+  /** The zone Started's header names; this row shows its own only if it differs. */
+  readonly headerZone: string;
 }) {
   // The value the API ORDERS BY, spelled the same way here — RunRepository.list
   // sorts on COALESCE(tool_started_at, started_at) DESC. Displaying anything
@@ -1173,6 +1184,7 @@ function RunRow({
   // mis-sorted, which is worse than an obvious bug because nothing looks broken.
   const startedAt = run.toolStartedAt ?? run.startedAt;
   const isIngestTime = run.toolStartedAt == null;
+  const rowZone = zoneLabel(startedAt);
 
   return (
     <tr data-testid="run-row" data-run-id={run.id} className={ROW}>
@@ -1289,8 +1301,13 @@ function RunRow({
             localised and does not sort. The attribute is the API's own ISO
             string, unmodified. */}
         <time dateTime={startedAt} className="tabular-nums">
-          {formatInstant(startedAt)}
+          {formatListInstant(startedAt)}
         </time>
+        {rowZone !== headerZone && (
+          <span data-testid="run-started-zone" className="ml-1 text-muted">
+            {rowZone}
+          </span>
+        )}
         {isIngestTime && <span className="ml-2 text-[0.75rem] text-muted">ingest time</span>}
       </td>
       <td className={TD} data-testid="run-environment">
