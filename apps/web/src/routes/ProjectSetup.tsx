@@ -1,5 +1,4 @@
 import type { ReactNode } from 'react';
-import type { RunnerJobListResponse } from '@perfportal/contracts';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { linkButtonClasses } from '../components/Button';
@@ -8,7 +7,8 @@ import { PlayIcon, TokenIcon, UploadIcon } from '../components/icons';
 import { fetchRunnerJobs, runnerJobsQueryKey } from '../api/runner';
 import ProjectShell from './ProjectShell';
 import { projectAccessPath, projectNewRunnerRunPath } from './paths';
-import { runnerReadiness, type RunnerReadinessKind } from './runnerReadiness';
+import { runnerReadiness } from './runnerReadiness';
+import RunnerStatusLine from './RunnerStatusLine';
 import BundleUpload from './BundleUpload';
 
 /**
@@ -174,8 +174,8 @@ function AddResults({ slug }: { readonly slug: string }) {
         title="Run a test"
         icon={<PlayIcon className="h-4 w-4" />}
         description="No bundle yet. Upload a Gatling jar or bundle and let an on-prem runner execute it."
-        status={runnerStatus(jobs.isPending, jobs.isError, jobs.data?.items ?? [])}
       >
+        <RunnerStatusLine query={jobs} />
         <p className="text-[0.8125rem] leading-relaxed text-muted">
           The runner streams the log as it is written, so the run’s page is live while the test is
           still going. It executes one job at a time.
@@ -272,77 +272,20 @@ function AddResults({ slug }: { readonly slug: string }) {
  * STATUS — THE HALF THAT MUST NOT OVERCLAIM
  * ======================================================================== */
 
-type EntryStatus = {
-  readonly kind: 'ready' | 'unknown' | 'busy' | 'problem';
-  readonly label: string;
-  readonly note?: string;
-};
-
-/**
- * The runner's own status, phrased for a card that is offering a choice.
- *
- * The query's OWN failure is a status too, and a distinct one: "this page
- * could not ask" is not the same claim as "no runner is there", and rendering
- * the second for the first would send somebody to restart a healthy machine.
- */
-function runnerStatus(
-  pending: boolean,
-  errored: boolean,
-  items: RunnerJobListResponse['items'],
-): EntryStatus {
-  if (pending) return { kind: 'unknown', label: 'Checking…' };
-  if (errored) {
-    return {
-      kind: 'unknown',
-      label: 'Status unavailable',
-      note: 'The job list could not be loaded, so nothing is known about the runner either way.',
-    };
-  }
-  const readiness = runnerReadiness(items);
-  return { kind: STATUS_KIND[readiness.kind], label: readiness.headline, note: readiness.detail };
-}
-
-const STATUS_KIND: Record<RunnerReadinessKind, EntryStatus['kind']> = {
-  busy: 'busy',
-  waiting: 'busy',
-  stalled: 'problem',
-  // NOT 'ready'. An idle project proves a runner worked once, and nothing at
-  // all about now — see `runnerReadiness`'s docstring.
-  idle: 'unknown',
-  unknown: 'unknown',
-};
-
-/* The status tokens are declared on `:root` rather than inside `@theme`, so
-   Tailwind generates NO `text-status-*` utility for them — a class here would
-   emit nothing and the label would silently inherit the body colour. CLAUDE.md
-   records this trap twice; `var()` is how every other consumer reads them. */
-const STATUS_COLOR: Record<EntryStatus['kind'], string> = {
-  ready: 'var(--color-status-passed)',
-  busy: 'var(--color-status-pending)',
-  problem: 'var(--color-status-failed)',
-  unknown: 'var(--color-status-not-applicable)',
-};
-
 function EntryCard({
   title,
   icon,
   description,
-  status,
   children,
   steps,
 }: {
   readonly title: string;
   readonly icon: ReactNode;
   readonly description: string;
-  /* ═══ OPTIONAL, BECAUSE ONLY ONE CARD HAS A STATE (review 09-13 N04) ═══
-   *
-   * Two of the three read `Available now`, which was true the moment the
-   * endpoint existed and could never say anything else — a badge that cannot
-   * vary is decoration, and three identical green dots taught the reader to
-   * skip the one that matters. The runner's IS a real state (unknown / busy /
-   * waiting / stalled / idle, computed from the project's own job history),
-   * and it reads as a status again now that it is the only one. */
-  readonly status?: EntryStatus;
+  /* No status prop: only the runner has a state, and its card draws it as
+     its first child (`RunnerStatusLine`, clean UI PR 4). Review 09-13 N04
+     removed the badges that could not vary; three identical green dots
+     taught the reader to skip the one that matters. */
   readonly children: ReactNode;
   /**
    * The commands and caveats — everything review M04 says must not be on
@@ -365,25 +308,8 @@ function EntryCard({
                 rung's 15px. review.md 20, "consistent heading sizes". */}
             <h2 className="text-base font-semibold tracking-tight text-primary">{title}</h2>
           </div>
-          {/* The dot is `aria-hidden` and the WORDS carry the state, so the
-              status is not a colour a reader has to have learnt. */}
-          {status !== undefined && (
-            <span
-              className="inline-flex items-center gap-1.5 font-mono text-[0.6875rem] font-medium tracking-[0.06em] uppercase"
-              style={{ color: STATUS_COLOR[status.kind] }}
-              data-testid="entry-status"
-            >
-              <span aria-hidden="true">●</span>
-              {status.label}
-            </span>
-          )}
         </div>
         <p className="text-[0.8125rem] leading-relaxed text-muted">{description}</p>
-        {status?.note !== undefined && (
-          <p className="rounded-lg border border-default bg-sunken p-3 text-[0.75rem] leading-snug text-muted">
-            {status.note}
-          </p>
-        )}
         {children}
 
         {/* ═══ THE WORKFLOW, BEHIND ONE CLICK — review M04 ═══

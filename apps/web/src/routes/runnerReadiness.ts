@@ -29,15 +29,17 @@ import type { RunnerJob, RunnerJobStatus } from '@perfportal/contracts';
  *
  * Each of those is a different sentence, and the last two are honestly
  * "unknown" rather than "available". `kind` is what a caller styles on;
- * `headline` and `detail` are what it prints.
+ * `headline` and `fact` are what it prints, with `RUNNER_STATUS_INFO` behind
+ * an ⓘ beside them (`RunnerStatusLine`).
  */
 export type RunnerReadinessKind = 'busy' | 'waiting' | 'stalled' | 'idle' | 'unknown';
 
 export interface RunnerReadiness {
   readonly kind: RunnerReadinessKind;
   readonly headline: string;
-  /** One sentence a reader can act on. Never claims more than is known. */
-  readonly detail: string;
+  /** One short fact after the headline. Never claims more than is known;
+   *  what every state cannot know is `RUNNER_STATUS_INFO`'s to say. */
+  readonly fact: string;
   /** How many jobs a run queued now would wait behind. */
   readonly ahead: number;
   /**
@@ -59,6 +61,18 @@ export interface RunnerReadiness {
 }
 
 /** The statuses that mean a runner has taken the job and is working on it. */
+/**
+ * ═══ THE CAVEAT EVERY STATE SHARES, STATED ONCE (clean UI, PR 4) ═══
+ *
+ * Each state's explanation used to repeat it, and the launch form's footnote
+ * said it again: none of this is a heartbeat. It rides behind the status
+ * line's ⓘ now, so each state is a headline and one short fact.
+ */
+export const RUNNER_STATUS_INFO =
+  "Inferred from this project's jobs. This instance is not told when a runner connects or leaves, " +
+  'so whether one is listening right now is known only once a job is claimed. A runner runs one ' +
+  'job at a time.';
+
 const CLAIMED: ReadonlySet<RunnerJobStatus> = new Set(['starting', 'running', 'closing']);
 
 /**
@@ -94,10 +108,7 @@ export function runnerReadiness(
        * backend the on-prem runner does not have — it polls, so nothing is
        * told when one connects — and is a product decision rather than a
        * wording one. */
-      detail:
-        'No run has been queued from this project, so nothing here has ever seen a runner. ' +
-        'A runner is a process you deploy alongside this instance; until one claims a job, ' +
-        'this page cannot tell whether any are connected.',
+      fact: 'No run queued from this project yet',
     };
   }
 
@@ -111,9 +122,7 @@ export function runnerReadiness(
       ahead,
       needsSetup: false,
       headline: 'A runner is working',
-      detail:
-        `A node claimed a job, so one is connected. It runs a single job at a time, so a run ` +
-        `queued now waits behind ${countLabel(ahead, 'job')}.`,
+      fact: `A new run waits behind ${countLabel(ahead, 'job')}`,
     };
   }
 
@@ -129,9 +138,9 @@ export function runnerReadiness(
         ahead: queued.length,
         needsSetup: false,
         headline: 'Nothing is claiming work',
-        detail:
-          `A job has been queued for ${durationLabel(waited)} and no runner has claimed it. ` +
-          'Check that a runner is running and pointed at this instance before queueing more.',
+        // The one fact that carries an action, so the action stays ON SCREEN
+        // rather than behind the ⓘ with the shared caveat.
+        fact: `Queued ${agoLabel(waited)}, unclaimed. Check a runner is running and pointed at this instance.`,
       };
     }
 
@@ -140,9 +149,7 @@ export function runnerReadiness(
       ahead: queued.length,
       needsSetup: false,
       headline: 'Waiting to be claimed',
-      detail:
-        `${countLabel(queued.length, 'job')} queued, none claimed yet. A runner polls for work, ` +
-        'so a few seconds here is normal.',
+      fact: `${countLabel(queued.length, 'job')} queued, none claimed yet`,
     };
   }
 
@@ -155,10 +162,7 @@ export function runnerReadiness(
     ahead: 0,
     needsSetup: false,
     headline: 'No job in flight',
-    detail:
-      `A runner last finished a job ${agoLabel(now - Date.parse(last.job.updatedAt))}. ` +
-      'This instance is not told when a runner connects or leaves, so whether one is listening ' +
-      'right now is unknown until a job is claimed.',
+    fact: `Last job finished ${agoLabel(now - Date.parse(last.job.updatedAt))}`,
   };
 }
 

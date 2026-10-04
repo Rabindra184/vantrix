@@ -227,7 +227,7 @@ describe('ProjectSetup — the three ways in', () => {
  * ======================================================================== */
 
 describe('ProjectSetup — the runner’s status is only as strong as the evidence', () => {
-  const runnerStatus = async () => within(await entry('Run a test')).getByTestId('entry-status');
+  const runnerStatus = async () => within(await entry('Run a test')).getByTestId('runner-status');
 
   it('says nothing is known when this project has never queued a job', async () => {
     renderPage();
@@ -278,11 +278,11 @@ describe('ProjectSetup — the runner’s status is only as strong as the eviden
 
     for (const name of ['Import results', 'Configure CI']) {
       const card = await entry(name);
-      expect(within(card).queryByTestId('entry-status')).toBeNull();
+      expect(within(card).queryByTestId('runner-status')).toBeNull();
       expect(card.textContent ?? '').not.toMatch(/available now/i);
     }
     // And the one that does vary still reports.
-    expect(within(await entry('Run a test')).getByTestId('entry-status')).toBeInTheDocument();
+    expect(within(await entry('Run a test')).getByTestId('runner-status')).toBeInTheDocument();
   });
 
   it('reports a claimed job as a runner that is there', async () => {
@@ -312,7 +312,11 @@ describe('ProjectSetup — the runner’s status is only as strong as the eviden
 
     const card = await entry('Run a test');
     await within(card).findByText(/no job in flight/i);
-    expect(card.textContent ?? '').toMatch(/unknown/i);
+    // "Whether one is listening now" is the caveat every state shares, behind
+    // the line's ⓘ (clean UI PR 4).
+    expect(within(card).getByRole('button', { name: 'About runner status' })).toHaveAccessibleDescription(
+      /known only once a job is claimed/,
+    );
     expect((await runnerStatus()).textContent ?? '').not.toMatch(/available|ready|online/i);
   });
 
@@ -327,7 +331,10 @@ describe('ProjectSetup — the runner’s status is only as strong as the eviden
 
     const card = await entry('Run a test');
     await within(card).findByText(/status unavailable/i);
-    expect(card.textContent ?? '').toMatch(/nothing is known about the runner either way/i);
+    expect(card.textContent ?? '').toMatch(/The job list could not be loaded/);
+    // A failed list is not a runner state, so it carries none of the states'
+    // caveat either.
+    expect(within(card).queryByRole('button', { name: 'About runner status' })).toBeNull();
   });
 
   /** Whatever the status, the action is still reachable — a status panel that
@@ -443,7 +450,7 @@ describe('ProjectSetup — the workflows are choices before they are documents',
     for (const name of ['Import results', 'Run a test', 'Configure CI']) {
       expect(screen.getByRole('heading', { name, level: 2 })).toBeInTheDocument();
     }
-    expect(within(await entry('Run a test')).getByTestId('entry-status')).toBeInTheDocument();
+    expect(within(await entry('Run a test')).getByTestId('runner-status')).toBeInTheDocument();
   });
 
   /* ====================================================================== *

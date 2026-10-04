@@ -43,7 +43,7 @@ import {
 import { fetchProjectTests, projectTestsQueryKey } from '../api/tests';
 import { formatBytes } from '../api/uploadBundle';
 import { ROW, TABLE, TD, TH, THEAD, INPUT } from '../components/tableStyles';
-import { runnerReadiness, type RunnerReadinessKind } from './runnerReadiness';
+import RunnerStatusLine from './RunnerStatusLine';
 import useDocumentTitle from '../useDocumentTitle';
 import { projectPath, runPath } from './paths';
 
@@ -1185,73 +1185,18 @@ function ReviewSummary({
  * RUNNER STATUS — WHAT THE OLD "NODE POLICY" PANEL CLAIMED TO BE
  * ======================================================================== */
 
-/* See `runnerReadiness` for why these are the states and why none of them is
-   "online". The tokens are read through `var()` because the status colours are
-   declared on `:root` rather than in `@theme`, so `text-status-*` emits no
-   CSS at all. */
-const READINESS_COLOR: Record<RunnerReadinessKind, string> = {
-  busy: 'var(--color-status-pending)',
-  waiting: 'var(--color-status-pending)',
-  stalled: 'var(--color-status-failed)',
-  idle: 'var(--color-status-not-applicable)',
-  unknown: 'var(--color-status-not-applicable)',
-};
-
 /**
- * Replaces the static "Node policy" card.
- *
- * That panel listed "Concurrency: one active job", "Artifact: jar or bundle",
- * "Report: live run" — three facts about the PRODUCT, in the place an engineer
- * looks for a fact about the machine they are about to send work to. The
- * concurrency line survives, inside the sentence where it changes what happens
- * (a run queued behind a busy node), and the other two moved to the fields
- * they describe.
+ * The runner's status beside the form — the same one line Add results draws
+ * (`RunnerStatusLine`), under this page's "Runner" heading.
  */
 function RunnerStatusCard({
   query,
 }: {
   readonly query: UseQueryResult<RunnerJobListResponse, Error>;
 }) {
-  if (query.isPending) {
-    return (
-      <Card headingLevel={2} title="Runner">
-        <p className="text-[0.8125rem] text-muted">Checking for recent jobs…</p>
-      </Card>
-    );
-  }
-
-  if (query.isError) {
-    /* "Could not ask" is a different claim from "nothing is there", and this
-       card must not make the second when it means the first. */
-    return (
-      <Card headingLevel={2} title="Runner" data-testid="runner-status">
-        <p className="text-[0.8125rem] font-medium" style={{ color: READINESS_COLOR.unknown }}>
-          Status unavailable
-        </p>
-        <p className="text-[0.8125rem] leading-relaxed text-muted">
-          The job list could not be loaded, so nothing is known about the runner either way. You can
-          still queue a run.
-        </p>
-      </Card>
-    );
-  }
-
-  const readiness = runnerReadiness(query.data.items);
-
   return (
-    <Card headingLevel={2} title="Runner" data-testid="runner-status">
-      <p
-        className="flex items-center gap-1.5 font-mono text-[0.75rem] font-medium tracking-[0.06em] uppercase"
-        style={{ color: READINESS_COLOR[readiness.kind] }}
-      >
-        <span aria-hidden="true">●</span>
-        {readiness.headline}
-      </p>
-      <p className="text-[0.8125rem] leading-relaxed text-muted">{readiness.detail}</p>
-      <p className="text-[0.75rem] leading-snug text-muted">
-        This instance is not told when a runner connects; everything above is inferred from the jobs
-        this project has queued.
-      </p>
+    <Card headingLevel={2} title="Runner">
+      <RunnerStatusLine query={query} />
     </Card>
   );
 }

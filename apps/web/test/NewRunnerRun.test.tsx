@@ -23,6 +23,16 @@ import {
 import { fetchProjectTests } from '../src/api/tests.js';
 import NewRunnerRun from '../src/routes/NewRunnerRun.js';
 
+/** An element's accessible description, read off `aria-describedby`. This
+ *  file does not load jest-dom's matchers, so `toHaveAccessibleDescription`
+ *  is an "Invalid Chai property" here rather than an assertion. */
+const descriptionOf = (element: Element): string =>
+  (element.getAttribute('aria-describedby') ?? '')
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((id) => document.getElementById(id)?.textContent ?? '')
+    .join(' ');
+
 vi.mock('../src/api/projects.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../src/api/projects.js')>()),
   fetchProjects: vi.fn(async () => ({
@@ -522,15 +532,21 @@ describe('NewRunnerRun — what will be sent, and what is known about the node',
    */
   it('never claims a runner is available on no evidence', async () => {
     mount();
+    // The line carries its testid while it is still "Checking…" too (one
+    // element for every state, clean UI PR 4), so wait for the settled words.
     const status = await screen.findByTestId('runner-status');
+    await waitFor(() => expect(status.textContent ?? '').not.toMatch(/checking/i));
     // "Runner availability unknown" — review 09-13 M12. The old headline
     // paired with a sentence asking the reader to QUEUE A LOAD TEST to find
     // out whether a node was connected.
     expect(status.textContent ?? '').toMatch(/runner availability unknown/i);
     expect(status.textContent ?? '').not.toMatch(/queue one to find out/i);
     expect(status.textContent ?? '').not.toMatch(/available|online/i);
-    // And it says where the claim comes from, so nobody reads it as health.
-    expect(status.textContent ?? '').toMatch(/inferred from the jobs/i);
+    // And it says where the claim comes from, so nobody reads it as health —
+    // behind the line's ⓘ now, as its description (clean UI PR 4).
+    expect(descriptionOf(within(status).getByRole('button', { name: 'About runner status' }))).toMatch(
+      /inferred from this project's jobs/i,
+    );
   });
 
   /** The tuning fields are one click away rather than gone, and a value set
