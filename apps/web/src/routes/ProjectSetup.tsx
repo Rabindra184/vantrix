@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { linkButtonClasses } from '../components/Button';
 import Card from '../components/Card';
+import InfoTip from '../components/InfoTip';
 import { PlayIcon, TokenIcon, UploadIcon } from '../components/icons';
 import { fetchRunnerJobs, runnerJobsQueryKey } from '../api/runner';
 import ProjectShell from './ProjectShell';
@@ -120,98 +121,66 @@ function AddResults({ slug }: { readonly slug: string }) {
       <EntryCard
         title="Import results"
         icon={<UploadIcon className="h-4 w-4" />}
-        description="You already have a finished Gatling report. Choose the bundle and PerfPortal parses it."
-        steps={
-          <>
-          <BundleUpload slug={slug} />
-
-          {/* The curl stays, one rung down. CI has no file picker, and
-              "Configure CI" below points back at this command — but the reader
-              holding a bundle no longer has to read a shell snippet to use it.
-              A DISCLOSURE rather than the only way in. */}
-          <details className="mt-1">
-            <summary className="cursor-pointer text-[0.8125rem] text-muted">
-              Or post it from a terminal
-            </summary>
-          <pre
-            data-testid="upload-command"
-            className="overflow-x-auto rounded-lg border border-default bg-sunken p-3 font-mono text-xs leading-relaxed text-primary"
-          >
-  {`curl -H "Authorization: Bearer $PERFPORTAL_TOKEN" \\
-    -F bundle=@results.tgz \\
-    -F 'metadata={"tool":"gatling"}' \\
-    ${instanceOrigin}/v1/runs`}
-          </pre>
-
-          {/* This read "There is no browser upload form yet." It was true, it
-              was the honest thing to say while that was the case, and it is now
-              exactly the kind of stale claim this repo keeps paying for — so it
-              goes with the thing it described. What survives is the fact a CI
-              author still needs. */}
-          <p className="text-[0.75rem] leading-snug text-muted">
-            The picker above and this command reach the same ingest pipeline; use whichever suits
-            the machine you are on.
-          </p>
-          <p className="text-[0.75rem] leading-snug text-muted">
-            The bundle is a <code className="font-mono">.tgz</code> containing the run directory
-            Gatling wrote, <code className="font-mono">simulation.log</code> included. The response is
-            a 202 with the run’s id; the worker parses it in the background.
-          </p>
-          </details>
-          </>
-        }
+        disclosure={{
+          summary: 'Or post it from a terminal',
+          children: (
+            <>
+              {/* THE TOKEN BELONGS HERE, NOT ON THE CARD (clean UI PR 4). The
+                  card used to say "Needs a token with the Completed reports
+                  permission" over a picker that needs none — a signed-in upload
+                  goes through the session. Only this command needs one. */}
+              <p className="flex flex-wrap items-center gap-x-1 text-[0.8125rem] text-muted">
+                <span>
+                  Needs <code className="font-mono text-primary">PERFPORTAL_TOKEN</code> (Completed
+                  reports) ·{' '}
+                  <Link to={projectAccessPath(slug)} className="text-accent underline underline-offset-2">
+                    Create one
+                  </Link>
+                </span>
+                <InfoTip label="About posting results">
+                  The picker above and this command reach the same ingest pipeline. The bundle is a
+                  .tgz of the run directory Gatling wrote, simulation.log included; the response is a
+                  202 with the run’s id, and the worker parses it in the background.
+                </InfoTip>
+              </p>
+              <pre
+                data-testid="upload-command"
+                className="overflow-x-auto rounded-lg border border-default bg-sunken p-3 font-mono text-xs leading-relaxed text-primary"
+              >
+                {`curl -H "Authorization: Bearer $PERFPORTAL_TOKEN" \\
+  -F bundle=@results.tgz \\
+  -F 'metadata={"tool":"gatling"}' \\
+  ${instanceOrigin}/v1/runs`}
+              </pre>
+            </>
+          ),
+        }}
       >
-        <p className="text-[0.8125rem] leading-relaxed text-muted">
-          Needs a token with the <span className="text-primary">Completed reports</span> permission.{' '}
-          <Link to={projectAccessPath(slug)} className="text-accent underline underline-offset-2">
-            Create one under API tokens
-          </Link>
-          , then export it as <code className="font-mono text-primary">PERFPORTAL_TOKEN</code>.
-        </p>
+        {/* The picker is the card's action, so it is ON the card rather than
+            behind a disclosure (clean UI PR 4). */}
+        <BundleUpload slug={slug} />
       </EntryCard>
 
-      <EntryCard
-        title="Run a test"
-        icon={<PlayIcon className="h-4 w-4" />}
-        description="No bundle yet. Upload a Gatling jar or bundle and let an on-prem runner execute it."
-      >
+      <EntryCard title="Run a test" icon={<PlayIcon className="h-4 w-4" />}>
         <RunnerStatusLine query={jobs} />
-        <p className="text-[0.8125rem] leading-relaxed text-muted">
-          The runner streams the log as it is written, so the run’s page is live while the test is
-          still going. It executes one job at a time.
-        </p>
-        {/* ═══ AND A WAY TO GET ONE, WHEN THERE HAS NEVER BEEN ONE ═══
-            (review 09-13, "Copy changes to make immediately")
-
-            The row is "No runner seen yet + inference paragraphs" ->
-            "`Runner availability unknown` + a useful connection/setup action".
-            M12 delivered the headline and removed the affordance that asked
-            the reader to QUEUE A LOAD TEST as a connectivity check; what it
-            left behind was a state that says what is not known and offers
-            nothing to do about it.
-
-            THE TOKEN IS THE HALF THIS APP OWNS. Deploying a runner is a
-            process you start beside the API and worker — `infra/README.md`
-            has the variables — and no route can own that. What it needs FROM
-            here is a credential carrying the On-prem runner permission, which
-            is minted on the API tokens page and nowhere else. So the action
-            names the deployment and links to the part a reader can actually
-            do in the product, rather than linking somewhere plausible and
-            leaving them to discover the rest.
+        {/* ═══ A WAY TO GET A RUNNER, WHEN THERE HAS NEVER BEEN ONE ═══
+            The review 09-13 copy table asks for "`Runner availability unknown`
+            + a useful connection/setup action". The token is the half this app
+            owns — deploying the process is `infra/README.md`'s — so the action
+            is the one link a reader can follow in the product (clean UI PR 4:
+            a link, where it used to be a three-sentence paragraph).
 
             `needsSetup` is true for the `unknown` state ALONE. `idle` and
-            `stalled` mean a runner HAS been seen and has stopped claiming —
-            telling that reader to go set one up is the wrong advice
-            confidently given, which is the shape M12 was about. */}
+            `stalled` mean a runner HAS been seen, and telling that reader to
+            go set one up is wrong advice confidently given — review M12. */}
         {runnerReadiness(jobs.data?.items ?? []).needsSetup && (
-          <p className="text-[0.8125rem] leading-relaxed text-muted" data-testid="runner-setup">
-            To connect one, deploy the runner process beside this instance and give it a token
-            carrying the <span className="text-primary">On-prem runner</span> permission.{' '}
-            <Link to={projectAccessPath(slug)} className="text-accent underline underline-offset-2">
-              Create one under API tokens
-            </Link>
-            .
-          </p>
+          <Link
+            to={projectAccessPath(slug)}
+            data-testid="runner-setup"
+            className="w-fit text-[0.8125rem] text-accent underline underline-offset-2"
+          >
+            Create a runner token
+          </Link>
         )}
         <div>
           <Link to={projectNewRunnerRunPath(slug)} className={linkButtonClasses}>
@@ -224,46 +193,47 @@ function AddResults({ slug }: { readonly slug: string }) {
       <EntryCard
         title="Configure CI"
         icon={<TokenIcon className="h-4 w-4" />}
-        description="Send reports from your CI pipeline, so the trend line keeps itself up to date."
-        steps={
-          <>
-          <pre
-            data-testid="ci-command"
-            className="overflow-x-auto rounded-lg border border-default bg-sunken p-3 font-mono text-xs leading-relaxed text-primary"
-          >
-  {`# after gradlew gatlingRun
-  tar -czf results.tgz -C build/reports/gatling .
-  curl -fsS -H "Authorization: Bearer $PERFPORTAL_TOKEN" \\
-    -F bundle=@results.tgz \\
-    -F 'metadata={"tool":"gatling","branch":"'"$CI_BRANCH"'","commitSha":"'"$CI_COMMIT"'"}' \\
-    ${instanceOrigin}/v1/runs`}
-          </pre>
-          <p className="text-[0.75rem] leading-snug text-muted">
-            <span className="text-primary">branch</span> and{' '}
-            <span className="text-primary">commitSha</span> are what let the Compare page tell a
-            regression from a different build, so they are worth wiring up even though both are
-            optional.
-          </p>
-          {/* NO VERSION NUMBER. The Gradle plugin is built from this repository
-              and is not on a public plugin portal, so a coordinate quoted here
-              would be a string this page cannot verify — which is exactly how
-              the plugin's own e2e script came to name a version that had not
-              existed for two releases. */}
-          <p className="text-[0.75rem] leading-snug text-muted">
-            For a LIVE view while the build runs rather than a report afterwards, there is a Gradle
-            plugin (<code className="font-mono">dev.vantrix.gatling</code>) that streams the log as
-            Gatling writes it. It ships with this repository under{' '}
-            <code className="font-mono">clients/gatling-gradle</code>; its README carries the
-            coordinates and its JDK 21 requirement.
-          </p>
-          </>
-        }
-      >
-        <p className="text-[0.8125rem] leading-relaxed text-muted">
-          Add one step after your existing Gatling task. The token belongs in the pipeline’s secret
-          store, never in the repository.
-        </p>
-      </EntryCard>
+        disclosure={{
+          summary: 'Show me how',
+          children: (
+            <>
+              <p className="flex flex-wrap items-center gap-x-1 text-[0.8125rem] text-muted">
+                <span>
+                  Store the token as <code className="font-mono text-primary">PERFPORTAL_TOKEN</code> in
+                  your pipeline secrets ·{' '}
+                  <Link to={projectAccessPath(slug)} className="text-accent underline underline-offset-2">
+                    Create one
+                  </Link>
+                </span>
+                <InfoTip label="About the CI step">
+                  branch and commitSha let the Compare page tell a regression from a different build;
+                  both are optional.
+                </InfoTip>
+              </p>
+              <pre
+                data-testid="ci-command"
+                className="overflow-x-auto rounded-lg border border-default bg-sunken p-3 font-mono text-xs leading-relaxed text-primary"
+              >
+                {`# after gradlew gatlingRun
+tar -czf results.tgz -C build/reports/gatling .
+curl -fsS -H "Authorization: Bearer $PERFPORTAL_TOKEN" \\
+  -F bundle=@results.tgz \\
+  -F 'metadata={"tool":"gatling","branch":"'"$CI_BRANCH"'","commitSha":"'"$CI_COMMIT"'"}' \\
+  ${instanceOrigin}/v1/runs`}
+              </pre>
+              {/* NO VERSION NUMBER. The Gradle plugin is built from this
+                  repository and is not on a public plugin portal, so a
+                  coordinate quoted here would be a string this page cannot
+                  verify — which is how the plugin's own e2e script came to name
+                  a version that had not existed for two releases. */}
+              <p className="text-[0.8125rem] text-muted">
+                Live view while the build runs: Gradle plugin{' '}
+                <code className="font-mono text-primary">dev.vantrix.gatling</code>
+              </p>
+            </>
+          ),
+        }}
+      />
     </div>
   );
 }
@@ -275,26 +245,27 @@ function AddResults({ slug }: { readonly slug: string }) {
 function EntryCard({
   title,
   icon,
-  description,
   children,
-  steps,
+  disclosure,
 }: {
   readonly title: string;
   readonly icon: ReactNode;
-  readonly description: string;
-  /* No status prop: only the runner has a state, and its card draws it as
+  /* No description prop (clean UI PR 4): each card is a title and then its
+     action, and a sentence under the title restated what the action shows.
+     No status prop: only the runner has a state, and its card draws it as
      its first child (`RunnerStatusLine`, clean UI PR 4). Review 09-13 N04
      removed the badges that could not vary; three identical green dots
      taught the reader to skip the one that matters. */
-  readonly children: ReactNode;
+  readonly children?: ReactNode;
   /**
-   * The commands and caveats — everything review M04 says must not be on
-   * screen for all three paths at once. Optional: a path whose whole content
-   * is already one short choice (running a test is a button) has no steps to
+   * The commands — everything review M04 says must not be on screen for all
+   * three paths at once — behind a summary the caller names ("Or post it
+   * from a terminal", "Show me how"). Optional: a path whose whole content is
+   * already one short choice (running a test is a button) has nothing to
    * hide, and wrapping it in a disclosure would bury an action rather than
    * shorten a document.
    */
-  readonly steps?: ReactNode;
+  readonly disclosure?: { readonly summary: string; readonly children: ReactNode };
 }) {
   return (
     <Card headingLevel={2} data-testid={`entry-${title.toLowerCase().replace(/\s+/g, '-')}`}>
@@ -309,7 +280,6 @@ function EntryCard({
             <h2 className="text-base font-semibold tracking-tight text-primary">{title}</h2>
           </div>
         </div>
-        <p className="text-[0.8125rem] leading-relaxed text-muted">{description}</p>
         {children}
 
         {/* ═══ THE WORKFLOW, BEHIND ONE CLICK — review M04 ═══
@@ -335,13 +305,12 @@ function EntryCard({
          * query these three by `level: 2`. The same shape as the `aria-hidden`
          * TableFrame defect this repo already paid for: markup that looks
          * tidier and quietly removes something only a screen reader uses. */}
-        {steps !== undefined && (
-          <details name="add-results" className="group">
+        {disclosure !== undefined && (
+          <details name="add-results">
             <summary className="w-fit cursor-pointer list-none text-[0.75rem] font-medium text-accent hover:underline hover:underline-offset-2">
-              <span className="group-open:hidden">Show me how</span>
-              <span className="hidden group-open:inline">Hide the steps</span>
+              {disclosure.summary}
             </summary>
-            <div className="mt-3 flex flex-col gap-3">{steps}</div>
+            <div className="mt-3 flex flex-col gap-3">{disclosure.children}</div>
           </details>
         )}
       </div>
