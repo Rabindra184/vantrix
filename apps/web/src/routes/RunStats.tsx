@@ -1,9 +1,8 @@
-import { Fragment } from 'react';
 import { Link } from 'react-router-dom';
 import type { Assertion, RunResponse, StatRow, StatsResponse, TrendRun } from '@perfportal/contracts';
+import InfoTip from '../components/InfoTip';
 import StatTile from '../components/StatTile';
 import { comparability, summariseConditions } from './comparability';
-import { formatInstant } from './format';
 import { clampPercentile, type PercentileRange } from '../percentile';
 import { runPath } from './paths';
 import { runName } from '../runNumber';
@@ -19,10 +18,10 @@ import { StatisticsEmpty, formatCount, formatMs } from '../tables/StatisticsTabl
  * whole-run. A tile that disagreed with the statistics table it summarises
  * would be worse than no tile, so nothing else is derived from anywhere else.
  *
- * The fields the three row-fed tiles read — `errorRate`, `koCount`, `count`,
- * `okCount` and `percentiles.p95` — are the run-scope row's own fields, read
- * straight off it as a headline value or a hint and never recombined into a
- * new quantity the row does not already carry.
+ * The fields the three row-fed tiles read — `errorRate`, `count` and
+ * `percentiles.p95` — are the run-scope row's own fields, read straight off
+ * it as a headline value and never recombined into a new quantity the row
+ * does not already carry.
  *
  * EVERY NUMBER IS WRITTEN DOWN THE SAME WAY THE TABLE WRITES IT: `formatCount`
  * and `formatMs` are imported from `StatisticsTable`, never re-derived here.
@@ -67,10 +66,10 @@ export default function RunStats({
   readonly runStatus: RunResponse['status'] | undefined;
   readonly baseline?: TrendRun | null;
   /**
-   * This run as its own cohort row, so the note under the tiles can say what
-   * the deltas are measured against and whether that run was comparable.
-   * Absent leaves the baseline NAMED and its conditions unstated — the
-   * identification is the half that must not depend on a second lookup.
+   * This run as its own cohort row, so the comparison row under the tiles
+   * can say whether the run each delta names was comparable. Absent leaves
+   * the baseline NAMED (every delta links it) and its conditions unstated —
+   * the identification is the half that must not depend on a second lookup.
    */
   readonly current?: TrendRun | null;
   /**
@@ -91,6 +90,25 @@ export default function RunStats({
       </section>
     );
   }
+
+  // A delta names the run it compares against, and links to it (clean UI,
+  // PR 2): "+7.7% vs Run 10". That replaces the sentence that used to sit
+  // under the row explaining what "vs previous" meant.
+  const against = baseline == null ? null : { name: baselineName(baseline), to: runPath(baseline.id) };
+  const vs = (delta: Delta | undefined) =>
+    delta === undefined || against === null
+      ? undefined
+      : {
+          label: (
+            <>
+              {delta.change} vs{' '}
+              <Link to={against.to} className="underline decoration-dotted underline-offset-2 hover:decoration-solid">
+                {against.name}
+              </Link>
+            </>
+          ),
+          tone: delta.tone,
+        };
 
   return (
     <section aria-label="Run totals" className="@container">
@@ -129,8 +147,8 @@ export default function RunStats({
        * Colour is reserved for SLA `tone`, which `StatTile`'s own docstring
        * argues at length ("colouring a number red is a JUDGEMENT, and the
        * platform has only made one where a rule exists"), and size would break
-       * the common baseline `mt-auto` on the hint exists to keep. Position IS
-       * the emphasis this grid has. First is first. */}
+       * the values' common baseline across the row. Position IS the emphasis
+       * this grid has. First is first. */}
       <dl className="grid grid-cols-2 gap-3 @xl:grid-cols-4">
         <StatTile
           label="Error rate"
@@ -140,8 +158,7 @@ export default function RunStats({
           // number sitting a few hundred pixels from the first.
           value={`${(run.errorRate * 100).toFixed(2)}%`}
           tone={slaTone(assertions, 'error_rate')}
-          hint={`${formatCount(run.koCount)} of ${formatCount(run.count)} requests`}
-          delta={deltaFor(run.errorRate, baseline?.errorRate, 'lower')}
+          delta={vs(deltaFor(run.errorRate, baseline?.errorRate, 'lower'))}
           data-testid="stat-error-rate"
         />
         <StatTile
@@ -155,8 +172,7 @@ export default function RunStats({
              statistics table keeps them where a reader may be diffing this
              against Gatling's own report side by side; a totals tile is not
              that surface. */
-          hint={`${formatCount(run.okCount)} successful, ${formatCount(run.koCount)} failed`}
-          delta={deltaFor(run.count, baseline?.count, 'neutral')}
+          delta={vs(deltaFor(run.count, baseline?.count, 'neutral'))}
           data-testid="stat-total-requests"
         />
         <StatTile
@@ -166,7 +182,6 @@ export default function RunStats({
              no peak, so there is nothing honest to compare against. */
           label="Peak users"
           value={peakUsers === null ? '—' : formatCount(peakUsers)}
-          hint="concurrent, at the busiest moment"
           data-testid="stat-peak-users"
         />
         <StatTile
@@ -186,56 +201,15 @@ export default function RunStats({
           value={percentileValue(run, 'p95')}
           unit={percentileUnit(run, 'p95')}
           tone={slaTone(assertions, 'p95')}
-          hint="estimate"
-          delta={deltaFor(percentileMs(run, 'p95'), percentileMs(baseline, 'p95'), 'lower')}
+          info={<InfoTip label="About p95">{P95_INFO}</InfoTip>}
+          delta={vs(deltaFor(percentileMs(run, 'p95'), percentileMs(baseline, 'p95'), 'lower'))}
           data-testid="stat-p95"
         />
       </dl>
 
-      {baseline != null && <BaselineNote previous={baseline} here={current ?? null} />}
-
-      {/* ═══ THE METHODOLOGY ONCE, NOT ONCE PER TILE (review 09-13 N02) ═══
-       *
-       * The percentile tiles carried "an estimate, accurate to within 1%" — the
-       * same sentence, twice, in a row where every other hint is a fact about
-       * ITS OWN tile. (One percentile tile is left, and the reasoning stands:
-       * the tile keeps the one word that is a property of the value, and the
-       * method is said here where it can be longer for it.) The tile keeps
-       * `estimate`, so nobody reads p95 as exact.
-       *
-       * IT IS WORTH SAYING AT ALL, which is why this is a disclosure and not a
-       * deletion: the 1% is a CLAIM ABOUT THIS PLATFORM, not a disclaimer.
-       * Gatling's own percentiles are histogram estimates — measured 9.47% low
-       * on the p99 of a real run, reporting a value that occurs nowhere in the
-       * data — and the sketch behind these answers the same question within 1%
-       * against the true distribution. A reader comparing the two reports needs
-       * that, and it is the kind of thing they need once.
-       *
-       * NO HEADING. The Summary's heading outline is exactly ['Platform gates',
-       * 'Simulation assertions', 'Over time', 'Errors'], pinned in
-       * `RunSummary.test.tsx`; a `<summary>` contributes a group, not a
-       * heading, so this cannot break that outline the way an <h2> would. */}
-      <details className="group mt-3" data-testid="percentile-method">
-        <summary className="w-fit cursor-pointer list-none text-[0.75rem] font-medium text-accent hover:underline hover:underline-offset-2">
-          <span className="group-open:hidden">How percentiles are measured</span>
-          <span className="hidden group-open:inline">Hide how percentiles are measured</span>
-        </summary>
-        <p className="pt-2 text-[0.75rem] leading-relaxed text-muted">
-          {/* "the whole run" — the Summary never carries a window (GE's does
-              not either), so there is no second population for this sentence to
-              name. It was conditional while this row could be narrowed, because
-              the sketch is rebuilt from the buckets a window selects; a note
-              that names the wrong population is worse than none, since a reader
-              checks it precisely when the number surprises them. The Report's
-              table is the windowed surface now. */}
-          Percentiles are read from a sketch of the whole run rather than from a bucketed
-          histogram, which answers any rank — p95, p99, p99.9 — to within 1% of the true
-          distribution. The tool&rsquo;s own report estimates from fixed bands and can drift
-          further: on this fixture&rsquo;s p99 it reads 9.47% low, reporting a number that occurs
-          nowhere in the data. The error rate, the request count and the peak user count on this
-          row are counted, not estimated — p95 is the only estimate here.
-        </p>
-      </details>
+      {baseline != null && (
+        <ComparisonNote previous={baseline} here={current ?? null} previousName={baselineName(baseline)} />
+      )}
     </section>
   );
 }
@@ -263,10 +237,9 @@ function percentileValue(row: StatRow, key: string): string {
 /**
  * `ms`, or NOTHING when the value is the em dash.
  *
- * A unit beside a dash claims a measurement that was never taken — the same
- * overclaim `RunDecisionBand` refuses when it draws no counts for a run
- * nobody has evaluated. The two functions read the same field so they cannot
- * disagree about whether a number exists.
+ * A unit beside a dash claims a measurement that was never taken. The two
+ * functions read the same field so they cannot disagree about whether a
+ * number exists.
  */
 function percentileUnit(row: StatRow, key: string): string | undefined {
   const raw = row.percentiles[key];
@@ -299,83 +272,63 @@ function percentileMs(
   return clampPercentile(raw, row);
 }
 
+/** The baseline's name: its number, or "previous run" for one that predates numbering. */
+function baselineName(previous: TrendRun): string {
+  return previous.runNumber !== null && previous.runNumber !== undefined ? runName(previous.runNumber) : 'previous run';
+}
+
+/** A tile's change against the baseline, before it is joined to the run it names. */
+type Delta = { readonly change: string; readonly tone: DeltaTone };
+
+/** p95's caveat, behind its tile's ⓘ — the one estimate on the row. */
+const P95_INFO =
+  'p95 is estimated from a sketch of the whole run, accurate to within 1%, and shown clamped to the ' +
+  'run’s own minimum and maximum. Error rate, requests and peak users are counted, not estimated.';
+
 /**
- * ═══ A DELTA IS ONLY AS GOOD AS THE RUN IT IS MEASURED AGAINST ═══
+ * WHAT A READER NEEDS BEFORE TRUSTING A DELTA — and nothing when there is
+ * nothing to say (clean UI, PR 2).
  *
- * Six tiles said "vs previous" and nothing on the page said WHICH run that is.
- * `baselineRun` picks it carefully — strictly the run before this one in the
- * cohort's own total order — and the reader was told none of that, so a -12%
- * could be against last night's identical nightly or against a different
- * branch, in a different environment, at half the offered load. review.md 4:
- * the shorthand "hides information needed to judge relevance".
- *
- * THE MACHINERY WAS ALREADY BUILT, ONE PAGE OVER. `comparability` exists to
- * answer exactly this question and has been answering it on Compare since the
- * review-criticals branch, over these same `TrendRun` fields. This is the
- * one-call-site-short shape this repo keeps meeting — `ErrorsTable`'s
- * `windowSelected` passed at two sites of three, `compareLabels` named by its
- * own docstring and called bare by the trends axis.
- *
- * IT SAYS NOTHING WHEN EVERYTHING MATCHES, deliberately. The IDENTIFICATION is
- * unconditional, because a reader must always be able to see what "previous"
- * means; the CONDITIONS earn a line only when there is something to act on, and
- * a permanent "these runs are comparable" is the undifferentiated chrome
- * review.md 20 objects to. So absence means "nothing differed and nothing was
- * missing" — which is only honest because the summary, when it does appear,
- * names both cases rather than collapsing them.
- *
- * UNKNOWN IS NOT COMPATIBLE, which `comparability` already encodes: a run that
- * recorded no branch cannot be said to match one that did, so it reads "not
- * recorded" rather than being quietly counted as agreement.
- *
- * NO HEADING, for the reason the percentile disclosure above gives: a
- * `<summary>` contributes an ARIA group and not a heading, so the Summary's
- * outline (pinned in `RunSummary.test.tsx`) is untouched.
+ * The baseline note used to be a sentence under the tiles on every run ("“vs
+ * previous” is Run 10 (started …) — the one that started immediately before
+ * this in this test"). The deltas name their run now, so what is left is
+ * comparability: a short visible chip when the two runs actually DIFFER, which
+ * changes whether a delta can be trusted (the text rule's data-integrity
+ * exception), and an ⓘ listing every finding — differences and what was not
+ * recorded alike. No finding, no row.
  */
-function BaselineNote({
+function ComparisonNote({
   previous,
   here,
+  previousName,
 }: {
   readonly previous: TrendRun;
   readonly here: TrendRun | null;
+  readonly previousName: string;
 }) {
-  // `here` absent still names and links the baseline. Identification is the
-  // half that must never depend on a second lookup succeeding.
   const notable = (here === null ? [] : comparability([here, previous])).filter(
     (finding) => finding.kind !== 'same',
   );
-
+  if (notable.length === 0) return null;
+  const differs = notable.filter((finding) => finding.kind === 'differs');
+  const details = notable
+    .map((finding) => `${finding.label}: this run ${finding.values[0] ?? 'unknown'}, ${previousName} ${finding.values[1] ?? 'unknown'}`)
+    .join('. ');
   return (
-    <div className="mt-3 flex flex-col gap-1.5 text-[0.75rem] text-muted" data-testid="baseline-note">
-      <p>
-        {'“vs previous” is '}
-        <Link
-          className="font-medium text-accent hover:underline hover:underline-offset-2"
-          to={runPath(previous.id)}
+    <div data-testid="comparison-note" className="mt-3 flex flex-wrap items-center gap-2 text-[0.75rem]">
+      {differs.length > 0 && (
+        <span
+          data-testid="comparison-differs"
+          /* On the CARD surface, not `bg-sunken`: the pending tone measures
+             4.44:1 on the sunken fill in the light theme, under AA's 4.5 for
+             text this size, and 5.02:1 on the card. */
+          className="rounded-md border border-default bg-surface px-2 py-0.5 font-medium"
+          style={{ color: 'var(--color-status-pending)' }}
         >
-          {previous.runNumber !== null && previous.runNumber !== undefined
-            ? `${runName(previous.runNumber)} (started ${formatInstant(previous.toolStartedAt ?? previous.startedAt)})`
-            : `the run of ${formatInstant(previous.toolStartedAt ?? previous.startedAt)}`}
-        </Link>
-        {' — the one that started immediately before this in this test.'}
-      </p>
-      {notable.length > 0 && (
-        <details className="group" data-testid="baseline-differences">
-          <summary className="w-fit cursor-pointer list-none font-medium text-accent hover:underline hover:underline-offset-2">
-            {summariseConditions(notable)}
-          </summary>
-          <dl className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
-            {notable.map((finding) => (
-              <Fragment key={finding.label}>
-                <dt>{finding.label}</dt>
-                <dd className="text-primary">
-                  {`this run ${finding.values[0] ?? 'unknown'}, previous ${finding.values[1] ?? 'unknown'}`}
-                </dd>
-              </Fragment>
-            ))}
-          </dl>
-        </details>
+          {summariseConditions(differs)}
+        </span>
       )}
+      <InfoTip label={`About the comparison with ${previousName}`}>{`${details}.`}</InfoTip>
     </div>
   );
 }
@@ -384,7 +337,7 @@ function deltaFor(
   current: number | undefined,
   previous: number | undefined,
   better: 'higher' | 'lower' | 'neutral',
-): { label: string; tone: DeltaTone } | undefined {
+): Delta | undefined {
   if (
     current === undefined ||
     previous === undefined ||
@@ -399,10 +352,7 @@ function deltaFor(
   if (!Number.isFinite(change)) return undefined;
   const rounded = Number(change.toFixed(1));
   const sign = rounded > 0 ? '+' : '';
-  return {
-    label: `${sign}${rounded.toFixed(1)}% vs previous`,
-    tone: deltaTone(rounded, better),
-  };
+  return { change: `${sign}${rounded.toFixed(1)}%`, tone: deltaTone(rounded, better) };
 }
 
 function deltaTone(change: number, better: 'higher' | 'lower' | 'neutral'): DeltaTone {

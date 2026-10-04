@@ -468,17 +468,21 @@ describe('ErrorsTable — the empty state says what it actually checked', () => 
     expect(screen.queryByText(/for this run/i)).not.toBeInTheDocument();
   });
 
-  /** The scoped body points a reader at where the whole-run answer lives, and
-   *  that place is the Summary: there is no Errors tab any more. It renders on
-   *  five of the reference run's seven request pages, so a pointer at a tab that
-   *  does not exist is read far more often than any other sentence here. Asserted
-   *  as an exclusive pair — either half alone passes against the other wrong
-   *  answer (a body that names nothing, or one that names both). */
-  it('points at the Summary for the whole run, and at no tab that no longer exists', () => {
+  /** ONE LINE (clean UI, PR 2). An empty state's title is the answer; the body
+   *  under it restated the title ("Every request this run made came back OK")
+   *  or, scoped, pointed at the Summary. Both branches, because the two bodies
+   *  were written separately and either could survive the other's removal.
+   *  The scoped title still names its scope and claims nothing about the run —
+   *  the C01 cases above pin that. */
+  it('says an empty errors result in one line, scoped or not', () => {
+    const { unmount } = render(<ErrorsTable errors={none} />);
+    expect(screen.getByText('No errors were recorded for this run')).toBeInTheDocument();
+    expect(screen.queryByText(/came back ok/i)).toBeNull();
+    unmount();
     render(<ErrorsTable errors={none} scopeLabel="Search" />);
-    const body = screen.getByText(/came back ok/i).textContent ?? '';
-    expect(body).toMatch(/run's summary/i);
-    expect(body).not.toMatch(/errors tab/i);
+    expect(screen.getByText('No errors recorded for Search')).toBeInTheDocument();
+    expect(screen.queryByText(/came back ok/i)).toBeNull();
+    expect(screen.queryByText(/summary/i)).toBeNull();
   });
 
   /** Acceptance in the review: a scoped table with failures names that scope
@@ -497,39 +501,6 @@ describe('ErrorsTable — the empty state says what it actually checked', () => 
     render(<ErrorsTable errors={{ runId: RUN_ID, errors: [{ message: 'boom', count: 2 }] }} />);
     expect(screen.getByRole('table', { name: 'Errors' })).toBeInTheDocument();
     expect(errorsInfo()).toHaveAccessibleDescription(/this run recorded/i);
-  });
-});
-
-/**
- * REVIEW C03 — WHOLE-RUN TOTALS UNDER A WINDOW MUST SAY SO.
- *
- * `/v1/runs/:id/errors` takes no `from`/`to` at all — by construction, not by
- * omission: the endpoint's sibling comment explains it deliberately has no
- * scope parameters. So selecting 10–30s narrows the errors CHART and leaves
- * this table at the run's own 24, directly beneath it. Two figures, one
- * screen, different scopes, nothing saying which.
- *
- * Windowed error aggregation is a backend change; saying what the number
- * actually covers is not, and it is the half that stops a wrong reading today.
- */
-describe('ErrorsTable — it says when a window does not reach it', () => {
-  const rows = { runId: RUN_ID, errors: [{ message: 'boom', count: 2 }] };
-
-  it('says nothing extra when no window is selected', () => {
-    render(<ErrorsTable errors={rows} />);
-    expect(screen.queryByTestId('errors-window-note')).not.toBeInTheDocument();
-  });
-
-  it('states that the selected window does not narrow these totals', () => {
-    render(<ErrorsTable errors={rows} windowSelected />);
-    expect(screen.getByTestId('errors-window-note')).toHaveTextContent(/whole run/i);
-  });
-
-  /** The empty state is the more dangerous one under a window: "no errors"
-   *  plus a visible 10–30s selection reads as "no errors in that interval". */
-  it('states it on the empty result too, where the misreading is worst', () => {
-    render(<ErrorsTable errors={{ runId: RUN_ID, errors: [] }} windowSelected />);
-    expect(screen.getByTestId('errors-window-note')).toHaveTextContent(/whole run/i);
   });
 });
 

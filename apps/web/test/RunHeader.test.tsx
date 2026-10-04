@@ -260,13 +260,26 @@ describe('RunHeader', () => {
     expect(screen.getByRole('link', { name: 'Checkout' })).toBeInTheDocument();
   });
 
-  it('still renders the verdict badge for a terminal run', () => {
+  /** The header draws whatever verdict it is handed — WHERE it is withheld
+   *  (the Summary, whose band states it) is `RunShell`'s decision, pinned in
+   *  `RunShell.test.tsx`. */
+  it('draws a failed terminal run’s verdict beside its status', () => {
+    render(
+      <MemoryRouter>
+        <RunHeader identity={FULL_IDENTITY} status="complete" verdict="failed" compact={false} note={null} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId('run-status')).toHaveAccessibleName('complete');
+    expect(screen.getByTestId('run-verdict')).toHaveAccessibleName('failed');
+  });
+
+  it('draws an evaluated absence as no verdict yet', () => {
     render(
       <MemoryRouter>
         <RunHeader identity={FULL_IDENTITY} status="complete" verdict={null} compact={false} note={null} />
       </MemoryRouter>,
     );
-    expect(screen.getByTestId('run-verdict')).toBeInTheDocument();
+    expect(screen.getByTestId('run-verdict')).toHaveAccessibleName('no verdict yet');
   });
 
   /** The breadcrumb's current rung names WHICH run of the test this is — by

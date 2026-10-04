@@ -208,6 +208,55 @@ describe('RequestDetail', () => {
 });
 
 /**
+ * CLEAN UI, PR 2 — the drill-down's two notes, each in as few words as do the
+ * job: a not-found state is its title (the "Back to this run" link beside it is
+ * the way out), and a selected window the page cannot honour is a short tag
+ * with its explanation behind an info.
+ */
+describe('RequestDetail — clean UI', () => {
+  function renderAt(url: string) {
+    vi.stubGlobal('fetch', (input: RequestInfo) =>
+      Promise.resolve(
+        String(input).includes('/stats')
+          ? new Response(JSON.stringify(fixture.stats), { status: 200 })
+          : new Response('{}', { status: 500 }),
+      ),
+    );
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={[url]}>
+          <Routes>
+            <Route path="/runs/:runId/requests/:name" element={<RequestDetail />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  }
+
+  it('says a request it cannot find in one line', async () => {
+    renderAt('/runs/r1/requests/Nope%2FNot%20Here');
+    expect(await screen.findByText('This run recorded no request named Nope/Not Here.')).toBeInTheDocument();
+    expect(screen.queryByText(/different run/i)).toBeNull();
+  });
+
+  it('tags whole-run figures under a window and explains behind an info', async () => {
+    renderAt('/runs/r1/requests/Search?from=0&to=10000');
+    const notice = await screen.findByTestId('whole-run-notice');
+    expect(notice).toHaveTextContent(/^Whole-run figures/);
+    expect(screen.getByRole('button', { name: 'About whole-run figures' })).toHaveAccessibleDescription(
+      /does not narrow this request’s figures/,
+    );
+  });
+
+  it('draws no tag without a window', async () => {
+    renderAt('/runs/r1/requests/Search');
+    await screen.findByRole('heading', { level: 1 });
+    expect(screen.queryByTestId('whole-run-notice')).toBeNull();
+  });
+});
+
+/**
  * REVIEW M08 — THE DETAIL PAGE DROPPED THE EXPERIMENT'S IDENTITY.
  *
  * Search opened with "Back to this run" and the word "Search". The run, its

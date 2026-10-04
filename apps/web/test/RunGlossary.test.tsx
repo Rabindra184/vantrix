@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import '@testing-library/jest-dom/vitest';
 import { cleanup, render, screen } from '@testing-library/react';
@@ -73,7 +73,7 @@ const RENDERED_IN: Readonly<Record<string, string>> = {
   'Platform gates': 'apps/web/src/routes/AssertionBars.tsx',
   'Simulation assertions': 'apps/web/src/routes/AssertionBars.tsx',
   Verdict: 'apps/web/src/routes/RunList.tsx',
-  estimate: 'apps/web/src/routes/RunStats.tsx',
+  estimated: 'apps/web/src/routes/RunStats.tsx',
 };
 
 /**
@@ -123,7 +123,32 @@ describe('RunGlossary — every word it defines is a word the product says', () 
       expect(src, `nothing builds "${word}" any more (was ${producer})`).toContain(producer);
       return;
     }
-    expect(src, `"${word}" is defined by the glossary and rendered nowhere`).toContain(word);
+    // A WHOLE word, not a substring: `estimate` once survived inside
+    // "estimated" after the label it named was gone — a stale cross-reference
+    // satisfied by a longer word, the very shape this file guards against.
+    const escaped = word.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+    const whole = new RegExp(`(^|[^\\w])${escaped}([^\\w]|$)`);
+    expect(src, `"${word}" is defined by the glossary and rendered nowhere`).toMatch(whole);
+  });
+
+  /**
+   * A NAME IN QUOTES IS A CROSS-REFERENCE TOO. The `estimate` entry sent its
+   * reader to “How percentiles are measured”, under the Summary's tiles — a
+   * disclosure the clean-UI pass deleted — while every headword check stayed
+   * green. Each phrase a meaning quotes must still be said by some source
+   * file under `apps/web/src` (comments stripped, the glossary itself left
+   * out, or it would vouch for its own quotes).
+   */
+  it('quotes only names the product still renders', () => {
+    const root = fromRepo('apps/web/src');
+    const files = readdirSync(root, { recursive: true, encoding: 'utf8' })
+      .filter((f) => /\.(ts|tsx)$/.test(f) && !f.endsWith('RunGlossary.tsx'));
+    expect(files.length, 'collected no web sources — the walk has rotted').toBeGreaterThan(50);
+    const product = files.map((f) => stripComments(readFileSync(resolve(root, f), 'utf8'))).join('\n');
+
+    const quoted = ENTRIES.flatMap((e) => [...e.meaning.matchAll(/“([^”]+)”/g)].map((m) => m[1]!));
+    expect(quoted.length, 'no meaning quotes anything — the pattern has rotted').toBeGreaterThan(0);
+    expect(quoted.filter((q) => !product.includes(q))).toEqual([]);
   });
 
   /** A word nobody said where to find is a word nothing can check. */

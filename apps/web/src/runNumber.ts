@@ -6,7 +6,7 @@
  *
  *   runName(12) -> "Run 12"   where a run is NAMED — a list row, a picker chip,
  *                             a chart series, a table column, a breadcrumb, a
- *                             document title, the baseline note
+ *                             document title, a tile delta's link
  *   runTag(12)  -> "#12"      where it is a compact TAG — the Trends axis
  *
  * GE spells its Compare series "Run #1" and its table column "Run 1"; here both

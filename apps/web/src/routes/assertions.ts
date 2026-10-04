@@ -62,10 +62,10 @@ export function describeAssertionRuleForReader(rule: Assertion['rule']): string 
 }
 
 /**
- * ONE counter, for the two components that draw these three numbers.
+ * ONE counter, for every reader of these three numbers.
  *
  * `RunDecisionBand` (the band under the header) and `RunDetail`'s SLA
- * evidence panel are the same three counts over the same array on the same
+ * evidence panel were the same three counts over the same array on the same
  * page. They were two reductions with two different key spellings —
  * `notApplicable` and `not_applicable` — so a fourth outcome added to
  * `AssertionOutcome` would have had to be found twice, with neither copy's

@@ -160,6 +160,18 @@ describe('RunSummary — live', () => {
    * still the honest last-known numbers. The socket is DOWN here on purpose:
    * that is the state in which a tile read off the connection would vanish.
    */
+  /** Clean UI, PR 2: the live twin of the finished tiles carries no hint
+   *  lines either, and offers the same p95 caveat behind an ⓘ. */
+  it('gives the live tiles no hint lines and the same p95 info', () => {
+    renderSummary({
+      live: liveWith({ count: 1200, okCount: 1176, koCount: 24, errorRate: 0.02, maxUsers: 8, percentiles: { p95: 450 } }),
+    });
+    const section = document.querySelector('section[aria-label="Run totals so far"]')!;
+    expect(section.textContent ?? '').not.toMatch(/so far$|of [\d,]+ requests|successful, /);
+    expect(screen.queryByText(/concurrent, so far|an estimate, so far/)).toBeNull();
+    expect(screen.getByRole('button', { name: 'About p95' })).toBeInTheDocument();
+  });
+
   it('keeps the tiles on screen, unblanked, once the run has left running', () => {
     renderSummary({ live: { ...liveWith({ count: 500 }), connected: false }, status: 'parsing' });
     expect(screen.getByTestId('live-stat-total-requests')).toHaveTextContent('500');
@@ -207,13 +219,14 @@ describe('RunSummary — live', () => {
     const section = document.querySelector('section[aria-label="Run totals so far"]')!;
     const text = section.textContent ?? '';
 
-    expect(text).toMatch(/successful/i);
-    expect(text).toMatch(/failed/i);
+    // Positive anchor for the absences below; the "successful, failed" hint is
+    // gone (clean UI, PR 2).
+    expect(text).toMatch(/Requests so far/);
     // As WORDS — Gatling's spellings, which no parity requirement binds here.
     expect(text).not.toMatch(/\bOK\b/);
     expect(text).not.toMatch(/\bKO\b/);
     // And the percentile is named the way a gate names it.
-    const labels = [...section.querySelectorAll('dt')].map((d) => (d.textContent ?? '').trim());
+    const labels = [...section.querySelectorAll('dt')].map((d) => (d.querySelector('span')?.textContent ?? '').trim());
     expect(labels).toContain('p95');
   });
 

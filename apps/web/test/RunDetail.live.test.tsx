@@ -337,7 +337,7 @@ describe('RunDetail — one shell, for every state', () => {
    * rendered nothing at all.
    *
    * WHAT THIS CASE IS FOR NOW IS THE SEAM. The gate card's own wording — the
-   * outcome sentence and the dash for a not-applicable actual — is pinned where
+   * rule title, the not-applicable reason and its dash — is pinned where
    * the card is built (`AssertionBars.test.tsx`), which is where it died with
    * the table that used to hold it here. This mounts the real run page, so it is
    * the one place that proves `RunSummary` hands the run's own gates to the bar.
@@ -346,13 +346,17 @@ describe('RunDetail — one shell, for every state', () => {
     seedThreeGates();
 
     // `getAllBy…`, not `getBy…`: three gates, three cards. The failed gate
-    // sorts first, so the first card is the failure — and its sentence is the
-    // reader's vocabulary, never the stored `p99 breached its threshold.`.
+    // sorts first, so the first card is the failure — named in the reader's
+    // vocabulary, never the stored `p99 breached its threshold.`, and carrying
+    // the run's own actual. Since the clean-UI pass a judged gate states its
+    // rule and its actual and no sentence restating both (`AssertionBars`).
     const cards = screen.getAllByTestId('gate-card');
     expect(cards).toHaveLength(3);
-    expect(
-      within(cards[0]!).getByText('Whole-run p99 response time 1830 ms exceeds the 750 ms limit.'),
-    ).toBeInTheDocument();
+    const failure = within(cards[0]!);
+    expect(failure.getByText('Whole-run p99 response time ≤ 750 ms')).toBeInTheDocument();
+    expect(cards[0]).toHaveTextContent(/Actual:\s*1830 ms/);
+    expect(failure.getByTestId('gate-outcome')).toHaveTextContent(/failed/);
+    expect(cards[0]).not.toHaveTextContent(/breached its threshold/);
     expect(screen.queryByTestId('assertion-evidence-panel')).toBeNull();
   });
 

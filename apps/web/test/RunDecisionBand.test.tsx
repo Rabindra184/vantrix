@@ -153,28 +153,6 @@ describe('RunDecisionBand', () => {
   });
 
   /**
-   * Three zeros are three measurements. `RunShell` states the rule two lines
-   * from its own `<RunDecisionBand>` call — `null`, not `0`, until the
-   * payload has actually resolved — and the band's counts were exempt from
-   * it: a pending run drew "Passed 0 / Failed 0 / N/A 0" over rules nobody
-   * had evaluated.
-   */
-  it('draws no assertion counts at all until the run has been evaluated', () => {
-    renderBand({ status: 'pending', verdict: undefined, assertions: undefined });
-    for (const label of ['Passed', 'Failed', 'N/A']) {
-      expect(screen.queryByText(label)).toBeNull();
-    }
-    // Positive half: the counts DO appear once there is something to count,
-    // so the assertion above is about the gate and not about the labels.
-    // 'Passed', not 'Failed': the default render's big verdict WORD is also
-    // "Failed", so that string matches two elements — the label the big
-    // word can never spell is the one that uniquely proves a count chip.
-    cleanup();
-    renderBand();
-    expect(screen.getByText('Passed')).toBeInTheDocument();
-  });
-
-  /**
    * ═══ INVERTED, NOT DELETED (review 09-13 C01) ═══
    *
    * This asserted the opposite — that an evaluated run with NO rules still
@@ -235,45 +213,6 @@ describe('RunDecisionBand', () => {
     // see "has no Execution row" above — so only Platform gates remains here.)
     const gates = screen.getByTestId('outcome-gates').querySelector('dd')!;
     expect(gates.getAttribute('style') ?? '').not.toContain('--color-status-failed');
-  });
-
-  /**
-   * THE TICK STRIP FOLLOWS THE COUNTS' OWN GATE. It is the counts sentence's
-   * picture — one tick per rule — so it must appear exactly when the counts
-   * do and never over rules nobody has evaluated (grey ticks over an
-   * unevaluated run would be the three-zeros overclaim in bar form). It is
-   * `aria-hidden` because the sentence beside it already carries the same
-   * fact as text: a screen reader hearing the counts and then a run of
-   * unnamed presentational marks would get the information twice, once
-   * badly — the same argument `Badge` makes for its glyph.
-   */
-  it('draws one aria-hidden tick per rule once evaluated, and none before', () => {
-    renderBand({ status: 'pending', verdict: undefined, assertions: undefined });
-    expect(screen.queryByTestId('gate-ticks')).toBeNull();
-
-    // A mixed cohort, not the single-failure default: three rules with three
-    // different outcomes is what proves the strip counts EVERY outcome
-    // rather than only the one the default fixture happens to carry.
-    const mixed: readonly Assertion[] = [
-      ASSERTIONS[0]!,
-      {
-        ...ASSERTIONS[0]!,
-        ruleId: '33333333-3333-4333-8333-333333333333',
-        outcome: 'passed',
-        message: 'p99 within its threshold.',
-      },
-      {
-        ...ASSERTIONS[0]!,
-        ruleId: '44444444-4444-4444-8444-444444444444',
-        outcome: 'not_applicable',
-        message: 'Too few samples to evaluate.',
-      },
-    ];
-    cleanup();
-    renderBand({ assertions: mixed });
-    const strip = screen.getByTestId('gate-ticks');
-    expect(strip).toHaveAttribute('aria-hidden', 'true');
-    expect(strip.childElementCount).toBe(mixed.length);
   });
 
   it('exports the run summary the decision band is showing', async () => {
@@ -394,7 +333,7 @@ describe('RunDecisionBand — two outcomes, not one word', () => {
       assertions: [],
       toolAssertions: [TOOL[0]!],
     });
-    expect(screen.getByTestId('outcome-simulation')).toHaveTextContent(/all 1 passed|1 passed/i);
+    expect(screen.getByTestId('outcome-simulation')).toHaveTextContent(/^Simulation assertions\s*passed$/);
     expect(screen.queryByRole('link', { name: /simulation assertion/i })).not.toBeInTheDocument();
   });
 
@@ -497,23 +436,20 @@ describe('RunDecisionBand — what the verdict word says when nothing failed', (
    */
   const UNPROCESSED = { ...RUN, status: 'incomplete' as const, durationMs: null };
 
-  it('says Not evaluated for an incomplete run nothing processed, and why', () => {
+  it('says Not evaluated for an incomplete run nothing processed', () => {
     renderBand({ identity: UNPROCESSED, status: 'incomplete', verdict: 'not_evaluated', assertions: [] });
     expect(word()).toHaveTextContent(/^not evaluated$/i);
+    // The gates row says the run's fact, "not evaluated", never the project's
+    // "not configured" (clean UI, PR 2 shortened the row to its word).
     const gates = screen.getByTestId('outcome-gates');
-    expect(gates).toHaveTextContent(/not evaluated — the run left nothing to judge/i);
+    expect(gates).toHaveTextContent(/^Platform gates\s*not evaluated$/);
     expect(gates).not.toHaveTextContent(/not configured/i);
-    const detail = screen.getByTestId('decision-detail');
-    expect(detail).not.toHaveTextContent(/completed/i);
-    expect(detail).toHaveTextContent(/no SLA rule ran/i);
   });
 
   it('still says Not configured for an incomplete run whose partial log was processed', () => {
     renderBand({ status: 'incomplete', verdict: 'not_evaluated', assertions: [] });
     expect(word()).toHaveTextContent(/^not configured$/i);
-    expect(screen.getByTestId('outcome-gates')).toHaveTextContent(/not configured — no SLA rule judged this run/i);
-    // Stopped early, not "completed": the sentence tells the truth about the run too.
-    expect(screen.getByTestId('decision-detail')).not.toHaveTextContent(/completed/i);
+    expect(screen.getByTestId('outcome-gates')).toHaveTextContent(/^Platform gates\s*not configured$/);
   });
 });
 
@@ -543,20 +479,19 @@ describe('RunDecisionBand — the export says what it exports', () => {
      3 and 15 landed. Two vocabularies for one fact on one screen, and the raw
      one was the prominent one.
 
-     NOTHING PINNED THIS TEXT. `decision-detail` appears in no other assertion
-     in this file, which is exactly how the drift survived three corrections
-     to the table beneath it.
+     NOTHING PINNED THIS TEXT at the time, which is exactly how the drift
+     survived three corrections to the table beneath it. (The sentence moved
+     from a separate paragraph into the gates row in clean UI, PR 2.)
 
      Asserted as a PAIR, because either half alone passes against the wrong
      product: the positive alone is satisfied by a band rendering both
      strings, and the absence alone by a band rendering neither. */
   it('states a failed gate in the reader-facing vocabulary, not the stored message', () => {
     renderBand();
-    const detail = screen.getByTestId('decision-detail');
-    expect(detail).toHaveTextContent(
-      'Whole-run p99 response time 1830 ms exceeds the 750 ms limit.',
-    );
-    expect(detail).not.toHaveTextContent('p99 breached its threshold.');
+    // The failing gate's sentence is the gates row now (clean UI, PR 2).
+    const gates = screen.getByTestId('outcome-gates');
+    expect(gates).toHaveTextContent('Whole-run p99 response time 1830 ms exceeds the 750 ms limit.');
+    expect(gates).not.toHaveTextContent('p99 breached its threshold.');
   });
 
   /* NO CASE HERE FOR THE `?? failed.message` FALLBACK, DELIBERATELY. The band
@@ -570,9 +505,8 @@ describe('RunDecisionBand — the export says what it exports', () => {
      per assertion including the not_applicable ones. The null answer itself
      is pinned in `packages/contracts/test/rules.test.ts`. The first draft of
      this file seeded a lone `not_applicable` assertion and asserted its
-     message appeared — it cannot: with no failed assertion the band falls
-     through to `decisionDetail`, and the case failed reporting "One or more
-     SLA rules failed…". Same lesson as the evidence-verdict-scope branch: a
+     message appeared — it cannot: with no failed assertion the band never
+     reaches that fallback. Same lesson as the evidence-verdict-scope branch: a
      case that cannot reach the branch it describes is not a keeper. */
 });
 
@@ -593,5 +527,73 @@ describe('RunDecisionBand — the compare action promises only what it can', () 
     const link = screen.getByRole('link', { name: 'Compare runs' });
     expect(link).toHaveAttribute('href', `/runs/${RUN.id}/compare`);
     expect(screen.queryByRole('link', { name: /previous/i })).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * CLEAN UI, PR 2 — THE BAND STATES EACH THING ONCE.
+ *
+ * It used to state the gate counts four times (a sentence, a tick strip, three
+ * count tiles and the gates row) and the failing gate's sentence beside a
+ * paragraph about it. The band is now the verdict word, one row per system
+ * saying what that system concluded, and the actions; the counts live once, in
+ * the gate cards' headers below.
+ */
+describe('RunDecisionBand — one row per system, no repeated counts', () => {
+  const gate = (metric: string, outcome: Assertion['outcome'], actualValue: number | null, threshold: number): Assertion => ({
+    ruleId: `0000000${metric.length}-0000-4000-8000-${metric.padEnd(12, '0').slice(0, 12).replace(/[^0-9a-f]/g, '0')}`,
+    outcome,
+    actualValue,
+    message: outcome === 'not_applicable' ? `No ${metric} statistics for the run.` : `${metric} message`,
+    rule: { scope: 'run', targetName: null, family: 'response_time', metric, comparator: 'lte', threshold },
+  });
+  const outcomes = () => screen.getByTestId('outcome-gates');
+
+  it('states one row per system and repeats no counts', () => {
+    renderBand({
+      assertions: [gate('p99', 'failed', 1830, 750), gate('p95', 'passed', 600, 800)],
+      toolAssertions: TOOL,
+    });
+    expect(screen.queryByTestId('gate-ticks')).toBeNull();
+    expect(screen.queryByTestId('decision-detail')).toBeNull();
+    expect(screen.queryByText(/passed · .* failed/)).toBeNull();
+    expect(screen.queryByText('N/A')).toBeNull();
+    expect(outcomes()).toHaveTextContent(/exceeds the 750 ms limit/);
+    expect(screen.getByTestId('outcome-simulation')).toHaveTextContent(/1 failed/);
+  });
+
+  it('names the first failed gate and how many more failed', () => {
+    renderBand({
+      assertions: [gate('p99', 'failed', 1830, 750), gate('p95', 'failed', 900, 800), gate('p50', 'failed', 500, 100)],
+    });
+    // ONE sentence: the gate's own sentence ends in a full stop, and a suffix
+    // tacked on after it read "…limit. and 2 more" on the band's top row.
+    expect(outcomes()).toHaveTextContent(
+      /^Platform gates\s*Whole-run p99 response time 1830 ms exceeds the 750 ms limit, and 2 more\.$/,
+    );
+  });
+
+  it.each([
+    ['no rules', [] as Assertion[], 'not_evaluated', 'not configured'],
+    ['every rule not applicable', [gate('p99', 'not_applicable', null, 750)], 'not_evaluated', 'not evaluated'],
+    ['all passed', [gate('p95', 'passed', 600, 800)], 'passed', 'passed'],
+  ] as const)('says the gates outcome in a word when %s', (_case, assertions, verdict, word) => {
+    renderBand({ assertions, verdict });
+    expect(outcomes()).toHaveTextContent(new RegExp(`^Platform gates\\s*${word}$`));
+  });
+
+  it('says the simulation outcome in a word when every check passed or none was declared', () => {
+    renderBand({ toolAssertions: [TOOL[0]!] });
+    expect(screen.getByTestId('outcome-simulation')).toHaveTextContent(/^Simulation assertions\s*passed$/);
+    cleanup();
+    renderBand({ toolAssertions: [] });
+    expect(screen.getByTestId('outcome-simulation')).toHaveTextContent(/^Simulation assertions\s*none declared$/);
+  });
+
+  it('keeps the two actions and nothing else on the right', () => {
+    renderBand();
+    expect(screen.getByRole('link', { name: 'Compare runs' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Export SLA summary/ })).toBeInTheDocument();
+    expect(screen.queryByText('Passed')).toBeNull();
   });
 });

@@ -111,8 +111,8 @@ export function comparability(runs: readonly TrendRun[]): readonly Comparability
  * only part that says what to do next.
  *
  * LIVES HERE, BESIDE THE FINDINGS IT SUMMARISES, and is read by both surfaces
- * that carry them: this page's comparability panel and the run overview's
- * baseline note. Two copies would drift into describing the same six findings
+ * that carry them: Compare's comparability panel and the comparison chip under
+ * the Summary's tiles. Two copies would drift into describing the same six findings
  * two different ways on two pages a reader moves between.
  */
 export function summariseConditions(notable: readonly ComparabilityFinding[]): string {

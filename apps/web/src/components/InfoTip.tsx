@@ -70,8 +70,9 @@ export default function InfoTip({
             // without Escape (final review, measured). Not focusing the panel
             // keeps the trigger a plain toggle: Enter again closes, Tab moves
             // on and the panel dismisses itself. The cost: a link inside the
-            // panel is not reachable by Tab. No caller has one; the first that
-            // needs one (PR 2's "vs previous") decides how it is reached.
+            // panel is not reachable by Tab, so no caller puts one there — PR 2
+            // put the baseline run's link in the tiles' "vs Run N" delta,
+            // beside the number, rather than behind an ⓘ.
             onOpenAutoFocus={(event) => event.preventDefault()}
             className="z-50 max-w-72 rounded-lg border border-default bg-surface p-3 text-[0.8125rem] leading-relaxed text-primary shadow-panel"
           >

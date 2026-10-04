@@ -1,3 +1,4 @@
+import InfoTip from '../components/InfoTip';
 import { useId, type ReactNode } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
@@ -211,14 +212,19 @@ function OverTimeCharts({ series, domainMs, warmupMs }: { readonly series: Serie
   );
 }
 
+/** The live p95's caveat, behind its tile's ⓘ — the finished tile's, read while the run streams. */
+const LIVE_P95_INFO =
+  'p95 is estimated from a sketch of what has arrived so far, accurate to within 1%. Error rate, ' +
+  'requests and peak users are counted, not estimated.';
+
 /**
  * The live wire's own headline numbers, read DIRECTLY from a delta's
  * `summary` — never laundered through a `StatRow`.
  *
  * `RunStats` reads a run-scope `StatRow`, and `LiveSummarySchema` has no
  * `StatRow`: this is not `RunStats` fed a partial payload, it is the same four
- * tiles built from what `count`/`okCount`/`koCount`/`errorRate`/`percentiles`/
- * `maxUsers` actually are.
+ * tiles built from what `count`/`errorRate`/`percentiles`/`maxUsers` actually
+ * are.
  *
  * ═══ THE SAME FOUR TILES AS THE FINISHED ROW, IN THE SAME PLACES ═══
  *
@@ -257,25 +263,22 @@ function LiveSummary({ summary }: { readonly summary: LiveDelta['summary'] }) {
           // (`errorRate * 100`, two decimals) — never `koCount / count`,
           // a second definition of the one number a few tiles away.
           value={`${(summary.errorRate * 100).toFixed(2)}%`}
-          hint={`${formatCount(summary.koCount)} of ${formatCount(summary.count)} requests`}
           data-testid="live-stat-error-rate"
         />
         <StatTile
           label="Requests so far"
           value={formatCount(summary.count)}
-          hint={`${formatCount(summary.okCount)} successful, ${formatCount(summary.koCount)} failed`}
           data-testid="live-stat-total-requests"
         />
         <StatTile
           label="Peak users"
           value={formatCount(summary.maxUsers)}
-          hint="concurrent, so far"
           data-testid="live-stat-peak-users"
         />
         <StatTile
           label="p95"
           value={livePercentileValue(summary, 'p95')}
-          hint="an estimate, so far"
+          info={<InfoTip label="About p95">{LIVE_P95_INFO}</InfoTip>}
           data-testid="live-stat-p95"
         />
       </dl>

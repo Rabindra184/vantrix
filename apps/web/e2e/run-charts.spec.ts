@@ -982,6 +982,20 @@ test('the tooltip reads at the same precision the data table does', async ({ pag
   }
 });
 
+/**
+ * Opens the percentile chart's Bands menu unless it is already open.
+ *
+ * The ten band chips became one menu (clean UI, PR 2) that STAYS OPEN while
+ * bands are ticked, so a case opens it once and ticks as many as it needs —
+ * which is also what a reader does. The menu is portalled and mounted only
+ * while open, so the `band-*` items exist only after this.
+ */
+async function openBands(page: Page): Promise<void> {
+  const trigger = page.getByTestId('bands-percentiles');
+  if ((await trigger.getAttribute('aria-expanded')) !== 'true') await trigger.click();
+  await expect(page.getByRole('menu')).toBeVisible();
+}
+
 test('the band selector adds and removes exactly the band it names', async ({ page }) => {
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
@@ -994,8 +1008,9 @@ test('the band selector adds and removes exactly the band it names', async ({ pa
   // categorical palette has.
   expect(await legendLabels(chart)).toEqual(['min', '50%', '75%', '95%', '99%', 'max']);
 
+  await openBands(page);
   await page.getByTestId('band-p50-percentiles').click();
-  await expect(page.getByTestId('band-p50-percentiles')).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.getByTestId('band-p50-percentiles')).toHaveAttribute('aria-checked', 'false');
   // EXACTLY that one leaves, and the other five stay. A selector that redrew
   // the default set, or dropped the last band instead of the named one, passes
   // an assertion that only counted series.
@@ -1004,8 +1019,9 @@ test('the band selector adds and removes exactly the band it names', async ({ pa
   // Turning one on puts it in BANDS order, NOT in the order it was clicked —
   // 25% belongs between min and 75%, not at the end. `toPercentiles` promises
   // this and nothing in a browser had checked it.
+  await openBands(page);
   await page.getByTestId('band-p25-percentiles').click();
-  await expect(page.getByTestId('band-p25-percentiles')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByTestId('band-p25-percentiles')).toHaveAttribute('aria-checked', 'true');
   await expect
     .poll(() => legendLabels(chart))
     .toEqual(['min', '25%', '75%', '95%', '99%', 'max']);
@@ -1055,9 +1071,10 @@ test('selecting every band draws all ten, which the palette used to forbid', asy
   await openReport(page, runId);
 
   const chart = page.getByTestId('chart-percentiles');
+  await openBands(page);
   for (const band of ['p25', 'p80', 'p85', 'p90']) {
-    const button = page.getByTestId(`band-${band}-percentiles`);
-    if ((await button.getAttribute('aria-pressed')) !== 'true') await button.click();
+    const item = page.getByTestId(`band-${band}-percentiles`);
+    if ((await item.getAttribute('aria-checked')) !== 'true') await item.click();
   }
 
   await expect.poll(() => legendLabels(chart)).toHaveLength(10);
@@ -1075,9 +1092,10 @@ test('deselecting every band explains itself rather than drawing an empty grid',
 
   const chart = page.getByTestId('chart-percentiles');
 
+  await openBands(page);
   for (const band of ['min', 'p25', 'p50', 'p75', 'p80', 'p85', 'p90', 'p95', 'p99', 'max']) {
-    const button = page.getByTestId(`band-${band}-percentiles`);
-    if ((await button.getAttribute('aria-pressed')) === 'true') await button.click();
+    const item = page.getByTestId(`band-${band}-percentiles`);
+    if ((await item.getAttribute('aria-checked')) === 'true') await item.click();
   }
 
   // NOT a labelled grid with no marks. `empty` was set only from the payload's
@@ -1100,6 +1118,7 @@ test('deselecting every band explains itself rather than drawing an empty grid',
   expect(await readTable(page, 'percentiles')).not.toHaveLength(0);
 
   // One click back and it draws again.
+  await openBands(page);
   await page.getByTestId('band-p95-percentiles').click();
   await expect(plot(chart)).toHaveCount(1);
 
@@ -1107,8 +1126,47 @@ test('deselecting every band explains itself rather than drawing an empty grid',
   // pins the "a legend only from two series up" rule from the other side: with
   // p95 alone above, the chart draws and names itself in its title, and there
   // is no one-entry legend pretending to be a control.
+  await openBands(page);
   await page.getByTestId('band-p99-percentiles').click();
   await expect.poll(() => legendLabels(chart)).toEqual(['95%', '99%']);
+});
+
+/**
+ * The Bands menu from the keyboard, in a real browser (clean UI, PR 2). jsdom
+ * proves Radix's keyboard model in `BandsMenu.test.tsx`; what only a browser
+ * proves is that focus really lands, the menu really stays open across a
+ * toggle, and Escape really hands focus back — a portalled menu inside a chart
+ * card is where WebKit has disagreed with the other two engines here before.
+ */
+test('the percentile chart’s Bands menu works from the keyboard', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await openReport(page, runId);
+
+  const chart = page.getByTestId('chart-percentiles');
+  const trigger = page.getByRole('button', { name: /^Percentile bands, \d+ selected$/ });
+  await expect(trigger).toHaveAccessibleName('Percentile bands, 6 selected');
+
+  await trigger.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('menu')).toBeVisible();
+  // Opened from the keyboard, focus is on the first item; one ArrowDown is 25%.
+  await expect(page.getByTestId('band-min-percentiles')).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(page.getByTestId('band-p25-percentiles')).toBeFocused();
+  await page.keyboard.press('Space');
+
+  // Ticked, the menu still open, the trigger counting one more — and the line
+  // drawn, in BANDS order.
+  await expect(page.getByTestId('band-p25-percentiles')).toHaveAttribute('aria-checked', 'true');
+  await expect(page.getByRole('menu')).toBeVisible();
+  await expect(trigger).toHaveAccessibleName('Percentile bands, 7 selected');
+  await expect.poll(() => legendLabels(chart)).toEqual(['min', '25%', '50%', '75%', '95%', '99%', 'max']);
+
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('menu')).toHaveCount(0);
+  await expect(trigger).toBeFocused();
 });
 
 /* ======================================================================== *
@@ -1484,10 +1542,12 @@ test('the Summary’s percentile note names the whole run, with or without a win
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
 
-  const note = page.getByTestId('percentile-method');
+  // The note is the p95 tile's ⓘ now (clean UI, PR 2): its caveat is the
+  // trigger's accessible description.
+  const note = page.getByRole('button', { name: 'About p95', exact: true });
 
   await page.goto(runPath(runId));
-  await expect(note).toContainText(/sketch of the whole run/i);
+  await expect(note).toHaveAccessibleDescription(/sketch of the whole run/i);
 
   /* UNDER A WINDOW THE SENTENCE USED TO BE FALSE, so it was conditional: the
      sketch was rebuilt from the buckets the window selects, and a methodology
@@ -1498,6 +1558,6 @@ test('the Summary’s percentile note names the whole run, with or without a win
      leave the whole-run sentence and must not bring the old windowed one back. */
   await page.goto(`${runPath(runId)}?from=0&to=2000`);
   await expect(page.getByTestId('stat-total-requests')).toBeVisible();
-  await expect(note).toContainText(/sketch of the whole run/i);
-  await expect(note).not.toContainText(/sketch of the selected window/i);
+  await expect(note).toHaveAccessibleDescription(/sketch of the whole run/i);
+  await expect(note).not.toHaveAccessibleDescription(/sketch of the selected window/i);
 });

@@ -29,8 +29,9 @@ export const BANDS = [
 
 export type Band = (typeof BANDS)[number];
 
-/** Human labels, matching the Gatling report's own series names. */
-const BAND_LABEL: Record<Band, string> = {
+/** Human labels, matching the Gatling report's own series names. Exported
+ *  so the chart's Bands menu names each band exactly as its line is named. */
+export const BAND_LABEL: Record<Band, string> = {
   min: 'min',
   p25: '25%',
   p50: '50%',

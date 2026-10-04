@@ -5,7 +5,6 @@ import { trendsQuery } from '../api/metrics';
 import TrendsCharts from '../charts/TrendsCharts';
 import { linkButtonClasses } from '../components/Button';
 import { CompareTabIcon } from '../components/icons';
-import { MAX_COMPARE } from './compareSelection';
 import LiveNotice from './LiveNotice';
 import { Payload, type Slot } from './payload';
 import { runComparePath } from './paths';
@@ -147,13 +146,12 @@ export default function RunTrends() {
                 explained before the reader starts choosing runs. */}
             {data.runs.length > 1 && (
               <p className="flex flex-wrap items-center gap-2 text-[0.8125rem]">
+                {/* The link alone (clean UI, PR 2): "Overlay up to five of
+                    them on one metric" restated what Compare shows on open. */}
                 <Link to={runComparePath(data.runId)} className={linkButtonClasses}>
                   <CompareTabIcon className="h-3.5 w-3.5" />
                   Compare these runs
-                </Link>{' '}
-                <span className="text-muted">
-                  Overlay up to {MAX_COMPARE} of them on one metric.
-                </span>
+                </Link>
               </p>
             )}
 

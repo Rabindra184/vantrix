@@ -140,8 +140,8 @@ export const ENTRIES: readonly { term: string; meaning: string }[] = [
       'What the platform gates concluded: passed, failed, or not evaluated when no rule applied. A simulation assertion never produces one — it has an outcome instead.',
   },
   {
-    term: 'estimate',
+    term: 'estimated',
     meaning:
-      'The p95 tile says estimate because percentiles are read from a sketch rather than counted, and so do the table’s percentile columns. “How percentiles are measured”, under the Summary’s tiles, says how close. They are also taken at the nearest rank, so a percentile here can differ from the same column in Gatling’s own report by a whole measurement — on a small sample that gap can be wide, and both numbers are right. Total, OK, KO, Min, Max and Mean are exact, and are what to diff the two reports on.',
+      'Percentiles — the p95 tile and the table’s percentile columns — are estimated from a sketch rather than counted; the ⓘ beside the p95 tile and beside Statistics says how close. They are also taken at the nearest rank, so a percentile here can differ from the same column in Gatling’s own report by a whole measurement — on a small sample that gap can be wide, and both numbers are right. Total, OK, KO, Min, Max and Mean are exact, and are what to diff the two reports on.',
   },
 ];

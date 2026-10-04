@@ -96,8 +96,10 @@ export default function RunHeader({
   readonly identity: Partial<RunIdentity> & { readonly id: string };
   readonly status: RunResponse['status'];
   /**
-   * `undefined` means NOT EVALUATED YET and omits the badge; `null` means
-   * evaluated with no verdict and renders `VERDICT['none']` as before.
+   * `undefined` OMITS the badge: a run nobody has finished measuring yet, or
+   * a page that states the verdict elsewhere — `RunShell` passes `undefined`
+   * on the Summary, whose release-gate band says it in its largest type.
+   * `null` means evaluated with no verdict and renders `VERDICT['none']`.
    *
    * Collapsing the two would put "no verdict" on a running run, which reads as
    * evaluated-and-nothing-found — a claim about a run nobody has finished
@@ -404,17 +406,15 @@ export default function RunHeader({
           {noteInDetails ? null : note}
         </div>
 
-        {/* The verdict is what the reader came for, so on a wide screen it
-            sits at the top right where the eye lands after the heading, and
-            on a narrow one it falls back into the flow above the metadata.
-            `shrink-0` so a long simulation name never squeezes it.
-
-            The verdict badge is OMITTED — not rendered as `VERDICT['none']`
-            — while `verdict` is `undefined`: that is a run nobody has
-            finished measuring yet, and "no verdict" reads as
-            evaluated-and-nothing-found, a claim about a run that has not
-            been judged at all. `null` still renders `VERDICT['none']`, as
-            before — that is a real, evaluated absence. */}
+        {/* STATUS always; the VERDICT once per page. On the Summary the
+            verdict was stated three times — this badge, the lifecycle strip's
+            last step and the release-gate band — so `RunShell` withholds it
+            there (clean UI, PR 2). The strip and the band draw on the Summary
+            ALONE, so on the Report, Logs, Trends and Compare this badge is the
+            only place the verdict appears, and it stays. Omitted while
+            `verdict` is `undefined`; `null` renders `VERDICT['none']`, a real,
+            evaluated absence. `shrink-0` so a long simulation name never
+            squeezes it. */}
         <div className="flex shrink-0 flex-wrap items-center gap-2">
           <NamedBadge mark={STATUS[status]} testId="run-status" />
           {verdict !== undefined && <NamedBadge mark={VERDICT[verdict ?? 'none']} testId="run-verdict" />}

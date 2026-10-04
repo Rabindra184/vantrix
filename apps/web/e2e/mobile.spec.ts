@@ -197,13 +197,11 @@ test('a run’s Summary leads with its decision, and its numbers start on the fi
  * verdict" directly above a row saying "Platform gates — not configured". One
  * fact twice, in 42px of the 424px that WAS the whole first screen on a phone.
  *
- * WITHHELD ONLY WHERE IT IS A RESTATEMENT. When a gate has failed the band
- * shows that gate's own message instead, which names a rule and is never a
- * summary of the rows — so it survives at every width. That distinction is the
- * case below, and it is the one worth guarding: a blanket `max-sm:hidden`
- * would silently drop the one sentence that says WHY a run failed.
+ * GONE AT EVERY WIDTH SINCE THE CLEAN-UI PASS. A failed gate's own message —
+ * the one sentence that says WHY a run failed — is the gates row itself now,
+ * so dropping the paragraph loses nothing; the band's unit tests pin that row.
  */
-test('the phone keeps the failing gate’s own message, and drops only the summary', async ({
+test('the phone’s band carries its two rows and no restating paragraph', async ({
   page,
 }) => {
   const admin = await seedAdmin();
@@ -214,15 +212,13 @@ test('the phone keeps the failing gate’s own message, and drops only the summa
   const band = page.getByRole('region', { name: 'Release decision' });
   await expect(band).toBeVisible();
 
-  /* HIDDEN, NOT ABSENT — and the assertion has to know the difference.
-     `max-sm:hidden` is `display: none`, and `toContainText` reads
-     `textContent`, which includes text no one can see. The first version of
-     this case asserted the substring was gone and failed against a product
-     that was already correct: the band measured 424px -> 372px at 375, so the
-     paragraph WAS hidden. Same shape as the `truncate` lesson CLAUDE.md
-     records — `textContent` is identical whether a string is clipped, hidden
-     or shown, so only a visibility check can see this. */
-  await expect(page.getByTestId('decision-detail')).toBeHidden();
+  /* ABSENT NOW, NOT HIDDEN (clean UI, PR 2). The restating paragraph used to
+     be `max-sm:hidden` on a phone, and this asserted `toBeHidden()`. The
+     paragraph is gone at every width — the failing gate's own sentence is the
+     gates row — and `toBeHidden()` PASSES for an element that does not exist,
+     so the old line would have gone on passing while asserting nothing.
+     `toHaveCount(0)` is the claim that is true now. */
+  await expect(page.getByTestId('decision-detail')).toHaveCount(0);
 
   // The rows it restates are still there, which is the half that makes
   // dropping it honest rather than lossy.

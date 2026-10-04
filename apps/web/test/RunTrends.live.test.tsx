@@ -59,7 +59,10 @@ function processing(status: RunProcessing['status']) {
  * different thing from mounting two separate instances in two different
  * states, and only the former can catch a hook-order bug.
  */
-function renderTrends(body: ReturnType<typeof processing> | { state: 'ready'; run: RunResponse }) {
+function renderTrends(
+  body: ReturnType<typeof processing> | { state: 'ready'; run: RunResponse },
+  trends: unknown = EMPTY_TRENDS,
+) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   client.setQueryData(runQueryKey(RUN_ID), body);
   // `current` is what the fetch stub answers with — a MUTABLE reference, not
@@ -76,7 +79,7 @@ function renderTrends(body: ReturnType<typeof processing> | { state: 'ready'; ru
   vi.stubGlobal('fetch', async (input: RequestInfo) => {
     const url = String(input);
     if (url.includes('/trends')) {
-      return new Response(JSON.stringify(EMPTY_TRENDS), { status: 200 });
+      return new Response(JSON.stringify(trends), { status: 200 });
     }
     // Reads `current` AFTER a microtask, not at call time — the un-`staleTime`'d
     // `runQueryKey` query fires a background refetch on MOUNT, and that call
@@ -213,5 +216,50 @@ describe('RunTrends — live', () => {
 
     expect(screen.queryByTestId('desktop-only')).toBeNull();
     expect(await screen.findByRole('heading', { name: 'Trends' })).toBeInTheDocument();
+  });
+});
+
+/**
+ * CLEAN UI, PR 2 — the Compare link is the whole affordance. "Overlay up to 5
+ * of them on one metric" restated what the Compare page shows the moment it
+ * opens. Two runs, because a cohort of one draws no link at all, and a case
+ * asserting the absence of a line beside a link that never rendered would pass
+ * against anything.
+ */
+describe('RunTrends — the Compare link', () => {
+  function trendRun(id: string, startedAt: string) {
+    return {
+      id,
+      startedAt,
+      toolStartedAt: startedAt,
+      durationMs: 60_000,
+      verdict: 'passed' as const,
+      count: 100,
+      okCount: 98,
+      koCount: 2,
+      errorRate: 0.02,
+      minMs: 10,
+      maxMs: 900,
+      meanMs: 120,
+      throughputRps: 1.6,
+      percentiles: { p50: 100, p95: 400, p99: 800 },
+    };
+  }
+  const TWO_RUNS = {
+    runId: RUN_ID,
+    simulation: COMPLETE_RUN.simulation,
+    test: { id: '99999999-9999-4999-8999-999999999999', slug: 'checkout', name: 'checkout' },
+    cohortSize: 2,
+    runs: [
+      trendRun(RUN_ID, '2026-08-14T10:43:49.546Z'),
+      trendRun('00000000-0000-4000-8000-000000000002', '2026-08-13T10:43:49.546Z'),
+    ],
+  };
+
+  it('offers Compare for a cohort of two, with no line explaining it', async () => {
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+    renderTrends({ state: 'ready', run: COMPLETE_RUN }, TWO_RUNS);
+    expect(await screen.findByRole('link', { name: 'Compare these runs' })).toBeInTheDocument();
+    expect(screen.queryByText(/Overlay up to/)).toBeNull();
   });
 });

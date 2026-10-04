@@ -221,7 +221,10 @@ export default function RunShell({
       <RunHeader
         identity={identity}
         status={status}
-        verdict={verdict}
+        /* Withheld on the Summary, where the release-gate band states the
+           verdict; the band and the lifecycle strip draw nowhere else, so on
+           every other section the header's badge is the verdict. */
+        verdict={onSummary ? undefined : verdict}
         /* THE SAME `compact` THE BRUSH BELOW READS, spent a second time —
            review M02 folds the header's secondary metadata behind a
            disclosure on a phone, and a `<details>`'s open state is the one
@@ -233,7 +236,7 @@ export default function RunShell({
            `editing`/`draft` state — AND an in-flight save's `useMutation`
            closure, still pointed at the OLD run id's `onSuccess` — would
            survive navigating from one run to another (Back, or the
-           baseline note's "vs previous" link). A same-instance reset can
+           link a tile's delta draws to the run it compares against). A same-instance reset can
            clear the draft but cannot re-point a save already in flight;
            the key forces a fresh instance instead, so a stale save's
            `onSuccess` writes into a component that is no longer mounted. */

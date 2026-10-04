@@ -223,8 +223,12 @@ test('renders a not_applicable assertion distinctly from a pass', async ({ page 
   // run made entirely of inapplicable rules produces — and pinning it is a
   // far stronger claim than excluding "passed". (It also fails if the verdict
   // is deleted outright, though as measured above the negation would too.)
-  await expect(page.getByTestId('run-verdict')).toHaveText(/not evaluated/i);
-  await expect(page.getByTestId('run-verdict')).not.toContainText(/passed/i);
+  //
+  // The header carries no verdict badge any more (clean UI, PR 2): the band's
+  // word and the lifecycle strip's last step state it, so both are pinned.
+  await expect(page.getByTestId('decision-word')).toHaveText(/^not evaluated$/i);
+  await expect(page.getByTestId('lifecycle-verdict')).toContainText('Verdict: Not evaluated');
+  await expect(page.getByTestId('lifecycle-verdict')).not.toContainText(/passed/i);
 });
 
 /**
@@ -309,10 +313,11 @@ test('a pending run says so rather than showing zeros', async ({ page }) => {
   // this line actually protects is that it reads the "not a measurement"
   // dash, never a fabricated `0s`.
   await expect(page.getByTestId('run-duration')).toHaveText('—');
-  // `run-verdict`, unlike duration, stays ABSENT — `RunHeader` omits that
-  // badge entirely rather than rendering one for `undefined` (Task 7's own
-  // `verdict={undefined}` for a non-terminal run).
-  await expect(page.getByTestId('run-verdict')).toHaveCount(0);
+  // The verdict, unlike duration, is not claimed at all: the lifecycle
+  // strip's verdict step — where the verdict lives now that the header has
+  // no badge (clean UI, PR 2) — stays pending and names no word.
+  await expect(page.getByTestId('lifecycle-verdict')).toHaveAttribute('data-state', 'pending');
+  await expect(page.getByTestId('lifecycle-verdict')).not.toContainText('Verdict:');
   await expect(page.getByRole('table')).toHaveCount(0);
 });
 
@@ -468,7 +473,7 @@ test('a run that failed its SLA renders as a run, not as an error', async ({ pag
   await page.goto(runPath(runId));
 
   await expect(page.getByRole('heading', { name: /ParitySimulation/ })).toBeVisible();
-  await expect(page.getByTestId('run-verdict')).toContainText(/failed/i);
+  await expect(page.getByTestId('decision-word')).toHaveText(/^failed$/i);
   // The specific way this breaks: apiFetch's synthetic branch, which fires
   // when a non-2xx body is not problem-shaped — and a 422 run body never is.
   await expect(page.getByText(/CLIENT_UNREADABLE_ERROR|could not be parsed/i)).toHaveCount(0);
@@ -710,12 +715,12 @@ test('a live run shows its identity in the header, not a bare id', async ({ page
   // `exact: true` query in practice; scoping removes the need to rely on that.
   await expect(breadcrumb.getByRole('link', { name: 'Checkout', exact: true })).toBeVisible();
   await expect(page.getByTestId('run-status')).toContainText(/running/i);
-  // `undefined` verdict, not `null` — `RunDetail` hands `RunShell` `verdict:
-  // undefined` for anything short of `state: 'ready'`, and `RunHeader` OMITS
-  // the badge entirely for `undefined` rather than rendering
-  // `VERDICT['none']`: "no verdict" reads as evaluated-and-nothing-found, a
-  // claim about a run nobody has finished measuring yet.
-  await expect(page.getByTestId('run-verdict')).toHaveCount(0);
+  // No verdict is claimed for a run nobody has finished measuring: "no
+  // verdict" would read as evaluated-and-nothing-found. The lifecycle
+  // strip's verdict step carries the verdict now (clean UI, PR 2) and stays
+  // pending here, naming no word.
+  await expect(page.getByTestId('lifecycle-verdict')).toHaveAttribute('data-state', 'pending');
+  await expect(page.getByTestId('lifecycle-verdict')).not.toContainText('Verdict:');
 });
 
 /**

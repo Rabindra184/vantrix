@@ -53,8 +53,10 @@ test('an incomplete run says its load test stopped early', async ({ page }) => {
   // AND IT WAS NEVER JUDGED. This seeded run is the unprocessed shape — the
   // real API answers it with `assertions: []` and no `durationMs` — so the
   // band and the strip must say "Not evaluated", never "Not configured", a
-  // claim about a project whose rules simply never ran (`rulesRan`).
+  // claim about a project whose rules simply never ran (`rulesRan`). The band's
+  // gates row is one phrase since the clean-UI pass; the longer reason ("the
+  // run left nothing to judge") lives on the Platform gates bar below it.
   await expect(page.getByTestId('decision-word')).toHaveText(/^not evaluated$/i);
-  await expect(page.getByTestId('outcome-gates')).toContainText(/left nothing to judge/i);
+  await expect(page.getByTestId('outcome-gates')).toHaveText(/^Platform gates\s*not evaluated$/i);
   await expect(page.getByTestId('lifecycle-verdict')).toContainText('Verdict: Not evaluated');
 });
