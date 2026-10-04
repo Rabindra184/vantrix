@@ -566,7 +566,11 @@ describe('RunDecisionBand — one row per system, no repeated counts', () => {
     renderBand({
       assertions: [gate('p99', 'failed', 1830, 750), gate('p95', 'failed', 900, 800), gate('p50', 'failed', 500, 100)],
     });
-    expect(outcomes()).toHaveTextContent(/exceeds the 750 ms limit\.? and 2 more$/);
+    // ONE sentence: the gate's own sentence ends in a full stop, and a suffix
+    // tacked on after it read "…limit. and 2 more" on the band's top row.
+    expect(outcomes()).toHaveTextContent(
+      /^Platform gates\s*Whole-run p99 response time 1830 ms exceeds the 750 ms limit, and 2 more\.$/,
+    );
   });
 
   it.each([

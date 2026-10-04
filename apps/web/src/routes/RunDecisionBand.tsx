@@ -370,7 +370,10 @@ function gatesOutcome(
   if (assertions.length === 0) return 'not configured';
   if (failed !== undefined) {
     const sentence = describeSlaOutcome(failed) ?? failed.message;
-    return counts.failed > 1 ? `${sentence} and ${counts.failed - 1} more` : sentence;
+    if (counts.failed <= 1) return sentence;
+    // One sentence, not a sentence and a fragment: the gate's own ends in a
+    // full stop, so the count joins it before that stop.
+    return `${sentence.replace(/\.$/, '')}, and ${counts.failed - 1} more.`;
   }
   if (counts.passed === 0) return 'not evaluated';
   return 'passed';
