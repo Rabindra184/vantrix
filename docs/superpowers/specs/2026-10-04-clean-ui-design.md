@@ -124,7 +124,11 @@ PRs 2–4 are sketched at the end and get their own short specs when reached.
   construction.
 - **Panel.** The card surface, `border-default`, `shadow-panel`, `p-3`,
   `text-[0.8125rem] leading-relaxed`, `max-w-72`. No new colours or tokens.
-- **Never inside a `<th>`.** Chromium folds a descendant button's name into
+- **Never inside a heading or a `<th>`, only beside one.** A heading's and a
+  header cell's accessible name is computed from their content, so a trigger
+  inside either adds its own name to theirs, and the hidden copy adds its words
+  to their `textContent` — which `run-tables.spec.ts` reads to pin each tab's
+  heading outline. For the `<th>` case Chromium folds a descendant button's name into
   the column header's accessible name ("p95 About p95"), which breaks both a
   screen reader's announcement and the e2e suite's exact `columnheader`
   queries. jsdom cannot see this (it does not consult a descendant's
@@ -159,22 +163,30 @@ goes. No other change to `SectionHeading`.
   the table's `<caption class="sr-only">`. Callers pass the same string they
   render, as today.
 - **Each caller's long text** moves into the `info` slot of the section
-  heading that names its table, or is deleted where it restates that heading.
+  heading that names its table. A table with no section heading of its own —
+  seven of the ten — takes it through `TableFrame`'s own `info?: ReactNode`,
+  drawn as an `InfoTip` at the frame's top-right, above the scroll box,
+  labelled `About ${name}`. With no `info` the frame draws no extra row. Text
+  that restates a heading is deleted rather than moved.
 
-The ten callers and the names that keep existing queries matching:
+The ten callers, where each caveat goes, and the names that keep existing
+queries matching:
 
-| caller | short name | queried by |
-| --- | --- | --- |
-| `StatisticsTable` | Statistics | `/statistics/i` ×5 |
-| `ErrorsTable` | Errors | `/errors/i` ×7, `/error/i` ×1 |
-| `CompareMatrix` | Per-request comparison | `/request/i` |
-| `NewRunnerRun` (jobs) | On-prem runner jobs | `/on-prem runner jobs/i` |
-| `ProjectTests` | Tests | `/every test in this project/i` → **re-pointed** to `/^tests$/i` |
-| `RunList` | Runs | — |
-| `ProjectPackages` | Packages | — |
-| `ProjectAccess` | API tokens | — |
-| `ProjectRules` ×3 | Test SLA rules / Inherited SLA rules / SLA rules (each table's existing `label`) | — |
-| `GroupsList` | Groups | — |
+| caller | short name | caveat goes to | queried by |
+| --- | --- | --- | --- |
+| `StatisticsTable` | Statistics | its `SectionHeading` | `/statistics/i` ×5 |
+| `ErrorsTable` | Errors; scoped: `Errors for ${scopeLabel}` | its `SectionHeading` | `/errors/i` ×7, `/error/i` ×1, `/search/i` (scoped) ×1 |
+| `CompareMatrix` | Per-request comparison | its `SectionHeading` ("By request") | `/request/i` |
+| `NewRunnerRun` (jobs) | On-prem runner jobs | deleted — restates the name | `/on-prem runner jobs/i` |
+| `ProjectTests` | Tests | `TableFrame` `info` | `/every test in this project/i` → **re-pointed** to `/^tests$/i` |
+| `RunList` | Runs | `TableFrame` `info`; "Every run in …, newest first" deleted | — |
+| `ProjectPackages` | Packages | deleted — restates the name | — |
+| `ProjectAccess` | API tokens | `TableFrame` `info` | — |
+| `ProjectRules` ×3 | Test SLA rules / Inherited SLA rules / SLA rules | `TableFrame` `info`; "newest first" deleted | — |
+| `GroupsList` | Groups | `TableFrame` `info` | — |
+
+The scoped errors table keeps its scope IN its name, because a screen reader
+moving by table must not read one request's failures as the run's.
 
 `ProjectTests`' current name is a sentence restating its heading, so it is the
 one query that changes; it is re-pointed to the new exact name, never loosened.
