@@ -55,8 +55,7 @@ type RunListItem = RunListResponse['items'][number];
  * THE TABLE'S NAME IS "Runs" AND ITS CAVEAT IS BEHIND AN INFO (clean UI).
  * The caption used to be a paragraph printed above the list — what "Started"
  * means, and what the since-removed Focus column was — met on every visit. It
- * is the frame's `InfoTip` now,
- * the same on both layouts, and the sentence that only restated the scope
+ * is the frame's `InfoTip` now, the same on both layouts, and the sentence that only restated the scope
  * ("Every run in this project, newest first") is gone.
  *
  * Filters are URL state and API parameters. That is the important boundary:
@@ -280,8 +279,8 @@ export default function RunList({
         />
       ) : (
         <>
-          <RunTally items={items} />
-          {/* ═══ NINE COLUMNS DO NOT FIT ON A PHONE, AND SCROLLING THEM
+          <RunTally items={items} showTotal={!showHeading} />
+          {/* ═══ EIGHT COLUMNS DO NOT FIT ON A PHONE, AND SCROLLING THEM
               SIDEWAYS IS NOT A FIX (review M18) ═══
 
               The TABLE scrolls horizontally inside its box — so a reader
@@ -1019,6 +1018,9 @@ function NoteLine({ note }: { readonly note: string | null | undefined }) {
  *   375, cards   the name shares a line with the badges; a card whose name
  *                wraps once more grows 15px (155 -> 170)
  *
+ * Those figures predate the clean-UI pass, whose package line puts every
+ * simulation name on at least two lines; re-measure before quoting them.
+ *
  * Inherent to putting the button beside the name, which is where a reader
  * looks for the id of the thing they are reading.
  */
@@ -1080,9 +1082,9 @@ function RunCard({
         </div>
       </div>
 
-      {/* THE TWO TRIAGE NUMBERS, SIDE BY SIDE AND FIRST. On the table these
-          are columns 6 and 7 and a phone had to scroll sideways to reach
-          them; they are the whole reason a reader looks at this list without
+      {/* THE TWO TRIAGE NUMBERS, SIDE BY SIDE AND FIRST. On the table they
+          follow identity and outcome, and a phone had to scroll sideways to
+          reach them; they are the whole reason a reader looks at this list without
           opening a run. `—` rather than `0` for anything unavailable, exactly
           as in `RunRow`: a zero in a latency column is a measurement. */}
       <dl className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-[0.8125rem]">

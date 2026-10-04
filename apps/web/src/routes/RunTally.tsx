@@ -10,8 +10,9 @@ type RunListItem = RunListResponse['items'][number];
  * Keyset pagination never learns a total, so the counts cannot be the
  * filtered set's; they were demoted from four dashboard tiles to a caption
  * for that reason, and the clean-UI pass takes them the rest of the way: the
- * card, the scope line's run total (the heading already says "23 runs"), a
- * description under each count and the "How counts work" disclosure all go.
+ * card, a description under each count and the "How counts work" disclosure
+ * all go, and so does the scope line's run total WHERE the heading already
+ * says it (All runs; see `showTotal`).
  *
  * WHAT STAYS VISIBLE is "On this page", because it changes what every number
  * beside it means. WHAT EACH COUNT INCLUDES, that a run can sit in two, and
@@ -22,7 +23,20 @@ type RunListItem = RunListResponse['items'][number];
  * to page. Each count is its own `<div>` with a derived testid: the number,
  * its label, and nothing else.
  */
-export default function RunTally({ items }: { readonly items: readonly RunListItem[] }) {
+export default function RunTally({
+  items,
+  showTotal,
+}: {
+  readonly items: readonly RunListItem[];
+  /**
+   * Whether "On this page" also says how many runs that is. TRUE where no
+   * heading above the list counts them — a project's list and a test's page
+   * hide `RunList`'s heading — and false on All runs, whose heading already
+   * says "23 runs" (final review, Important 2). Required, with no default: a
+   * caller that forgot it would leave a page with no count at all, silently.
+   */
+  readonly showTotal: boolean;
+}) {
   const counts = tally(items);
   return (
     <section
@@ -30,7 +44,9 @@ export default function RunTally({ items }: { readonly items: readonly RunListIt
       className="flex flex-wrap items-baseline gap-x-5 gap-y-1 text-[0.75rem]"
     >
       <span data-testid="health-scope" className="font-medium text-muted">
-        On this page
+        {showTotal
+          ? `On this page · ${items.length} ${items.length === 1 ? 'run' : 'runs'}`
+          : 'On this page'}
       </span>
       <Count label="Needs attention" value={counts.needsAttention} />
       <Count label="In flight" value={counts.inFlight} />
@@ -41,9 +57,11 @@ export default function RunTally({ items }: { readonly items: readonly RunListIt
   );
 }
 
+/** In the Status badges' and filter's own words ("incomplete", "running"):
+ *  one word per thing, so a reader can match a definition to a column. */
 const COUNTS_INFO =
-  'Needs attention: failed, stopped early, SLA verdict failed, or a simulation assertion failed. ' +
-  'In flight: pending, parsing or live. Passed gates: SLA verdict passed. Unjudged: no verdict, ' +
+  'Needs attention: failed, incomplete, SLA verdict failed, or a simulation assertion failed. ' +
+  'In flight: pending, parsing or running. Passed gates: SLA verdict passed. Unjudged: no verdict, ' +
   'or not evaluated. A run can sit in more than one count — Needs attention asks whether anything ' +
   'failed, Unjudged whether a gate reached a verdict. The counts cover this page only, not the ' +
   'whole list.';

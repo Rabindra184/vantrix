@@ -33,7 +33,7 @@ const FOUR: RunListResponse['items'] = [
 
 describe('RunTally', () => {
   it('counts the page in four labelled numbers, zeros included', () => {
-    render(<RunTally items={FOUR} />);
+    render(<RunTally items={FOUR} showTotal={false} />);
     const counts = [
       ['needs-attention', 'Needs attention', 1],
       ['in-flight', 'In flight', 1],
@@ -45,14 +45,14 @@ describe('RunTally', () => {
     }
 
     cleanup();
-    render(<RunTally items={[]} />);
+    render(<RunTally items={[]} showTotal={false} />);
     for (const [id, label] of counts) {
       expect(screen.getByTestId(`health-${id}`)).toHaveTextContent(new RegExp(`^0\\s*${label}$`));
     }
   });
 
   it('scopes the counts without repeating the run total, and carries no descriptions', () => {
-    render(<RunTally items={FOUR} />);
+    render(<RunTally items={FOUR} showTotal={false} />);
     expect(screen.getByRole('region', { name: 'Run health on this page' })).toBeInTheDocument();
     expect(screen.getByTestId('health-scope')).toHaveTextContent(/^On this page$/);
     expect(screen.queryByText(/Pending, parsing, or live/)).toBeNull();
@@ -61,11 +61,25 @@ describe('RunTally', () => {
   });
 
   it('puts what each count includes behind one info', () => {
-    render(<RunTally items={FOUR} />);
+    render(<RunTally items={FOUR} showTotal={false} />);
     const info = screen.getByRole('button', { name: 'About these counts' });
-    expect(info).toHaveAccessibleDescription(/simulation assertion failed/i);
-    expect(info).toHaveAccessibleDescription(/pending, parsing or live/i);
+    // Each count's definition, in the words the Status badges and filter use
+    // ("incomplete", "running") — one word per thing (review N01, review 22).
+    expect(info).toHaveAccessibleDescription(
+      /Needs attention: failed, incomplete, SLA verdict failed, or a simulation assertion failed/,
+    );
+    expect(info).toHaveAccessibleDescription(/In flight: pending, parsing or running/);
+    expect(info).toHaveAccessibleDescription(/Passed gates: SLA verdict passed/);
+    expect(info).toHaveAccessibleDescription(/Unjudged: no verdict, or not evaluated/);
     expect(info).toHaveAccessibleDescription(/more than one/i);
     expect(info).toHaveAccessibleDescription(/this page only/i);
+  });
+
+  it('says how many runs are on the page when asked to', () => {
+    render(<RunTally items={FOUR} showTotal />);
+    expect(screen.getByTestId('health-scope')).toHaveTextContent(/^On this page · 4 runs$/);
+    cleanup();
+    render(<RunTally items={FOUR.slice(0, 1)} showTotal />);
+    expect(screen.getByTestId('health-scope')).toHaveTextContent(/^On this page · 1 run$/);
   });
 });

@@ -15,7 +15,7 @@ afterEach(cleanup);
 function renderList(
   items: RunListResponse['items'],
   initialEntry = '/runs',
-  props: { projectSlug?: string; testSlug?: string } = {},
+  props: { projectSlug?: string; testSlug?: string; showHeading?: boolean } = {},
 ) {
   const fetchSpy = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(() =>
     Promise.resolve(
@@ -425,6 +425,26 @@ describe('RunList columns', () => {
  * still says the counts are page-local (clean UI, PR 3: the caveat moved from
  * a disclosure to the ⓘ, its claims unchanged).
  */
+/**
+ * FINAL REVIEW, IMPORTANT 2: the scope line dropped the run total because "the
+ * heading already says it" — true on All runs, false on a project's list and a
+ * test's page, which hide the list's heading (`showHeading={false}`). There
+ * the scope line is the page's only count, so it keeps it.
+ */
+describe('RunList — the tally counts the page where no heading does', () => {
+  it('says how many runs are on the page when the heading is hidden, and not when it is shown', async () => {
+    renderList([...ROWS], '/projects/checkout/runs', { projectSlug: 'checkout', showHeading: false });
+    const hidden = await screen.findByRole('region', { name: 'Run health on this page' });
+    expect(within(hidden).getByTestId('health-scope')).toHaveTextContent(/^On this page · 2 runs$/);
+    expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
+
+    cleanup();
+    renderList([...ROWS]);
+    const shown = await screen.findByRole('region', { name: 'Run health on this page' });
+    expect(within(shown).getByTestId('health-scope')).toHaveTextContent(/^On this page$/);
+  });
+});
+
 describe('RunList — the health summary says which systems it counted', () => {
   it('says the counts include simulation assertions and cover this page only', async () => {
     renderList([...ROWS]);
