@@ -16,6 +16,7 @@ import {
   Funnel,
   GitCompareArrows,
   Inbox,
+  Info,
   KeyRound,
   Layers,
   LoaderCircle,
@@ -163,6 +164,9 @@ export const AlertIcon = icon(TriangleAlert);
 
 /** An empty result — a container with nothing in it. */
 export const InboxIcon = icon(Inbox);
+
+/** A caveat about the thing beside it, opened on request — see `InfoTip`. */
+export const InfoIcon = icon(Info);
 
 /** An action in flight — pair with `animate-spin` and `aria-busy`. */
 export const SpinnerIcon = icon(LoaderCircle);
