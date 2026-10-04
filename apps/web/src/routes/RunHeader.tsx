@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 import Badge from '../components/Badge';
 import { ChevronRightIcon } from '../components/icons';
 import { formatDuration, formatInstant } from './format';
-import { STATUS, type Mark } from './marks';
+import { STATUS, VERDICT, type Mark } from './marks';
 import { projectPath, projectTestPath } from './paths';
 import { runName } from '../runNumber';
 
@@ -81,6 +81,7 @@ const COMPACT_STRIP = `flex flex-col gap-3 ${BOX}`;
 export default function RunHeader({
   identity,
   status,
+  verdict,
   compact,
   note,
 }: {
@@ -94,6 +95,17 @@ export default function RunHeader({
    */
   readonly identity: Partial<RunIdentity> & { readonly id: string };
   readonly status: RunResponse['status'];
+  /**
+   * `undefined` OMITS the badge: a run nobody has finished measuring yet, or
+   * a page that states the verdict elsewhere — `RunShell` passes `undefined`
+   * on the Summary, whose release-gate band says it in its largest type.
+   * `null` means evaluated with no verdict and renders `VERDICT['none']`.
+   *
+   * Collapsing the two would put "no verdict" on a running run, which reads as
+   * evaluated-and-nothing-found — a claim about a run nobody has finished
+   * measuring.
+   */
+  readonly verdict: RunResponse['verdict'] | undefined;
   /**
    * `useIsCompact()`, PASSED IN — the shape `DesktopOnly` already uses and for
    * its stated reason: "so a caller can test both paths". `RunShell` already
@@ -394,16 +406,18 @@ export default function RunHeader({
           {noteInDetails ? null : note}
         </div>
 
-        {/* The STATUS only (clean UI, PR 2). The verdict used to sit here too,
-            and on the Summary it was then stated three times — this badge,
-            the lifecycle strip's last step and the release-gate band. The
-            strip carries it on every tab and the band on the Summary; status
-            and verdict are different facts, so status stays. On a phone the
-            strip collapses to one step, and a failed verdict is a step that
-            did not end well — the one it shows. `shrink-0` so a long
-            simulation name never squeezes it. */}
+        {/* STATUS always; the VERDICT once per page. On the Summary the
+            verdict was stated three times — this badge, the lifecycle strip's
+            last step and the release-gate band — so `RunShell` withholds it
+            there (clean UI, PR 2). The strip and the band draw on the Summary
+            ALONE, so on the Report, Logs, Trends and Compare this badge is the
+            only place the verdict appears, and it stays. Omitted while
+            `verdict` is `undefined`; `null` renders `VERDICT['none']`, a real,
+            evaluated absence. `shrink-0` so a long simulation name never
+            squeezes it. */}
         <div className="flex shrink-0 flex-wrap items-center gap-2">
           <NamedBadge mark={STATUS[status]} testId="run-status" />
+          {verdict !== undefined && <NamedBadge mark={VERDICT[verdict ?? 'none']} testId="run-verdict" />}
         </div>
       </div>
 

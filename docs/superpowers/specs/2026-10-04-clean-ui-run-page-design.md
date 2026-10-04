@@ -13,6 +13,9 @@ Decisions settled in brainstorming:
 2. **A tile is a label, a value and a delta that names its run.**
 3. **The header's verdict badge goes**; the lifecycle strip carries the
    verdict on every tab, the band on the Summary.
+   *Amended after the final review:* the strip, like the band, draws on the
+   Summary alone, so the badge goes from the Summary only and stays on the
+   Report, Logs, Trends and Compare — one verdict per page.
 4. **The percentile chart's ten band chips become one "Bands" dropdown.**
 5. **One PR, six tasks.**
 
@@ -98,6 +101,11 @@ The verdict badge (`data-testid="run-verdict"`) is removed. The status badge
 stays — status and verdict are different facts. On a phone the lifecycle strip
 collapses to one step, and a failed verdict is a step that did not end well, so
 it is the step a phone already shows.
+
+*Amended after the final review:* both premises above were false — `RunShell`
+draws the strip on the Summary alone, and a phone's one step is never the
+verdict (`phoneStep` filters it out). The badge is withheld on the Summary,
+where the band states the verdict, and kept on every other section.
 
 ## The gate cards (`AssertionBars`)
 

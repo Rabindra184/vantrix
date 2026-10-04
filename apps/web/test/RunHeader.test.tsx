@@ -47,6 +47,7 @@ function renderHeader(
       <RunHeader
         identity={run}
         status={run.status}
+        verdict={run.verdict}
         compact={compact}
         note={note}
       />
@@ -233,7 +234,7 @@ describe('RunHeader', () => {
     render(
       <MemoryRouter>
         <RunHeader identity={{ id: 'a66548b7-2962-43ff-8b93-7149a6f2a1b8' }}
-                   status="running" compact={false} note={null} />
+                   status="running" verdict={undefined} compact={false} note={null} />
       </MemoryRouter>,
     );
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Run a66548b7');
@@ -252,25 +253,33 @@ describe('RunHeader', () => {
                                project: { id: '11111111-1111-4111-8111-111111111111',
                                           slug: 'checkout', name: 'Checkout' },
                                tool: 'gatling', startedAt: '2026-08-20T10:43:49.546Z' }}
-                   status="running" compact={false} note={null} />
+                   status="running" verdict={undefined} compact={false} note={null} />
       </MemoryRouter>,
     );
     expect(screen.queryByTestId('run-verdict')).toBeNull();
     expect(screen.getByRole('link', { name: 'Checkout' })).toBeInTheDocument();
   });
 
-  /** Clean UI, PR 2: the verdict was stated three times on the Summary — this
-   *  badge, the lifecycle strip's last step and the release-gate band. The
-   *  strip carries it on every tab and the band on the Summary, so the header
-   *  keeps only the STATUS, which is a different fact. */
-  it('draws the status badge and no verdict badge, even for a failed terminal run', () => {
+  /** The header draws whatever verdict it is handed — WHERE it is withheld
+   *  (the Summary, whose band states it) is `RunShell`'s decision, pinned in
+   *  `RunShell.test.tsx`. */
+  it('draws a failed terminal run’s verdict beside its status', () => {
     render(
       <MemoryRouter>
-        <RunHeader identity={FULL_IDENTITY} status="complete" compact={false} note={null} />
+        <RunHeader identity={FULL_IDENTITY} status="complete" verdict="failed" compact={false} note={null} />
       </MemoryRouter>,
     );
-    expect(screen.getByTestId('run-status')).toHaveTextContent(/complete/i);
-    expect(screen.queryByTestId('run-verdict')).toBeNull();
+    expect(screen.getByTestId('run-status')).toHaveAccessibleName('complete');
+    expect(screen.getByTestId('run-verdict')).toHaveAccessibleName('failed');
+  });
+
+  it('draws an evaluated absence as no verdict yet', () => {
+    render(
+      <MemoryRouter>
+        <RunHeader identity={FULL_IDENTITY} status="complete" verdict={null} compact={false} note={null} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId('run-verdict')).toHaveAccessibleName('no verdict yet');
   });
 
   /** The breadcrumb's current rung names WHICH run of the test this is — by

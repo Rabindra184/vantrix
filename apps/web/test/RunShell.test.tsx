@@ -453,6 +453,26 @@ describe('RunShell — GE’s Summary and Report around the tab strip', () => {
     expect(screen.queryByTestId('run-lifecycle')).toBeNull();
   });
 
+  /** THE VERDICT ONCE PER PAGE, ON EVERY PAGE (clean UI PR 2's final review).
+   *  The header's verdict badge was dropped on the belief that the lifecycle
+   *  strip carries the verdict on every tab — and the strip, like the band,
+   *  draws on the Summary alone. So a failed run's Report, Logs, Trends and
+   *  Compare said nothing about how it went. The badge is back on those four
+   *  and withheld on the Summary, where the band's word states it. */
+  it.each(['report', 'logs', 'trends', 'compare'])('names a failed run’s verdict in the header on %s', (section) => {
+    renderShellWith({ verdict: 'failed' }, `/runs/${RUN.id}/${section}`);
+    expect(screen.getByTestId('run-verdict')).toHaveAccessibleName('failed');
+  });
+
+  it('names no verdict in the header on the Summary, where the band states it', () => {
+    renderShellWith({ verdict: 'failed' }, `/runs/${RUN.id}`);
+    // The paired positive: the band is there, so the absence is not a page
+    // that failed to draw.
+    expect(screen.getByRole('region', { name: 'Release decision' })).toBeInTheDocument();
+    expect(screen.getByTestId('run-status')).toBeInTheDocument();
+    expect(screen.queryByTestId('run-verdict')).toBeNull();
+  });
+
   it('offers the time window on the Report and nowhere else', async () => {
     renderShellWith({ windowable: true }, `/runs/${RUN.id}/report`);
     expect(await screen.findByTestId('time-brush')).toBeInTheDocument();

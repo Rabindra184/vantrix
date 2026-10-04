@@ -221,6 +221,10 @@ export default function RunShell({
       <RunHeader
         identity={identity}
         status={status}
+        /* Withheld on the Summary, where the release-gate band states the
+           verdict; the band and the lifecycle strip draw nowhere else, so on
+           every other section the header's badge is the verdict. */
+        verdict={onSummary ? undefined : verdict}
         /* THE SAME `compact` THE BRUSH BELOW READS, spent a second time —
            review M02 folds the header's secondary metadata behind a
            disclosure on a phone, and a `<details>`'s open state is the one
