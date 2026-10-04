@@ -1,8 +1,9 @@
 import { useId, useMemo } from 'react';
+import InfoTip from '../components/InfoTip';
 import SectionHeading from '../components/SectionHeading';
 import { EmptyState } from '../components/States';
 import TableFrame from '../components/TableFrame';
-import { CAPTION, ROW, TABLE, TD, TD_NUM, TH, THEAD, TH_NUM, TH_ROW } from '../components/tableStyles';
+import { ROW, TABLE, TD, TD_NUM, TH, THEAD, TH_NUM, TH_ROW } from '../components/tableStyles';
 import { formatCell } from '../charts/DataTable';
 import { compareUnit, type CompareMetric } from '../charts/transforms/compare';
 import { toCompareMatrix, type CompareChangeRow, type CompareStats } from './buildCompareMatrix';
@@ -61,18 +62,14 @@ export default function CompareMatrix({
    * changing it. */
   const name = `Per-request ${metricLabel.toLowerCase()} across the selected runs`;
 
-  /* The visible line: what the table IS. No unit here — it is in the
-   * headers, which is the half of row 7 that makes the prose unnecessary
-   * rather than merely shorter. */
-  const summary = <>{metricLabel} for every request, in each selected run.</>;
-
-  /* The help. Available rather than present, behind `TableFrame`'s
-   * disclosure — the mechanism C06 built for exactly this. A dash is worth
-   * defining precisely BECAUSE the obvious reading is wrong: it is not a
-   * zero, and `toCompareMatrix` refuses to emit one for the reason its own
-   * comment gives — a zero would sort to the top of a column of durations
-   * as though it were the fastest thing in the comparison. */
-  const caption = (
+  /* The help, behind the section heading's info (the clean-UI text rule).
+   * The visible line that used to sit above the table ("p95 for every
+   * request, in each selected run") only restated the heading, so it is gone.
+   * A dash is worth defining precisely BECAUSE the obvious reading is wrong:
+   * it is not a zero, and `toCompareMatrix` refuses to emit one for the
+   * reason its own comment gives — a zero would sort to the top of a column of
+   * durations as though it were the fastest thing in the comparison. */
+  const info = (
     <>
       A dash means the request did not run in that one — not that it took no time.
       {matrix.change !== null && (
@@ -99,17 +96,15 @@ export default function CompareMatrix({
 
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-3">
-      <SectionHeading id={headingId}>By request</SectionHeading>
+      <SectionHeading id={headingId} info={<InfoTip label="About By request">{info}</InfoTip>}>
+        By request
+      </SectionHeading>
 
-      <TableFrame caption={caption} summary={summary} label="Per-request comparison">
+      <TableFrame name={name} label="Per-request comparison">
         <table className={TABLE}>
-          {/* THE NAME, NOT THE PROSE. This rendered `{caption}` — the same
-              node `TableFrame` draws — which made the table's accessible name
-              the whole explanation, including the dash definition. `summary`
-              is what shows now and `caption` is behind the disclosure, so the
-              sighted reader and the screen-reader user get the same short
-              name and the same opt-in detail, which is what C06 asks for. */}
-          <caption className={`${CAPTION} sr-only`}>{name}</caption>
+          {/* THE NAME, NOT THE PROSE: a short name for both readers, the dash
+              definition behind the heading's info (review C06). */}
+          <caption className="sr-only">{name}</caption>
 
           <thead className={THEAD}>
             <tr>

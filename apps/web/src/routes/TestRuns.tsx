@@ -161,14 +161,6 @@ export default function TestRuns() {
 
   const row = test.data;
 
-  const caption = (
-    <>
-      Every run of {row.name}, newest first. “Started” is the load test’s own start time; rows
-      marked <em>ingest time</em> have not been parsed yet, so they fall back to when PerfPortal
-      received the run. Focus is the first operational action to take from the row.
-    </>
-  );
-
   return (
     <div className="flex flex-col gap-4">
       <Breadcrumb projectSlug={slug} projectName={project?.name ?? slug} testName={row.name} />
@@ -427,7 +419,6 @@ export default function TestRuns() {
         testSlug={testSlug}
         heading={row.name}
         showHeading={false}
-        caption={caption}
         emptyBody={
           'This test exists because a run of it was parsed at some point, so an empty list here ' +
           'means those runs have since been deleted.'

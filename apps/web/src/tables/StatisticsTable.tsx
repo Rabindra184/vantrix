@@ -14,6 +14,7 @@ import {
   type TableRow,
 } from './buildTree';
 import Button from '../components/Button';
+import InfoTip from '../components/InfoTip';
 import SectionHeading from '../components/SectionHeading';
 import { EmptyState } from '../components/States';
 import TableFrame from '../components/TableFrame';
@@ -936,7 +937,14 @@ export default function StatisticsTable({
           32px root that input alone is 448px. Wrapping is what makes the
           answer independent of the reader's font size. */}
       <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-        <SectionHeading id={headingId} level={headingLevel} overline="Run telemetry">Statistics</SectionHeading>
+        <SectionHeading
+          id={headingId}
+          level={headingLevel}
+          overline="Run telemetry"
+          info={<InfoTip label="About Statistics">{TABLE_INFO}</InfoTip>}
+        >
+          Statistics
+        </SectionHeading>
 
         {/* G-14, THE FILTER BOX. A real `<label htmlFor>` rather than a
             placeholder: a placeholder disappears the moment the reader types,
@@ -998,46 +1006,15 @@ export default function StatisticsTable({
         </div>
       </details>
 
-      <TableFrame
-        caption={CAPTION_TEXT}
-        summary="Every request and group in this run, with the run’s own totals first. Times in milliseconds."
-        label="Statistics table"
-      >
+      <TableFrame name={TABLE_NAME} label="Statistics table">
         <table className={TABLE}>
-          {/* The caption is the table's ACCESSIBLE NAME as well as its
-              explanation — `getByRole('table', { name: /statistics/i })` is how
-              this suite and the Playwright specs find it, and this suite reads
-              this element's own `textContent` for the percentile caveat.
-
-              It states that caveat because the ruling requires it: a reader
-              comparing our 99th against another tool's needs to know it is an
-              estimate, and that is true whether or not it was clamped.
-
-              `sr-only`, with the SAME text drawn visibly by `TableFrame` above
-              the scroll box — a `<caption>` is as wide as its table, and this
-              table is far wider than a phone. See `TableFrame`'s docstring. */}
-          {/* ═══ A CONCISE NAME, NOT THE WHOLE METHODOLOGY (review C06) ═══
-           *
-           * This was `{CAPTION_TEXT}` — 94 words, and a `<caption>` IS the
-           * table's accessible name, so a screen-reader user met the entire
-           * methodology on arrival with no way to skip it. C06 asks for "a
-           * short caption" with "optional methodology as an accessible
-           * disclosure", and says in as many words: "Avoid duplicating the
-           * full prose as the accessible name."
-           *
-           * `TableFrame` already exposes that disclosure (the `aria-hidden`
-           * half of C06 was fixed when it shipped), so every one of those 94
-           * words is still one keystroke away and none is lost.
-           *
-           * IT KEEPS THE WORD "Statistics" DELIBERATELY. Six specs across the
-           * unit and e2e suites find this table by
-           * `getByRole('table', { name: /statistics/i })`, and the visible
-           * `summary` prop — "Every request and group in this run…" — does not
-           * contain it. Naming the table after what it IS satisfies the review
-           * and keeps those queries pointed at the same element; a short name
-           * that dropped the distinctive word would have been a rename
-           * smuggled in behind an accessibility fix. */}
-          <caption className="sr-only">{CAPTION_NAME}</caption>
+          {/* The table's accessible NAME, a word — `getByRole('table', { name:
+              /statistics/i })` is how this suite and the Playwright specs find
+              it. The methodology a reader needs (GROUP rows are aggregates,
+              milliseconds, percentiles are estimates within 1%) rides behind
+              the section heading's info: the clean-UI text rule, and the
+              review C06 ask that the name not be the whole methodology. */}
+          <caption className="sr-only">{TABLE_NAME}</caption>
 
           <thead className={THEAD}>
             {/* Gatling's own two-row header: the column GROUPS carry the unit,
@@ -1164,24 +1141,21 @@ export default function StatisticsTable({
   );
 }
 
-/**
- * The statistics table's caption, as a module constant.
- *
- * A plain string rather than JSX because it is used in two places —
- * `TableFrame`'s visible copy and the table's own `sr-only` `<caption>` — and
- * a constant is what guarantees they cannot drift. It carries no markup, so
- * there is nothing JSX would buy.
- */
-const CAPTION_NAME = 'Statistics for every request and group in this run';
+/** The statistics table's accessible name. */
+const TABLE_NAME = 'Statistics';
 
-const CAPTION_TEXT =
-  'Statistics for every request and group in this run, with the run’s own totals in the first ' +
-  'row. A row tagged GROUP is an aggregate — the cumulated response time of the requests inside ' +
-  'it — so its counts already include theirs and the two must never be added together; every ' +
-  'untagged row is a single request. ' +
-  'Response times are in milliseconds. The percentile columns are estimates, accurate to ' +
-  'within 1%, and are shown clamped to their own row’s minimum and maximum — a percentile of a ' +
-  'sample cannot lie outside that sample’s range.';
+/**
+ * What a reader needs to read the table correctly, behind the section
+ * heading's info. "Statistics for every request and group in this run, with
+ * the run’s own totals in the first row" only described what is on screen, so
+ * it is gone; the rest is a caveat about how to read the numbers.
+ */
+const TABLE_INFO =
+  'A row tagged GROUP is an aggregate — the cumulated response time of the requests inside it — ' +
+  'so its counts already include theirs and the two must never be added together; every untagged ' +
+  'row is a single request. Response times are in milliseconds. The percentile columns are ' +
+  'estimates, accurate to within 1%, and are shown clamped to their own row’s minimum and ' +
+  'maximum — a percentile of a sample cannot lie outside that sample’s range.';
 
 /* ======================================================================== *
  * 6. THE COLUMN HEADINGS, WHICH ARE THE SORT CONTROLS

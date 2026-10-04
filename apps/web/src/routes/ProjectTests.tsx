@@ -93,12 +93,16 @@ function Tests({ slug }: { readonly slug: string }) {
     );
   }
 
-  const caption = (
+  // The name, and the conventions a reader needs to read the columns behind
+  // the frame's info (the clean-UI text rule). "Every test in this project,
+  // newest first" only restated the page, so it is gone.
+  const name = 'Tests';
+  const info = (
     <>
-      Every test in this project, newest first. A test is created the first time PerfPortal sees a
-      run of it, named by whatever that run declared — or after its simulation class, if it declared
-      nothing — until somebody renames it. “Runs” counts this test’s whole history, not a page of it.
-      An em dash under “Simulation class” means the class is the same as the name.
+      A test is created the first time PerfPortal sees a run of it, named by whatever that run
+      declared — or after its simulation class, if it declared nothing — until somebody renames it.
+      “Runs” counts this test’s whole history, not a page of it. An em dash under “Simulation class”
+      means the class is the same as the name.
     </>
   );
 
@@ -111,13 +115,9 @@ function Tests({ slug }: { readonly slug: string }) {
       <p className="text-[0.8125rem] text-muted">
         {items.length} {items.length === 1 ? 'test' : 'tests'}
       </p>
-      <TableFrame
-        caption={caption}
-        summary="Every test in this project, with its latest run."
-        label="Tests table"
-      >
+      <TableFrame name={name} label="Tests table" info={info}>
         <table className={TABLE}>
-          <caption className="sr-only">{caption}</caption>
+          <caption className="sr-only">{name}</caption>
           <thead className={THEAD}>
             <tr>
               <th scope="col" className={TH}>
@@ -200,11 +200,11 @@ function TestRow({
           but when they are identical it says SO rather than repeating it. */}
       <td className={`${TD} font-mono text-[0.75rem] break-all text-muted`}>
         {test.name === test.simulationClass ? (
-          /* ═══ AN EM DASH, WITH THE CONVENTION IN THE CAPTION (review N04) ═══
+          /* ═══ AN EM DASH, WITH THE CONVENTION IN THE TABLE'S INFO (review N04) ═══
            *
            * "same as the name" was accurate and spent a sentence saying it in
            * every untouched test's row. The dash is the table convention and
-           * the caption defines it once — the pattern N02 uses one component
+           * the table's info defines it once — the pattern N02 uses one component
            * over for the percentile caveat.
            *
            * IT CANNOT BE MISREAD AS "ABSENT" HERE, which is the usual reason

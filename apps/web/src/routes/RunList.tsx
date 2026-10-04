@@ -8,7 +8,8 @@ import CopyIdButton from '../components/CopyIdButton';
 import { ChevronLeftIcon, ChevronRightIcon, FilterIcon, PlusIcon } from '../components/icons';
 import { SkeletonTable } from '../components/Skeleton';
 import { EmptyState, ErrorState, LoadingState } from '../components/States';
-import TableFrame, { CAPTION_LESS, CAPTION_MORE } from '../components/TableFrame';
+import InfoTip from '../components/InfoTip';
+import TableFrame from '../components/TableFrame';
 import { INPUT, ROW, TABLE, TD, TH, THEAD } from '../components/tableStyles';
 import { ProblemError } from '../api/fetch';
 import useIsCompact from '../useIsCompact';
@@ -49,15 +50,11 @@ type RunListItem = RunListResponse['items'][number];
  * relied on by Task 7, so it is deliberately independent of visible text and
  * column order.
  *
- * THE TABLE IS IN A `Card` WITH `padding="none"`, and the `<caption>` sits
- * ABOVE it rather than inside. Two reasons, and the second is the real one: a
- * caption inside a `padding="none"` card has no gutter, so it reads as a
- * sentence jammed against the header fill; and this caption is a paragraph of
- * explanation about what "Started" means, which the reader needs BEFORE
- * meeting the column, not as part of the table's own frame. It keeps
- * `<caption>` semantics — it is still the table's programmatic description —
- * by staying the table's first child with `caption-side: top` stated
- * explicitly (`CAPTION`), because the default side varies by engine.
+ * THE TABLE'S NAME IS "Runs" AND ITS CAVEAT IS BEHIND AN INFO (clean UI).
+ * The caption used to be a paragraph printed above the list — what "Started"
+ * means, what Focus is — met on every visit. It is the frame's `InfoTip` now,
+ * the same on both layouts, and the sentence that only restated the scope
+ * ("Every run in this project, newest first") is gone.
  *
  * Filters are URL state and API parameters. That is the important boundary:
  * the list is keyset-paginated, so narrowing only the page in hand would
@@ -69,7 +66,6 @@ export default function RunList({
   heading = 'Runs',
   showHeading = true,
   titlesDocument = true,
-  caption: captionOverride,
   emptyBody,
   action,
 }: {
@@ -111,14 +107,7 @@ export default function RunList({
    * makes this a two-line change rather than a branch around the hook.
    */
   readonly titlesDocument?: boolean;
-  /**
-   * The table's own description. Defaults to the org/project sentence below;
-   * a caller with a narrower scope supplies a truer one, because the default
-   * says "every run in this project" and a test's page is showing a subset of
-   * exactly that.
-   */
-  readonly caption?: ReactNode;
-  /** What "no runs yet" means in this scope. Same reasoning as `caption`. */
+  /** What "no runs yet" means in this scope — a test's page knows more than the default. */
   readonly emptyBody?: string;
   readonly action?: ReactNode;
 } = {}) {
@@ -248,22 +237,15 @@ export default function RunList({
 
   const { items, nextCursor } = runs.data;
 
-  /* THE SHORT LINE BOTH LAYOUTS SHOW. It was written inline on the
-     `TableFrame` below as "Every run in your organisation, newest first." —
-     true on `/runs` and false on a project's own list, which is the same
-     scope mistake the long caption directly beneath it takes care to avoid.
-     One expression now, so the two cannot disagree. */
-  const summaryLine =
-    projectSlug === null
-      ? 'Every run in your organisation, newest first.'
-      : 'Every run in this project, newest first.';
-
-  const caption = captionOverride ?? (
+  /* What a reader needs to read two of the columns, behind the list's info
+     (the clean-UI text rule). True of every scope, which is why no caller
+     overrides it any more: the override existed only because the old
+     opening sentence named the wrong scope on a test's page. */
+  const info = (
     <>
-      {projectSlug === null ? 'Every run in your organisation' : 'Every run in this project'},
-      newest first, with the project it belongs to. “Started” is the load test’s own start time;
-      rows marked <em>ingest time</em> have not been parsed yet, so they fall back to when
-      PerfPortal received the run. Focus is the first operational action to take from the row.
+      “Started” is the load test’s own start time; rows marked <em>ingest time</em> have not been
+      parsed yet, so they fall back to when PerfPortal received the run. Focus is the first
+      operational action to take from the row.
     </>
   );
 
@@ -307,21 +289,16 @@ export default function RunList({
               items={items}
               showProject={projectSlug === null}
               identifyByRunId={testSlug !== null}
-              caption={caption}
-              summary={summaryLine}
+              info={info}
             />
           ) : (
           /* ONE `caption` NODE, rendered visibly outside the scroll box and
              programmatically inside the table — see `TableFrame`'s docstring for
              why a `<caption>` inside `overflow-x-auto` stops wrapping and runs
              off the side of a phone. */
-          <TableFrame
-            caption={caption}
-            summary={summaryLine}
-            label={`${heading} table`}
-          >
+          <TableFrame name="Runs" label={`${heading} table`} info={info}>
               <table className={TABLE}>
-                <caption className="sr-only">{caption}</caption>
+                <caption className="sr-only">Runs</caption>
                 {/* No Tool column. TOOL_IDS has exactly one member, so it read
                     "gatling" on every row this platform can produce. It returns
                     the day a second tool ships, at which point it carries
@@ -1150,8 +1127,8 @@ function CompactFilters({
  * Restyling the `<table>` responsively is the tempting move and it breaks the
  * semantics: cells stripped of their row and column lose the header
  * association that makes a data table readable at all with a screen reader.
- * A `<ul>` of cards claims to be what it is. The `caption` prose travels with
- * it, so the explanation of what the list holds is not desktop-only either.
+ * A `<ul>` of cards claims to be what it is. The table's caveat travels with
+ * it, behind the same info, so it is not desktop-only either.
  *
  * The testids are UNCHANGED from `RunRow` on purpose — `run-row`, `run-p95`,
  * `run-error-rate` and the rest are a contract this file's own docstring
@@ -1162,39 +1139,20 @@ function RunCards({
   items,
   showProject,
   identifyByRunId,
-  caption,
-  summary,
+  info,
 }: {
   readonly items: readonly RunListItem[];
   readonly showProject: boolean;
   readonly identifyByRunId: boolean;
-  readonly caption: ReactNode;
-  readonly summary: string;
+  /** The same caveat the table's frame carries, behind the same kind of info. */
+  readonly info: ReactNode;
 }) {
   return (
     <section aria-label="Runs" className="flex flex-col gap-3">
-      {/* ═══ THE SHORT LINE, THEN THE REST ON REQUEST ═══
-       *
-       * `TableFrame` already does this for every table in the app and the
-       * reason applies here twice over: measured at 375px, the full caption
-       * was a 127px paragraph sitting directly above the list it describes —
-       * on the very screen this whole change exists to shorten.
-       *
-       * NOT `aria-hidden`, unlike `TableFrame`'s copy. That one is hidden
-       * because the table's own `<caption class="sr-only">` carries the same
-       * words; a list of cards has no caption element, so hiding this would
-       * simply delete the explanation for a screen-reader user. Same pattern,
-       * opposite a11y contract — which is why the labels are shared and the
-       * markup is not. */}
-      <div>
-        <p className="text-[0.8125rem] leading-relaxed text-muted">{summary}</p>
-        <details className="group">
-          <summary className="w-fit cursor-pointer list-none text-[0.75rem] font-medium text-accent hover:underline hover:underline-offset-2">
-            <span className="group-open:hidden">{CAPTION_MORE}</span>
-            <span className="hidden group-open:inline">{CAPTION_LESS}</span>
-          </summary>
-          <p className="pt-2 text-[0.8125rem] leading-relaxed text-muted">{caption}</p>
-        </details>
+      {/* A list of cards has no `<caption>`, so the caveat rides on an info
+          beside it — the same one the desktop table's frame carries. */}
+      <div className="flex justify-end">
+        <InfoTip label="About Runs">{info}</InfoTip>
       </div>
       <ul className="flex flex-col gap-2">
         {items.map((run) => (

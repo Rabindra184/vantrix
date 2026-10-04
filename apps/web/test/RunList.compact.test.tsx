@@ -204,32 +204,21 @@ describe('RunList — cards carry every field the row did', () => {
   });
 
   /**
-   * THE CAPTION TRAVELS WITH THE CARDS, IN THE SHAPE `TableFrame` GIVES IT.
+   * THE CAVEAT TRAVELS WITH THE CARDS, BEHIND THE SAME INFO THE TABLE HAS.
    *
-   * It lived inside `TableFrame`, so dropping the table would have dropped it
-   * — and rendering the WHOLE thing as a paragraph was the first attempt here,
-   * measured at 127px sitting directly above the list on the very screen this
-   * change exists to shorten. `TableFrame` had already solved that: a short
-   * line, and the rest behind a disclosure.
-   *
-   * What is NOT copied is the `aria-hidden` on `TableFrame`'s visible block.
-   * That is hidden because the table's own `<caption class="sr-only">` carries
-   * the same words; a list of cards has no caption element, so hiding it would
-   * simply delete the explanation for a screen-reader user. Asserted, because
-   * it is exactly the detail a later copy-paste would reintroduce.
+   * It lived inside `TableFrame`, so dropping the table would have dropped it.
+   * Under the clean-UI text rule the desktop table carries it behind its
+   * frame's info; a list of cards has no frame, so the same `InfoTip` sits
+   * beside the list. The sentence that only restated the scope ("Every run in
+   * your organisation, newest first") is gone from both layouts.
    */
-  it('keeps the caption prose, short line first and the rest on request', async () => {
+  it('carries the caveat behind an info beside the cards, and no restating line', async () => {
     renderList();
     const section = await screen.findByRole('region', { name: 'Runs' });
 
-    // The short line, visible and not hidden from assistive tech.
-    const short = within(section).getByText('Every run in your organisation, newest first.');
-    expect(short.closest('[aria-hidden="true"]')).toBeNull();
-
-    // The long caption, present and folded.
-    const details = within(section).getByRole('group');
-    expect(details).not.toHaveAttribute('open');
-    expect(details.textContent ?? '').toMatch(/Focus is the first operational action/i);
+    const info = within(section).getByRole('button', { name: 'About Runs' });
+    expect(info).toHaveAccessibleDescription(/Focus is the first operational action/i);
+    expect(within(section).queryByText(/Every run in your organisation/i)).toBeNull();
   });
 });
 

@@ -45,10 +45,13 @@ export function groupRows(stats: StatsResponse): readonly GroupRow[] {
     }));
 }
 
-/* No "statistics", "errors" or "request" in this caption: a caption is a
-   table's accessible name, Playwright matches names as a case-insensitive
-   substring, and the e2e suite reaches three other tables by those words. */
-const CAPTION = 'Every group this run recorded, with the p95 of its summed time and of its wall-clock span.';
+/* The table's accessible name — never "statistics", "errors" or "request":
+   Playwright matches names as a case-insensitive substring, and the e2e suite
+   reaches three other tables by those words. The two-p95 explanation is the
+   caveat a reader needs to read the columns, so it rides behind the frame's
+   info (the clean-UI text rule) rather than on the page. */
+const TABLE_NAME = 'Groups';
+const TABLE_INFO = 'Each group shows the p95 of its summed time and of its wall-clock span.';
 
 /**
  * The Report's Groups section — this product's own design, because GE's
@@ -91,9 +94,9 @@ export default function GroupsList({
   }
   const ms = (value: number | null) => (value === null ? '—' : `${formatMs(value)} ms`);
   return (
-    <TableFrame caption={CAPTION} label="Groups table">
+    <TableFrame name={TABLE_NAME} label="Groups table" info={TABLE_INFO}>
       <table className={TABLE}>
-        <caption className="sr-only">{CAPTION}</caption>
+        <caption className="sr-only">{TABLE_NAME}</caption>
         <thead className={THEAD}>
           <tr>
             <th scope="col" className={TH}>Group</th>

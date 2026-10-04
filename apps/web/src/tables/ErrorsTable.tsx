@@ -1,5 +1,6 @@
 import { useId } from 'react';
 import type { ErrorsResponse } from '@perfportal/contracts';
+import InfoTip from '../components/InfoTip';
 import SectionHeading from '../components/SectionHeading';
 import { EmptyState } from '../components/States';
 import TableFrame from '../components/TableFrame';
@@ -170,7 +171,7 @@ export default function ErrorsTable({
    * survived: its 15 + 9 = 24 really does equal its `koCount`, because that
    * simulation emits no standalone ERROR record at all. Not the request count
    * either: a reader who reads "62.5%" as "62.5% of requests" has misread the
-   * table by a factor of thirty-seven. The caption says which.
+   * table by a factor of thirty-seven. The heading's info says which.
    */
   const total = rows.reduce((sum, row) => sum + row.count, 0);
 
@@ -215,32 +216,24 @@ export default function ErrorsTable({
     );
   }
 
-  // ONE node, used as both the visible caption and the table's own. It names
-  // the DENOMINATOR, from the same `total` the shares are divided by, so the
-  // table cannot tell a reader it is showing shares of 24 errors while
-  // dividing by something else.
-  const caption =
-    scopeLabel === undefined ? (
-      <>
-        Every distinct error message recorded in this run, most frequent first. Each percentage is
-        that message’s share of the {total} {total === 1 ? 'error' : 'errors'} this run recorded —
-        not of the requests it made.
-      </>
-    ) : (
-      /* The caption is this table's accessible NAME as well as its
-         explanation, so naming the scope here is what stops a screenshot — or
-         a screen reader moving by table — reading a request's failures as the
-         run's. */
-      <>
-        Every distinct error message recorded for {scopeLabel}, most frequent first. Shares are
-        of the {total} {total === 1 ? 'error' : 'errors'} {scopeLabel} recorded, not of the
-        requests it made.
-      </>
-    );
+  // The table's accessible NAME keeps its scope: a screen reader moving by
+  // table — or a screenshot — must not read one request's failures as the
+  // run's. The DENOMINATOR caveat, from the same `total` the shares are
+  // divided by, rides behind the section heading's info (the clean-UI text
+  // rule); "every distinct error message, most frequent first" only described
+  // what the table plainly shows, so it is gone.
+  const name = scopeLabel === undefined ? 'Errors' : `Errors for ${scopeLabel}`;
+  const noun = total === 1 ? 'error' : 'errors';
+  const info =
+    scopeLabel === undefined
+      ? `Each percentage is that message’s share of the ${total} ${noun} this run recorded — not of the requests it made.`
+      : `Shares are of the ${total} ${noun} ${scopeLabel} recorded, not of the requests it made.`;
 
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-3">
-      <SectionHeading id={headingId}>Errors</SectionHeading>
+      <SectionHeading id={headingId} info={<InfoTip label="About Errors">{info}</InfoTip>}>
+        Errors
+      </SectionHeading>
 
       {/* TWO COUNTS, AN ORDER OF MAGNITUDE APART, BOTH TRUE. The tab strip
           counts distinct MESSAGES ("Errors (2)") and this line counts the
@@ -253,11 +246,11 @@ export default function ErrorsTable({
           NOT. A Gatling ERROR record — a session or EL failure — is recorded
           here and belongs to no request, so on a real run this line read
           "310 failed requests" on a page whose own KO tile read 294. The
-          caption three lines down had it right all along ("share of the 310
+          caption beneath it had it right all along ("share of the 310
           errors this run recorded — not of the requests it made"); the two
           halves of one component disagreed about one number's noun.
 
-          THE NOUN IS NOW THE CAPTION'S. Naming the KO count here instead is
+          THE NOUN IS NOW THE CAVEAT'S. Naming the KO count here instead is
           not available: `koCount` lives in the statistics payload and this
           component is deliberately not handed it (see `total` above). */}
       <p data-testid="errors-tally" className="text-[0.8125rem] text-primary">
@@ -266,19 +259,12 @@ export default function ErrorsTable({
       </p>
       {windowNote}
 
-      <TableFrame caption={caption} label="Errors table">
+      <TableFrame name={name} label="Errors table">
         <table className={TABLE}>
-          {/* The caption is the table's ACCESSIBLE NAME as well as its
-              explanation — `getByRole('table', { name: /errors/i })` is how
-              this suite and the Playwright specs find it, and
-              `ErrorsTable.test.tsx` reads this element's own `textContent` for
-              the denominator.
-
-              `sr-only`, with the SAME node drawn visibly by `TableFrame` above
-              the scroll box: a `<caption>` is table-width, so inside
-              `overflow-x-auto` this sentence would run off the side of a phone
-              instead of wrapping. See `TableFrame`'s docstring. */}
-          <caption className="sr-only">{caption}</caption>
+          {/* The table's accessible NAME — `getByRole('table', { name:
+              /errors/i })` is how this suite and the Playwright specs find it.
+              The denominator caveat is the section heading's info now. */}
+          <caption className="sr-only">{name}</caption>
 
           <thead className={THEAD}>
             <tr className={ROW}>
