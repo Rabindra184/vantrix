@@ -11,9 +11,12 @@ import { runPath } from '../src/routes/paths.js';
  * accessible description with its own library. Three things only a browser
  * can answer, and each is a promise the clean-UI text rule rests on:
  *
- *   - the caveat really is the trigger's accessible description in Chromium's
- *     own computation (followed into a `hidden` node), so moving it off the
- *     page did not take it away from a screen reader;
+ *   - the caveat really is the trigger's accessible description — once
+ *     through Playwright's `toHaveAccessibleDescription` (Playwright's OWN
+ *     accname code, not the browser's), and once from Chromium's real
+ *     accessibility tree over CDP, which is what a screen reader reads.
+ *     Following `aria-describedby` into a `hidden` node is what both must do,
+ *     so moving the caveat off the page did not take it from a screen reader;
  *   - the panel lands inside the viewport — on a desktop chart, and on a
  *     375px phone where the table frame's trigger sits at the right edge and
  *     a panel aligned to its start would run off the screen without Radix's
@@ -55,4 +58,35 @@ test('a table frame’s info stays on a 375px screen', async ({ page }) => {
   await expect(trigger).toBeVisible();
   await trigger.click();
   await expect(page.getByRole('dialog', { name: 'About Tests' })).toBeInViewport({ ratio: 1 });
+});
+
+/**
+ * THE SCREEN-READER PROMISE, MEASURED WHERE A SCREEN READER READS IT.
+ *
+ * `toHaveAccessibleDescription` above is computed by Playwright's injected
+ * script, which is not the browser's accessibility tree (the final review
+ * caught an earlier docstring here saying otherwise). This reads Chromium's
+ * own tree through CDP and requires the trigger's description to be the
+ * caveat. Chromium only — CDP does not exist in Firefox or WebKit — and the
+ * skip sits inside the body so the other engines still run the file.
+ */
+test('Chromium’s own accessibility tree gives the trigger the caveat as its description', async ({
+  page,
+  browserName,
+}) => {
+  test.skip(browserName !== 'chromium', 'CDP, and so the real accessibility tree, is Chromium-only');
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(runPath(runId));
+
+  const name = 'About Response time percentiles over time';
+  await expect(page.getByRole('button', { name, exact: true })).toBeVisible();
+
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Accessibility.enable');
+  const { nodes } = await cdp.send('Accessibility.getFullAXTree');
+  const trigger = nodes.find((n) => n.role?.value === 'button' && n.name?.value === name);
+  expect(trigger, 'the trigger is in Chromium’s accessibility tree').toBeDefined();
+  expect(String(trigger?.description?.value ?? '')).toMatch(/no successful response/i);
 });
