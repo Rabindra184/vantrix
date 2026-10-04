@@ -690,10 +690,14 @@ test('the errors table shows each distinct error as a share of the run’s failu
   }
   expect(rendered.reduce((sum, r) => sum + Number(r.share), 0)).toBeCloseTo(100, 9);
 
-  // The denominator the caption names is the one the shares were divided by —
-  // failures, not requests. 24 of 895 requests failed here; a reader who reads
-  // 62.5% as a share of requests is out by a factor of thirty-seven.
-  await expect(errorsTable(page).locator('caption')).toContainText(`${total} errors`);
+  // The denominator the Errors heading's info names is the one the shares were
+  // divided by — failures, not requests. 24 of 895 requests failed here; a
+  // reader who reads 62.5% as a share of requests is out by a factor of
+  // thirty-seven. (It was the table's caption until the clean-UI text rule
+  // moved the caveat behind the info; Chromium's own description is read.)
+  await expect(page.getByRole('button', { name: 'About Errors' })).toHaveAccessibleDescription(
+    new RegExp(`${total} errors`),
+  );
 });
 
 /* ======================================================================== *
