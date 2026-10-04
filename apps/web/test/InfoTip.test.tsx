@@ -59,6 +59,40 @@ describe('InfoTip', () => {
     expect(trigger).toHaveFocus();
   });
 
+  /**
+   * THE KEYBOARD MUST NOT BE TRAPPED IN THE PANEL (final review, Important).
+   * Radix moves focus into the content on open and its FocusScope loops Tab
+   * there, so a reader who opened an ⓘ with Enter could not Tab on, could not
+   * press Enter again to close it, and could not reach the next ⓘ — Escape was
+   * the only way out. Focus stays on the trigger now.
+   */
+  it('keeps focus on the trigger after opening from the keyboard, so a second Enter closes it', async () => {
+    tip();
+    const user = userEvent.setup();
+    const trigger = screen.getByRole('button', { name: 'About p95' });
+    trigger.focus();
+    await user.keyboard('{Enter}');
+    await screen.findByRole('dialog', { name: 'About p95' });
+    expect(trigger).toHaveFocus();
+    await user.keyboard('{Enter}');
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('lets Tab move on to the next control after opening from the keyboard', async () => {
+    render(
+      <>
+        <InfoTip label="About p95">p95 is an estimate.</InfoTip>
+        <button type="button">Next</button>
+      </>,
+    );
+    const user = userEvent.setup();
+    screen.getByRole('button', { name: 'About p95' }).focus();
+    await user.keyboard('{Enter}');
+    await screen.findByRole('dialog', { name: 'About p95' });
+    await user.tab();
+    expect(screen.getByRole('button', { name: 'Next' })).toHaveFocus();
+  });
+
   it('gives two InfoTips distinct names, and opening one closes the other', async () => {
     render(
       <>

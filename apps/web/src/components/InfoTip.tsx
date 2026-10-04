@@ -12,8 +12,8 @@ import { InfoIcon } from './icons';
  * number, chart or table should be read behind an ⓘ beside it. This is that ⓘ.
  *
  * A TOGGLETIP, NOT A HOVER TOOLTIP. Click, tap, Enter or Space opens it;
- * Escape, an outside click or a second activation closes it, and focus goes
- * back to the trigger. A hover-only tooltip is unreachable on touch and
+ * Escape, an outside click, Tab or a second activation closes it, and focus
+ * never leaves the trigger. A hover-only tooltip is unreachable on touch and
  * unreliable from a keyboard, so it would hide exactly the caveats this exists
  * to keep available.
  *
@@ -63,6 +63,16 @@ export default function InfoTip({
             align="start"
             sideOffset={6}
             collisionPadding={8}
+            // FOCUS STAYS ON THE TRIGGER. Radix moves it into the content on
+            // open, and its FocusScope then loops Tab inside a panel with
+            // nothing to tab to — a keyboard reader could not Tab on, could
+            // not close it with a second Enter, and could not reach the next ⓘ
+            // without Escape (final review, measured). Not focusing the panel
+            // keeps the trigger a plain toggle: Enter again closes, Tab moves
+            // on and the panel dismisses itself. The cost: a link inside the
+            // panel is not reachable by Tab. No caller has one; the first that
+            // needs one (PR 2's "vs previous") decides how it is reached.
+            onOpenAutoFocus={(event) => event.preventDefault()}
             className="z-50 max-w-72 rounded-lg border border-default bg-surface p-3 text-[0.8125rem] leading-relaxed text-primary shadow-panel"
           >
             {children}
