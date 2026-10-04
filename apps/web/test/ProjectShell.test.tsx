@@ -204,4 +204,33 @@ describe('ProjectShell — what it draws before and instead of a project', () =>
     expect(out).toHaveAttribute('href', '/runs');
     expect(screen.queryByRole('link', { name: /^all runs$/i })).toBeNull();
   });
+
+  /** A section is named by the nav, never by a sentence under the heading:
+   *  `intro` was deleted (clean UI PR 4), and this directive goes unused —
+   *  failing `pnpm typecheck` — the day it comes back. */
+  it('takes no intro', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/projects/checkout/access']}>
+          <Routes>
+            <Route
+              path="/projects/:slug/*"
+              element={
+                <ProjectShell
+                  current="access"
+                  // @ts-expect-error — `intro` was deleted (clean UI PR 4).
+                  intro="An intro under the heading."
+                >
+                  {() => <p>section body</p>}
+                </ProjectShell>
+              }
+            />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText('section body')).toBeInTheDocument();
+    expect(screen.queryByText('An intro under the heading.')).toBeNull();
+  });
 });
