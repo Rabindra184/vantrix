@@ -143,20 +143,21 @@ describe('Chart — the data table is always present', () => {
 describe('Chart — more series than the palette has hues (A3)', () => {
   const seven = ['Browse', 'Checkout', 'Search', 'Cart', 'Pay', 'Confirm', 'Logout'];
 
-  it('states the limitation in the rendered figure, naming what was left out', () => {
+  it('states the palette’s limitation behind the chart’s info, naming what was left out', () => {
     render(<Chart id="users" title="Concurrent users" data={seriesData(seven)} />);
 
     // Asserted at the RENDERED level. `assignPalette` returning the right
     // string is not the same as the reader being told.
     //
-    // Matched on the limitation sentence, then read for the name: 'Logout' on
-    // its own also matches the data table's column header, which is a
-    // different (and much weaker) fact — the table lists every series whether
-    // or not the chart says anything about them.
-    const limitation = screen.getByText(/not drawn/i);
-    expect(limitation).toBeVisible();
-    expect(limitation.textContent).toContain('Logout');
-    expect(limitation.textContent).toMatch(/first 6 of 7/i);
+    // The caveat is the info trigger's DESCRIPTION now (the clean-UI text
+    // rule): a screen reader gets it on focus, and nothing is printed under
+    // the plot. Read for the name: 'Logout' on its own also matches the data
+    // table's column header, which is a different (and much weaker) fact.
+    const trigger = screen.getByRole('button', { name: 'About Concurrent users' });
+    expect(trigger).toHaveAccessibleDescription(/first 6 of 7/i);
+    expect(trigger).toHaveAccessibleDescription(/Logout/);
+    // Only the hidden copy carries the sentence while the panel is closed.
+    expect(screen.getByText(/not drawn/i)).not.toBeVisible();
   });
 
   it('hands ECharts six colours, all distinct — never a seventh that repeats one', () => {
@@ -206,7 +207,7 @@ describe('Chart — more series than the palette has hues (A3)', () => {
     expect(screen.getByText(/not drawn/i).textContent).toContain('Confirm');
   });
 
-  it('renders a transform’s own limitation too, not only the palette’s', () => {
+  it('puts a transform’s own limitation behind the same info', () => {
     render(
       <Chart
         id="dist"
@@ -214,7 +215,14 @@ describe('Chart — more series than the palette has hues (A3)', () => {
         data={{ ...seriesData(['OK']), limitation: 'Bins above 10000 ms are incomplete.' }}
       />,
     );
-    expect(screen.getByText(/Bins above 10000 ms are incomplete\./)).toBeVisible();
+    expect(screen.getByRole('button', { name: 'About Response time distribution' })).toHaveAccessibleDescription(
+      'Bins above 10000 ms are incomplete.',
+    );
+  });
+
+  it('draws no info when the chart has no caveat', () => {
+    render(<Chart id="dist" title="Response time distribution" data={seriesData(['OK'])} />);
+    expect(screen.queryByRole('button', { name: /^About / })).toBeNull();
   });
 });
 

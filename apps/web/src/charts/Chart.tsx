@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import Card from '../components/Card';
+import InfoTip from '../components/InfoTip';
 import { CollapseIcon } from '../components/icons';
 import ChartActions from './ChartActions';
 import DataTable from './DataTable';
@@ -1121,7 +1122,20 @@ export default function Chart({
             why that prop is optional (see `Card`'s docstring): a card that
             always drew a heading would give every figure two, and the figure's
             accessible name would become whichever won. */}
-        <h3 className="min-w-0 text-[0.9375rem] font-semibold tracking-tight text-primary">{title}</h3>
+        {/* The figure's caveats sit BESIDE its title, behind an info toggle —
+            the clean-UI text rule. They used to be paragraphs under the plot,
+            met by every reader of every chart whether or not they needed them.
+            Beside the `<h3>`, never inside it, so the heading's name and text
+            stay the title alone. */}
+        <div className="flex min-w-0 items-start gap-1.5">
+          <h3 className="min-w-0 text-[0.9375rem] font-semibold tracking-tight text-primary">{title}</h3>
+          {(data.limitation !== undefined || assignment.limitation !== undefined) && (
+            <InfoTip label={`About ${title}`}>
+              {data.limitation !== undefined && <p>{data.limitation}</p>}
+              {assignment.limitation !== undefined && <p>{assignment.limitation}</p>}
+            </InfoTip>
+          )}
+        </div>
 
         <ChartActions
           id={id}
@@ -1182,21 +1196,6 @@ export default function Chart({
         canvas
       )}
       </div>
-
-      {/* Anything the chart is not showing, in prose. Both the transform's own
-          limitation (truncated bins, a split the run predates) and the
-          palette's (a seventh series that would have had to reuse a hue).
-
-          Set apart with a rule and a smaller size rather than left as another
-          paragraph: these are caveats ABOUT the figure, and a reader
-          skimming eight charts has to be able to tell them from the figure's
-          own description at a glance. */}
-      {(data.limitation !== undefined || assignment.limitation !== undefined) && (
-        <div className="flex flex-col gap-1 border-t border-divider pt-3 text-[0.75rem] leading-relaxed text-muted">
-          {data.limitation !== undefined && <p>{data.limitation}</p>}
-          {assignment.limitation !== undefined && <p>{assignment.limitation}</p>}
-        </div>
-      )}
 
       <DataTable
         id={id}
