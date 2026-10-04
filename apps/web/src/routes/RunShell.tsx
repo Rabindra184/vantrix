@@ -221,7 +221,6 @@ export default function RunShell({
       <RunHeader
         identity={identity}
         status={status}
-        verdict={verdict}
         /* THE SAME `compact` THE BRUSH BELOW READS, spent a second time —
            review M02 folds the header's secondary metadata behind a
            disclosure on a phone, and a `<details>`'s open state is the one
