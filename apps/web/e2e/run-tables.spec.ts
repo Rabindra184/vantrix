@@ -1005,22 +1005,26 @@ test('a windowed drill-down says its figures are the whole run’s', async ({ pa
   await expect(page.getByTestId('whole-run-notice')).toHaveCount(0);
 
   await page.goto(`${runPath(runId)}/requests/${encodeURIComponent('Search')}?from=0&to=10000`);
+  /* A TAG, WITH ITS EXPLANATION BEHIND AN INFO (clean UI, PR 2). The words
+     on screen are two; the sentence is the ⓘ's description. */
   const notice = page.getByTestId('whole-run-notice');
   await expect(notice).toBeVisible();
-  await expect(notice).toContainText(/does not narrow/i);
-  await expect(notice).toContainText(/whole run/i);
+  await expect(notice.getByText('Whole-run figures', { exact: true })).toBeVisible();
+  const about = page.getByRole('button', { name: 'About whole-run figures', exact: true });
+  await expect(about).toHaveAccessibleDescription(/does not narrow this request.s figures/i);
+  await expect(about).toHaveAccessibleDescription(/whole run/i);
   /* AND IT POINTS AT THE PAGE THAT DOES HONOUR THE WINDOW. The sentence used
      to say "the run page's own figures", which was true of the old Overview
      and is false of the Summary this page's "Back to this run" now lands on:
      the Summary ignores a window. Only the Report applies one. */
-  await expect(notice).toContainText(/the run.s Report still honours it/i);
-  await expect(notice).not.toContainText(/run page/i);
+  await expect(about).toHaveAccessibleDescription(/the run.s Report still honours it/i);
+  await expect(about).not.toHaveAccessibleDescription(/run page/i);
 
-  /* AND THE ERRORS TABLE SAYS IT FOR ITS OWN TOTALS, which is the half that
-     was missing from this call site alone. Both, because the page-level notice
-     is about the page's figures and this one is about a number the reader is
-     looking straight at. */
-  await expect(page.getByTestId('errors-window-note')).toContainText(/whole run/i);
+  /* ONE WHOLE-RUN STATEMENT PER PAGE. The errors table used to add its own
+     ("These totals cover the whole run. The selected time window narrows the
+     chart above, not this table.") — on a page where nothing is windowed, so
+     its second sentence was false and its first repeated the tag above. */
+  await expect(page.getByTestId('errors-window-note')).toHaveCount(0);
 
   /* AND THE GROUP DRILL-DOWN, which is the same shape and a DIFFERENT wiring.
      Both pages render the shared `WholeRunNotice`, so what this catches is the
@@ -1031,7 +1035,10 @@ test('a windowed drill-down says its figures are the whole run’s', async ({ pa
   await expect(page.getByTestId('whole-run-notice')).toHaveCount(0);
 
   await page.goto(`${runPath(runId)}/groups/Cart?from=0&to=10000`);
-  await expect(page.getByTestId('whole-run-notice')).toContainText(/does not narrow/i);
+  await expect(page.getByTestId('whole-run-notice').getByText('Whole-run figures', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'About whole-run figures', exact: true })).toHaveAccessibleDescription(
+    /does not narrow this group.s figures/i,
+  );
 });
 
 /**

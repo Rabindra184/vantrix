@@ -1,3 +1,5 @@
+import InfoTip from '../components/InfoTip';
+
 /**
  * "These figures are the whole run's" — for a page that carries a time window
  * in its URL and cannot honour it.
@@ -16,6 +18,13 @@
  * the run page's percentile note and SLA tint were corrected for: a number in
  * one scope under a context that claims another.
  *
+ * ═══ A TAG, WITH THE EXPLANATION BEHIND AN INFO (clean UI, PR 2) ═══
+ *
+ * The note stays VISIBLE — it changes how every number on the page is read,
+ * which is the text rule's data-integrity exception — but as two words. The
+ * sentence explaining it is the info's description: a screen reader gets it
+ * on focus, a sighted reader one click away.
+ *
  * ═══ RENDERED ONLY UNDER A WINDOW ═══
  *
  * With no window there is nothing to disclaim, and a permanent "these are
@@ -24,12 +33,12 @@
  */
 export default function WholeRunNotice({ what }: { readonly what: string }) {
   return (
-    <p
-      data-testid="whole-run-notice"
-      className="rounded-lg border border-default bg-sunken px-3 py-2 text-[0.8125rem] text-muted"
-    >
-      The time window you selected does not narrow {what} — these endpoints report the whole run.
-      The run’s Report still honours it.
+    <p data-testid="whole-run-notice" className="flex items-center gap-1 text-[0.8125rem] text-muted">
+      <span className="rounded-md border border-default bg-sunken px-2 py-0.5">Whole-run figures</span>
+      <InfoTip label="About whole-run figures">
+        The time window you selected does not narrow {what} — these endpoints report the whole run. The run’s
+        Report still honours it.
+      </InfoTip>
     </p>
   );
 }

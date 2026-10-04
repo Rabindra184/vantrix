@@ -92,7 +92,6 @@ const formatShare = (percent: number): string => `${Number(percent.toFixed(2))}%
 export default function ErrorsTable({
   errors,
   scopeLabel,
-  windowSelected,
 }: {
   readonly errors: ErrorsResponse;
   /**
@@ -112,32 +111,7 @@ export default function ErrorsTable({
    * the whole-run wording, which is what the two run-level call sites want.
    */
   readonly scopeLabel?: string;
-  /**
-   * Whether a time window is currently selected on the run page.
-   *
-   * ═══ THIS TABLE IS WHOLE-RUN, AND THE CHART ABOVE IT IS NOT ═══
-   *
-   * `/v1/runs/:id/errors` takes no `from`/`to` — deliberately; see that
-   * handler's own comment about not reproducing the `?name=` trap. Its
-   * sibling `errors/series` DOES narrow. So a reader who selects 10–30s gets
-   * a windowed chart and, directly beneath it, this table still reporting the
-   * run's own 24, with nothing distinguishing them.
-   *
-   * Windowed error aggregation is a backend change. Saying what the number
-   * covers is not, and it is the half that stops the wrong reading today.
-   */
-  readonly windowSelected?: boolean;
 }) {
-  /* Rendered in both branches — the empty one is where the misreading is
-     worst, because "no errors" beside a visible 10–30s selection reads as
-     "none in that interval" rather than "none in the whole run". */
-  const windowNote =
-    windowSelected === true ? (
-      <p data-testid="errors-window-note" className="text-[0.75rem] text-muted">
-        These totals cover the whole run. The selected time window narrows the chart above, not
-        this table.
-      </p>
-    ) : null;
   const headingId = useId();
 
   /**
@@ -201,17 +175,12 @@ export default function ErrorsTable({
               ? 'No errors were recorded for this run'
               : `No errors recorded for ${scopeLabel}`
           }
-          /* The scoped body deliberately says nothing about the run. The
-             sentence it replaces — "Every request this run made came back
-             OK" — was the false one: it is a claim about the whole run drawn
-             from one request's empty array. */
-          body={
-            scopeLabel === undefined
-              ? 'Every request this run made came back OK.'
-              : `Every request recorded under ${scopeLabel} came back OK. The run as a whole may still have failures — the run's Summary answers that.`
-          }
+          /* ONE LINE (clean UI, PR 2): the title is the answer, and a body
+             only restated it. The scoped title names its scope and says
+             nothing about the run — the sentence review C01 removed ("Every
+             request this run made came back OK") was a claim about the whole
+             run drawn from one request's empty array. */
         />
-        {windowNote}
       </section>
     );
   }
@@ -257,7 +226,6 @@ export default function ErrorsTable({
         {rows.length} {rows.length === 1 ? 'error type' : 'error types'} ·{' '}
         {total} {total === 1 ? 'recorded error' : 'recorded errors'}
       </p>
-      {windowNote}
 
       <TableFrame name={name} label="Errors table">
         <table className={TABLE}>

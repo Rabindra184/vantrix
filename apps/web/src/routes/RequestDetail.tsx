@@ -206,13 +206,11 @@ export default function RequestDetail() {
             // `role="status"`, kept: this is the answer to the reader's
             // question, not a system failure, so it is announced politely and
             // wears `EmptyState` rather than the alert treatment. The sentence
-            // is unchanged and stays one text node — `{name}` interpolated
-            // into `title` keeps it that way.
+            // stays one text node — `{name}` interpolated into `title` keeps
+            // it that way — and it is the whole state (clean UI, PR 2): the
+            // page's "Back to this run" link is the way out.
             <div role="status">
-              <EmptyState
-                title={`This run recorded no request named ${name}.`}
-                body="The link may be from a different run, or the name may have been edited in the address bar."
-              />
+              <EmptyState title={`This run recorded no request named ${name}.`} />
             </div>
           ) : (
             <ScopedStatistics row={row} rows={data.stats} />
@@ -221,15 +219,13 @@ export default function RequestDetail() {
       </TableSection>
 
       <TableSection title="Errors" query={errors} columns={ERRORS_TABLE_COLUMNS}>
-        {/* `windowSelected`, WHICH THIS CALL SITE ALONE WAS MISSING. The same
-            component on the run page passes it (`RunDetail`, twice) and says
-            "these totals cover the whole run" when a window is applied;
-            here it said nothing, so the identical table under the identical
-            window reported whole-run totals in silence on one page and
-            explained itself on the other. */}
-        {(data) => (
-          <ErrorsTable errors={data} scopeLabel={name} windowSelected={windowSuffix !== ''} />
-        )}
+        {/* No note of its own under a window (clean UI, PR 2). The table
+            once said "These totals cover the whole run. The selected time
+            window narrows the chart above, not this table." — and this was
+            its last caller, where nothing is windowed, so the second sentence
+            was false and the first repeated the page's own "Whole-run
+            figures" tag, which covers this table too. */}
+        {(data) => <ErrorsTable errors={data} scopeLabel={name} />}
       </TableSection>
 
       <Payload query={stats} slots={[INDICATORS]}>
