@@ -121,4 +121,15 @@ describe('InfoTip', () => {
     await userEvent.setup().click(trigger);
     expect(await screen.findByRole('link', { name: 'Run 10' })).toHaveAttribute('href', '/runs/r10');
   });
+  /** A field's hint is the field's description AND the ⓘ's: one hidden copy,
+   *  at an id the field can point at (clean UI PR 4, `FormField`). */
+  it('carries the description at the id it is given', () => {
+    render(
+      <InfoTip label="About x" descriptionId="given-id">
+        body
+      </InfoTip>,
+    );
+    expect(screen.getByRole('button', { name: 'About x' })).toHaveAttribute('aria-describedby', 'given-id');
+    expect(document.getElementById('given-id')).toHaveTextContent('body');
+  });
 });
