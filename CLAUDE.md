@@ -128,7 +128,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **194 files / 2667 tests**, it
+`nvm use` first, and if a run reports fewer than **196 files / 2681 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -145,6 +145,144 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The clean-UI InfoTip branch (`feat/clean-ui-infotip`, PR 1 of four in
+`docs/superpowers/specs/2026-10-04-clean-ui-design.md`) added TWO unit files —
+`apps/web/test/InfoTip.test.tsx` (10) and `apps/web/test/SectionHeading.test.tsx`
+(3) — plus 1 case to `Chart.test.tsx`, from **194 / 2667 to 196 / 2681**. Every
+other changed test was re-pointed, not added. Integration stays
+**182 / 2353** (no `.ts` test changed) and **e2e rises to 187**
+(`apps/web/e2e/info-tip.spec.ts`, 3, one of them Chromium-only). It is the first branch of the
+"enterprise-grade, clean, like Gatling Enterprise, without unwanted text"
+programme: the palette and theme stay; layout, charts and text change.
+
+**THE TEXT RULE IS IN THE SPEC, AND IT IS THE THING TO READ BEFORE ADDING A
+SENTENCE TO ANY PAGE.** Labels and data are visible; errors, empty states,
+validation, destructive confirmations and live status are visible because the
+reader must act; a caveat that changes how ONE number, chart or table is read
+goes behind an ⓘ beside it; everything else — restated headings, how-it-works
+paragraphs, "How counts work" links, card descriptions — is deleted. Two firm
+limits: no description line under a card or section title, and no visible
+paragraph longer than one sentence outside an empty state or an error. **Every
+review round here used to answer a correctness concern with a new sentence on
+screen; that is the habit this programme reverses** — the concern stays, its
+sentence moves behind an ⓘ.
+
+**`InfoTip` IS A TOGGLETIP, AND ITS CAVEAT IS THE TRIGGER'S DESCRIPTION.**
+Radix Popover (click, tap, Enter or Space; Escape returns focus), `label`
+required and named after the subject ("About p95"), and the same content in a
+sibling `<span hidden>` the trigger names in `aria-describedby`. **The
+accessible-description computation follows `aria-describedby` into a `hidden`
+node** — measured three ways: jsdom's `dom-accessibility-api`, Playwright's
+`toHaveAccessibleDescription`, and Chromium's real accessibility tree read over
+CDP (`Accessibility.getFullAXTree`) — so a screen reader gets the caveat on
+focus while the copy adds no tab stop and no second reading in browse mode.
+`sr-only` would have done the opposite on both counts.
+
+**`toHaveAccessibleDescription` IN PLAYWRIGHT IS NOT THE BROWSER'S ANSWER.**
+It is Playwright's own injected accname code, the same family CLAUDE.md
+already records computing names. The first draft of `info-tip.spec.ts` called
+it "Chromium's own computation"; the final review caught it, and the CDP case
+exists because of that. Reading the real tree is one `newCDPSession` and one
+call — worth it whenever a claim is "a screen reader gets X".
+
+**AND RADIX POPOVER TRAPS THE KEYBOARD BY DEFAULT.** It moves focus into the
+content on open, and its `FocusScope` loops Tab inside a panel with nothing to
+tab to: a reader who opened an ⓘ with Enter could not Tab on, could not close
+it with a second Enter, and could not reach the next ⓘ without Escape. The
+final review measured it; every unit case passed throughout, because none
+pressed Tab after opening. `onOpenAutoFocus={(e) => e.preventDefault()}` keeps
+focus on the trigger — Enter again closes, Tab moves on and dismisses. The
+cost, recorded in the component: a link inside the panel is not reachable by
+Tab, and PR 2's "vs previous" link has to decide how it is.
+
+**NEVER INSIDE A HEADING OR A `<th>`.** Their accessible names come from their
+content, so a trigger inside adds "About …" to the name and the hidden copy
+adds its words to `textContent` — red-verified: moving `SectionHeading`'s slot
+inside the `<h2>` read `"StatisticsTimes in ms."`, and `run-tables.spec.ts`
+pins each tab's heading outline by exactly that text. Beside, always.
+
+**`Chart` AND `TableFrame` CANNOT PRINT A CAVEAT ANY MORE.** A chart's
+`limitation` strings ride behind an ⓘ after its `<h3>` (the transforms are
+untouched, so their ten test files are too). `TableFrame` lost `caption`,
+`summary`, its `<details>` and `CAPTION_MORE`/`CAPTION_LESS`; it takes a short
+`name` (the table's accessible name, keeping each e2e query's word —
+"Statistics", "Errors", "On-prem runner jobs") and an optional `info`. A table
+under a section heading gives its caveat to `SectionHeading`'s new `info` slot
+(Statistics, Errors, By request); the seven with no heading of their own put it
+behind the frame's top-right ⓘ, and with no `info` the frame adds no row. The
+props are gone, so `tsc` refuses a caller that tries to bring prose back.
+
+**MEASURED BEFORE AND AFTER**, the same headless pass over the developer
+database's real runs at 1440×900, words inside `<main>` and prose words
+(paragraphs, list items and captions of seven words or more):
+
+```
+                 words          prose
+  Run Summary    478 -> 388     251 -> 191
+  Report         315 -> 286      29 ->   0
+  Compare        222 -> 185      32 ->   0
+  API tokens     527 -> 403     101 ->  38
+  A test's runs  441 -> 351      68 ->  42
+  Tests          148 ->  68       9 ->   0
+  All runs       565 -> 503       7 ->   0
+  Add results    180 -> 180     145 -> 145   (PR 4)
+```
+
+What is left on the Summary is PR 2's (the release-gate band's triple counts,
+"vs previous", the window notes); on Add results and the New run form it is PR
+4's; on the run lists the tally strip and Focus column are PR 3's.
+
+**RULINGS, EACH A DECISION RATHER THAN AN OVERSIGHT:**
+
+  - `RunList`'s `caption` override is gone rather than renamed: `TestRuns`
+    passed one only because the old opening sentence named the wrong scope,
+    and that sentence is deleted.
+  - Statistics and Errors carry their heading ⓘ only when a table renders; an
+    empty section has no columns to caveat.
+  - `CompareMatrix` keeps its existing short name (`Per-request p95 across the
+    selected runs`) rather than the spec's "Per-request comparison".
+  - `ProjectRules`' three tables are named by their existing `label`, so table
+    and scroll region share a name — the region queries in both suites stay.
+  - `ProjectPackages`' phone layout printed the restating caption too; gone.
+
+**RED-VERIFIED, EVERY MUTATION FROM A CHECKPOINT COMMIT WITH ITS REPLACEMENT
+COUNT ASSERTED:**
+
+```
+  InfoTip      no aria-describedby                    the description and link cases
+               copy without `hidden`                  the link case alone (a tab stop while closed)
+  Heading      the slot inside the <h2>               both slot cases, on textContent
+  Chart        caveats back as visible paragraphs     both description cases
+               the ⓘ always drawn                     the no-caveat case alone
+  TableFrame   `info` as a visible <p>                the caveat case alone
+               the info row always drawn              the no-caveat case alone
+  InfoTip      panel autofocus restored               both keyboard cases (second Enter, Tab on)
+  browser      avoidCollisions={false}                the 375px case: viewport ratio 0.17
+               no aria-describedby                    the CDP case: Chromium's description empty
+```
+
+The last row is why the phone case exists: the frame's ⓘ sits at the right
+edge, and a panel aligned to its start leaves 83% of itself off a 375px screen
+without Radix's collision handling.
+
+**NINE UNIT CASES AND ONE e2e CASE WERE RE-POINTED, NONE LOOSENED.** They read
+a caption's `textContent` (the errors denominator, the statistics methodology,
+the tokens and rules caveats) and now read the ⓘ trigger's accessible
+description; `project-tests.spec.ts` finds its table by the exact name "Tests"
+instead of a sentence.
+
+**WHAT WAS RUN.** `typecheck` and `lint` exit 0 by their own exit codes;
+`test:unit` **196 / 2681**, zero `Errors` lines; `test:integration`
+**182 / 2353, exit 0, zero failures** — on the tree before the final review's
+fix pass, which touched only `.tsx` files and one e2e spec, neither of which
+that config runs; `pnpm test:e2e` **187 passed, exit 0**; `pnpm audit --prod`
+clean with the new `@radix-ui/react-popover`. Every total the one predicted
+from the source, against a SCRATCH DATABASE (`perfportal_cleanui`) and a
+scratch Redis INDEX (db 13). **Integration waited behind a load gate**: the
+machine sat at a 1-minute load of 20–31 with 93% of swap in use, and the gate
+held the suite for eight minutes until the load read 4.07.
+
 
 The wheel-lands branch (`rb/brave-hamilton-sxydmy`) added no unit FILE, no
 unit case and no e2e case: unit stays **194 / 2667**, integration
@@ -17441,8 +17579,11 @@ a skip link must be `focus:`-prefixed, including the padding.
 **A `<caption>` is as wide as its TABLE, not its scroll box.** Put a table in
 `overflow-x-auto` and its caption stops wrapping at the viewport and scrolls
 sideways with the columns — on a phone the reader gets half a sentence and has
-to drag a data table to finish it. `components/TableFrame.tsx` is the fix:
-one caption node, drawn visibly outside the scroller and again as the real
-`sr-only` `<caption>` inside, so the accessible name and the
-`caption.textContent` assertions in `ErrorsTable.test.tsx` /
-`StatisticsTable.test.tsx` keep working.
+to drag a data table to finish it. `components/TableFrame.tsx` used to answer
+that by drawing the caption twice, visibly outside the scroller and as the real
+`sr-only` `<caption>` inside. **Since the clean-UI branch it draws no visible
+caption at all:** the `sr-only` caption is a short name ("Statistics",
+"Errors") and the long text rides behind an `InfoTip` — so the trap is gone
+from tables rather than worked around. `DataTable`'s chart data tables still
+draw a one-line visible caption outside their scroller, for the original
+reason.
