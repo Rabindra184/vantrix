@@ -30,7 +30,8 @@ import BundleUpload from './BundleUpload';
  * The three are the three real ways in, named for what the reader is trying
  * to do rather than for the mechanism:
  *
- *   Import via API   — a bundle already exists. `POST /v1/runs`.
+ *   Import results   — a bundle already exists: the picker, or `POST /v1/runs`
+ *                      from a terminal.
  *   Run a test       — no bundle yet; the on-prem runner makes one.
  *   Configure CI     — the same import, but from a pipeline, every build.
  *
@@ -42,9 +43,11 @@ import BundleUpload from './BundleUpload';
  *
  * ═══ THE CREDENTIAL IS A NAMED PREREQUISITE, NOT A PLACE TO HIDE ═══
  *
- * Importing still needs a token. The fix is not to drop the dependency, it is
- * to state it and link to it — the opposite of the old arrangement, where the
- * import instructions were a paragraph inside the credentials screen.
+ * Posting from a terminal or a pipeline needs a token (the picker does not: a
+ * signed-in upload goes through the session). The fix is not to drop the
+ * dependency, it is to state it where it applies and link to it — the
+ * opposite of the old arrangement, where the import instructions were a
+ * paragraph inside the credentials screen.
  */
 export default function ProjectSetup() {
   return (
@@ -53,8 +56,8 @@ export default function ProjectSetup() {
      * This read "Three ways to get a run into this project. Pick the one that
      * matches what you already have." The review's copy table replaces that
      * whole pattern with "`Add results` with short workflow choices", and M04
-     * already built the choices: three collapsed cards, each a title, a status
-     * and one sentence, under a nav whose current section is called Add
+     * already built the choices: three cards, each a title and its action
+     * since clean UI PR 4, under a nav whose current section is called Add
      * results.
      *
      * So the sentence was narrating what the reader could already see — it
@@ -63,9 +66,8 @@ export default function ProjectSetup() {
      * paragraph between them is the over-explanation the same review's N04
      * objects to elsewhere.
      *
-     * `intro` stays on `ProjectShell` — it is optional and `ProjectRulesPage`
-     * already passes none, so a section with no intro is the existing shape
-     * rather than a new state. */
+     * `ProjectShell` has no `intro` at all since clean UI PR 4 — a section is
+     * named by its nav, and `tsc` refuses a page that tries to add one. */
     <ProjectShell current="setup">{({ slug }) => <AddResults key={slug} slug={slug} />}</ProjectShell>
   );
 }

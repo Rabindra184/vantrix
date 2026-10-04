@@ -46,9 +46,9 @@ import { projectRulesPath } from './paths';
 /**
  * Authoring the gates a project's runs are judged against.
  *
- * A SEPARATE FILE from `ProjectSetup`, which already carries two components
- * and 400 lines. The setup page composes this one; nothing else about it
- * changes.
+ * A SEPARATE FILE from `ProjectSetup`. Since review M15 the project's SLA
+ * rules page (`ProjectRulesPage`) composes it, and a test's page composes it
+ * scoped to that test.
  *
  * THE FORM VALIDATES BEFORE IT SUBMITS, against the same schema the server
  * uses. That is not belt-and-braces — `resolveMetric` returns null for a name
@@ -485,8 +485,8 @@ export default function ProjectRules({
    * test, and the one non-default option silently widens the rule to every
    * OTHER test in the project — a mistake nothing on the page would show
    * afterwards, since a project-wide rule looks identical in this list. The
-   * project's setup page is where a project-wide gate is authored, and it says
-   * so below.
+   * project's SLA rules page is where a project-wide gate is authored, and one
+   * line below links there (clean UI PR 4).
    */
   readonly testSlug?: string | null;
   /** How to NAME that test in prose. Falls back to the slug, which is real. */
