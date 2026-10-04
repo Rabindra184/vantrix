@@ -1,8 +1,9 @@
-import { useState, type FormEvent, type ReactNode } from 'react';
+import { useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { CreateProjectRequestSchema } from '@perfportal/contracts';
 import Button, { linkButtonClasses } from '../components/Button';
+import FormField from '../components/FormField';
 import Card from '../components/Card';
 import { ChevronLeftIcon, PlusIcon } from '../components/icons';
 import { ProblemError } from '../api/fetch';
@@ -57,10 +58,13 @@ export default function NewProject() {
         <h1 className="text-xl font-semibold tracking-tight">New project</h1>
       </div>
 
-      <Card title="Project details" description="Name the service or application these performance runs belong to.">
+      {/* No card title and no description (clean UI PR 4): "Project details"
+          restated the `<h1>` and the sentence restated the fields — the
+          one-title fix review M11 made to New on-prem run. */}
+      <Card>
         <form className="flex flex-col gap-5" onSubmit={submit}>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Field label="Project name" id="project-name">
+            <FormField label="Project name" id="project-name">
               <input
                 id="project-name"
                 className={INPUT}
@@ -69,8 +73,8 @@ export default function NewProject() {
                 required
                 autoFocus
               />
-            </Field>
-            <Field label="URL slug" id="project-slug">
+            </FormField>
+            <FormField label="URL slug" id="project-slug">
               <input
                 id="project-slug"
                 className={INPUT}
@@ -87,7 +91,7 @@ export default function NewProject() {
                 onBlur={(event) => setSlug(slugify(event.target.value))}
                 required
               />
-            </Field>
+            </FormField>
           </div>
 
           {(formError !== null || mutation.isError) && (
@@ -108,25 +112,6 @@ export default function NewProject() {
           </div>
         </form>
       </Card>
-    </div>
-  );
-}
-
-function Field({
-  label,
-  id,
-  children,
-}: {
-  readonly label: string;
-  readonly id: string;
-  readonly children: ReactNode;
-}) {
-  return (
-    <div className="flex min-w-0 flex-col gap-1.5">
-      <label htmlFor={id} className="text-[0.8125rem] font-medium text-primary">
-        {label}
-      </label>
-      {children}
     </div>
   );
 }

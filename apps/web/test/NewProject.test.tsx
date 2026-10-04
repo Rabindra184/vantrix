@@ -144,4 +144,17 @@ describe('NewProject', () => {
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/at least 2 character/i));
     expect(createProjectMock).not.toHaveBeenCalled();
   });
+
+  /** One title: the `<h1>`. The card's "Project details" restated it and its
+   *  description restated the fields (clean UI PR 4; the review M11 fix that
+   *  New on-prem run got). */
+  it('names the page once', async () => {
+    renderNewProject();
+    expect(await screen.findByRole('heading', { level: 1, name: 'New project' })).toBeInTheDocument();
+    expect(screen.getAllByRole('heading')).toHaveLength(1);
+    expect(screen.queryByText('Project details')).toBeNull();
+    expect(screen.queryByText(/Name the service/)).toBeNull();
+    expect(screen.getByLabelText('Project name')).toBeInTheDocument();
+    expect(screen.getByLabelText('URL slug')).toBeInTheDocument();
+  });
 });

@@ -253,6 +253,30 @@ describe('ProjectAccess', () => {
    * VOCABULARY — REVIEW M18, AND THE HALF THAT SURVIVED IT
    * ======================================================================== */
 
+  /**
+   * ═══ THE PAGE OPENS ON THE FORM (clean UI PR 4) ═══
+   *
+   * An intro under the heading ("Credentials for CI, load generators and
+   * runner hosts…") and a description under "Create a token" ("Name it after
+   * whatever will use it… The secret is shown once and never again.") went;
+   * the reveal panel still says the secret is shown once, where it matters.
+   * Expires' consequence rides behind its ⓘ and stays the select's
+   * description.
+   */
+  it('opens on the form, with no intro and no card description', async () => {
+    renderSetup();
+    await ready();
+
+    expect(screen.getByRole('heading', { name: 'Create a token' })).toBeInTheDocument();
+    expect(screen.queryByText(/Credentials for CI/)).toBeNull();
+    expect(screen.queryByText(/Name it after/)).toBeNull();
+
+    const expires = screen.getByRole('combobox', { name: 'Expires' });
+    expect(expires).toHaveAccessibleDescription(/stops authenticating/);
+    expect(screen.getByRole('button', { name: 'About Expires' })).toBeInTheDocument();
+    expect(screen.getByText(/stops authenticating/).closest('[hidden]')).not.toBeNull();
+  });
+
   describe('ProjectAccess — the words M18 retired stay retired', () => {
     /**
      * ═══ M18 RENAMED THE CONTROLS AND MISSED THE PROSE AROUND THEM ═══

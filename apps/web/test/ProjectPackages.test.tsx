@@ -430,6 +430,11 @@ describe('Packages — creating one', () => {
     expect(input).toHaveAccessibleDescription(
       'A package can be made empty and given its first file from its row later.',
     );
+    // Behind the field's ⓘ, not a line under it (clean UI PR 4).
+    expect(within(newPackage()).getByRole('button', { name: 'About File' })).toBeInTheDocument();
+    expect(
+      within(newPackage()).getByText(/given its first file from its row later/).closest('[hidden]'),
+    ).not.toBeNull();
   });
 });
 

@@ -5,6 +5,7 @@ import type { Package, PackageKind } from '@perfportal/contracts';
 import Button from '../components/Button';
 import Card from '../components/Card';
 import CopyIdButton from '../components/CopyIdButton';
+import FormField, { hintId } from '../components/FormField';
 import { MoreIcon, UploadIcon } from '../components/icons';
 import { SkeletonTable } from '../components/Skeleton';
 import { EmptyState, ErrorState, LoadingState } from '../components/States';
@@ -252,7 +253,6 @@ function NewPackageForm({ slug }: { readonly slug: string }) {
   const [file, setFile] = useState<File | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const fileId = useId();
-  const fileHelpId = `${fileId}-help`;
 
   const clearFile = () => {
     setFile(null);
@@ -312,29 +312,28 @@ function NewPackageForm({ slug }: { readonly slug: string }) {
       </label>
 
       {/* ═══ A NAME IDENTIFIES, A DESCRIPTION EXPLAINS ═══
-          The sentence is a SIBLING of the label, tied to the input with
-          `aria-describedby`. Inside the `<label>` it became the input's
-          accessible name — "File (optional) A package can be made empty and
-          given its first file from its row later." — which is review 09-13
-          M21's defect, in a form written after it was recorded. */}
-      <div className="flex flex-col gap-1.5">
-        <label htmlFor={fileId} className="text-[0.8125rem] font-medium">
-          File (optional)
-        </label>
+          The sentence is the field's hint: behind its ⓘ (clean UI PR 4) and
+          still the input's DESCRIPTION through `aria-describedby`. Inside the
+          `<label>` it once became the input's accessible name — "File
+          (optional) A package can be made empty and given its first file from
+          its row later." — which is review 09-13 M21's defect. */}
+      <FormField
+        label="File"
+        id={fileId}
+        optional
+        hint="A package can be made empty and given its first file from its row later."
+      >
         <input
           id={fileId}
           ref={fileInput}
           type="file"
           data-testid="new-package-file"
           accept={PACKAGE_ACCEPT[kind]}
-          aria-describedby={fileHelpId}
+          aria-describedby={hintId(fileId)}
           className="min-w-0 max-w-full text-[0.8125rem] text-primary file:mr-3 file:rounded-md file:border file:border-default file:bg-surface file:px-3 file:py-1.5 file:text-[0.8125rem] file:text-primary"
           onChange={(event) => setFile(event.target.files?.[0] ?? null)}
         />
-        <p id={fileHelpId} className="text-[0.6875rem] text-muted">
-          A package can be made empty and given its first file from its row later.
-        </p>
-      </div>
+      </FormField>
 
       {create.isError && <Problem error={create.error} />}
 
