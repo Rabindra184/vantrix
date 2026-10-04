@@ -1131,6 +1131,44 @@ test('deselecting every band explains itself rather than drawing an empty grid',
   await expect.poll(() => legendLabels(chart)).toEqual(['95%', '99%']);
 });
 
+/**
+ * The Bands menu from the keyboard, in a real browser (clean UI, PR 2). jsdom
+ * proves Radix's keyboard model in `BandsMenu.test.tsx`; what only a browser
+ * proves is that focus really lands, the menu really stays open across a
+ * toggle, and Escape really hands focus back — a portalled menu inside a chart
+ * card is where WebKit has disagreed with the other two engines here before.
+ */
+test('the percentile chart’s Bands menu works from the keyboard', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await openReport(page, runId);
+
+  const chart = page.getByTestId('chart-percentiles');
+  const trigger = page.getByRole('button', { name: /^Percentile bands, \d+ selected$/ });
+  await expect(trigger).toHaveAccessibleName('Percentile bands, 6 selected');
+
+  await trigger.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('menu')).toBeVisible();
+  // Opened from the keyboard, focus is on the first item; one ArrowDown is 25%.
+  await expect(page.getByTestId('band-min-percentiles')).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(page.getByTestId('band-p25-percentiles')).toBeFocused();
+  await page.keyboard.press('Space');
+
+  // Ticked, the menu still open, the trigger counting one more — and the line
+  // drawn, in BANDS order.
+  await expect(page.getByTestId('band-p25-percentiles')).toHaveAttribute('aria-checked', 'true');
+  await expect(page.getByRole('menu')).toBeVisible();
+  await expect(trigger).toHaveAccessibleName('Percentile bands, 7 selected');
+  await expect.poll(() => legendLabels(chart)).toEqual(['min', '25%', '50%', '75%', '95%', '99%', 'max']);
+
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('menu')).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+});
+
 /* ======================================================================== *
  * THE TIME WINDOW — a re-aggregation, not a redrawn axis
  * ======================================================================== */
