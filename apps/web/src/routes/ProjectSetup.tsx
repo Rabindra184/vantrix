@@ -25,7 +25,7 @@ import BundleUpload from './BundleUpload';
  * past it, and the most prominent action on the page was "New on-prem run" —
  * useless to somebody who already has a results bundle in their hand.
  *
- * ═══ THREE EXPLICIT CHOICES, EACH WITH A STATUS ═══
+ * ═══ THREE EXPLICIT CHOICES ═══
  *
  * The three are the three real ways in, named for what the reader is trying
  * to do rather than for the mechanism:
@@ -175,7 +175,10 @@ function AddResults({ slug }: { readonly slug: string }) {
             `needsSetup` is true for the `unknown` state ALONE. `idle` and
             `stalled` mean a runner HAS been seen, and telling that reader to
             go set one up is wrong advice confidently given — review M12. */}
-        {runnerReadiness(jobs.data?.items ?? []).needsSetup && (
+        {/* Only on a SETTLED list: one still loading, or one that failed, has
+            seen nothing either way, and offering setup under "Checking…" or
+            "Status unavailable" is the wrong advice M12 was about. */}
+        {jobs.isSuccess && runnerReadiness(jobs.data.items).needsSetup && (
           <Link
             to={projectAccessPath(slug)}
             data-testid="runner-setup"
@@ -230,7 +233,8 @@ curl -fsS -H "Authorization: Bearer $PERFPORTAL_TOKEN" \\
                   a version that had not existed for two releases. */}
               <p className="text-[0.8125rem] text-muted">
                 Live view while the build runs: Gradle plugin{' '}
-                <code className="font-mono text-primary">dev.vantrix.gatling</code>
+                <code className="font-mono text-primary">dev.vantrix.gatling</code> (
+                <code className="font-mono text-primary">clients/gatling-gradle</code>)
               </p>
             </>
           ),
@@ -241,7 +245,7 @@ curl -fsS -H "Authorization: Bearer $PERFPORTAL_TOKEN" \\
 }
 
 /* ======================================================================== *
- * STATUS — THE HALF THAT MUST NOT OVERCLAIM
+ * THE CARD — A TITLE AND ITS ACTION
  * ======================================================================== */
 
 function EntryCard({
@@ -291,9 +295,8 @@ function EntryCard({
          * implementation caveats at once. What it asks for is three short
          * choices with only the chosen workflow expanded.
          *
-         * So the CHOICE stays on screen — icon, title, status and the one
-         * sentence saying when this path is the right one — and the commands
-         * and caveats move in here.
+         * So the CHOICE stays on screen — icon, title and the card's action
+         * (since clean UI PR 4) — and the commands and caveats move in here.
          *
          * `name` MAKES IT AN ACCORDION WITH NO JAVASCRIPT. Browsers close the
          * other `<details>` sharing a name, which is exactly "expand only the

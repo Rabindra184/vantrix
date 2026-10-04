@@ -67,4 +67,28 @@ describe('FormField', () => {
       "Tests couldn't be loaded — type the slug. Line 2 must be key=value.",
     );
   });
+
+  /**
+   * FINAL REVIEW, IMPORTANT 1: a status colour as TEXT fails AA on the sunken
+   * ground in the light theme (failed 4.27:1, pending 4.44:1 — CLAUDE.md
+   * records `palette.test.ts` gating the tones against the card only), and a
+   * field can sit on either ground. The words are the primary colour; the
+   * status colour is a left rule, which needs only 3:1 as a non-text mark.
+   */
+  it('keeps a notice and an error readable on any ground', () => {
+    render(
+      <FormField label="X" id="f-x" notice="Degraded." error="Wrong.">
+        <input id="f-x" />
+      </FormField>,
+    );
+    for (const [id, tone] of [
+      [noticeId('f-x'), '--color-status-pending'],
+      [errorId('f-x'), '--color-status-failed'],
+    ] as const) {
+      const line = document.getElementById(id) as HTMLElement;
+      expect(line).toHaveClass('text-primary');
+      expect(line.style.color).toBe('');
+      expect(line.style.borderLeftColor).toBe(`var(${tone})`);
+    }
+  });
 });

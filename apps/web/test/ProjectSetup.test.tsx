@@ -458,6 +458,30 @@ describe('ProjectSetup — the workflows are choices before they are documents',
     expect(details.textContent ?? '').toMatch(/PERFPORTAL_TOKEN.{0,3}in your pipeline secrets/);
     expect(within(details).getByRole('button', { name: 'About the CI step' })).toHaveAccessibleDescription(/commitSha/);
     expect(details.textContent ?? '').toMatch(/Gradle plugin\s*dev\.vantrix\.gatling/);
+    // FINAL REVIEW, IMPORTANT 3: and where it lives — it is on no public
+    // portal, so a coordinate alone is "plugin not found".
+    expect(details.textContent ?? '').toMatch(/clients\/gatling-gradle/);
+  });
+
+  /**
+   * FINAL REVIEW, IMPORTANT (re-graded): "Create a runner token" is the
+   * never-seen-a-runner action. A list that is still loading, or failed to
+   * load, has seen nothing either way — offering setup there is the wrong
+   * advice M12 was about, under a status that says it does not know.
+   */
+  it('offers no runner setup while the job list loads or after it fails', async () => {
+    fetchRunnerJobsMock.mockReturnValueOnce(new Promise(() => {}));
+    renderPage();
+    const loading = await entry('Run a test');
+    expect(within(loading).getByTestId('runner-status')).toHaveTextContent(/Checking…/);
+    expect(within(loading).queryByTestId('runner-setup')).toBeNull();
+    cleanup();
+
+    fetchRunnerJobsMock.mockRejectedValueOnce(new Error('gateway down'));
+    renderPage();
+    const failed = await entry('Run a test');
+    await within(failed).findByText(/status unavailable/i);
+    expect(within(failed).queryByTestId('runner-setup')).toBeNull();
   });
 
   /**

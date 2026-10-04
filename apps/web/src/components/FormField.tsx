@@ -21,9 +21,10 @@ export const errorId = (id: string): string => `${id}-error`;
  *
  * Two lines may still sit under a control, because the reader has to act on
  * them: a `notice` (a degraded state — "Tests couldn't be loaded — type the
- * slug.") in the pending colour, and an `error` (a validation the submit will
- * refuse) in the failed colour. Status colours are inline: `text-status-*`
- * utilities emit nothing.
+ * slug.") marked in the pending colour, and an `error` (a validation the
+ * submit will refuse) marked in the failed colour — the mark is a left rule
+ * and the words stay the primary colour (see the note at the lines). Status
+ * colours are inline: `text-status-*` utilities emit nothing.
  *
  * `FormField` never sets attributes on its children. The control lives in
  * `children` and only the caller can reach it, so the caller wires
@@ -71,13 +72,27 @@ export default function FormField({
         )}
       </div>
       {children}
+      {/* THE WORDS ARE THE PRIMARY COLOUR; THE STATUS COLOUR IS A RULE. As
+          text, the failed and pending tones fall under AA on the sunken ground
+          in the light theme (4.27:1 and 4.44:1 — `palette.test.ts` gates them
+          against the card only), and a field can sit on either ground: New
+          on-prem run's Advanced body is sunken. A left rule is a non-text mark
+          and needs 3:1, which both tones clear on both grounds. */}
       {notice !== undefined && (
-        <p id={noticeId(id)} className="text-[0.75rem] leading-snug" style={{ color: 'var(--color-status-pending)' }}>
+        <p
+          id={noticeId(id)}
+          className="border-l-2 pl-2 text-[0.75rem] leading-snug text-primary"
+          style={{ borderLeftColor: 'var(--color-status-pending)' }}
+        >
           {notice}
         </p>
       )}
       {error !== undefined && (
-        <p id={errorId(id)} className="text-[0.75rem] leading-snug" style={{ color: 'var(--color-status-failed)' }}>
+        <p
+          id={errorId(id)}
+          className="border-l-2 pl-2 text-[0.75rem] leading-snug text-primary"
+          style={{ borderLeftColor: 'var(--color-status-failed)' }}
+        >
           {error}
         </p>
       )}

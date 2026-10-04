@@ -21,6 +21,7 @@ import type {
   RunnerStartMetadata,
   RunnerStartResponse,
 } from '@perfportal/contracts';
+import { DeclaredTestSlugSchema } from '@perfportal/contracts';
 import Button, { linkButtonClasses } from '../components/Button';
 import Card from '../components/Card';
 import FormField, { errorId, hintId, noticeId } from '../components/FormField';
@@ -465,11 +466,11 @@ function NewRunnerRunProject({
   const mutationError = mutation.error;
   const problem = mutationError instanceof ProblemError ? mutationError : null;
 
-  /* Parsed for the REVIEW summary, which has to show what will actually be
-     sent rather than the raw text. Submit re-parses rather than reading this,
-     because the summary must never be the thing that decides whether the form
-     is valid — a value shown to the reader and a value sent to the server have
-     to come from one parse, and that parse belongs at the submit. */
+  /* Parsed for the field's own error line (clean UI PR 4 — the Review summary
+     that read the parsed set back is gone). Submit re-parses rather than
+     reading this, because the line shown while typing must never be the thing
+     that decides whether the form is valid: the value sent to the server comes
+     from one parse, and that parse belongs at the submit. */
   const parsedProperties = useMemo(
     () => parseSystemProperties(form.systemProperties),
     [form.systemProperties],
@@ -515,7 +516,7 @@ function NewRunnerRunProject({
          * a second section of this page, it IS the page, and an `<h2>`
          * repeating the `<h1>` is what a screen-reader user meets twice. */}
         <Card headingLevel={2}>
-          {/* ═══ THREE GROUPS, IN THE ORDER THE DECISIONS ARE MADE (review M16)
+          {/* ═══ GROUPS, IN THE ORDER THE DECISIONS ARE MADE (review M16)
               ═══
 
               The form was one flat run of eleven fields in which a JVM option
@@ -831,6 +832,25 @@ const LEGEND =
  * to queue a run because a dropdown could not be populated would be a worse
  * page than the one this replaces.
  */
+/**
+ * What is wrong with a typed test slug, as a sentence, or undefined.
+ *
+ * FINAL REVIEW, IMPORTANT 2. The slug's format rule is the field's hint —
+ * behind its ⓘ since clean UI PR 4 — so a reader who types "Checkout Soak" has
+ * nothing on screen saying it is wrong until the server refuses it after
+ * Queue run. The field checks the SHARED schema the server uses
+ * (`DeclaredTestSlugSchema`), so the two cannot disagree about a slug. Empty
+ * is not a mistake: on the typed fallback it means the default grouping, and
+ * the new-test field's own `required` refuses it at submit.
+ */
+function slugProblem(value: string): string | undefined {
+  if (value.trim() === '') return undefined;
+  const result = DeclaredTestSlugSchema.safeParse(value);
+  if (result.success) return undefined;
+  const message = result.error.issues[0]?.message ?? 'is not a valid test slug';
+  return `${message.charAt(0).toUpperCase()}${message.slice(1)}.`;
+}
+
 function TestPicker({
   slug,
   form,
@@ -848,6 +868,9 @@ function TestPicker({
 
   const NEW = '__new__';
   const value = form.testMode === 'default' ? '' : form.testMode === 'new' ? NEW : form.test;
+  // Only a slug the reader TYPED is checked: one picked from the list is a
+  // test that exists.
+  const problem = form.testMode === 'existing' ? undefined : slugProblem(form.test);
 
   const onSelect = (event: ChangeEvent<HTMLSelectElement>) => {
     const chosen = event.target.value;
@@ -866,13 +889,15 @@ function TestPicker({
         optional
         notice="Tests couldn't be loaded — type the slug."
         hint="Lower case, hyphens, no spaces — a slug that names no test yet creates one."
+        error={problem}
       >
         <input
           id="runner-test"
           className={INPUT}
           value={form.test}
           placeholder="checkout-soak"
-          aria-describedby={`${noticeId('runner-test')} ${hintId('runner-test')}`}
+          aria-describedby={[noticeId('runner-test'), hintId('runner-test'), ...(problem ? [errorId('runner-test')] : [])].join(' ')}
+          aria-invalid={problem !== undefined || undefined}
           onChange={(event) =>
             setForm((current) => ({
               ...current,
@@ -917,13 +942,15 @@ function TestPicker({
           label="New test slug"
           id="runner-test-new"
           hint="Lower case, hyphens, no spaces. The server refuses a display name outright rather than slugifying it, which is what stops a typo becoming a second test."
+          error={problem}
         >
           <input
             id="runner-test-new"
             className={INPUT}
             value={form.test}
             placeholder="checkout-soak"
-            aria-describedby={hintId('runner-test-new')}
+            aria-describedby={[hintId('runner-test-new'), ...(problem ? [errorId('runner-test-new')] : [])].join(' ')}
+            aria-invalid={problem !== undefined || undefined}
             onChange={(event) => setForm((current) => ({ ...current, test: event.target.value }))}
             required
           />

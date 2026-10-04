@@ -433,6 +433,44 @@ describe('NewRunnerRun', () => {
   });
 
   /**
+   * FINAL REVIEW, IMPORTANT 2: THE SLUG RULE MOVED BEHIND THE ⓘ, SO THE
+   * FIELD CHECKS IT. "Lower case, hyphens, no spaces" was visible under the
+   * field; behind the ⓘ, a reader who types "Checkout Soak" learned it only
+   * from the server after Queue run. The field checks the shared
+   * `DeclaredTestSlugSchema` as it is typed — the treatment System properties
+   * got — on both slug fields.
+   */
+  it('checks a new test slug as it is typed', async () => {
+    noPackages();
+    mount();
+    fireEvent.change(await screen.findByLabelText('Test'), { target: { value: '__new__' } });
+    const slug = screen.getByLabelText(/^new test slug/i);
+
+    fireEvent.change(slug, { target: { value: 'Checkout Soak' } });
+    expect(descriptionOf(slug)).toMatch(/lower-case letters, digits and single hyphens/);
+    expect(slug.getAttribute('aria-invalid')).toBe('true');
+    expect(document.getElementById('runner-test-new-error')?.closest('[hidden]')).toBeNull();
+
+    fireEvent.change(slug, { target: { value: 'checkout-soak' } });
+    expect(document.getElementById('runner-test-new-error')).toBeNull();
+    expect(slug.hasAttribute('aria-invalid')).toBe(false);
+  });
+
+  it('checks the typed slug the same way when the tests list cannot load', async () => {
+    noPackages();
+    fetchProjectTestsMock.mockRejectedValueOnce(new Error('tests unavailable'));
+    mount();
+    const typed = await screen.findByPlaceholderText('checkout-soak');
+
+    fireEvent.change(typed, { target: { value: 'Checkout Soak' } });
+    expect(descriptionOf(typed)).toMatch(/lower-case letters, digits and single hyphens/);
+    expect(typed.getAttribute('aria-invalid')).toBe('true');
+    // Empty is the default grouping, not a mistake.
+    fireEvent.change(typed, { target: { value: '' } });
+    expect(document.getElementById('runner-test-error')).toBeNull();
+  });
+
+  /**
    * A LAUNCH FORM MUST NOT BE BLOCKED BY A DROPDOWN IT COULD NOT FILL.
    *
    * When the tests list is unavailable the picker degrades to the typed field
@@ -515,7 +553,7 @@ describe('NewRunnerRun', () => {
  * WHAT THE FORM SAYS ABOUT ITS FIELDS, AND THE PANEL THAT REPLACED "NODE POLICY"
  * ======================================================================== */
 
-describe('NewRunnerRun — what will be sent, and what is known about the node', () => {
+describe('NewRunnerRun — what the form says about its fields, and what is known about the node', () => {
   function mount() {
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
