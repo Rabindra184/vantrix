@@ -1075,9 +1075,16 @@ function RunCard({
           </IdentityCell>
           <NoteLine note={run.note} />
         </div>
-        <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-          <Badge mark={STATUS[run.status]} />
-          <Badge mark={VERDICT[run.verdict ?? 'none']} />
+        {/* A COLUMN: the badges in a row, a failed assertion's line under them
+            (final review). In one flex-wrap row the line's text widened the
+            group to ~300px, so on a phone it fell below the name — on most
+            real runs, which carry a failed assertion. The column is as wide as
+            its widest child, so it sits beside the name as it always did. */}
+        <div data-testid="run-badges" className="flex shrink-0 flex-col items-end">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Badge mark={STATUS[run.status]} />
+            <Badge mark={VERDICT[run.verdict ?? 'none']} />
+          </div>
           <AssertionLine checks={run.checks} />
         </div>
       </div>

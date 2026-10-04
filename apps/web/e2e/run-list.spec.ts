@@ -412,6 +412,11 @@ test('a real simulation class does not push the triage columns off screen', asyn
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await renameSimulation(runId, 'com.acme.checkout.simulations.CheckoutPeakLoadSimulation');
+  /* AND ONE WITH NO camelCase AT ALL (final review, Important 1): snake_case
+     has no lower-to-upper boundary, so before pieces split after `_` it was one
+     45-character no-wrap piece setting the column's minimum to its length. */
+  const snakeId = await seedRunWithData(admin.orgId);
+  await renameSimulation(snakeId, 'com.acme.checkout_peak_load_simulation_for_the_storefront');
 
   await signIn(page, admin);
 
@@ -458,12 +463,12 @@ test('a real simulation class does not push the triage columns off screen', asyn
      nothing; this asks a browser, in the table and on a phone's card, that
      every piece is ONE line box — and that no piece runs past its track under
      the copy button, which a no-wrap piece wider than its column would. */
-  for (const width of [768, 1024, 375]) {
+  for (const width of [768, 1024, 375, 320]) {
     await page.setViewportSize({ width, height: 812 });
     await page.goto('/runs');
-    await expect(page.getByTestId('run-row').first()).toBeVisible();
-    const pieces = await page.evaluate(() =>
-      Array.from(document.querySelectorAll('[data-testid="run-simulation"]')).flatMap((cell) => {
+    await expect(page.getByTestId('run-row')).toHaveCount(2);
+    const seen = await page.evaluate(() => ({
+      pieces: Array.from(document.querySelectorAll('[data-testid="run-simulation"]')).flatMap((cell) => {
         const button = cell.querySelector('[data-testid="copy-id"]')!.getBoundingClientRect();
         return Array.from(cell.querySelectorAll('[data-name-piece]')).map((piece) => ({
           text: piece.textContent,
@@ -471,12 +476,22 @@ test('a real simulation class does not push the triage columns off screen', asyn
           overlapsButton: piece.getBoundingClientRect().right > button.left + 0.5,
         }));
       }),
-    );
-    expect(pieces.length, `the long name was drawn in pieces at ${width}`).toBeGreaterThan(4);
-    for (const piece of pieces) {
+      /* WHAT A COPY OR A FIND-IN-PAGE SEES (final review): `innerText` is the
+         rendered text, and a BLOCK package line put a line break inside it. */
+      names: Array.from(document.querySelectorAll('[data-testid="run-simulation"] a')).map(
+        (a) => ({ rendered: (a as HTMLElement).innerText, text: a.textContent }),
+      ),
+      docOverflows: document.documentElement.scrollWidth > window.innerWidth,
+    }));
+    expect(seen.pieces.length, `the long names were drawn in pieces at ${width}`).toBeGreaterThan(8);
+    for (const piece of seen.pieces) {
       expect(piece.lines, `at ${width}px "${piece.text}" broke across ${piece.lines} lines`).toBe(1);
       expect(piece.overlapsButton, `at ${width}px "${piece.text}" runs under the copy button`).toBe(false);
     }
+    for (const name of seen.names) {
+      expect(name.rendered, `at ${width}px the name renders with a break inside it`).toBe(name.text);
+    }
+    expect(seen.docOverflows, `the document scrolls sideways at ${width}`).toBe(false);
   }
 });
 

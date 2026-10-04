@@ -75,6 +75,29 @@ test('the run list shows a run without scrolling, and does not scroll sideways',
     () => document.documentElement.scrollWidth > window.innerWidth,
   );
   expect(overflows).toBe(false);
+
+  /* THE BADGES STAY BESIDE THE NAME, failed assertion or not (clean UI, PR
+     3's final review). The fixture's run has a failed simulation assertion,
+     so its card carries "1 assertion failed"; in one flex-wrap row with the
+     two badges that line widened the group to ~300px, and the group fell
+     below the name wherever the name and two badges would otherwise fit.
+     MEASURED AT 480, not 375: flex wraps by each item's WIDEST size, and at
+     375 the name (~215px with its copy button) and two badges (~150) already
+     exceed the card's ~319px, so the badges sat below the name before this
+     branch too. At 480 (~424px) they fit beside it, and only a widened group
+     pushes them down. */
+  await page.setViewportSize({ width: 480, height: 812 });
+  await page.goto('/runs');
+  await expect(page.getByTestId('run-assertions-failed').first()).toBeVisible();
+  const placement = await page.getByTestId('run-row').first().evaluate((card) => {
+    const name = card.querySelector('[data-testid="run-simulation"] a')!.getBoundingClientRect();
+    const badges = card.querySelector('[data-testid="run-badges"]')!.getBoundingClientRect();
+    return { badgesTop: Math.round(badges.top), nameBottom: Math.round(name.bottom) };
+  });
+  expect(
+    placement.badgesTop,
+    `the badges start at ${placement.badgesTop}, below the name ending at ${placement.nameBottom}`,
+  ).toBeLessThan(placement.nameBottom);
 });
 
 test('the filters are folded away until something is filtering', async ({ page }) => {

@@ -19,14 +19,18 @@ import { Fragment, type ReactNode } from 'react';
  *
  * NOTHING SITS BETWEEN THE SPANS, so the element's text is the full name:
  * search, a text copy and every `run-simulation` text assertion still read
- * `example.ParitySimulation`.
+ * `example.ParitySimulation`. The package line is `inline-block w-full`, NOT
+ * `block`: both put it on a line of its own, but a block boundary adds a line
+ * break to the RENDERED text (`innerText`), which is what a copy and a
+ * find-in-page see — measured in Chromium as
+ * "com.acme.checkout.simulations.\nCheckoutPeakLoadSimulation" (final review).
  */
 export default function SimulationName({ name }: { readonly name: string }) {
   const pieces = namePieces(name);
   return (
     <>
       {pieces.package.length > 0 && (
-        <span data-name-package className="block text-[0.6875rem] font-normal text-muted">
+        <span data-name-package className="inline-block w-full text-[0.6875rem] font-normal text-muted">
           {joined(pieces.package)}
         </span>
       )}
