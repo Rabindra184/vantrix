@@ -75,7 +75,11 @@ export default function StatTile({
 }) {
   return (
     <div className="flex flex-col rounded-xl border border-default bg-surface p-4 shadow-panel">
-      <dt className="flex items-center gap-1 text-[0.75rem] font-medium text-muted">
+      {/* `min-h-5`: the label row is the ⓘ trigger's 20px whether or not a
+          tile has one. Without it the p95 tile's trigger made its row 2px
+          taller than its neighbours' 18px of text, and its value sat 2px
+          below theirs — one row of numbers on two baselines. */}
+      <dt className="flex min-h-5 items-center gap-1 text-[0.75rem] font-medium text-muted">
         <span>{label}</span>
         {info}
       </dt>

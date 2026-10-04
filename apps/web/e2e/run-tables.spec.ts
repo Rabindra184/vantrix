@@ -893,6 +893,16 @@ test('the run totals come before the assertions, and near the top', async ({ pag
     const y = await page.getByTestId(id).evaluate((el) => el.getBoundingClientRect().bottom);
     expect(y, `${id} is below the fold at 1440x900`).toBeLessThan(900);
   }
+  /* ONE BASELINE FOR THE ROW'S NUMBERS. The p95 tile carries an ⓘ in its
+     label and the others do not; a 20px trigger beside 18px of label text
+     pushed p95's value 2px below its neighbours' (measured at 1280, 1440 and
+     375), and only a browser lays the row out. */
+  const valueTops = await Promise.all(
+    ['stat-error-rate', 'stat-total-requests', 'stat-peak-users', 'stat-p95'].map((id) =>
+      page.getByTestId(id).evaluate((el) => Math.round(el.getBoundingClientRect().top * 10) / 10),
+    ),
+  );
+  expect(new Set(valueTops).size, `the tile values start at ${valueTops.join(', ')}`).toBe(1);
 });
 
 /**
