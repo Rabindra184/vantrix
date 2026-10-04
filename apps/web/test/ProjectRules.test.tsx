@@ -721,7 +721,7 @@ describe('ProjectRules — the table', () => {
 describe('ProjectRules — what a rule applies to', () => {
   it('offers every test in the project, defaulting to all of them', async () => {
     renderRules();
-    const select = await screen.findByLabelText(/applies to/i);
+    const select = await screen.findByLabelText(/^applies to/i);
     // The default is the empty-valued option, which the submit case above
     // pins as `testSlug: null` on the wire.
     expect(select).toHaveValue('');
@@ -739,7 +739,7 @@ describe('ProjectRules — what a rule applies to', () => {
     // "value not found" for a reason that is about timing rather than the
     // component.
     await screen.findByRole('option', { name: 'Payments sweep' });
-    await user.selectOptions(screen.getByLabelText(/applies to/i), 'payments-sweep');
+    await user.selectOptions(screen.getByLabelText(/^applies to/i), 'payments-sweep');
     await user.click(screen.getByRole('button', { name: 'Add rule' }));
 
     await waitFor(() => expect(createProjectRule).toHaveBeenCalledTimes(1));
@@ -792,16 +792,20 @@ describe('ProjectRules — on a test’s page', () => {
    * The page is titled after one test. A select whose one non-default option
    * silently widens the rule to every OTHER test is a mistake nothing on the
    * page would show afterwards, because a project-wide rule looks identical in
-   * this list. Project-wide gates are authored on the project's setup page,
-   * and the prose here says so.
+   * this list. Project-wide gates are authored on the project's SLA rules
+   * page, and one line here links there — never "the setup page", where rules
+   * have not lived since review M15 (clean UI PR 4).
    */
   it('fixes new rules to this test rather than offering to widen them', async () => {
     const user = userEvent.setup();
     renderRules({ testSlug: 'payments-sweep', testName: 'Payments sweep' });
 
     await screen.findByRole('button', { name: 'Add rule' });
-    expect(screen.queryByLabelText(/applies to/i)).toBeNull();
-    expect(screen.getByText(/setup page/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/^applies to/i)).toBeNull();
+    expect(screen.queryByText(/setup page/i)).toBeNull();
+    const link = screen.getByRole('link', { name: 'Add a project-wide rule' });
+    expect(link).toHaveAttribute('href', '/projects/checkout/rules');
+    expect(link.closest('p')?.textContent ?? '').toMatch(/^Applies to\s*Payments sweep\s*only/);
 
     await user.click(screen.getByRole('button', { name: 'Add rule' }));
     await waitFor(() => expect(createProjectRule).toHaveBeenCalledTimes(1));
@@ -1188,7 +1192,7 @@ describe('ProjectRules — the rule reads back as a sentence', () => {
    */
   it('makes exactly one claim about when a new rule takes effect', async () => {
     renderRules();
-    await screen.findByLabelText(/applies to/i);
+    await screen.findByLabelText(/^applies to/i);
 
     const lifecycle = screen.getAllByText(/judges runs finished after it is added/i);
     expect(lifecycle).toHaveLength(1);
@@ -1204,7 +1208,7 @@ describe('ProjectRules — the rule reads back as a sentence', () => {
    *  asks straight after "did that save". */
   it('states when a new rule takes effect', async () => {
     renderRules();
-    expect((await screen.findByTestId('rule-preview')).textContent ?? '').toMatch(
+    expect(await screen.findByRole('button', { name: 'About when rules apply' })).toHaveAccessibleDescription(
       /judges runs finished after it is added/i,
     );
   });
@@ -1624,6 +1628,10 @@ describe('ProjectRules — the page leads with what exists (review.md 12, 14, 21
 
     const select = await screen.findByRole('combobox', { name: 'Applies to' });
     expect(select).toHaveAccessibleDescription(/judges only that test’s runs/);
+    // Behind the field's ⓘ now, not a line under it (clean UI PR 4).
+    expect(screen.getByRole('button', { name: 'About Applies to' })).toHaveAccessibleDescription(
+      /judges only that test’s runs/,
+    );
     // The half that moved: the lifecycle clause is no longer part of either.
     expect(select).not.toHaveAccessibleDescription(/log header/);
   });
@@ -1637,18 +1645,21 @@ describe('ProjectRules — the page leads with what exists (review.md 12, 14, 21
    * `queryByText` finds them either way — the same reason `ProjectSetup`'s own
    * accordion cases read the `open` attribute instead.
    */
-  it('files the lifecycle policy behind a disclosure rather than in the form', async () => {
+  it('files the lifecycle policy behind an info beside Save', async () => {
     fetchProjectRules.mockResolvedValue({ rules: [] });
     renderRules();
 
-    const policy = await screen.findByText(/A new rule judges runs finished after it is added/);
-    const disclosure = policy.closest('details');
-    expect(disclosure).not.toBeNull();
-    expect(disclosure!.open).toBe(false);
-    expect(disclosure!).toHaveTextContent('When does this rule apply?');
-    // The clause that used to be the Applies-to helper lives here now too, so
-    // the policy is stated once rather than split across the form.
-    expect(disclosure!).toHaveTextContent(/log header names the simulation/);
+    /* Since clean UI PR 4 it is an ⓘ beside the button rather than a
+       disclosure: one place, out of the reader's way, announced as the
+       trigger's description. */
+    const tip = await screen.findByRole('button', { name: 'About when rules apply' });
+    expect(tip).toHaveAccessibleDescription(/judges runs finished after it is added/);
+    // The clause that used to be the Applies-to helper lives here too, so the
+    // policy is stated once rather than split across the form.
+    expect(tip).toHaveAccessibleDescription(/log header names the simulation/);
+    const save = screen.getByRole('button', { name: 'Add rule' });
+    expect(tip.closest('div')?.parentElement).toContainElement(save);
+    expect(screen.queryByText('When does this rule apply?')).toBeNull();
   });
 
   /**
@@ -1700,3 +1711,28 @@ describe('ProjectRules — the page leads with what exists (review.md 12, 14, 21
   });
 });
 
+describe('ProjectRules — nothing written under the title (clean UI PR 4)', () => {
+  /**
+   * The card carried "Gates this project's runs are judged against… A run
+   * with no rules gets no verdict." on the project page and its test-scoped
+   * twin on a test's page. Which runs each set judges is the two tables' own
+   * ⓘs; the no-verdict consequence is the empty state, where it bites.
+   */
+  const gone = [/Gates (this project’s|every run of)/, /A run with no rules gets no verdict/];
+
+  it('says nothing under the SLA rules title on the project page', async () => {
+    fetchProjectRules.mockResolvedValue({ rules: [] });
+    renderRules();
+    expect(await screen.findByText(/no release verdict/)).toBeInTheDocument();
+    for (const sentence of gone) expect(screen.queryByText(sentence)).toBeNull();
+  });
+
+  it('says nothing under it on a test’s page, and one line when the test has no rules of its own', async () => {
+    fetchProjectRules.mockResolvedValue({ rules: [rule({ test: null })] });
+    renderRules({ testSlug: 'payments-sweep', testName: 'Payments sweep' });
+    expect(
+      await screen.findByText('No rules for this test — the project-wide rules below apply.'),
+    ).toBeInTheDocument();
+    for (const sentence of gone) expect(screen.queryByText(sentence)).toBeNull();
+  });
+});

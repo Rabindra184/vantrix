@@ -15,8 +15,11 @@ import {
   type SlaRuleScope,
   percentToFraction,
 } from '@perfportal/contracts';
+import { Link } from 'react-router-dom';
 import Button from '../components/Button';
 import Card from '../components/Card';
+import FormField, { hintId } from '../components/FormField';
+import InfoTip from '../components/InfoTip';
 import { ErrorState, LoadingState } from '../components/States';
 import TableFrame from '../components/TableFrame';
 import { ProblemError } from '../api/fetch';
@@ -38,6 +41,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '../components/ui/dropdown-menu';
+import { projectRulesPath } from './paths';
 
 /**
  * Authoring the gates a project's runs are judged against.
@@ -264,16 +268,6 @@ const FIELD_GUIDANCE: Record<string, { label: string; help: string }> = {
  * before the error can be reported at all.
  */
 const fieldId = (field: string): string => `rule-field-${field}`;
-
-/**
- * A field's DESCRIPTION id, keyed by the same field name `fieldId` uses.
- *
- * One spelling of "which field", the rule M08 established here for
- * `FIELD_GUIDANCE` and `fieldId`. A description and the control it describes
- * drifting apart is silent: `aria-describedby` pointing at nothing announces
- * nothing, and nothing looks exactly like a control that never had help.
- */
-const helpId = (field: string): string => `rule-help-${field}`;
 
 /** The one message block, named once so its two references cannot drift. */
 const FORM_ERROR_ID = 'rule-form-error';
@@ -808,11 +802,9 @@ export default function ProjectRules({
         // is optional on `Card`, so passing undefined is the same thing and
         // stays in front of the compiler.
         title={showTitle ? 'SLA rules' : undefined}
-        description={
-          scopedToTest
-            ? `Gates every run of ${testLabel} is judged against — this test's own, plus the project-wide ones. A run with no rules gets no verdict.`
-            : 'Gates this project’s runs are judged against. A rule can cover every test or just one. A run with no rules gets no verdict.'
-        }
+        /* No description (clean UI PR 4). Which runs each set judges is the
+           two tables' own ⓘs; that a run with no rules gets no verdict is the
+           empty state, where it bites. */
       >
         {/* ═══ THE LIST LEADS; CREATING IS A CHOICE (review.md finding 12) ═══
          *
@@ -859,27 +851,36 @@ export default function ProjectRules({
               and two selects sharing that word is how somebody gates the
               wrong thing while reading their own configuration as correct. */}
           {scopedToTest ? (
-            <p className="rounded-lg border border-default bg-sunken p-3 text-[0.75rem] leading-relaxed text-muted">
-              A rule added here applies to <span className="text-primary">{testLabel}</span> only.
-              To gate every test in this project, add it on the project’s setup page instead.
-              {/* THIS PARAGRAPH USED TO CARRY A CAVEAT, and it is worth knowing
-                  why it does not any more. A test-scoped rule could once not
-                  appear in a run's live banner at all: `run.test_id` was only
-                  resolved by the pipeline at finalize, so a streaming run
-                  belonged to no test and matched no test rule. `LiveFoldOwner`
-                  now resolves it from the log header the decoder reads within
-                  the first few hundred bytes, so the banner applies these
-                  rules like any other. Nothing here needs to warn a reader
-                  about a gap that no longer exists. */}
+            /* ONE LINE, AND IT POINTS AT THE RIGHT PAGE (clean UI PR 4). This
+               was a boxed paragraph sending the reader to "the project's setup
+               page" — where rules have not lived since review M15 moved them
+               to SLA rules. A rule made here judges this test only; the link
+               is where a project-wide one is made. */
+            <p className="text-[0.8125rem] text-muted">
+              Applies to <span className="text-primary">{testLabel}</span> only ·{' '}
+              <Link to={projectRulesPath(slug)} className="text-accent underline underline-offset-2">
+                Add a project-wide rule
+              </Link>
             </p>
           ) : (
             <>
-            <label className="flex flex-col gap-1.5 text-[0.8125rem] font-medium">
-              Applies to
+            {/* ═══ THE NAME IDENTIFIES; THE HINT EXPLAINS (review.md 21) ═══
+                The help sentence once lived INSIDE the `<label>`, so it was
+                part of the control's accessible NAME. It is the hint now —
+                behind the field's ⓘ (clean UI PR 4) and still the select's
+                DESCRIPTION, announced after the name and the value. The
+                log-header clause it used to carry is lifecycle, stated once in
+                the ⓘ beside Save (review 09-13 M06, finding 14). */}
+            <FormField
+              label="Applies to"
+              id={fieldId('appliesTo')}
+              hint="A rule for one test judges only that test’s runs."
+            >
               <select
+                id={fieldId('appliesTo')}
                 className={INPUT}
                 value={appliesTo}
-                aria-describedby={helpId('appliesTo')}
+                aria-describedby={hintId(fieldId('appliesTo'))}
                 onChange={(e) => setAppliesTo(e.target.value)}
               >
                 <option value="">Every test in this project</option>
@@ -889,49 +890,7 @@ export default function ProjectRules({
                   </option>
                 ))}
               </select>
-              {/* ═══ TWO SENTENCES IN ONE FORM SAID OPPOSITE THINGS
-                  (review 09-13 M06) ═══
-
-                  This read "Every rule here applies to a live run as soon as
-                  its log header names the simulation", while the preview below
-                  says a run streaming right now keeps the rules it started
-                  under. Read together they contradict each other about the one
-                  question an author asks after saving.
-
-                  Both describe real mechanisms and neither was a lie — they are
-                  about DIFFERENT things. `LiveFoldOwner.#identify` resolves the
-                  run's test from the log header and widens the rule set to that
-                  test's rules, which is the initial load COMPLETING; and
-                  `FoldState.rules` is loaded once per run on purpose, so an
-                  edit mid-run cannot make a breach appear with no change in the
-                  data. What was missing is that both are true of rules that
-                  ALREADY EXISTED when the run was claimed.
-
-                  So this sentence stops making a claim about newly-added rules
-                  and says the thing that is only true here: which runs a
-                  test-scoped rule judges. The lifecycle is stated once, beside
-                  the button that creates one. */}
-            </label>
-            {/* ═══ OUTSIDE THE LABEL, AND POINTED AT BY id (review.md 21) ═══
-             *
-             * This sentence used to live INSIDE the `<label>` that wraps the
-             * select, so it was part of the control's accessible NAME: a
-             * screen-reader user heard "Applies to, A rule for one test judges
-             * only that test's runs. A live run is matched to its test as soon
-             * as the log header names the simulation…" before reaching the
-             * first option.
-             *
-             * A name identifies; a description explains. `aria-describedby` is
-             * the difference, and it is announced AFTER the name and the value
-             * rather than in place of them.
-             *
-             * SHORTER, TOO (finding 14). The log-header clause is lifecycle
-             * detail and has moved to the disclosure beside Save, where a
-             * reader who wants the policy can find it and a reader filling in
-             * the form is not taught it mid-field. */}
-            <p id={helpId('appliesTo')} className="text-[0.6875rem] leading-snug text-muted">
-              A rule for one test judges only that test’s runs.
-            </p>
+            </FormField>
             </>
           )}
 
@@ -1179,44 +1138,6 @@ export default function ProjectRules({
             ) : (
               <p className="text-primary">{preview}</p>
             )}
-            {/* WHEN IT STARTS JUDGING, which is the question an author asks
-                straight after "did that save". A run is judged by the rules
-                that existed when it was finalized, and a run already streaming
-                keeps the set it was claimed with — `FoldState.rules` is loaded
-                once per run on purpose, so that a rule edited mid-run cannot
-                make a breach appear with no change in the data. */}
-            {/* ═══ POLICY BEHIND A DISCLOSURE, BESIDE SAVE (review.md 14) ═══
-             *
-             * Two paragraphs of lifecycle sat in the primary flow: this one,
-             * and the log-header clause that used to be the Applies-to helper.
-             * Both are true and both are useful — and neither is something a
-             * reader entering a threshold needs read to them first. The
-             * finding asks for exactly this shape: short field help, then a
-             * "When does this rule apply?" disclosure near Save.
-             *
-             * ITS WORDING IS THE BACKEND'S, WHICH THE FINDING INSISTS ON ("do
-             * not replace a complicated policy with an inaccurate promise").
-             * A run is judged by the rules that existed when it was finalized;
-             * `FoldState.rules` is loaded once per run on purpose, so a rule
-             * edited mid-run cannot make a breach appear with no change in the
-             * data; and a live run is matched to its test at the log header,
-             * which is `LiveFoldOwner.#identify` completing its initial load
-             * rather than a re-read. */}
-            <details className="mt-2">
-              <summary className="cursor-pointer text-[0.75rem] font-medium text-muted">
-                When does this rule apply?
-              </summary>
-              <div className="mt-1 flex flex-col gap-1 text-[0.75rem] leading-snug text-muted">
-                <p>
-                  A new rule judges runs finished after it is added. Runs already complete keep
-                  their verdicts, and a run streaming right now keeps the rules it started under.
-                </p>
-                <p>
-                  A live run is matched to its test as soon as the log header names the
-                  simulation, so a test’s rules apply from that moment on.
-                </p>
-              </div>
-            </details>
           </div>
 
           {/* ═══ THE OPTIONAL NAME, BESIDE THE PREVIEW AND SAVE ═══
@@ -1241,10 +1162,29 @@ export default function ProjectRules({
               />
             </label>
 
-          <div>
+          {/* ═══ WHEN A RULE STARTS JUDGING, BESIDE SAVE (review.md 14) ═══
+              The question an author asks straight after "did that save". An ⓘ
+              rather than the disclosure it was (clean UI PR 4): one place, out
+              of the reader's way, announced as the trigger's description.
+
+              ITS WORDING IS THE BACKEND'S, which the finding insists on ("do
+              not replace a complicated policy with an inaccurate promise"). A
+              run is judged by the rules that existed when it was finalized;
+              `FoldState.rules` is loaded once per run on purpose, so a rule
+              edited mid-run cannot make a breach appear with no change in the
+              data; and a live run is matched to its test at the log header,
+              which is `LiveFoldOwner.#identify` completing its initial load
+              rather than a re-read. */}
+          <div className="flex flex-wrap items-center gap-2">
             <Button type="submit" variant="primary" loading={createMutation.isPending}>
               Add rule
             </Button>
+            <InfoTip label="About when rules apply">
+              A new rule judges runs finished after it is added. Runs already complete keep their
+              verdicts, and a run streaming right now keeps the rules it started under. A live run is
+              matched to its test as soon as the log header names the simulation, so a test’s rules
+              apply from that moment on.
+            </InfoTip>
           </div>
           </form>
         </details>
@@ -1356,7 +1296,7 @@ function RulesPanel({
             items={own}
             info="These rules judge this test’s runs and no other test’s. A disabled rule stays here but is not evaluated."
             label="Test SLA rules"
-            emptyNote="No rule has been written for this test yet — it is judged by the project-wide rules below."
+            emptyNote="No rules for this test — the project-wide rules below apply."
             confirming={confirming}
             onConfirming={onConfirming}
             togglingId={togglingId}
