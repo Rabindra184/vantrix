@@ -27,11 +27,13 @@ describe('PercentilesChart identity', () => {
     // beside it rather than left to the name of the test.
     for (const id of ['percentiles-a', 'percentiles-b']) {
       expect(screen.getByTestId(`scale-toggle-${id}`)).toBeInTheDocument();
-      expect(screen.getByTestId(`band-p95-${id}`)).toBeInTheDocument();
+      // The band selector is one menu now (clean UI, PR 2); its TRIGGER is
+      // the handle a closed menu leaves on the page.
+      expect(screen.getByTestId(`bands-${id}`)).toBeInTheDocument();
       expect(screen.getByTestId(`outcome-ko-${id}`)).toBeInTheDocument();
     }
 
-    for (const bare of ['scale-toggle', 'band-p95', 'outcome-ko']) {
+    for (const bare of ['scale-toggle', 'bands', 'outcome-ko']) {
       expect(screen.queryByTestId(bare)).not.toBeInTheDocument();
     }
   });
@@ -39,7 +41,7 @@ describe('PercentilesChart identity', () => {
   it('keeps the default identity when the caller names nothing', () => {
     render(<PercentilesChart series={series} windowSelected={false} />);
     expect(screen.getByTestId('scale-toggle-percentiles')).toBeInTheDocument();
-    expect(screen.getByTestId('band-p95-percentiles')).toBeInTheDocument();
+    expect(screen.getByTestId('bands-percentiles')).toBeInTheDocument();
     expect(screen.getByTestId('outcome-ko-percentiles')).toBeInTheDocument();
   });
 

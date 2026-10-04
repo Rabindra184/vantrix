@@ -116,6 +116,36 @@ const DropdownMenuRadioItem = forwardRef<
 ));
 DropdownMenuRadioItem.displayName = 'DropdownMenuRadioItem';
 
+/**
+ * A many-of-N item (`menuitemcheckbox`). Same gutter and tick as the radio
+ * item above, because the two say the same thing — "this one is on" — and a
+ * reader should not have to learn two marks for it. Radix sets `aria-checked`
+ * from `checked`, so the state reaches assistive technology without a label
+ * that restates it.
+ */
+const DropdownMenuCheckboxItem = forwardRef<
+  ElementRef<typeof DropdownMenuPrimitive.CheckboxItem>,
+  ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.CheckboxItem>
+>(({ className, children, ...props }, ref) => (
+  <DropdownMenuPrimitive.CheckboxItem
+    ref={ref}
+    className={cn(
+      'relative flex cursor-default items-center gap-2 rounded-md py-1.5 pr-2 pl-7 text-[0.8125rem] outline-none select-none',
+      'data-[highlighted]:bg-sunken data-[highlighted]:text-primary',
+      className,
+    )}
+    {...props}
+  >
+    <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">
+      <DropdownMenuPrimitive.ItemIndicator>
+        <CheckIcon className="h-3.5 w-3.5 text-accent" />
+      </DropdownMenuPrimitive.ItemIndicator>
+    </span>
+    {children}
+  </DropdownMenuPrimitive.CheckboxItem>
+));
+DropdownMenuCheckboxItem.displayName = 'DropdownMenuCheckboxItem';
+
 const DropdownMenuLabel = forwardRef<
   ElementRef<typeof DropdownMenuPrimitive.Label>,
   ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Label>
@@ -145,6 +175,7 @@ export {
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuCheckboxItem,
   DropdownMenuLabel,
   DropdownMenuGroup,
   DropdownMenuRadioGroup,

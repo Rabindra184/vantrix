@@ -19,7 +19,8 @@ import type { ReactNode } from 'react';
  * multi-select (bands), a pick-one (outcome) and a binary toggle (scale) were
  * indistinguishable until operated. Each now looks like what it is:
  *
- *   `Chip`      many-of-N — separate chips, each independently pressed
+ *   many-of-N — a checkbox menu (`BandsMenu`, clean UI PR 2: ten chips were
+ *               longer than the legend they repeated)
  *   `Segmented` one-of-N  — joined segments in a single track
  *   `Switch`    on/off    — a track and a knob
  *
@@ -86,59 +87,6 @@ export function ControlGroup({
  */
 const CHIP_BASE =
   'inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[0.8125rem] leading-none transition-colors';
-
-/**
- * One chip in a many-of-N group.
- *
- * `swatch` is the colour of the series this chip turns on, drawn as a mark
- * beside the label. That is the other half of the problem the old chips had:
- * the chart drew ten ordered bands on a green-to-red ramp and the chips were
- * all the same colour, so a reader who wanted to know which line `95%` was had
- * to toggle it off and watch what disappeared.
- *
- * Passed as a CSS custom property NAME (`--chart-pct-p95`), not a resolved
- * hex: `var()` follows the theme through `tokens.css`'s three blocks on its
- * own, so the swatch repaints on a light/dark switch with no JS and no second
- * source of truth for a colour `theme.ts` already owns.
- */
-export function Chip({
-  pressed,
-  swatch,
-  testId,
-  onClick,
-  children,
-}: {
-  readonly pressed: boolean;
-  readonly swatch?: string;
-  readonly testId: string;
-  readonly onClick: () => void;
-  readonly children: ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      aria-pressed={pressed}
-      data-testid={testId}
-      onClick={onClick}
-      className={`${CHIP_BASE} ${
-        pressed
-          ? 'border-accent bg-sunken font-medium text-primary'
-          : 'border-default bg-surface text-muted hover:border-accent hover:text-primary'
-      }`}
-    >
-      {swatch !== undefined && (
-        <span
-          // Decorative: the label beside it already names the band, and the
-          // colour is a second encoding of it, never the only one.
-          aria-hidden="true"
-          className={`h-2.5 w-2.5 shrink-0 rounded-[3px] ${pressed ? '' : 'opacity-40'}`}
-          style={{ backgroundColor: `var(${swatch})` }}
-        />
-      )}
-      {children}
-    </button>
-  );
-}
 
 /**
  * A one-of-N control, drawn as joined segments so it cannot be mistaken for

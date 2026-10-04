@@ -3,7 +3,8 @@ import { useMemo, useState } from 'react';
 import Chart from './Chart';
 import { RUN_TIME_GROUP } from './crosshair';
 import type { TimeDomainMs } from './types';
-import { Chip, ControlBar, ControlGroup, Segmented, Switch } from './ChartControls';
+import BandsMenu from './BandsMenu';
+import { ControlBar, ControlGroup, Segmented, Switch } from './ChartControls';
 import type { MarkRole } from './theme';
 import { BANDS, type Band, type Outcome, toPercentiles } from './transforms/percentiles';
 
@@ -19,11 +20,6 @@ const OUTCOMES: readonly { readonly value: Outcome; readonly label: string }[] =
   { value: 'ko', label: 'KO' },
   { value: 'all', label: 'All' },
 ];
-
-const BAND_LABEL: Record<Band, string> = {
-  min: 'min', p25: '25%', p50: '50%', p75: '75%', p80: '80%',
-  p85: '85%', p90: '90%', p95: '95%', p99: '99%', max: 'max',
-};
 
 /**
  * Response Time Percentiles over Time — §13.2 ⑨, Appendix A G-22.
@@ -126,22 +122,14 @@ export default function PercentilesChart({
       controls={
         compact ? undefined : (
         <ControlBar>
-          {/* Each chip carries the colour of the line it draws. The chart puts
-              ten ordered bands on a green-to-red ramp; without the swatch the
+          {/* One menu, not ten chips (clean UI, PR 2) — the chips sat above
+              a legend listing the same bands in the same colours. Each item
+              still carries the swatch of the line it draws: the chart puts
+              ten ordered bands on a green-to-red ramp, and without it the
               only way to find out which line `95%` was, was to switch it off
               and see what vanished. */}
           <ControlGroup label="Percentile bands">
-            {BANDS.map((band) => (
-              <Chip
-                key={band}
-                pressed={bands.includes(band)}
-                swatch={`--chart-pct-${band}`}
-                testId={`band-${band}-${id}`}
-                onClick={() => toggle(band)}
-              >
-                {BAND_LABEL[band]}
-              </Chip>
-            ))}
+            <BandsMenu id={id} selected={bands} onToggle={toggle} />
           </ControlGroup>
 
           {/* Segments, not chips: these REPLACE each other, and drawn as chips
