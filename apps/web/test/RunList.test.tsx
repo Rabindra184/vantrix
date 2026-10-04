@@ -61,36 +61,54 @@ const ROWS: RunListResponse['items'] = [
 ];
 
 /* ======================================================================== *
- * REVIEW 09-13 M14 — FOCUS LOOKED LIKE AN ACTION AND WAS A SPAN
+ * CLEAN UI, PR 3 — FOCUS IS GONE, AND THE ONE FACT ONLY IT CARRIED MOVED
  * ======================================================================== */
 
-describe('RunList — the Focus cell', () => {
-  /**
-   * The caption calls Focus "the first operational action to take from the
-   * row", and `investigate` was drawn in the failed-status colour with medium
-   * weight — every affordance of a link, on a `<span>` that does nothing.
-   *
-   * Made real rather than renamed, because the destination exists and is where
-   * the reader was going: the run, which opens on the decision band that names
-   * the failed check. The accessible name carries the RUN, since "investigate"
-   * repeated down a column names nothing.
-   */
-  it('links investigate to the run, named by the run', async () => {
-    renderList([{ ...ROWS[0]!, status: 'failed', verdict: 'failed' }]);
-    const link = await screen.findByRole('link', { name: `Investigate run ${ROWS[0]!.id}` });
-    expect(link).toHaveAttribute('href', `/runs/${ROWS[0]!.id}`);
-    expect(link).toHaveTextContent('investigate');
+/**
+ * Focus read "investigate" on every row that failed, stopped early, failed its
+ * SLA verdict — or whose SIMULATION had a failing assertion. Status and
+ * Verdict already say the first three. The fourth only Focus said, so it moves
+ * into the Verdict cell: a second line under the badge, and only when it
+ * happened, so most rows look as they always did.
+ */
+describe('RunList — a failed simulation assertion in the Verdict cell', () => {
+  const ASSERTED = {
+    id: '66666666-6666-4666-8666-666666666666',
+    status: 'complete' as const,
+    verdict: 'passed' as const,
+    tool: 'gatling',
+    startedAt: '2026-08-16T09:00:00.000Z',
+    toolStartedAt: '2026-08-16T09:00:00.000Z',
+    project: { id: '55555555-5555-4555-8555-555555555555', slug: 'catalog', name: 'Catalog' },
+    simulation: 'example.CatalogSimulation',
+    checks: { failed: 1, total: 3 },
+  };
+
+  it('names a failed simulation assertion in the Verdict cell, and only then', async () => {
+    renderList([
+      ASSERTED,
+      { ...ASSERTED, id: '77777777-7777-4777-8777-777777777777', checks: { failed: 0, total: 3 } },
+      { ...ASSERTED, id: '88888888-8888-4888-8888-888888888888', checks: null },
+    ]);
+    const lines = await screen.findAllByTestId('run-assertions-failed');
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toHaveTextContent(/^1 assertion failed$/);
+    expect(lines[0]!.closest('tr')).toHaveAttribute('data-run-id', ASSERTED.id);
   });
 
-  /**
-   * AND THE OTHER STATES STAY TEXT, which is the half that keeps the first
-   * one meaningful. There is nothing to do about "processing", so a link there
-   * would be the same false affordance pointing somewhere else.
-   */
-  it('leaves a status-only focus as plain text', async () => {
-    renderList([{ ...ROWS[0]!, status: 'complete', verdict: 'passed' }]);
-    expect(await screen.findByText('clear')).toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: /investigate/i })).toBeNull();
+  it('counts failed assertions in the plural', async () => {
+    renderList([{ ...ASSERTED, checks: { failed: 2, total: 3 } }]);
+    expect(await screen.findByTestId('run-assertions-failed')).toHaveTextContent(
+      /^2 assertions failed$/,
+    );
+  });
+
+  it('draws no Focus column', async () => {
+    renderList([...ROWS, { ...ASSERTED, verdict: 'failed' }]);
+    await screen.findByRole('columnheader', { name: 'Simulation' });
+    expect(screen.queryByRole('columnheader', { name: 'Focus' })).toBeNull();
+    expect(screen.queryByText('investigate')).toBeNull();
+    expect(screen.queryByText('processing')).toBeNull();
   });
 });
 
@@ -203,7 +221,7 @@ describe('RunList columns', () => {
     expect(screen.queryByRole('columnheader', { name: 'Tool' })).toBeNull();
   });
 
-  it('summarizes the current page and adds a focus signal after verdict', async () => {
+  it('summarizes the current page', async () => {
     renderList([
       ...ROWS,
       {
@@ -238,11 +256,6 @@ describe('RunList columns', () => {
     expect(within(health).getByTestId('health-scope')).toHaveTextContent(
       new RegExp(`on this page · ${rows.length} runs`, 'i'),
     );
-
-    expect(screen.getByRole('columnheader', { name: 'Focus' })).toBeInTheDocument();
-    expect(screen.getByText('investigate')).toBeInTheDocument();
-    expect(screen.getByText('processing')).toBeInTheDocument();
-    expect(screen.getByText('clear')).toBeInTheDocument();
   });
 
   it('falls back to the short id when the run has no simulation yet', async () => {

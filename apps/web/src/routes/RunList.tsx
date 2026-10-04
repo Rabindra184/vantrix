@@ -53,7 +53,8 @@ type RunListItem = RunListResponse['items'][number];
  *
  * THE TABLE'S NAME IS "Runs" AND ITS CAVEAT IS BEHIND AN INFO (clean UI).
  * The caption used to be a paragraph printed above the list — what "Started"
- * means, what Focus is — met on every visit. It is the frame's `InfoTip` now,
+ * means, and what the since-removed Focus column was — met on every visit. It
+ * is the frame's `InfoTip` now,
  * the same on both layouts, and the sentence that only restated the scope
  * ("Every run in this project, newest first") is gone.
  *
@@ -195,9 +196,9 @@ export default function RunList({
               (the 09-13 review's acceptance list: slow loading)
 
               This said `columns={6}` while the table it stands in for renders
-              NINE on the org-wide list — Project, Simulation, Status, Verdict,
-              p95, Errors, Focus, Started, Environment — and eight on a
-              project's, where the constant Project column is dropped. A
+              EIGHT on the org-wide list — Project, Simulation, Status, Verdict,
+              p95, Errors, Started, Environment — and seven on a project's,
+              where the constant Project column is dropped. A
               placeholder whose shape is not the arriving content's is a
               layout jump dressed as a loading state: the whole point of
               drawing one is that nothing moves when the data lands.
@@ -206,7 +207,7 @@ export default function RunList({
               (`projectSlug === null`), so the two cannot drift — a literal
               here is what let it be wrong by three for as long as it was,
               through two column changes that never thought to look at it. */}
-          <SkeletonTable columns={projectSlug === null ? 9 : 8} rows={6} />
+          <SkeletonTable columns={projectSlug === null ? 8 : 7} rows={6} />
         </LoadingState>
       </div>
     );
@@ -245,8 +246,7 @@ export default function RunList({
   const info = (
     <>
       “Started” is the load test’s own start time; rows marked <em>ingest time</em> have not been
-      parsed yet, so they fall back to when PerfPortal received the run. Focus is the first
-      operational action to take from the row.
+      parsed yet, so they fall back to when PerfPortal received the run.
     </>
   );
 
@@ -342,9 +342,6 @@ export default function RunList({
                     </th>
                     <th scope="col" className={TH}>
                       Errors
-                    </th>
-                    <th scope="col" className={TH}>
-                      Focus
                     </th>
                     {/* ═══ CONTEXT AFTER TRIAGE, BECAUSE THIS TABLE SCROLLS ═══
                         (review 09-13's acceptance list)
@@ -1106,12 +1103,12 @@ function CompactFilters({
  * ======================================================================== */
 
 /**
- * One card per run, for viewports where nine columns cannot be columns.
+ * One card per run, for viewports where eight columns cannot be columns.
  *
  * ═══ THE SAME FIELDS, RE-STACKED — NOTHING IS DROPPED ═══
  *
- * Started, project, simulation, status, verdict, p95, errors, environment and
- * focus are all here. A phone list that quietly showed fewer facts than a
+ * Started, project, simulation, status, verdict (with any failed simulation
+ * assertion), p95, errors and environment are all here. A phone list that quietly showed fewer facts than a
  * desktop one would be the harder failure to notice: the reader has no way to
  * know what they are not being shown, and triage decisions would differ by
  * device.
@@ -1310,6 +1307,7 @@ function RunCard({
         <div className="flex shrink-0 flex-wrap items-center gap-1.5">
           <Badge mark={STATUS[run.status]} />
           <Badge mark={VERDICT[run.verdict ?? 'none']} />
+          <AssertionLine checks={run.checks} />
         </div>
       </div>
 
@@ -1345,12 +1343,6 @@ function RunCard({
                 {`${(run.metrics.errorRate * 100).toFixed(2)}%`}
               </span>
             )}
-          </dd>
-        </div>
-        <div className="flex items-baseline gap-1.5">
-          <dt className="text-muted">Focus</dt>
-          <dd>
-            <FocusHint focus={focusFor(run)} runId={run.id} />
           </dd>
         </div>
       </dl>
@@ -1484,6 +1476,7 @@ function RunRow({
       </td>
       <td className={TD}>
         <Badge mark={VERDICT[run.verdict ?? 'none']} />
+        <AssertionLine checks={run.checks} />
       </td>
 
       {/* ═══ THE TRIAGE CELLS ═══
@@ -1516,21 +1509,6 @@ function RunRow({
           </span>
         )}
       </td>
-      {/* PLAIN COLOURED TEXT, NOT A BADGE, and the distinction is what the
-          column means. Status and Verdict beside it are STATES the platform
-          recorded — a stamp is right for those, and the pill is what makes
-          them scannable down the column. Focus is not a state; it is the
-          ACTION this row suggests, derived here rather than stored. Drawing
-          it as a third pill made every row read as three equal stamps and
-          buried the two that came from the run itself.
-
-          The WORD carries the meaning — investigate / watch live / clear are
-          different words, not one word in different colours — so the colour
-          is emphasis rather than information, and WCAG 1.4.1 is satisfied
-          without the glyph the badge used to add. */}
-      <td className={TD}>
-        <FocusHint focus={focusFor(run)} runId={run.id} />
-      </td>
       <td data-testid="run-started" className={`${TD} whitespace-nowrap`}>
         {/* <time dateTime> carries the machine-readable instant next to the
             human one. That is the correct markup for a rendered date
@@ -1551,67 +1529,32 @@ function RunRow({
 }
 
 /**
- * ═══ IT LOOKS LIKE AN ACTION, SO IT IS ONE (review 09-13 M14) ═══
+ * ═══ THE ONE FACT FOCUS CARRIED THAT NOTHING ELSE DID (clean UI, PR 3) ═══
  *
- * The caption calls Focus "the first operational action to take from the row",
- * and `investigate` was drawn in the failed-status colour with medium
- * weight — every affordance of a link, on a `<span>` nothing happens when you
- * click.
+ * Focus read "investigate" when a run failed, stopped early, failed its SLA
+ * verdict, or its SIMULATION had a failing assertion — and the first three are
+ * what Status and Verdict already say, on every row. Only the fourth was
+ * Focus's own: a platform verdict of "passed" over a Gatling assertion that
+ * failed. So Focus is gone and that fact sits under the verdict it qualifies,
+ * drawn only when it happened.
  *
- * The review offers both repairs: make it real, or rename it so it stops
- * pretending. Real is better here because the destination exists and is
- * exactly where the reader was going — the run, which opens on the decision
- * band that names the failed check and links to it. The other four states are
- * genuinely statuses (there is nothing to do about "processing"), so they stay
- * text: a row's Focus cell is a link exactly when it is worth following.
- *
- * The accessible name carries the RUN, not the word: "investigate" repeated
- * down a column names nothing, which is the same reason the simulation cell's
- * link spells out `View run ${id}`.
+ * `checks` is null for a run that reported no assertions, which is not a
+ * failure. The colour is the status palette's own route — those tokens live on
+ * `:root` and not in `@theme`, so a `text-status-failed` utility emits
+ * nothing. `basis-full` puts it on its own line inside the card's badge group;
+ * in a table cell it is simply a block.
  */
-function FocusHint({ focus, runId }: { readonly focus: Focus; readonly runId: string }) {
-  const { label, colour } = FOCUS_MARKS[focus];
-  if (focus !== 'investigate') {
-    return (
-      <span className="font-medium whitespace-nowrap" style={{ color: colour }}>
-        {label}
-      </span>
-    );
-  }
+function AssertionLine({ checks }: { readonly checks: RunListItem['checks'] }) {
+  if (checks == null || checks.failed <= 0) return null;
   return (
-    <Link
-      to={runPath(runId)}
-      aria-label={`Investigate run ${runId}`}
-      className="font-medium whitespace-nowrap underline-offset-2 hover:underline"
-      style={{ color: colour }}
+    <span
+      data-testid="run-assertions-failed"
+      className="mt-1 block basis-full text-[0.75rem] font-medium"
+      style={{ color: 'var(--color-status-failed)' }}
     >
-      {label}
-    </Link>
+      {checks.failed} {checks.failed === 1 ? 'assertion' : 'assertions'} failed
+    </span>
   );
-}
-
-type Focus = 'investigate' | 'watch' | 'processing' | 'clear' | 'review';
-
-/**
- * `glyph` is gone with the badge — see `FocusHint`. The remaining pair is
- * deliberately the same SHAPE as a `Mark` minus that field, so the colours
- * still come from the status text palette every other signal on this page
- * reads, rather than becoming a fourth place colour is decided.
- */
-const FOCUS_MARKS: Record<Focus, { label: string; colour: string }> = {
-  investigate: { label: 'investigate', colour: 'var(--color-status-failed)' },
-  watch: { label: 'watch live', colour: 'var(--color-status-pending)' },
-  processing: { label: 'processing', colour: 'var(--color-status-pending)' },
-  clear: { label: 'clear', colour: 'var(--color-status-passed)' },
-  review: { label: 'review', colour: 'var(--color-status-not-applicable)' },
-};
-
-function focusFor(run: RunListItem): Focus {
-  if (needsAttention(run)) return 'investigate';
-  if (run.status === 'running') return 'watch';
-  if (isInFlight(run)) return 'processing';
-  if (run.verdict === 'passed') return 'clear';
-  return 'review';
 }
 
 function needsAttention(run: RunListItem): boolean {

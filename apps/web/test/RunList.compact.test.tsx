@@ -193,6 +193,18 @@ describe('RunList — cards carry every field the row did', () => {
     expect(first.textContent ?? '').toContain('failed');
   });
 
+  /** A card shows a failed simulation assertion under its verdict, as the
+   *  table's Verdict cell does, and carries no Focus row (clean UI, PR 3). */
+  it('names a failed simulation assertion under the verdict, with no Focus row', async () => {
+    renderList([{ ...ROWS[0]!, checks: { failed: 2, total: 5 } }, ROWS[1]!] as unknown as RunListResponse['items']);
+    const cards = await screen.findAllByTestId('run-row');
+    expect(within(cards[0]!).getByTestId('run-assertions-failed')).toHaveTextContent(
+      /^2 assertions failed$/,
+    );
+    expect(within(cards[1]!).queryByTestId('run-assertions-failed')).toBeNull();
+    for (const card of cards) expect(within(card).queryByText('Focus')).toBeNull();
+  });
+
   /** An unparsed run has no p95 and no error rate. `—`, never `0` — a zero in
    *  a latency column is a measurement, which is the wrong claim entirely. */
   it('draws an absent measurement as an absence', async () => {
@@ -217,7 +229,10 @@ describe('RunList — cards carry every field the row did', () => {
     const section = await screen.findByRole('region', { name: 'Runs' });
 
     const info = within(section).getByRole('button', { name: 'About Runs' });
-    expect(info).toHaveAccessibleDescription(/Focus is the first operational action/i);
+    // Focus is gone (clean UI, PR 3), and so is the sentence explaining it;
+    // the Started caveat stays.
+    expect(info).not.toHaveAccessibleDescription(/Focus/);
+    expect(info).toHaveAccessibleDescription(/ingest time/i);
     expect(within(section).queryByText(/Every run in your organisation/i)).toBeNull();
   });
 });
