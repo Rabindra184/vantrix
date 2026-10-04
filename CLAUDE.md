@@ -128,7 +128,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **196 files / 2681 tests**, it
+`nvm use` first, and if a run reports fewer than **197 files / 2711 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -145,6 +145,125 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The clean-UI run-page branch (`feat/clean-ui-run-page`, PR 2 of four in
+`docs/superpowers/specs/2026-10-04-clean-ui-design.md`, its own spec
+`docs/superpowers/specs/2026-10-04-clean-ui-run-page-design.md`) added ONE
+unit file — `apps/web/test/BandsMenu.test.tsx` (6) — and 24 cases net
+elsewhere (several deleted WITH the claims they pinned, more re-pointed), from
+**196 / 2681 to 197 / 2711**. Integration stays **182 / 2353** (no `.ts` test
+changed) and **e2e rises to 188** (`run-charts.spec.ts`' keyboard case for the
+Bands menu). The run page loses its repeated and explanatory text: the
+release-gate band keeps one row per system and no counts, a tile is a label, a
+value and a delta naming its run ("+7.7% vs Run 10", a link), the percentile
+chart's ten band chips are one `Bands · n` menu, and the gate cards stop
+restating rule and actual in a sentence.
+
+**MEASURED BEFORE AND AFTER**, the same headless pass as PR 1's table, words
+inside `<main>` and prose words (paragraphs, list items and captions of seven
+words or more):
+
+```
+                 words          prose
+  Run Summary    388 -> 295     191 -> 127   the longest blocks left are DATA: the
+                                             simulation's own assertion
+                                             expressions, read verbatim (G-05)
+  Report         286 -> 279       0 ->   0
+  Trends         113 -> 104      12 ->   0
+  Compare        185 -> 185       0 ->   0
+  A request      276 -> 245      35 ->  11   the identity line (project · class · time)
+  A group        293 -> 279      11 ->  11   the same line
+```
+
+**A REMOVAL JUSTIFIED BY "IT IS SHOWN ELSEWHERE" HAS TO BE CHECKED AGAINST
+WHERE ELSEWHERE RENDERS.** The header's verdict badge was dropped because "the
+lifecycle strip carries the verdict on every tab" — in the spec, the plan, the
+component's comment and a test docstring. `RunShell` draws the strip, like the
+band, `{onSummary && …}`, and `RunLifecycle.phoneStep` filters the verdict out
+before choosing a phone's one step. So a failed run's Report, Logs, Trends and
+Compare said nothing about how it went, with every suite green: the four
+re-pointed verdict assertions were all on the Summary. The final review (Opus)
+found it by reading the conditional. The badge is back and withheld on the
+Summary alone, where the band states it — one verdict per page — and
+`RunShell.test.tsx` renders the real header under each section's path.
+
+**A GUARD AGAINST STALE CROSS-REFERENCES WAS SATISFIED BY A LONGER WORD.**
+`RunGlossary.test.tsx` checked each headword with `toContain`, so `estimate`
+passed inside "estimat**ed**" after the p95 tile stopped saying it — while the
+entry also sent readers to "How percentiles are measured", a disclosure this
+branch deleted. Headwords match as WHOLE words now, and a second case requires
+every “quoted” name in a meaning to be said by some source file under
+`apps/web/src`. Both failed on the old entry.
+
+**`palette.test.ts` GATES THE STATUS TONES AGAINST THE CARD, AND NOTHING
+ELSE.** The comparison chip drew the pending tone on `bg-sunken`: 4.44:1 in the
+light theme, under AA's 4.5. It sits on the card now (5.02). The case reads the
+ground off the chip's own class and the tone off its own style, so it measures
+the pair that ships rather than a pair somebody listed. **A new chip, tag or
+badge on a non-card ground is unmeasured until something reads its ground.**
+
+**ONE ⓘ IN ONE TILE'S LABEL PUT ITS VALUE ON A DIFFERENT LINE.** The trigger is
+20px; the other labels are 18px of text. p95's value sat 2px below its
+neighbours at 1280, 1440 and 375 — the common-baseline defect `RunStats`'
+grid comment records fixing before, from another direction, and jsdom lays out
+nothing. Every tile's `<dt>`
+is `min-h-5`; `run-tables.spec.ts`' M01 case asserts the four values start at
+one height. The phone's first tile moves 804.4 → **806.4** against
+`mobile.spec.ts`' 812: **5.6px of headroom now.**
+
+**A PATTERN WITH `\.?` IN IT PINNED A STRAY FULL STOP.** The gates row read
+"…exceeds the 750 ms limit. and 2 more" — `describeSlaOutcome` ends its
+sentence and the count was tacked on after — and the case's
+`/limit\.? and 2 more$/` accepted both. It reads "…limit, and 2 more." and the
+case pins the whole row.
+
+**WHAT A CHART DRAWS IS NOT WHAT ITS DATA TABLE SAYS.** `toPercentiles` puts
+ALL TEN band columns in the table whatever is ticked, so "draws what is
+ticked" reads the series handed to `setOption` (the `RunSummary.test.tsx`
+wrapper) rather than the table.
+
+**A FOCUSED RUN MISSED A SEAM CASE ONE FILE OVER.** Task 4 removed the gate
+card's sentence and ran `AssertionBars.test.tsx`; `RunDetail.live.test.tsx`'s
+seam case pinned that sentence and only the full `test:unit` found it. Same for
+`run-lifecycle.spec.ts`, which pinned the band's old gates wording. Both were
+re-pointed at the claim (title, actual, outcome; the one-phrase row) and
+red-verified.
+
+**RULINGS, EACH A DECISION RATHER THAN AN OVERSIGHT:**
+
+  - The unprocessed incomplete run's "why" left the band with its detail
+    paragraph; the Platform gates bar still says "the run left nothing to
+    judge".
+  - The baseline's start time is no longer shown; the delta names the run and
+    links to it.
+  - p95's ⓘ sits INSIDE the tile's `<dt>` (a `<dl>` group cannot hold another
+    wrapper), so `dt.textContent` includes the hidden caveat; three tests read
+    the label `<span>`.
+  - The live p95 caveat says "what has arrived so far", not "the whole run".
+  - `BandsMenu` is `modal={false}`, as `ChartActions` and the account menu, so
+    the chart stays visible while bands are ticked; `Chip` lost its only caller
+    and is deleted, and `BAND_LABEL` has one definition.
+  - `ErrorsTable` lost `windowSelected` and its window note: its last caller
+    was the request page, where nothing is windowed, and the page's new
+    "Whole-run figures" tag (an ⓘ) covers the table.
+
+**KNOWN AND LEFT, EACH A DECISION RATHER THAN AN OVERSIGHT:**
+
+  - A lone ⓘ under the tiles when the only comparability findings are "not
+    recorded" — the usual state on uploaded runs. A muted word beside it would
+    label it.
+  - The group page renders two percentile charts, so two Bands triggers share
+    the name "Percentile bands, 6 selected" (twenty chips shared names before).
+    Naming each after its chart's title would separate them.
+
+**WHAT WAS RUN.** `typecheck` and `lint` exit 0 by their own exit codes;
+`test:unit` **197 / 2711**, zero `Errors` lines, after the final review's fix
+pass; `test:integration` **182 / 2353, exit 0, zero failures** — on the tree
+before that pass, which touched only `.tsx` files and one e2e spec, neither of
+which that config runs; `pnpm test:e2e` **188 passed, exit 0** — every total the one
+predicted from the source, against a SCRATCH DATABASE (`perfportal_cleanui2`),
+a scratch Redis INDEX (db 4) and e2e port 3800. Integration waited behind the
+load gate and started at 6.87 / 9.96.
 
 The clean-UI InfoTip branch (`feat/clean-ui-infotip`, PR 1 of four in
 `docs/superpowers/specs/2026-10-04-clean-ui-design.md`) added TWO unit files —
