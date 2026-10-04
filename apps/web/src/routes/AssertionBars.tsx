@@ -141,10 +141,8 @@ export function PlatformGatesBar({
                   <Marked mark={ASSERTION_OUTCOME[a.outcome]} />
                 </span>
               </div>
-              {/* The same two cells the gates table carried: the measured
-                  value through the rule's own formatter, and the outcome in
-                  words — the stored message only for a not-applicable gate.
-                  A dash, never `0`, where nothing was measured. A
+              {/* The measured value through the rule's own formatter. A dash,
+                  never `0`, where nothing was measured. A
                   MEASUREMENT, so it is rounded for reading and widened where
                   rounding would make it read as equal to the rule's own bound
                   in the line above — `Actual: 100 ms` under `≤ 100 ms` on a
@@ -153,7 +151,16 @@ export function PlatformGatesBar({
                 Actual:{' '}
                 {a.actualValue === null ? '—' : formatSlaMeasured(a.rule.metric, a.actualValue, a.rule.threshold)}
               </p>
-              <p className="text-[0.8125rem] text-muted">{describeSlaOutcome(a) ?? a.message}</p>
+              {/* EACH RULE ONCE (clean UI, PR 2). The title states the rule and
+                  the line above the measurement, so a passed or failed gate's
+                  sentence joining the two said both again. A not-applicable
+                  gate keeps its stored message: there it is the REASON it
+                  could not judge ("No matching request was measured"), which
+                  no field on the card carries. `describeSlaOutcome` answers
+                  null for exactly that outcome. */}
+              {describeSlaOutcome(a) === null ? (
+                <p className="text-[0.8125rem] text-muted">{a.message}</p>
+              ) : null}
             </li>
           ))}
         </ul>

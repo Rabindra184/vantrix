@@ -4,7 +4,7 @@ import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { Assertion, StatsResponse, ToolAssertion } from '@perfportal/contracts';
+import { describeSlaOutcome, type Assertion, type StatsResponse, type ToolAssertion } from '@perfportal/contracts';
 import reference from './fixtures/reference-run.json';
 import {
   PlatformGatesBar,
@@ -195,21 +195,42 @@ describe('PlatformGatesBar', () => {
   });
 
   /**
-   * THE CARD'S OUTCOME LINE, WHOLE. The title line above it already says
-   * `Whole-run p99 response time ≤ 750 ms`, so a fragment such as "p99" or
-   * "750 ms" is satisfied by the title and pins nothing here. The full
-   * sentence is the evaluator's structured fields in the reader's vocabulary
-   * (review.md 3); the STORED message is `p99 breached its threshold.`, which
-   * is how a card quietly printing the schema's own words is told from one
-   * that does not — so its absence is asserted beside the sentence's presence.
+   * THE CARD READS IN THE READER'S VOCABULARY, NEVER THE SCHEMA'S (review.md
+   * 3). The title is the rule from its structured fields and the actual its
+   * measurement; the STORED message is `p99 breached its threshold.`, which is
+   * how a card quietly printing the evaluator's own words is told from one
+   * that does not — so its absence is asserted beside the title's presence.
    */
-  it('words a failed gate’s outcome from its structured fields, not its stored message', () => {
+  it('names a failed gate from its structured fields, never its stored message', () => {
     at('/r', <PlatformGatesBar runId={RUN_ID} assertions={THREE_GATES} ran />);
     const failed = screen.getAllByTestId('gate-card')[0]!;
-    expect(
-      within(failed).getByText('Whole-run p99 response time 1830 ms exceeds the 750 ms limit.'),
-    ).toBeVisible();
+    expect(within(failed).getByText('Whole-run p99 response time \u2264 750 ms')).toBeVisible();
+    expect(failed).toHaveTextContent('Actual: 1830 ms');
     expect(failed).not.toHaveTextContent('p99 breached its threshold.');
+  });
+
+  /**
+   * ═══ EACH RULE ONCE (clean UI, PR 2) ═══
+   *
+   * A passed or failed card's title already states the rule and its `Actual:`
+   * line the measurement, so a third line joining the two into a sentence
+   * said both again. The expected sentence is COMPUTED by the same
+   * `describeSlaOutcome` the card used to print, so this cannot pass against
+   * a card that merely reworded it; the actual is asserted beside the absence
+   * so a card that lost its measurement too cannot satisfy it.
+   */
+  it('does not restate a passed or failed gate in a sentence', () => {
+    at('/r', <PlatformGatesBar runId={RUN_ID} assertions={THREE_GATES} ran />);
+    const [failed, passed] = screen.getAllByTestId('gate-card');
+    for (const [card, gate] of [
+      [failed!, THREE_GATES[0]!],
+      [passed!, THREE_GATES[1]!],
+    ] as const) {
+      const sentence = describeSlaOutcome(gate);
+      expect(sentence).not.toBeNull();
+      expect(within(card).queryByText(sentence!)).toBeNull();
+      expect(card).toHaveTextContent(/Actual: \S/);
+    }
   });
 
   /**
@@ -258,7 +279,6 @@ describe('PlatformGatesBar', () => {
     expect(card).toHaveTextContent('Whole-run mean response time \u2264 100 ms');
     expect(card).toHaveTextContent('Actual: 100.004 ms');
     expect(card).not.toHaveTextContent(/Actual: 100 ms/);
-    expect(within(card).getByText('Whole-run mean response time 100.004 ms exceeds the 100 ms limit.')).toBeVisible();
   });
 
   it.each([
