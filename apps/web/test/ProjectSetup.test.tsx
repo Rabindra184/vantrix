@@ -449,6 +449,23 @@ describe('ProjectSetup — the workflows are choices before they are documents',
   });
 
   /** CI's notes ride behind an info; the plugin keeps one line (clean UI PR 4). */
+  /** PR 4 cleanup: a static summary reads the same open or closed, so each
+   *  carries a chevron that turns when its disclosure opens. Screen readers
+   *  already hear expanded or collapsed, so the chevron is `aria-hidden`. */
+  it('marks each disclosure open or closed with a chevron', async () => {
+    renderPage();
+    await ready();
+    const all = [...document.querySelectorAll('details')];
+    expect(all).toHaveLength(2);
+    for (const details of all) {
+      expect(details).toHaveClass('group');
+      const chevron = details.querySelector('summary svg');
+      expect(chevron).not.toBeNull();
+      expect(chevron).toHaveAttribute('aria-hidden', 'true');
+      expect(chevron!.getAttribute('class') ?? '').toContain('group-open:rotate-90');
+    }
+  });
+
   it('puts the CI notes behind an info and keeps one line about the plugin', async () => {
     renderPage();
     await ready();

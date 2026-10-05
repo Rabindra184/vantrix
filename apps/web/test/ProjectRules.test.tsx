@@ -1658,7 +1658,9 @@ describe('ProjectRules — the page leads with what exists (review.md 12, 14, 21
     // policy is stated once rather than split across the form.
     expect(tip).toHaveAccessibleDescription(/log header names the simulation/);
     const save = screen.getByRole('button', { name: 'Add rule' });
-    expect(tip.closest('div')?.parentElement).toContainElement(save);
+    // The ⓘ's own row — not the form, which contains Save wherever the ⓘ
+    // sits (PR 4's review found the parent-of-the-row form vacuous).
+    expect(tip.closest('div')).toContainElement(save);
     expect(screen.queryByText('When does this rule apply?')).toBeNull();
   });
 
