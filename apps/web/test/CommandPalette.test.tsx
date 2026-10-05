@@ -688,6 +688,31 @@ describe('CommandPalette', () => {
     expect(word.closest('[style*="--color-status"]')).toBeNull();
   });
 
+  it("gives a row's context only the space its name leaves", async () => {
+    /* A LAYOUT claim, and jsdom lays nothing out — so this pins the class that
+       carries it, and `command-palette.spec.ts` is what measures it. The row's
+       context (the project beside a test) used to be `shrink-[2]`, which flex
+       weights by its UNCLAMPED size: beside a long name it took a share of
+       the NAME's width however short the name was, and a run's "Run 2" drew as
+       "R…". The context is the remainder instead — a basis of zero that only
+       grows into free space — so it can never take from the name. */
+    stubApi({ tests: () => json(tests([SMOKE])) });
+    renderPalette();
+    const user = userEvent.setup();
+
+    await enter(user, 'smoke');
+    const row = await screen.findByRole('option', { name: /Checkout smoke/ });
+    const name = within(row).getByText('Checkout smoke');
+    const context = within(row).getByText('Checkout', { exact: true });
+
+    expect(context).toHaveClass('flex-1');
+    expect(context).toHaveClass('min-w-0');
+    expect(name).not.toHaveClass('flex-1');
+    // A shrink factor on the context is the shape that failed: it is weighed
+    // against the name by size, so it is never zero.
+    expect(context.className).not.toMatch(/(^|\s)shrink-/);
+  });
+
   it('returns focus to what had it before the palette opened', async () => {
     stubApi();
     renderPalette({ open: false });

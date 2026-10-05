@@ -303,13 +303,34 @@ function Row({ row, onChoose }: { readonly row: RowSpec; readonly onChoose: (to:
 
 /* A row's parts. Each truncates on its own and none can widen the row; the
    spaces between them are real text nodes, because a flex gap moves pixels and
-   a screen reader reads text (CLAUDE.md, "A MARGIN IS NOT A SPACE"). */
+   a screen reader reads text (CLAUDE.md, "A MARGIN IS NOT A SPACE").
+
+   ═══ THE SECONDARY TEXT TAKES WHAT THE NAME LEAVES, AND NOTHING IT HAS NOT ═══
+
+   This was `shrink-[2]`, meant as "the secondary text gives way twice as fast",
+   and it does not: a flex item loses space in proportion to its shrink factor
+   TIMES ITS UNCLAMPED SIZE, and `max-w-[50%]` clamps a size only after that
+   sum is taken. Beside a long class the secondary text therefore counts at its
+   full length, the row overshoots by about that much, and a short primary —
+   "Run 2" — loses about HALF of itself (its factor over the secondary's)
+   whatever the screen: it drew as "R…" at 375px with the class beside it
+   still holding a hundred pixels.
+   Raising the factor only shrinks that fraction; the primary still loses a
+   sliver, and a clipped sliver is an ellipsis. Measured in a browser (jsdom
+   lays nothing out): `command-palette.spec.ts`.
+
+   So the secondary text is the REMAINDER instead: `flex-1` is a basis of zero
+   that grows into whatever space is left, capped at half the row. The primary
+   keeps its full width while there is any, shrinks only once the row cannot
+   hold it (the one item that then can), and the secondary text reaches nothing
+   before the name has what it needs. As a side effect the times and outcomes
+   that follow it sit flush right, one column down the list. */
 function Primary({ children }: { readonly children: ReactNode }) {
   return <span className="min-w-0 max-w-full truncate">{children}</span>;
 }
 
 function Secondary({ children }: { readonly children: ReactNode }) {
-  return <span className="min-w-0 max-w-[50%] shrink-[2] truncate text-muted">{children}</span>;
+  return <span className="min-w-0 max-w-[50%] flex-1 truncate text-muted">{children}</span>;
 }
 
 /**

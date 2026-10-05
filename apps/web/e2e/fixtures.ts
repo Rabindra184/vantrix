@@ -1216,9 +1216,18 @@ export async function seedTestWithRuns(
     runs: number;
     /** The verdict every run of this test carries. */
     verdict?: 'passed' | 'failed' | 'not_evaluated' | null;
+    /**
+     * The slug of a project already in the org to file the test under, for a
+     * spec about a test's PROJECT (its name is part of what the command
+     * palette prints beside the test). Absent, the org's first project.
+     */
+    projectSlug?: string;
   },
 ): Promise<{ testId: string; slug: string }> {
-  const projectId = await projectFor(orgId);
+  const projectId =
+    opts.projectSlug === undefined
+      ? await projectFor(orgId)
+      : (await prisma.project.findFirstOrThrow({ where: { orgId, slug: opts.projectSlug } })).id;
   const test = await prisma.test.create({
     data: {
       orgId,
