@@ -143,7 +143,7 @@ describe('runNumber on the wire', () => {
 
 /**
  * ═══ `number=` ON THE RUN LIST: A RUN BY THE NUMBER ITS PAGE SHOWS ═══
- * (docs/superpowers/specs/2026-10-05-command-palette-design.md)
+ * (docs/superpowers/specs/2026-10-05-portfolio-home-and-command-palette-design.md)
  *
  * A run number names a run only WITHIN its test (the unique index is
  * `(test_id, run_number)`), so the filter is meaningless without a resolved

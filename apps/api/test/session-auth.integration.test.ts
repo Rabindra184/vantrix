@@ -4,12 +4,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { hashToken, mintToken } from '@perfportal/core';
+import { OrgMemberRepository } from '@perfportal/persistence';
 import { Queue } from 'bullmq';
 import request from 'supertest';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { createTestApp, type TestContext } from './support/app.js';
 import { runPipelineFor } from './support/pipeline.js';
-import { signUpAndLogin, signUpAsOrgMember } from './support/session.js';
+import { signUp, signUpAndLogin, signUpAsOrgMember } from './support/session.js';
 
 let ctx: TestContext;
 
@@ -519,6 +520,48 @@ describe('cross-org isolation on every session-reachable endpoint', () => {
     // toEqual below pass vacuously — same emptiness, not same content.
     expect(viaToken.body.stats.length).toBeGreaterThan(0);
     expect(viaSession.body).toEqual(viaToken.body);
+  });
+
+  /**
+   * `GET /v1/tests` is session-reachable and names no run, so the id-shaped
+   * loop above cannot cover it: it is the list a session sees its WHOLE org
+   * through, which makes "its whole org and nothing more" the property to
+   * prove. Two orgs, a member of each, a test in each — and each session sees
+   * exactly its own, by list and by search. The two-sided toEqual is what
+   * makes it discriminating: a list that leaked fails on the extra slug, and
+   * one that answered nothing fails on the missing one.
+   */
+  it('shows each org’s session its own tests at GET /v1/tests, and never the other’s', async () => {
+    ctx = await createTestApp();
+    const otherOrg = await ctx.prisma.org.create({ data: { slug: 'other-org-tests', name: 'Other' } });
+    const otherProject = await ctx.prisma.project.create({
+      data: { orgId: otherOrg.id, slug: 'other-project', name: 'Other Project' },
+    });
+    const testIn = (orgId: string, projectId: string, slug: string) =>
+      ctx.prisma.test.create({
+        data: { orgId, projectId, slug, name: slug, simulationClass: `com.acme.${slug}` },
+      });
+    await testIn(ctx.orgId, ctx.projectId, 'ours-smoke');
+    await testIn(otherOrg.id, otherProject.id, 'theirs-smoke');
+
+    const ours = await signUpAsOrgMember(ctx, 'tests-ours@example.test');
+    const member = await signUp(ctx.app, 'tests-theirs@example.test');
+    await ctx.app.get(OrgMemberRepository).add(member.userId, otherOrg.id, 'member');
+    const theirs = member.cookie;
+
+    const slugs = async (cookie: string, query = ''): Promise<string[]> => {
+      const res = await request(ctx.app.getHttpServer())
+        .get(`/v1/tests${query}`)
+        .set('Cookie', cookie)
+        .expect(200);
+      return res.body.items.map((t: { slug: string }) => t.slug).sort();
+    };
+
+    expect(await slugs(ours)).toEqual(['ours-smoke']);
+    expect(await slugs(theirs)).toEqual(['theirs-smoke']);
+    // A search that matches both orgs' tests still answers only the caller's.
+    expect(await slugs(ours, '?q=smoke')).toEqual(['ours-smoke']);
+    expect(await slugs(theirs, '?q=smoke')).toEqual(['theirs-smoke']);
   });
 });
 

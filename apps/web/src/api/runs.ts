@@ -124,9 +124,12 @@ export function searchRuns(q: string, limit: number): Promise<RunListResponse> {
  * test — so both slugs are required parameters here, and the API's own rule
  * (400 NUMBER_NEEDS_TEST without a resolved test, and a test slug is unique
  * only within its project) is unreachable from this client rather than left
- * for every caller to remember. The answer is a list of zero or one: no such
- * run is an empty list, not an error, because a palette typing `#999` is not
- * making a mistake the server should refuse.
+ * for every caller to remember. The answer is a list of zero or one: a test
+ * that has no run N is an empty list, not an error, because a palette typing
+ * `#999` is not making a mistake the server should refuse. A project or test
+ * slug that names nothing IS an error — the API answers 404, as it does for
+ * any unknown slug on the run list — and the caller decides what that means
+ * (the palette counts a test deleted between two requests as no hit).
  */
 export function fetchRunByNumber(
   projectSlug: string,

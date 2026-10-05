@@ -635,6 +635,15 @@ const responses: Record<string, ResponseObject> = {
       'what a valid value looks like.',
     content: problem(),
   },
+  TestListBadRequest: {
+    description:
+      'A query parameter was given more than once (code INVALID_QUERY): "q" and "cursor" each ' +
+      'take a single value, and a repeated one is refused rather than guessed at. Nothing ' +
+      'else here is a 400 — "limit" is clamped, and a malformed or foreign "cursor" answers ' +
+      'an empty page rather than an error (see TestListCursor). application/problem+json with ' +
+      'a required "remediation".',
+    content: problem(),
+  },
   ProjectRunsBadRequest: {
     description:
       'Either a query parameter was malformed (e.g. "cursor" is not a valid cursor), or (code ' +
@@ -1598,8 +1607,10 @@ const paths: Record<string, PathItemObject> = {
         'no project and sees every test across its whole organisation. Another organisation\'s ' +
         'tests are never returned, searched or paged to. Each entry names its own project and ' +
         'carries "latestRun" and "p95History", so a table or a search box needs no request per ' +
-        'test. "latestRun" is the test\'s newest ARRIVAL — the run that was created last, which ' +
-        'is the order run numbers follow — and not the run that started last: its "startedAt" ' +
+        'test. "latestRun" is the test\'s newest ARRIVAL — the run that was created last, ' +
+        'usually but not always the highest-numbered one (an upload is numbered when it is ' +
+        'processed and a live run when its log header arrives, so overlapping ingests can be ' +
+        'numbered out of arrival order) — and not the run that started last: its "startedAt" ' +
         'is when that run\'s load test ran, which can be earlier than a run that arrived ' +
         'before it. "p95History" holds the p95 of the last completed runs, oldest first, at ' +
         'most ten, and a run with no usable p95 contributes no point. Tests whose latest run ' +
@@ -1615,7 +1626,7 @@ const paths: Record<string, PathItemObject> = {
           description: 'A page of tests, most recently run first.',
           content: json(schemaRef('OrgTestListResponse')),
         },
-        '400': ref('BadRequest'),
+        '400': ref('TestListBadRequest'),
         ...authFailureResponses,
       },
     },

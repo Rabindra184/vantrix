@@ -33,9 +33,11 @@ export const TestSummarySchema = z.object({
    */
   runCount: z.number().int().nonnegative(),
   /**
-   * This test's most recent run by ARRIVAL (`created_at DESC, id DESC`), which
-   * is the order run numbers follow — so it is always the test's
-   * highest-numbered run. That is NOT the order `GET /v1/runs` uses: the run
+   * This test's most recent run by ARRIVAL (`created_at DESC, id DESC`) —
+   * usually the test's highest-numbered run, and not always: an upload is
+   * numbered when the worker finalizes it and a live run when its log header
+   * arrives, so two ingests that overlap can be numbered out of arrival order.
+   * That is NOT the order `GET /v1/runs` uses either: the run
    * list sorts by when the test RAN (`COALESCE(tool_started_at, started_at)`),
    * and the two differ only for a bundle uploaded after a newer one, which is
    * the latest run here and sits lower in that list. (This docstring used to
@@ -89,9 +91,10 @@ export const OrgTestSummarySchema = z.object({
   /** The owning project, so a row can name and link it without a lookup. */
   project: z.object({ slug: z.string(), name: z.string() }),
   /**
-   * The test's latest run by ARRIVAL (`created_at DESC, id DESC`) — the order
-   * run numbers follow, NOT the run list's by-start order. Null for a test
-   * that has never run, or whose every run was deleted.
+   * The test's latest run by ARRIVAL (`created_at DESC, id DESC`) — usually,
+   * not always, its highest-numbered run (see `TestSummarySchema`'s
+   * `latestRun`), and NOT the run list's by-start order. Null for a test that
+   * has never run, or whose every run was deleted.
    */
   latestRun: z
     .object({

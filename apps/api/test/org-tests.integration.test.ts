@@ -1,5 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { OrgTestListResponseSchema, type OrgTestListResponse } from '@perfportal/contracts';
+import {
+  OrgTestListResponseSchema,
+  RunListResponseSchema,
+  type OrgTestListResponse,
+} from '@perfportal/contracts';
 import { Sketch } from '@perfportal/statistics';
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -340,6 +344,30 @@ describe('GET /v1/tests', () => {
     });
     // The history point is the same figure the latest run's own row carries.
     expect(row!.p95History).toEqual([{ runId: latest, runNumber: 2, p95Ms: 90 }]);
+  });
+
+  /**
+   * THE SPEC'S OWN CASE: "p95History equals the list rows' metrics.p95Ms, a
+   * clamped value included". The portfolio and the palette read a test's p95
+   * here; the run list reads the same run's from `GET /v1/runs`. A reader
+   * moves between the two, so they must be one number — and the run's stored
+   * p95 sits ABOVE its own maximum, so a path that skipped the clamp, or
+   * joined a different statistics row, would show a different one.
+   */
+  it('reports the p95 the run list shows for the same run, clamped', async () => {
+    const t = await seedTest('checkout-smoke');
+    const runId = await seedRun(t.id, '2026-09-02T10:00:00Z', { runNumber: 1 });
+    await seedRunStat(runId, 450, { minMs: 5, maxMs: 300 });
+
+    const [row] = parse((await asSession(PATH)).body).items;
+    const listed = await asSession(`/v1/runs?project=checkout&test=checkout-smoke`);
+
+    expect(listed.status).toBe(200);
+    const run = RunListResponseSchema.parse(listed.body).items.find((r) => r.id === runId);
+    // Clamped to the run's own maximum, not the stored 450.
+    expect(run?.metrics?.p95Ms).toBe(300);
+    expect(row!.latestRun!.p95Ms).toBe(run!.metrics!.p95Ms);
+    expect(row!.p95History.at(-1)).toEqual({ runId, runNumber: 1, p95Ms: run!.metrics!.p95Ms });
   });
 
   it('reports a test that has never run with no latest run and no history', async () => {

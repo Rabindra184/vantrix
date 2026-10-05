@@ -391,6 +391,26 @@ describe('OpenAPI document', () => {
     expect(get?.parameters?.map((p) => p.name)).toContain('test');
   });
 
+  /**
+   * `GET /v1/tests`' one 400 is a repeated parameter. It used to share the
+   * generic `BadRequest`, whose text says a "cursor" that is not a UUID is
+   * refused — the opposite of this list's opaque cursor, which answers an
+   * empty page. A generated client would have branched on a 400 that cannot
+   * happen and missed the one that can.
+   */
+  it('gives GET /v1/tests its own 400, naming the repeated parameter and not a UUID cursor', async () => {
+    const doc = (await fetchDoc()) as AnyDoc & {
+      components?: { responses?: Record<string, { description?: string }> };
+    };
+    const get = doc.paths?.['/v1/tests']?.['get'] as
+      | { responses?: Record<string, { $ref?: string }> }
+      | undefined;
+    expect(get?.responses?.['400']?.$ref).toBe('#/components/responses/TestListBadRequest');
+    const description = doc.components?.responses?.['TestListBadRequest']?.description ?? '';
+    expect(description).toContain('INVALID_QUERY');
+    expect(description).not.toMatch(/not a UUID/i);
+  });
+
   it('documents the new component schemas', async () => {
     const doc = await fetchDoc();
     for (const name of ['DistributionResponse', 'UsersResponse', 'ScatterResponse', 'IndicatorBands']) {
