@@ -9,6 +9,7 @@ import request from 'supertest';
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createTestApp, type TestContext } from './support/app.js';
 import { runPipelineFor } from './support/pipeline.js';
+import { signUpAsOrgMember } from './support/session.js';
 
 /**
  * ═══ A RUN'S NUMBER, ON EVERY READ THAT CARRIES A RUN ═══
@@ -137,5 +138,95 @@ describe('runNumber on the wire', () => {
     expect(res.status).toBe(200);
     expect(res.body.tests).toHaveLength(1);
     expect(res.body.tests[0].latestRun.runNumber).toBe(2);
+  });
+});
+
+/**
+ * ═══ `number=` ON THE RUN LIST: A RUN BY THE NUMBER ITS PAGE SHOWS ═══
+ * (docs/superpowers/specs/2026-10-05-command-palette-design.md)
+ *
+ * A run number names a run only WITHIN its test (the unique index is
+ * `(test_id, run_number)`), so the filter is meaningless without a resolved
+ * test and is refused rather than guessed at. The runs come from the real
+ * pipeline for the reason the top of this file gives.
+ */
+describe('number= on GET /v1/runs', () => {
+  /** The one test the reference bundle's simulation class resolves to. */
+  async function theTestSlug(): Promise<string> {
+    const test = await ctx.prisma.test.findFirstOrThrow({ where: { projectId: ctx.projectId } });
+    return test.slug;
+  }
+
+  it('narrows a test’s runs to the one with that number', async () => {
+    const ids = [await ingested(), await ingested(), await ingested()];
+    const slug = await theTestSlug();
+
+    const res = await request(ctx.app.getHttpServer()).get(`/v1/runs?test=${slug}&number=2`).set(auth());
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    // Vacuity guard: without the filter the same call answers all three, so
+    // a one-item answer is the filter's and not the fixture's.
+    const unfiltered = await request(ctx.app.getHttpServer()).get(`/v1/runs?test=${slug}`).set(auth());
+    expect(unfiltered.body.items).toHaveLength(3);
+    expect(res.body.items).toHaveLength(1);
+    expect(res.body.items[0]).toMatchObject({ id: ids[1], runNumber: 2 });
+  });
+
+  it('narrows a session’s read the same way, naming the project beside the test', async () => {
+    const ids = [await ingested(), await ingested()];
+    const slug = await theTestSlug();
+    const cookie = await signUpAsOrgMember(ctx, `member-${randomUUID()}@example.com`);
+
+    const res = await request(ctx.app.getHttpServer())
+      .get(`/v1/runs?project=checkout&test=${slug}&number=1`)
+      .set('Cookie', cookie);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.items.map((i: { id: string }) => i.id)).toEqual([ids[0]]);
+  });
+
+  it('answers an empty page for a number the test never reached', async () => {
+    await ingested();
+    await ingested();
+    const slug = await theTestSlug();
+
+    const res = await request(ctx.app.getHttpServer()).get(`/v1/runs?test=${slug}&number=3`).set(auth());
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body).toEqual({ items: [], nextCursor: null });
+  });
+
+  it('refuses number without a test', async () => {
+    await ingested();
+
+    const token = await request(ctx.app.getHttpServer()).get('/v1/runs?number=1').set(auth());
+    expect(token.status).toBe(400);
+    expect(token.body.code).toBe('NUMBER_NEEDS_TEST');
+    expect(token.body.remediation).toContain('test=<slug>');
+
+    // A session that names its project and still no test is the same mistake.
+    const cookie = await signUpAsOrgMember(ctx, `member-${randomUUID()}@example.com`);
+    const session = await request(ctx.app.getHttpServer()).get('/v1/runs?project=checkout&number=1').set('Cookie', cookie);
+    expect(session.status).toBe(400);
+    expect(session.body.code).toBe('NUMBER_NEEDS_TEST');
+  });
+
+  it.each(['abc', '0', '-1', '2147483648', '1.5', '01', ''])(
+    'refuses a number that is not a positive whole number: %j',
+    async (bad) => {
+      await ingested();
+      const slug = await theTestSlug();
+
+      const res = await request(ctx.app.getHttpServer()).get(`/v1/runs?test=${slug}&number=${bad}`).set(auth());
+      expect(res.status, JSON.stringify(res.body)).toBe(400);
+      expect(res.body.code).toBe('INVALID_RUN_NUMBER');
+      expect(res.body.remediation).toContain('number=12');
+    },
+  );
+
+  it('accepts the largest number an int column holds', async () => {
+    await ingested();
+    const slug = await theTestSlug();
+
+    const res = await request(ctx.app.getHttpServer()).get(`/v1/runs?test=${slug}&number=2147483647`).set(auth());
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.items).toEqual([]);
   });
 });

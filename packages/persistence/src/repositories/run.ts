@@ -325,6 +325,34 @@ export interface RunListOptions {
    * value of this, which is correct: it is not a run of any test yet.
    */
   readonly testId?: string;
+  /**
+   * Narrow to the one run carrying this number WITHIN `testId`'s test.
+   *
+   * A run number names a run only inside its test (the unique index is
+   * `(test_id, run_number)`), so this means nothing alone: on its own it would
+   * match the Nth run of every test in scope. The API refuses it without a
+   * resolved test for exactly that reason, and this repository does not
+   * repeat the refusal — it takes whatever it is told to filter by.
+   */
+  readonly runNumber?: number;
+}
+
+/**
+ * The run-number predicate, spelled once.
+ *
+ * `param` is the 1-based placeholder INDEX the caller has already pushed the
+ * number onto (`$${params.length}`), not the number itself — a number
+ * interpolated into SQL would be an injection point and a distinct plan per
+ * value. A function rather than a literal in `list` because the persistence
+ * suite EXPLAINs this exact string beside `test_id` and asserts the plan names
+ * `run_test_id_run_number_key`: a restated copy would let the real predicate
+ * change under a green plan assertion.
+ *
+ * `::int` matches the column, so the planner compares like with like and the
+ * unique index stays usable.
+ */
+export function runNumberClause(param: number): string {
+  return `r.run_number = $${param}::int`;
 }
 
 /**
@@ -970,6 +998,10 @@ export class RunRepository {
     if (opts.testId) {
       params.push(opts.testId);
       filters.push(`r.test_id = $${params.length}::uuid`);
+    }
+    if (opts.runNumber !== undefined) {
+      params.push(opts.runNumber);
+      filters.push(runNumberClause(params.length));
     }
     if (opts.status) {
       params.push(opts.status);

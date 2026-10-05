@@ -54,6 +54,7 @@ export class RunsController {
     @Query('q') q?: string,
     @Query('status') status?: string,
     @Query('verdict') verdict?: string,
+    @Query('number') number?: string,
   ): Promise<RunListResponse> {
     const tenant = req.tenant!;
     let projectId = tenant.projectId;
@@ -106,6 +107,41 @@ export class RunsController {
       testId = named.id;
     }
 
+    // ═══ `number` NEEDS THE TEST THE `test` ABOVE JUST RESOLVED ═══
+    //
+    // A run number counts within its test — the unique index is
+    // `(test_id, run_number)` — so "run 12" alone names one run in EVERY test
+    // in scope, and answering it would return whichever of them the sort put
+    // first: a wrong answer with a 200 on it. It is checked here, after the
+    // test is resolved rather than beside the raw query parameters, because
+    // "has a test" is a fact about the RESOLVED request: a bearer token
+    // supplies its project and a session supplies it through `project`, and
+    // either way only a `test` that resolved gets this far.
+    //
+    // The needs-a-test check comes first so a request with neither a test nor
+    // a well-formed number is told about the missing test, the thing the
+    // caller has to add; the FORMAT check is the strict one. It refuses
+    // anything that is not plain decimal digits with no leading zero — which
+    // also rules out a sign, a fraction, an exponent and an array — and then
+    // bounds it at the largest value the int column holds, because ten digits
+    // admit values up to 9,999,999,999 and int4 stops at 2,147,483,647: an
+    // unbounded one would reach Postgres as "out of range for type integer"
+    // and answer 500 for a caller's typo. An EMPTY `number=` is
+    // refused rather than read as "any" — unlike `status=`, which a form
+    // submits to mean exactly that, nothing submits this one, and a request
+    // naming a run by an empty number is not asking for the whole list.
+    let runNumber: number | undefined;
+    if (number !== undefined) {
+      if (testId === undefined) {
+        throw badRequest(
+          'NUMBER_NEEDS_TEST',
+          'The "number" filter needs a test.',
+          'A run number names a run only within its test. Add "test=<slug>", and "project=<slug>" when using a session.',
+        );
+      }
+      runNumber = parseRunNumber(number);
+    }
+
     const parsedCursor = parseCursor(cursor);
     const filters = parseRunListFilters({ q, status, verdict });
     const page = await this.runs.runs().list(
@@ -114,6 +150,7 @@ export class RunsController {
         limit: parseLimit(limit),
         cursor: parsedCursor ? parsedCursor : undefined,
         testId: testId ? testId : undefined,
+        runNumber,
         ...filters,
       },
     );
@@ -399,6 +436,30 @@ export class ProjectRunsController {
     );
     return { items: page.items.map(toListItem), nextCursor: page.nextCursor };
   }
+}
+
+/** The largest value `run.run_number`'s int column holds. */
+const MAX_RUN_NUMBER = 2_147_483_647;
+
+/**
+ * `?number=` as a positive whole number, or a 400 that says what a run number
+ * looks like. Plain decimal digits, no leading zero, at most ten of them and
+ * no more than `MAX_RUN_NUMBER` — see the call site for why each bound is
+ * there. `typeof` first because a repeated parameter (`number=1&number=2`)
+ * arrives as an array, which the regular expression would otherwise coerce to
+ * "1,2" and refuse for the right reason by accident.
+ */
+function parseRunNumber(value: unknown): number {
+  const invalid = () =>
+    badRequest(
+      'INVALID_RUN_NUMBER',
+      '"number" must be a positive whole number.',
+      'Pass the number a run page shows, e.g. number=12 for "Run 12".',
+    );
+  if (typeof value !== 'string' || !/^[1-9]\d{0,9}$/.test(value)) throw invalid();
+  const parsed = Number(value);
+  if (parsed > MAX_RUN_NUMBER) throw invalid();
+  return parsed;
 }
 
 /**

@@ -379,6 +379,18 @@ const parameters: Record<string, ParameterObject> = {
       'runs of any test yet.',
     schema: { type: 'string' },
   },
+  RunNumberFilter: {
+    name: 'number',
+    in: 'query',
+    description:
+      'Narrow to the one run carrying this number WITHIN its test — the number a run page ' +
+      'shows as "Run 12". A run number counts per test, so it names a run only beside a test: ' +
+      'sending "number" without a "test" that resolved is a 400 (code NUMBER_NEEDS_TEST) rather ' +
+      'than a guess at which test\'s Run 12 was meant, and a value that is not a positive whole ' +
+      'number no larger than 2147483647 is a 400 (code INVALID_RUN_NUMBER). A number the test ' +
+      'never reached is an empty page, not a 404.',
+    schema: { type: 'integer', minimum: 1, maximum: 2147483647 },
+  },
   RuleProjectSlug: {
     name: 'slug',
     in: 'path',
@@ -816,6 +828,7 @@ const paths: Record<string, PathItemObject> = {
         parameters['Cursor']!,
         parameters['ProjectFilter']!,
         parameters['RunListTest']!,
+        parameters['RunNumberFilter']!,
         parameters['RunSearch']!,
         parameters['RunStatusFilter']!,
         parameters['RunVerdictFilter']!,
