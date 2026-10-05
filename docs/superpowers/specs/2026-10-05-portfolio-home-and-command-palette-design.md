@@ -103,9 +103,18 @@ OrgTestSummary = {
 OrgTestListResponse = { items: OrgTestSummary[], nextCursor: string | null }
 ```
 
-- **"Latest run"** is the run list's own ordering (`created_at DESC, id
-  DESC`), one `DISTINCT ON (r.test_id)` query, so the home table, the project
-  catalogue and the run list can never disagree about which run is latest.
+- **"Latest run"** is ARRIVAL order, `created_at DESC, id DESC`: the order
+  the project catalogue already uses and run numbers follow, so the latest run
+  is always the test's highest-numbered one. It is read per test with a
+  `LATERAL … LIMIT 1` over the existing `run_test_id_created_at_idx`.
+  - **This is not the run list's order, and the spec first said it was.**
+    `RunRepository.list` sorts by when the test RAN,
+    `COALESCE(tool_started_at, started_at) DESC, id DESC`. The two differ only
+    for a bundle uploaded after a newer one: it is the latest run here and sits
+    lower in the run list. Run numbering is arrival order, so arrival is the
+    honest meaning of "latest" for a test.
+  - `TestSummary.latestRun`'s docstring claims the run list's ordering; the
+    code never used it. The docstring is corrected in PR 1.
 - **`p95Ms` and `p95History`** are the run-scope response-time p95 the run
   list's `metrics.p95Ms` already returns, through the same expression,
   clamped against that run's own min and max (`clampPercentile`'s rule). A
@@ -197,8 +206,10 @@ response echoes the zone used. A zone `Intl` rejects is 400
 `INVALID_TIMEZONE`, with a remediation giving `Europe/London` as an example.
 
 **Two windows, both copied from Gatling Enterprise, both on `run.created_at`**
-(arrival: the time the run list sorts by and "latest run" means everywhere;
-a late upload counts on the day it arrived):
+(arrival: the order "latest run" and run numbers follow, served by the existing
+`(status, created_at)` and `(test_id, created_at)` indexes. The run list itself
+sorts by when the test ran, so a late upload counts here on the day it
+arrived):
 
 - **Attention window:** the last 168 hours before now.
 - **Glance days:** the 7 calendar days ending today in `tz`. Node computes the
@@ -323,8 +334,9 @@ checkpoint commit, with the replacement count asserted.
 
 - Contracts: `OrgTestListResponseSchema` round trip; `number` parsing.
 - Integration, `GET /v1/tests`:
-  - "latest run" agrees with `GET /v1/runs`' order, including a test whose
-    newest run arrived second-to-last of its project's runs;
+  - "latest run" is the newest ARRIVAL, including when an older-started
+    bundle arrived last (the one case where it and the run list differ), and
+    agrees with the project catalogue's `latestRun`;
   - `p95History` equals the list rows' `metrics.p95Ms`, a clamped value
     included;
   - another org's tests are invisible; a token sees its own project only;
