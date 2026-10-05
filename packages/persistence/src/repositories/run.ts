@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { clampPercentile } from '@perfportal/statistics';
 import type { Prisma, PrismaClient } from '@prisma/client';
 import type { RunStatus, RunVerdict } from '@perfportal/contracts';
+import { escapeLike } from './like.js';
 import type { ProjectScope, TenantScope } from './tenant.js';
 
 export interface RunRecord {
@@ -326,48 +327,73 @@ export interface RunListOptions {
   readonly testId?: string;
 }
 
+/**
+ * A run's headline p95, read off its run-scope response-time statistics row —
+ * or null where that row has no usable one.
+ *
+ * ONE DEFINITION, TWO READERS. The run list's `metrics.p95Ms` and the org-wide
+ * test list's latest run and p95 history both show this number, so both reach
+ * it here: two copies would drift into disagreeing about a run's p95 exactly
+ * where a reader compares a list with the page it links to.
+ *
+ * Null when the project's percentile set does not include p95 — and NOT a
+ * neighbouring percentile. The set is a project setting, so a project that
+ * does not configure p95 genuinely has no answer here, and p99 is a different
+ * question. Null too when there is no statistics row at all, which the callers
+ * pass as all-null fields.
+ *
+ * ═══ CLAMPED, LIKE EVERY OTHER SURFACE THAT SHOWS A PERCENTILE ═══
+ *
+ * A percentile cannot lie outside the sample it came from, and `minMs`/
+ * `maxMs` are exact while the sketch carries 1% relative error — so the
+ * stored estimate sometimes does. `clampPercentile` projects it back, and
+ * the clamp branch installed it at every assembler: the rollup, the bucket
+ * split, the evaluator's fallback and `/stats`. The list was the one reader
+ * left holding the raw value, because it deliberately reads the FROZEN
+ * column rather than re-quantiling a sketch per row.
+ *
+ * That trade is right and is untouched here: the clamp needs no sketch. It is
+ * `Math.min(Math.max(v, min), max)` against two columns already on the row, so
+ * the list agrees with the run page for nothing.
+ *
+ * Measured on the nine real runs in the developer database: 9 stored values
+ * sit above their own maximum, 3 of them at RUN scope, worst +12.46 ms. All
+ * three happen to be p99 and the list surfaces p95, so the disagreement was
+ * not yet visible — which is the argument for closing it now rather than after
+ * a reader reports two p95s for one run. History is not rewritten (the clamp
+ * branch says so deliberately), so raw values keep arriving here for as long
+ * as those rows exist.
+ */
+export function runP95(stat: {
+  percentiles: unknown;
+  minMs: number | null;
+  maxMs: number | null;
+}): number | null {
+  const bands =
+    typeof stat.percentiles === 'object' && stat.percentiles !== null
+      ? (stat.percentiles as Record<string, unknown>)
+      : null;
+  const p95 = bands?.['p95'];
+  if (typeof p95 !== 'number' || !Number.isFinite(p95)) return null;
+  return stat.minMs !== null && stat.maxMs !== null
+    ? clampPercentile(p95, { minMs: stat.minMs, maxMs: stat.maxMs })
+    : p95;
+}
+
 function metricsFrom(row: RunSqlRow): RunListMetrics | null {
   // `count` is the discriminant: the LEFT JOIN either matched a stat row or it
   // did not, and a half-populated one would be a bug in the query rather than
   // a state to represent — the same argument the test triple below makes.
   if (row.statCount === null) return null;
-  const p95 = row.statPercentiles?.['p95'];
-  const usable = typeof p95 === 'number' && Number.isFinite(p95);
   return {
     count: row.statCount,
     errorRate: row.statErrorRate ?? 0,
     throughputRps: row.statThroughputRps ?? 0,
-    // NOT a neighbouring percentile. The set is a project setting, so a
-    // project that does not configure p95 genuinely has no answer here, and
-    // p99 is a different question.
-    //
-    // ═══ CLAMPED, LIKE EVERY OTHER SURFACE THAT SHOWS A PERCENTILE ═══
-    //
-    // A percentile cannot lie outside the sample it came from, and `minMs`/
-    // `maxMs` are exact while the sketch carries 1% relative error — so the
-    // stored estimate sometimes does. `clampPercentile` projects it back, and
-    // the clamp branch installed it at every assembler: the rollup, the
-    // bucket split, the evaluator's fallback and `/stats`. This row was the
-    // one reader left holding the raw value, because it deliberately reads
-    // the FROZEN column rather than re-quantiling a sketch per row.
-    //
-    // That trade is right and is untouched here: the clamp needs no sketch.
-    // It is `Math.min(Math.max(v, min), max)` against two columns already on
-    // the row, so the list agrees with the run page for nothing.
-    //
-    // Measured on the nine real runs in the developer database: 9 stored
-    // values sit above their own maximum, 3 of them at RUN scope, worst
-    // +12.46 ms. All three happen to be p99 and this row surfaces p95, so
-    // the disagreement was not yet visible — which is the argument for
-    // closing it now rather than after a reader reports two p95s for one
-    // run. History is not rewritten (the clamp branch says so deliberately),
-    // so raw values keep arriving here for as long as those rows exist.
-    p95Ms:
-      usable && row.statMinMs !== null && row.statMaxMs !== null
-        ? clampPercentile(p95, { minMs: row.statMinMs, maxMs: row.statMaxMs })
-        : usable
-          ? p95
-          : null,
+    p95Ms: runP95({
+      percentiles: row.statPercentiles,
+      minMs: row.statMinMs,
+      maxMs: row.statMaxMs,
+    }),
   };
 }
 
@@ -410,10 +436,6 @@ function startedOnFrom(startedAt: Date): Date {
  */
 function isUniqueConstraintViolation(err: unknown): boolean {
   return typeof err === 'object' && err !== null && 'code' in err && err.code === 'P2002';
-}
-
-function escapeLike(value: string): string {
-  return value.replace(/[\\%_]/g, (match) => `\\${match}`);
 }
 
 /**
