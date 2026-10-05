@@ -1,6 +1,7 @@
 import type { PrismaClient } from '@prisma/client';
 import { escapeLike } from './like.js';
 import { runP95, type RunRecord } from './run.js';
+import { decodeOrgTestCursor, encodeOrgTestCursor } from './test-cursor.js';
 import type { ProjectScope, TenantScope } from './tenant.js';
 
 /**
@@ -69,7 +70,8 @@ export interface OrgTestRow {
 
 export interface ListOrgTestsOptions {
   readonly limit: number;
-  /** A test id: the last item of the previous page. */
+  /** The previous page's `nextCursor`: opaque, and an empty page if it is not
+   *  one this repository minted. */
   readonly cursor?: string;
   /** Free text over the test's name, slug and class and its project's name
    *  and slug. Already trimmed by the caller; matched literally. */
@@ -85,10 +87,11 @@ export interface ListOrgTestsOptions {
 export const P95_HISTORY_POINTS = 10;
 
 /**
- * The newest ARRIVAL per test, as a LATERAL join the list's ORDER BY and its
- * cursor lookup both read — one definition, because the keyset is only correct
- * while the order it resumes and the order it was sorted by are the same
- * expression. Served by `run_test_id_created_at_idx`.
+ * The newest ARRIVAL per test, as a LATERAL join the list's ORDER BY, its
+ * keyset predicate and the `latestAt` a page's cursor is minted from all read —
+ * one definition, because the keyset is only correct while the key it resumes
+ * from and the key the rows were sorted by are the same expression. Served by
+ * `run_test_id_created_at_idx`.
  */
 const LATEST_ARRIVAL_JOIN = `
   LEFT JOIN LATERAL (
@@ -106,8 +109,6 @@ const RUN_SCOPE_STAT_ON = `
        AND s.name = ''
        AND s.family = 'response_time'`;
 
-const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 interface OrgTestSqlRow {
   id: string;
   slug: string;
@@ -115,6 +116,9 @@ interface OrgTestSqlRow {
   simulationClass: string;
   projectSlug: string;
   projectName: string;
+  /** The test's latest arrival: the first part of its sort key, and so of the
+   *  cursor a page ends with. Null for a test that has never run. */
+  latestAt: Date | null;
 }
 
 interface LatestRunSqlRow {
@@ -179,11 +183,14 @@ export class TestRepository {
    * project that has been running for a year; the newest-per-test read is a
    * LATERAL over `run_test_id_created_at_idx` now, one index probe per test.
    *
-   * `latestRun` is chosen by `createdAt DESC, id DESC` — the SAME ordering
-   * `RunRepository.list` uses for its tiebreak and `latestRuns` uses for its
-   * whole order, so the run a reader sees at the top of a test's history is the
-   * run this reports. Two orderings would disagree exactly when two runs share
-   * a timestamp, which is precisely when a reader is looking.
+   * `latestRun` is the newest ARRIVAL: `created_at DESC, id DESC`, the order a
+   * run's number follows, so it is always the test's highest-numbered run. It is
+   * NOT the run list's order. `RunRepository.list` sorts by when the test RAN,
+   * `COALESCE(tool_started_at, started_at) DESC, id DESC`, and the two differ
+   * for a bundle uploaded after a newer one: that bundle is the latest run here
+   * and sits lower in the run list. `listOrg` reads through the same
+   * `latestRuns`, so the portfolio and the project catalogue agree with each
+   * other about which run is latest.
    */
   async listForProject(scope: ProjectScope): Promise<TestRow[]> {
     const tests = await this.prisma.test.findMany({
@@ -258,19 +265,27 @@ export class TestRepository {
    * descending sort puts nulls FIRST by default, which would lead the page with
    * the tests that have done nothing.
    *
-   * THE CURSOR IS A TEST ID, resolved first to the `(latest arrival, name, id)`
-   * it sorts by, and the next page is everything strictly after that tuple in
-   * the same order. There are three boundaries to resume across and each has
-   * its own predicate:
+   * THE CURSOR IS THE LAST ROW'S SORT KEY, `(latest arrival, name, id)`, as
+   * that page showed it (see `test-cursor.ts`), and the next page is everything
+   * strictly after that tuple in the same order. It is NOT a test id looked up
+   * again on the next request: this key moves whenever a run lands, so a cursor
+   * test that got a run between two pages would re-resolve to the newest
+   * arrival in the org and page two would repeat page one. There are three
+   * boundaries to resume across and each has its own predicate:
    *
    *   - dated to dated      later arrival, or the same arrival and a later name/id
    *   - dated to never-run  every never-run test follows a dated one
    *   - never-run to same   a never-run cursor continues by name/id alone
    *
-   * A cursor that no longer resolves — another org's, a deleted test, not a
-   * uuid at all — answers an EMPTY page rather than starting over, because a
-   * silent restart resurfaces tests the reader already saw. The run list's
-   * rule, and the reason it is spelled the same way here.
+   * What a carried key cannot do is follow a test that moves WHILE the reader
+   * pages: one already shown stays where it was shown, and one not yet shown
+   * that gets a run jumps above the cursor and is not on this walk — it is at
+   * the top of the next fresh request. Keyset paging trades that for never
+   * repeating or skipping a row that stays put.
+   *
+   * A cursor that does not decode answers an EMPTY page rather than starting
+   * over, because a silent restart resurfaces tests the reader already saw. The
+   * run list's rule, and the reason it is spelled the same way here.
    *
    * `latestRuns` and `p95Histories` are separate reads over the page's ids
    * rather than columns of this one: they are per-test lookups against the run
@@ -290,9 +305,9 @@ export class TestRepository {
     }
 
     if (opts.cursor) {
-      const at = await this.resolveCursor(scope, opts.cursor);
+      const at = decodeOrgTestCursor(opts.cursor);
       if (at === null) return none;
-      params.push(at.name, opts.cursor);
+      params.push(at.name, at.id);
       const name = `$${params.length - 1}::text`;
       const id = `$${params.length}::uuid`;
       if (at.latestAt === null) {
@@ -326,7 +341,8 @@ export class TestRepository {
     const rows = await this.prisma.$queryRawUnsafe<OrgTestSqlRow[]>(
       `
       SELECT t.id, t.slug, t.name, t.simulation_class AS "simulationClass",
-             p.slug AS "projectSlug", p.name AS "projectName"
+             p.slug AS "projectSlug", p.name AS "projectName",
+             lr.created_at AS "latestAt"
       FROM test t
       JOIN project p ON p.id = t.project_id
       ${LATEST_ARRIVAL_JOIN}
@@ -338,7 +354,11 @@ export class TestRepository {
     );
     const page = rows.slice(0, opts.limit);
     if (page.length === 0) return none;
-    const nextCursor = rows.length > opts.limit ? (page[page.length - 1]?.id ?? null) : null;
+    const last = page[page.length - 1];
+    const nextCursor =
+      rows.length > opts.limit && last !== undefined
+        ? encodeOrgTestCursor({ latestAt: last.latestAt, name: last.name, id: last.id })
+        : null;
 
     const ids = page.map((row) => row.id);
     const [counts, latest, history] = await Promise.all([
@@ -365,39 +385,6 @@ export class TestRepository {
       })),
       nextCursor,
     };
-  }
-
-  /**
-   * A cursor test's sort key, or null when it is not a test this caller can
-   * see. Tenant-scoped like the list it resumes: a cursor from another org
-   * must not read as "start after that test", and must not reveal that the
-   * test exists.
-   *
-   * The shape check comes first because the column is a uuid and an unguarded
-   * `::uuid` cast on a hand-edited cursor would THROW — a 500 for what the
-   * list answers, for every other unresolvable cursor, with an empty page.
-   */
-  private async resolveCursor(
-    scope: TenantScope,
-    cursor: string,
-  ): Promise<{ name: string; latestAt: Date | null } | null> {
-    if (!UUID_SHAPE.test(cursor)) return null;
-    const params: unknown[] = [cursor, scope.orgId];
-    let project = '';
-    if (scope.projectId) {
-      params.push(scope.projectId);
-      project = 'AND t.project_id = $3::uuid';
-    }
-    const rows = await this.prisma.$queryRawUnsafe<{ name: string; latestAt: Date | null }[]>(
-      `
-      SELECT t.name, lr.created_at AS "latestAt"
-      FROM test t
-      ${LATEST_ARRIVAL_JOIN}
-      WHERE t.id = $1::uuid AND t.org_id = $2::uuid ${project}
-      `,
-      ...params,
-    );
-    return rows[0] ?? null;
   }
 
   /**

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { Sketch } from '@perfportal/statistics';
 import { createPool, createPrisma, SCHEMA_TABLES, TestRepository } from '../src/index.js';
+import { decodeOrgTestCursor } from '../src/repositories/test-cursor.js';
 
 /**
  * ═══ EVERY TEST IN THE ORG, WITH ITS LATEST RUN AND ITS p95 HISTORY ═══
@@ -292,8 +293,13 @@ describe('TestRepository.listOrg', () => {
         expect(page.items.length).toBeLessThanOrEqual(limit);
         seen.push(...slugsOf(page.items));
         if (page.nextCursor === null) break;
-        // The cursor is the LAST item's id, so the next page starts after it.
-        expect(page.nextCursor).toBe(page.items[page.items.length - 1]!.id);
+        // The cursor is the LAST item's sort key, so the next page starts after
+        // it: its name and id, and a latest arrival exactly when it has run.
+        const last = page.items[page.items.length - 1]!;
+        const key = decodeOrgTestCursor(page.nextCursor);
+        expect(key).not.toBeNull();
+        expect([key!.name, key!.id]).toEqual([last.name, last.id]);
+        expect(key!.latestAt === null).toBe(last.latestRun === null);
         cursor = page.nextCursor;
       }
       // Every test exactly once, in the one order: no duplicate, none skipped.
@@ -301,16 +307,19 @@ describe('TestRepository.listOrg', () => {
     });
 
     it('crosses from dated to never-run mid-page', async () => {
-      const { t11 } = await fourTests();
-      const page = await repo.listOrg(scope(), { limit: 2, cursor: t11.id });
+      await fourTests();
+      const first = await repo.listOrg(scope(), { limit: 2 });
+      expect(slugsOf(first.items)).toEqual(['t12', 't11']);
+      const page = await repo.listOrg(scope(), { limit: 2, cursor: first.nextCursor! });
       expect(slugsOf(page.items)).toEqual(['a-test', 'b-test']);
       expect(page.nextCursor).toBeNull();
     });
 
     it('continues from a never-run cursor to the next never-run test', async () => {
       await fourTests();
-      const a = await prisma.test.findFirstOrThrow({ where: { slug: 'a-test' } });
-      const page = await repo.listOrg(scope(), { limit: 5, cursor: a.id });
+      const first = await repo.listOrg(scope(), { limit: 3 });
+      expect(slugsOf(first.items)).toEqual(['t12', 't11', 'a-test']);
+      const page = await repo.listOrg(scope(), { limit: 5, cursor: first.nextCursor! });
       expect(slugsOf(page.items)).toEqual(['b-test']);
     });
 
@@ -332,40 +341,115 @@ describe('TestRepository.listOrg', () => {
       expect(seen).toEqual(['x', 'y', 'z']);
     });
 
-    it('answers an unresolvable cursor with an empty page', async () => {
+    /**
+     * ═══ THE CURSOR MUST NOT BE RE-READ, AND THESE TWO CASES ARE WHY ═══
+     *
+     * A test's latest arrival moves whenever a run lands, so a cursor that named
+     * a test and was resolved again on the next request would sort by the key
+     * the test has NOW, not the one the reader was shown. With a new run on the
+     * cursor test that read as the newest arrival in the org, "earlier than the
+     * cursor" matched everything else, and page two repeated page one.
+     */
+    it('keeps pages stable when the cursor test gets a new run between pages', async () => {
+      const { t11 } = await fourTests();
+      const first = await repo.listOrg(scope(), { limit: 2 });
+      expect(slugsOf(first.items)).toEqual(['t12', 't11']);
+
+      // The last test on page one gets the newest arrival in the whole org.
+      await seedRun({ testId: t11.id, createdAt: '2026-09-01T13:00:00Z' });
+
+      const second = await repo.listOrg(scope(), { limit: 25, cursor: first.nextCursor! });
+      const firstIds = new Set(first.items.map((i) => i.id));
+      expect(second.items.filter((i) => firstIds.has(i.id))).toEqual([]);
+      expect(slugsOf(second.items)).toEqual(['a-test', 'b-test']);
+
+      // Between them the pages cover every test exactly once. The moved test
+      // was already shown, at the position it had; it is not shown again.
+      const all = [...slugsOf(first.items), ...slugsOf(second.items)];
+      expect(new Set(all).size).toBe(all.length);
+      expect([...all].sort()).toEqual(['a-test', 'b-test', 't11', 't12']);
+    });
+
+    it('keeps pages stable when a never-run cursor test gets its first run', async () => {
       await fourTests();
-      expect(await repo.listOrg(scope(), { limit: 25, cursor: randomUUID() })).toEqual({
-        items: [],
-        nextCursor: null,
-      });
-      // Not a uuid at all: the column is a uuid, so an unguarded cast would
-      // THROW here instead of answering the way the run list does.
-      expect(await repo.listOrg(scope(), { limit: 25, cursor: 'not-a-uuid' })).toEqual({
-        items: [],
-        nextCursor: null,
+      const first = await repo.listOrg(scope(), { limit: 3 });
+      expect(slugsOf(first.items)).toEqual(['t12', 't11', 'a-test']);
+
+      const a = await prisma.test.findFirstOrThrow({ where: { slug: 'a-test' } });
+      await seedRun({ testId: a.id, createdAt: '2026-09-01T13:00:00Z' });
+
+      const second = await repo.listOrg(scope(), { limit: 25, cursor: first.nextCursor! });
+      expect(slugsOf(second.items)).toEqual(['b-test']);
+      expect(second.nextCursor).toBeNull();
+    });
+
+    describe('a cursor that does not decode', () => {
+      const id = randomUUID();
+      const b64 = (value: unknown) =>
+        Buffer.from(typeof value === 'string' ? value : JSON.stringify(value), 'utf8').toString(
+          'base64url',
+        );
+
+      it.each<[string, string]>([
+        ['a bare test id, the old cursor shape', randomUUID()],
+        ['not base64url at all', 'not base64!'],
+        ['base64url of something that is not JSON', b64('hello')],
+        ['a JSON array', b64([null, 'x', id])],
+        ['a missing id', b64({ at: null, name: 'x' })],
+        ['an id that is not a uuid', b64({ at: null, name: 'x', id: 'nope' })],
+        ['a name that is not a string', b64({ at: null, name: 7, id })],
+        ['a name holding a NUL, which Postgres refuses in text', b64({ at: null, name: 'a\u0000b', id })],
+        ['an instant that does not parse', b64({ at: 'yesterday', name: 'x', id })],
+        ['an instant that is a number', b64({ at: 1_788_000_000_000, name: 'x', id })],
+        ['an instant not in the spelling the repository writes', b64({ at: '2026-09-01', name: 'x', id })],
+      ])('returns an empty page for %s', async (_label, cursor) => {
+        await fourTests();
+        // Empty, not a restart from the top, and above all not a thrown cast.
+        expect(await repo.listOrg(scope(), { limit: 25, cursor })).toEqual({
+          items: [],
+          nextCursor: null,
+        });
       });
     });
 
-    it('does not resolve a cursor that belongs to another org', async () => {
+    it('lets a cursor from another org position the page and nothing more', async () => {
       await fourTests();
       const other = await prisma.org.create({ data: { slug: 'other', name: 'Other' } });
       const otherProject = await prisma.project.create({
         data: { orgId: other.id, slug: 'other-p', name: 'Other P', settings: {} },
       });
-      // NAMED TO SORT BEFORE EVERYTHING HERE ('0' precedes any letter). A
-      // foreign cursor that did resolve would then read "start after '0-foreign'
-      // among never-run tests" and return a-test and b-test; named 'foreign' it
-      // would sort after them, return nothing, and pass for the wrong reason.
-      const foreign = await prisma.test.create({
+      const mk = (slug: string) =>
+        prisma.test.create({
+          data: {
+            orgId: other.id, projectId: otherProject.id, slug, name: slug,
+            simulationClass: `example.${slug}`,
+          },
+        });
+      const o1 = await mk('o1');
+      const o2 = await mk('o2');
+      // o1's latest arrival falls BETWEEN t12 (12:00) and t11 (11:00) here.
+      await prisma.run.create({
         data: {
-          orgId: other.id, projectId: otherProject.id, slug: 'foreign', name: '0-foreign',
-          simulationClass: 'example.foreign',
+          orgId: other.id, projectId: otherProject.id, testId: o1.id, status: 'complete',
+          verdict: 'passed', tool: 'gatling', bundleKey: `runs/${otherProject.id}/o1.tgz`,
+          bundleSha256: 'a'.repeat(64), bundleBytes: 1n, engineOptions: {},
+          createdAt: new Date('2026-09-01T11:30:00Z'),
+          startedAt: new Date('2026-09-01T11:30:00Z'),
+          startedOn: new Date('2026-09-01'),
         },
       });
-      expect(await repo.listOrg(scope(), { limit: 25, cursor: foreign.id })).toEqual({
-        items: [],
-        nextCursor: null,
-      });
+      const foreign = await repo.listOrg({ orgId: other.id }, { limit: 1 });
+      expect(slugsOf(foreign.items)).toEqual(['o1']);
+      expect(foreign.nextCursor).not.toBeNull();
+
+      const page = await repo.listOrg(scope(), { limit: 25, cursor: foreign.nextCursor! });
+
+      // The cursor says "after 11:30", so t12 (12:00) is behind it — but every
+      // row that comes back is THIS org's: the other org's tests, o2 included,
+      // never surface through a cursor minted over there.
+      expect(slugsOf(page.items)).toEqual(['t11', 'a-test', 'b-test']);
+      expect(page.items.map((i) => i.id)).not.toContain(o1.id);
+      expect(page.items.map((i) => i.id)).not.toContain(o2.id);
     });
   });
 
