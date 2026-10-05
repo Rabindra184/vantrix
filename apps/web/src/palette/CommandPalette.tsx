@@ -236,8 +236,15 @@ function PaletteSearch({ onChoose }: { readonly onChoose: (to: string) => void }
            the key is withheld from cmdk (it honours `defaultPrevented`), the
            pause is ended so the right search runs now, and the choice is made
            when that answer is complete — see `chooseWhenSettled` above. An
-           IME composition's Enter is the composition's, not ours. */
-        if (event.key !== 'Enter' || event.nativeEvent.isComposing) return;
+           IME composition's Enter is the composition's, not ours: cmdk skips
+           it on `isComposing || keyCode === 229`, and so must this, because
+           Safari fires the Enter that COMMITS a composition after the
+           composition has ended (`isComposing` false) with `keyCode` 229 —
+           queued, it would navigate on a key the reader pressed to confirm a
+           character. */
+        if (event.key !== 'Enter' || event.nativeEvent.isComposing || event.keyCode === 229) {
+          return;
+        }
         if (!groups.pending) return;
         event.preventDefault();
         groups.flush();

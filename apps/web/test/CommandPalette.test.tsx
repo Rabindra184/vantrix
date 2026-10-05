@@ -803,6 +803,30 @@ describe('CommandPalette — an Enter before the answer', () => {
     expect(onOpenChange).toHaveBeenLastCalledWith(false);
   });
 
+  /* Safari fires the Enter that commits an IME composition AFTER the
+     composition has ended, so `isComposing` is already false and only
+     `keyCode === 229` says what it is. cmdk skips it on that rule; this
+     palette's own queue has to agree, or the key a reader pressed to confirm
+     a character navigates them away once the answer lands. */
+  it('does not queue the Enter that commits an IME composition', async () => {
+    const held = deferred();
+    stubApi({ tests: () => held.promise });
+    const { onOpenChange } = renderPalette();
+    const user = userEvent.setup();
+
+    await enter(user, 'smoke');
+    // The very key a plain Enter would queue: pending, nothing answered yet.
+    fireEvent.keyDown(input(), { key: 'Enter', keyCode: 229 });
+    await act(async () => {});
+
+    held.resolve(json(tests([SMOKE])));
+    await screen.findByRole('option', { name: /Checkout smoke/ });
+    await act(async () => {});
+    expect(where()).toHaveTextContent(/^\/runs$/);
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
   it('chooses the first row of the answer, not one picked among the previous query’s', async () => {
     const heldSoak = deferred();
     stubApi({
