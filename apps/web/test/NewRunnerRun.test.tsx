@@ -165,7 +165,7 @@ const CHECKOUT_FILE = 'gatling-gradle-plugin-demo-kotlin-main-tests.jar';
 
 /** The line the form draws when `?package=` names a package it cannot offer. */
 const IGNORED_LINK =
-  'The package in this link has no file to run, or is not in this project. Choose one below.';
+  "The linked package can't run here — choose one below.";
 
 function packageOf(id: string, name: string, current: Package['current']): Package {
   return {
@@ -440,13 +440,18 @@ describe('NewRunnerRun', () => {
    * `DeclaredTestSlugSchema` as it is typed — the treatment System properties
    * got — on both slug fields.
    */
-  it('checks a new test slug as it is typed', async () => {
+  it('checks a new test slug once the reader leaves it, then as they correct it', async () => {
     noPackages();
     mount();
     fireEvent.change(await screen.findByLabelText('Test'), { target: { value: '__new__' } });
     const slug = screen.getByLabelText(/^new test slug/i);
 
+    // Not mid-word (PR 4 cleanup): nothing is wrong yet while it is typed.
     fireEvent.change(slug, { target: { value: 'Checkout Soak' } });
+    expect(document.getElementById('runner-test-new-error')).toBeNull();
+    expect(slug.hasAttribute('aria-invalid')).toBe(false);
+
+    fireEvent.blur(slug);
     expect(descriptionOf(slug)).toMatch(/lower-case letters, digits and single hyphens/);
     expect(slug.getAttribute('aria-invalid')).toBe('true');
     expect(document.getElementById('runner-test-new-error')?.closest('[hidden]')).toBeNull();
@@ -463,6 +468,8 @@ describe('NewRunnerRun', () => {
     const typed = await screen.findByPlaceholderText('checkout-soak');
 
     fireEvent.change(typed, { target: { value: 'Checkout Soak' } });
+    expect(document.getElementById('runner-test-error')).toBeNull();
+    fireEvent.blur(typed);
     expect(descriptionOf(typed)).toMatch(/lower-case letters, digits and single hyphens/);
     expect(typed.getAttribute('aria-invalid')).toBe('true');
     // Empty is the default grouping, not a mistake.
@@ -504,13 +511,19 @@ describe('NewRunnerRun', () => {
    * field's own error line, tied to the textarea, and it goes once the line
    * is fixed. The submit still refuses a malformed set.
    */
-  it('flags a malformed property under the field as it is typed, and still refuses it', async () => {
+  it('flags a malformed property once the reader leaves the field, and still refuses it', async () => {
     noPackages();
     mount();
     await fillRequired();
     const field = screen.getByLabelText(/^system properties/i);
 
+    // Not on the first keystroke (PR 4 cleanup): `baseUrl` is not wrong yet,
+    // it is unfinished.
     fireEvent.change(field, { target: { value: 'this line has no equals sign' } });
+    expect(document.getElementById('runner-system-properties-error')).toBeNull();
+    expect(field.hasAttribute('aria-invalid')).toBe(false);
+
+    fireEvent.blur(field);
     const message = screen.getByText(/must be key=value/i);
     expect(message.closest('[hidden]')).toBeNull();
     expect(descriptionOf(field)).toMatch(/must be key=value/i);
@@ -526,6 +539,42 @@ describe('NewRunnerRun', () => {
     expect(document.getElementById('runner-system-properties-error')).toBeNull();
     expect(descriptionOf(field)).not.toMatch(/must be key=value/i);
     expect(field.hasAttribute('aria-invalid')).toBe(false);
+  });
+
+  /** A refused submit shows the field's own line too, whether or not the
+   *  reader ever left the field (PR 4 cleanup). */
+  it('shows the property error when a submit is refused, even before the field is left', async () => {
+    noPackages();
+    mount();
+    await fillRequired();
+    const field = screen.getByLabelText(/^system properties/i);
+    fireEvent.change(field, { target: { value: 'no equals sign' } });
+
+    queue();
+    expect((await screen.findByRole('alert')).textContent).toMatch(/key=value/i);
+    expect(document.getElementById('runner-system-properties-error')).not.toBeNull();
+    expect(field.getAttribute('aria-invalid')).toBe('true');
+  });
+
+  /**
+   * THE COLLAPSED SECTION SAYS IT HOLDS A PROBLEM (PR 4 cleanup). The
+   * property error lives inside Advanced, and a reader who closes it would
+   * otherwise meet the mistake only as the submit's alert.
+   */
+  it('flags a property problem on the Advanced summary', async () => {
+    noPackages();
+    mount();
+    await fillRequired();
+    const summary = () => screen.getByTestId('advanced').querySelector('summary')?.textContent ?? '';
+    const field = screen.getByLabelText(/^system properties/i);
+
+    fireEvent.change(field, { target: { value: 'a=b' } });
+    fireEvent.blur(field);
+    expect(summary()).toMatch(/\(1 set\)/);
+    expect(summary()).not.toMatch(/problem/);
+
+    fireEvent.change(field, { target: { value: 'no equals sign' } });
+    expect(summary()).toMatch(/1 set · 1 problem/);
   });
 
   /**

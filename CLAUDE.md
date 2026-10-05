@@ -128,7 +128,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **201 files / 2753 tests**, it
+`nvm use` first, and if a run reports fewer than **201 files / 2757 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -145,6 +145,38 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The PR 4 minors branch (`fix/clean-ui-pr4-minors`) added no unit FILE and 4
+cases (2 to `NewRunnerRun.test.tsx`, 1 each to `RunnerStatusLine.test.tsx` and
+`ProjectSetup.test.tsx`), from **201 / 2753 to 201 / 2757**. Integration stays
+**182 / 2357** and **e2e stays 188**. It takes the seven minors PR 4's final
+review left: a field's error (system properties, both slug fields) waits
+until the reader leaves the field and then follows every keystroke, and a
+refused submit shows it either way; the collapsed Advanced summary names a
+property problem ("1 set · 1 problem"); Add results' disclosures carry a
+turning chevron; the runner status line has a spoken separator; the
+`?package=` notice is one sentence; the runner ⓘ says a runner is a deployed
+process needing the On-prem runner permission; and ProjectRules' "beside
+Save" assertion reads the ⓘ's own row.
+
+**THE DESIGN SAID "THE PROBLEM PART IN THE FAILED COLOUR", AND THAT WAS THE
+DEFECT PR 4 HAD JUST FIXED.** The Advanced summary sits on the sunken ground,
+where the failed tone as text measures 4.27:1 in the light theme. "1 problem"
+is words in the summary's own colour. **A colour chosen for a new piece of
+text has to be checked against the ground it lands on**, not against the
+ground the last measurement used.
+
+**A VACUOUS ASSERTION IS PROVEN FIXED THE SAME WAY A DEFECT IS.** The old
+`tip.closest('div')?.parentElement` was the form, so moving the ⓘ into the
+rule preview left it green; the new `tip.closest('div')` fails on exactly
+that mutation. Eight mutations in all, each landing on its own case.
+
+**WHAT WAS RUN.** `typecheck` and `lint` exit 0; `test:unit` **201 / 2757**,
+zero `Errors` lines, the prediction exactly; the three browser specs that
+drive these pages (`project-tests`, `packages`, `project-shell`), **15
+passed** on Chromium against the same scratch stores as PR 4. Integration was not re-run: the one
+`.ts` change is a string constant in `runnerReadiness.ts`, whose test file
+the unit run covers.
 
 The clean-UI project-area branch (`feat/clean-ui-project-area`, PR 4 of four
 in `docs/superpowers/specs/2026-10-04-clean-ui-design.md`, its own spec

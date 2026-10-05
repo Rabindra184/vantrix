@@ -150,6 +150,10 @@ const ARTIFACT_HINTS: Record<RunnerArtifactKind, string> = {
 const UPLOAD_OPTION = '__upload__';
 
 /** Said under the typed Simulation field when a package's list is UNKNOWN. */
+/** The fields checked once the reader leaves them (or a submit is refused). */
+const PROPERTIES_FIELD = 'runner-system-properties';
+const CHECKED_FIELDS = [PROPERTIES_FIELD, 'runner-test', 'runner-test-new'] as const;
+
 const SIMULATIONS_UNKNOWN_NOTICE = "This package's simulations aren't known yet — type the class.";
 
 /**
@@ -400,6 +404,8 @@ function NewRunnerRunProject({
     // Nothing can be started until the packages list has said which kind of
     // start this is. The button is disabled meanwhile; this is the Enter key.
     if (mode === 'loading') return;
+    // A refused submit shows every checked field's own line, left or not.
+    setLeft(new Set(CHECKED_FIELDS));
     const parsedProps = parseSystemProperties(form.systemProperties);
     if (parsedProps.kind === 'error') {
       setFormError(parsedProps.message);
@@ -475,6 +481,18 @@ function NewRunnerRunProject({
     () => parseSystemProperties(form.systemProperties),
     [form.systemProperties],
   );
+
+  /* ═══ A FIELD IS CHECKED ONCE THE READER LEAVES IT (PR 4 cleanup) ═══
+     `baseUrl` is not a malformed property and `C` is not a bad slug — they
+     are unfinished. So a field's error waits until the reader leaves it (or a
+     submit is refused), and from then on it follows every keystroke, so a
+     correction clears it at once. Keyed by field id: the two slug fields share
+     one check but are left separately. */
+  const [left, setLeft] = useState<ReadonlySet<string>>(() => new Set());
+  const leave = (id: string) =>
+    setLeft((current) => (current.has(id) ? current : new Set(current).add(id)));
+  const propertiesError =
+    left.has(PROPERTIES_FIELD) && parsedProperties.kind === 'error' ? parsedProperties.message : undefined;
 
   /* How many of the collapsed fields carry a value. Without it a JVM option
      typed and then forgotten sits invisible behind a closed disclosure, which
@@ -552,7 +570,7 @@ function NewRunnerRunProject({
                   screen reader landing on it hears why it holds what it does. */}
               {mode === 'package' && linkIgnored && (
                 <p id="runner-package-link" className="text-[0.8125rem] leading-snug text-muted">
-                  The package in this link has no file to run, or is not in this project. Choose one below.
+                  The linked package can't run here — choose one below.
                 </p>
               )}
 
@@ -700,7 +718,7 @@ function NewRunnerRunProject({
                 <FormField label="Branch" id="runner-branch" optional>
                   <input id="runner-branch" className={INPUT} value={form.branch} onChange={update('branch', setForm)} />
                 </FormField>
-                <TestPicker slug={slug} form={form} setForm={setForm} />
+                <TestPicker slug={slug} form={form} setForm={setForm} left={left} onLeave={leave} />
               </div>
 
               {/* ═══ THE TUNING, OUT OF THE WAY OF THE LAUNCH PATH ═══
@@ -714,7 +732,23 @@ function NewRunnerRunProject({
                   cannot be forgotten behind a collapsed summary. */}
               <details className="rounded-xl border border-default bg-sunken p-3" data-testid="advanced">
                 <summary className="cursor-pointer list-none text-[0.8125rem] font-medium text-accent hover:underline hover:underline-offset-2">
-                  Advanced{advancedCount > 0 ? ` (${advancedCount} set)` : ''}
+                  Advanced
+                  {/* A PROBLEM INSIDE IS SAID ON THE SUMMARY (PR 4 cleanup), so
+                      closing the section does not hide it. In WORDS, in the
+                      summary's own colour: the failed tone as text falls under
+                      AA on this sunken ground in the light theme (4.27:1, the
+                      measurement `FormField`'s left rule exists for). */}
+                  {(advancedCount > 0 || propertiesError !== undefined) && (
+                    <>
+                      {' '}(
+                      {advancedCount > 0 && `${advancedCount} set`}
+                      {advancedCount > 0 && propertiesError !== undefined && ' · '}
+                      {propertiesError !== undefined && (
+                        '1 problem'
+                      )}
+                      )
+                    </>
+                  )}
                 </summary>
                 <div className="flex flex-col gap-4 pt-3">
                   <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -746,23 +780,25 @@ function NewRunnerRunProject({
                     id="runner-system-properties"
                     optional
                     hint="One key=value per line, passed to the JVM as -Dkey=value. Which names mean anything is up to your simulation — PerfPortal does not interpret them."
-                    /* A malformed line is flagged HERE, as it is typed (clean UI
-                       PR 4). The Review group used to be the one place it showed
-                       while it could still be fixed cheaply; the submit still
-                       refuses it with the alert below. */
-                    error={parsedProperties.kind === 'error' ? parsedProperties.message : undefined}
+                    /* A malformed line is flagged HERE once the reader leaves the
+                       field (clean UI PR 4, and its cleanup). The Review group
+                       used to be the one place it showed while it could still
+                       be fixed cheaply; the submit still refuses it with the
+                       alert below. */
+                    error={propertiesError}
                   >
                     <textarea
                       id="runner-system-properties"
                       className={`${INPUT} min-h-28 resize-y py-2 font-mono`}
                       aria-describedby={
-                        parsedProperties.kind === 'error'
-                          ? `${hintId('runner-system-properties')} ${errorId('runner-system-properties')}`
-                          : hintId('runner-system-properties')
+                        propertiesError !== undefined
+                          ? `${hintId(PROPERTIES_FIELD)} ${errorId(PROPERTIES_FIELD)}`
+                          : hintId(PROPERTIES_FIELD)
                       }
-                      aria-invalid={parsedProperties.kind === 'error' || undefined}
+                      aria-invalid={propertiesError !== undefined || undefined}
                       value={form.systemProperties}
                       onChange={update('systemProperties', setForm)}
+                      onBlur={() => leave(PROPERTIES_FIELD)}
                     />
                   </FormField>
                 </div>
@@ -855,10 +891,15 @@ function TestPicker({
   slug,
   form,
   setForm,
+  left,
+  onLeave,
 }: {
   readonly slug: string;
   readonly form: FormState;
   readonly setForm: Dispatch<SetStateAction<FormState>>;
+  /** Which fields the reader has left — a slug is checked only after that. */
+  readonly left: ReadonlySet<string>;
+  readonly onLeave: (id: string) => void;
 }) {
   const tests = useQuery({
     queryKey: projectTestsQueryKey(slug),
@@ -870,7 +911,10 @@ function TestPicker({
   const value = form.testMode === 'default' ? '' : form.testMode === 'new' ? NEW : form.test;
   // Only a slug the reader TYPED is checked: one picked from the list is a
   // test that exists.
-  const problem = form.testMode === 'existing' ? undefined : slugProblem(form.test);
+  const check = form.testMode === 'existing' ? undefined : slugProblem(form.test);
+  const problemIn = (id: string): string | undefined => (left.has(id) ? check : undefined);
+  const typedProblem = problemIn('runner-test');
+  const newProblem = problemIn('runner-test-new');
 
   const onSelect = (event: ChangeEvent<HTMLSelectElement>) => {
     const chosen = event.target.value;
@@ -889,15 +933,16 @@ function TestPicker({
         optional
         notice="Tests couldn't be loaded — type the slug."
         hint="Lower case, hyphens, no spaces — a slug that names no test yet creates one."
-        error={problem}
+        error={typedProblem}
       >
         <input
           id="runner-test"
           className={INPUT}
           value={form.test}
           placeholder="checkout-soak"
-          aria-describedby={[noticeId('runner-test'), hintId('runner-test'), ...(problem ? [errorId('runner-test')] : [])].join(' ')}
-          aria-invalid={problem !== undefined || undefined}
+          aria-describedby={[noticeId('runner-test'), hintId('runner-test'), ...(typedProblem ? [errorId('runner-test')] : [])].join(' ')}
+          aria-invalid={typedProblem !== undefined || undefined}
+          onBlur={() => onLeave('runner-test')}
           onChange={(event) =>
             setForm((current) => ({
               ...current,
@@ -942,15 +987,16 @@ function TestPicker({
           label="New test slug"
           id="runner-test-new"
           hint="Lower case, hyphens, no spaces. The server refuses a display name outright rather than slugifying it, which is what stops a typo becoming a second test."
-          error={problem}
+          error={newProblem}
         >
           <input
             id="runner-test-new"
             className={INPUT}
             value={form.test}
             placeholder="checkout-soak"
-            aria-describedby={[hintId('runner-test-new'), ...(problem ? [errorId('runner-test-new')] : [])].join(' ')}
-            aria-invalid={problem !== undefined || undefined}
+            aria-describedby={[hintId('runner-test-new'), ...(newProblem ? [errorId('runner-test-new')] : [])].join(' ')}
+            aria-invalid={newProblem !== undefined || undefined}
+            onBlur={() => onLeave('runner-test-new')}
             onChange={(event) => setForm((current) => ({ ...current, test: event.target.value }))}
             required
           />

@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { linkButtonClasses } from '../components/Button';
 import Card from '../components/Card';
 import InfoTip from '../components/InfoTip';
-import { PlayIcon, TokenIcon, UploadIcon } from '../components/icons';
+import { ChevronRightIcon, PlayIcon, TokenIcon, UploadIcon } from '../components/icons';
 import { fetchRunnerJobs, runnerJobsQueryKey } from '../api/runner';
 import ProjectShell from './ProjectShell';
 import { projectAccessPath, projectNewRunnerRunPath } from './paths';
@@ -311,9 +311,18 @@ function EntryCard({
          * TableFrame defect this repo already paid for: markup that looks
          * tidier and quietly removes something only a screen reader uses. */}
         {disclosure !== undefined && (
-          <details name="add-results">
-            <summary className="w-fit cursor-pointer list-none text-[0.75rem] font-medium text-accent hover:underline hover:underline-offset-2">
+          <details name="add-results" className="group">
+            {/* THE CHEVRON SAYS OPEN OR CLOSED (PR 4 cleanup). The summary's
+                words are the same either way — they used to swap "Show me
+                how" / "Hide the steps" — so a turning chevron carries the
+                state. `aria-hidden`: a screen reader already hears
+                expanded or collapsed on the summary itself. */}
+            <summary className="inline-flex w-fit cursor-pointer list-none items-center gap-1 text-[0.75rem] font-medium text-accent hover:underline hover:underline-offset-2">
               {disclosure.summary}
+              <ChevronRightIcon
+                className="h-3 w-3 transition-transform group-open:rotate-90"
+                aria-hidden="true"
+              />
             </summary>
             <div className="mt-3 flex flex-col gap-3">{disclosure.children}</div>
           </details>

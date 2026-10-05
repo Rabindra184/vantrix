@@ -70,7 +70,8 @@ export interface RunnerReadiness {
 export const RUNNER_STATUS_INFO =
   "Inferred from this project's jobs. This instance is not told when a runner connects or leaves, " +
   'so whether one is listening right now is known only once a job is claimed. A runner runs one ' +
-  'job at a time.';
+  'job at a time. A runner is a process deployed beside this instance, with a token carrying the ' +
+  'On-prem runner permission.';
 
 /** The statuses that mean a runner has taken the job and is working on it. */
 const CLAIMED: ReadonlySet<RunnerJobStatus> = new Set(['starting', 'running', 'closing']);

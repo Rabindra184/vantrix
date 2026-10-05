@@ -28,8 +28,17 @@ const settled = (...items: ReturnType<typeof job>[]) => ({
  *  dot are excluded. */
 const visibleText = (): string => {
   const line = screen.getByTestId('runner-status').cloneNode(true) as HTMLElement;
-  line.querySelectorAll('[hidden]').forEach((node) => node.remove());
+  line.querySelectorAll('[hidden], .sr-only').forEach((node) => node.remove());
   return (line.textContent ?? '').replace('●', '').replace(/\s+/g, ' ').trim();
+};
+
+/** What a screen reader reads: nothing `aria-hidden` (the dot and the "·"),
+ *  nothing `hidden` (the ⓘ's copy), the visually hidden separator included. */
+const spokenText = (): string => {
+  const line = screen.getByTestId('runner-status').cloneNode(true) as HTMLElement;
+  line.querySelectorAll('[hidden], [aria-hidden="true"]').forEach((node) => node.remove());
+  line.querySelectorAll('button').forEach((node) => node.remove());
+  return (line.textContent ?? '').replace(/\s+/g, ' ').trim();
 };
 
 describe('RunnerStatusLine', () => {
@@ -54,6 +63,13 @@ describe('RunnerStatusLine', () => {
     expect(visibleText()).toBe(`${headline} · ${fact}`);
   });
 
+  /** PR 4 cleanup: the "·" is decoration, so a screen reader heard the
+   *  headline and the fact as one run-on phrase. */
+  it('separates the headline from the fact for a screen reader', () => {
+    render(<RunnerStatusLine query={settled()} />);
+    expect(spokenText()).toBe('Runner availability unknown, No run queued from this project yet');
+  });
+
   it('keeps a stalled runner’s action on screen', () => {
     render(<RunnerStatusLine query={settled(job('queued', 12 * 60_000))} />);
     const action = screen.getByText(/Check a runner is running and pointed at this instance/);
@@ -68,5 +84,9 @@ describe('RunnerStatusLine', () => {
     expect(tip).toHaveAccessibleDescription(/inferred from this project's jobs/i);
     expect(tip).toHaveAccessibleDescription(/not told when a runner connects/i);
     expect(tip).toHaveAccessibleDescription(/one job at a time/i);
+    // PR 4 cleanup: nothing else on Add results says a runner is something
+    // you deploy, or which permission its token needs.
+    expect(tip).toHaveAccessibleDescription(/process deployed beside this instance/i);
+    expect(tip).toHaveAccessibleDescription(/On-prem runner permission/);
   });
 });

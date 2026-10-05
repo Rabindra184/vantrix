@@ -61,9 +61,11 @@ export default function RunnerStatusLine({
         <span aria-hidden="true">●</span>
         {headline}
       </span>
-      {/* Real spaces between the pieces, not only the flex gap: a gap moves
-          pixels, and without a text node the headline and the fact reach a
-          screen reader — and a copy — as one run-together word. */}{' '}
+      {/* A SPOKEN SEPARATOR (PR 4 cleanup): the "·" is decoration, so without
+          this a screen reader heard the headline and the fact as one run-on
+          phrase. Real spaces between the pieces too, not only the flex gap: a
+          gap moves pixels, and a copy reads text nodes. */}
+      <span className="sr-only">,</span>{' '}
       <span aria-hidden="true" className="text-muted">
         ·
       </span>{' '}
