@@ -250,6 +250,27 @@ const parameters: Record<string, ParameterObject> = {
       'UUID — an invalid value is rejected with 400 INVALID_CURSOR, unlike "limit" above.',
     schema: { type: 'string', format: 'uuid' },
   },
+  TestListCursor: {
+    name: 'cursor',
+    in: 'query',
+    description:
+      'Opaque pagination cursor: pass the "nextCursor" of the previous page back unchanged. ' +
+      'Do not build one — its contents are not a contract. Unlike "cursor" on the run lists, ' +
+      'it is not an item id and a malformed or foreign value is NOT rejected: it yields an ' +
+      'empty page ({"items": [], "nextCursor": null}), never a restart from the first page.',
+    schema: { type: 'string' },
+  },
+  TestSearch: {
+    name: 'q',
+    in: 'query',
+    description:
+      'Case-insensitive substring search over the test\'s name, slug and simulation class and ' +
+      'its project\'s name and slug. Trimmed before use: a value that is only whitespace is no ' +
+      'filter at all, and "%" and "_" match themselves rather than acting as wildcards. Applied ' +
+      'by the API before pagination, never as a client-side page filter. Give it once — a ' +
+      'repeated "q" is a 400 INVALID_QUERY.',
+    schema: { type: 'string' },
+  },
   ProjectFilter: {
     name: 'project',
     in: 'query',
@@ -1562,6 +1583,40 @@ const paths: Record<string, PathItemObject> = {
         '401': ref('Unauthorized'),
         '403': ref('SessionRequired'),
         '404': ref('NotFound'),
+      },
+    },
+  },
+
+  '/v1/tests': {
+    get: {
+      operationId: 'listTests',
+      summary: 'List every test the credential can see',
+      tags: ['tests'],
+      description:
+        'Requires the "read" scope. Scoped by the credential, not by the URL, exactly like ' +
+        'GET /v1/runs: a project-scoped token sees only that project\'s tests; a session names ' +
+        'no project and sees every test across its whole organisation. Another organisation\'s ' +
+        'tests are never returned, searched or paged to. Each entry names its own project and ' +
+        'carries "latestRun" and "p95History", so a table or a search box needs no request per ' +
+        'test. "latestRun" is the test\'s newest ARRIVAL — the run that was created last, which ' +
+        'is the order run numbers follow — and not the run that started last: its "startedAt" ' +
+        'is when that run\'s load test ran, which can be earlier than a run that arrived ' +
+        'before it. "p95History" holds the p95 of the last completed runs, oldest first, at ' +
+        'most ten, and a run with no usable p95 contributes no point. Tests whose latest run ' +
+        'arrived most recently come first, then tests that have never run, by name. Page with ' +
+        '"nextCursor" until it is null.',
+      parameters: [
+        parameters['Limit']!,
+        parameters['TestListCursor']!,
+        parameters['TestSearch']!,
+      ],
+      responses: {
+        '200': {
+          description: 'A page of tests, most recently run first.',
+          content: json(schemaRef('OrgTestListResponse')),
+        },
+        '400': ref('BadRequest'),
+        ...authFailureResponses,
       },
     },
   },

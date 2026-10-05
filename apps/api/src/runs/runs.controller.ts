@@ -14,6 +14,7 @@ import {
 } from '@perfportal/contracts';
 import { ProjectRepository, TestRepository, type RunListItem, type RunRecord, type RunVerdictFilter } from '@perfportal/persistence';
 import { Scopes } from '../auth/scopes.decorator.js';
+import { checkTally } from './check-tally.js';
 import { noteOf, RunsService, warmupMsOf } from './runs.service.js';
 import { notFound } from '../common/validation.js';
 import { SessionOnlyGuard } from '../auth/session-only.guard.js';
@@ -255,28 +256,6 @@ function toListItem(r: RunListItem): RunListResponse['items'][number] {
     metrics: r.metrics,
     // The TEXT alone: the author and time belong to the run's own page.
     note: r.note,
-  };
-}
-
-/**
- * The simulation's own checks as a tally, or null when there are none to tally.
- *
- * THE ARRAY IS DELIBERATELY NOT SENT. A corpus run declares hundreds of
- * assertions, and a page of 25 such runs would carry every expression across
- * the wire to render one number. The run's own page is where they belong.
- *
- * `null` for a run that reported none at all, which is not the same as a run
- * whose checks all passed — the list renders the first as unavailable and the
- * second as zero failures.
- */
-function checkTally(
-  toolAssertions: RunRecord['toolAssertions'],
-): { failed: number; total: number } | null {
-  if (toolAssertions === null || toolAssertions === undefined) return null;
-  if (toolAssertions.length === 0) return null;
-  return {
-    failed: toolAssertions.filter((a) => a.outcome === 'failed').length,
-    total: toolAssertions.length,
   };
 }
 
