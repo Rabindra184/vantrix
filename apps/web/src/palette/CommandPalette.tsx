@@ -1,10 +1,10 @@
 import * as Dialog from '@radix-ui/react-dialog';
 import { Command } from 'cmdk';
-import { useRef, useState, type ReactNode } from 'react';
+import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { OrgTestSummary, RunStatus, RunVerdict } from '@perfportal/contracts';
 import { formatListInstant } from '../routes/format';
-import { Marked, STATUS, VERDICT, type Mark } from '../routes/marks';
+import { STATUS, VERDICT, type Mark } from '../routes/marks';
 import { projectPath, projectTestPath, runPath } from '../routes/paths';
 import { runName } from '../runNumber';
 import type { Destination, ProjectRef } from './destinations';
@@ -86,49 +86,90 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
   );
 }
 
-/* Each row's cmdk `value`, one function per kind so the list below and the
-   rows it renders cannot spell one differently. Unique across the whole list:
-   cmdk treats two items sharing a value as one, so a duplicate is a row that
-   silently cannot be reached. A destination's own id is already unique. */
-const projectValue = (p: ProjectRef) => `project:${p.slug}`;
-const testValue = (t: OrgTestSummary) => `test:${t.id}`;
-const runValue = (r: RunRow) => `run:${r.id}`;
-const runNumberValue = (h: RunByNumberHit) => `num:${h.run.id}`;
+/** One row: what cmdk is told it is, where it goes, and what it shows. */
+interface RowSpec {
+  /**
+   * The row's cmdk value. Unique across the whole list — cmdk treats two items
+   * sharing a value as one, so a duplicate is a row that silently cannot be
+   * reached — and also the row's React key, so a result present in two answers
+   * is the SAME row in both.
+   */
+  readonly value: string;
+  readonly to: string;
+  readonly content: ReactNode;
+}
 
-/** Every row's value, in the order the rows are drawn. */
-function rowValues(groups: PaletteGroups): string[] {
-  return [
-    ...groups.goTo.map((d) => d.id),
-    ...groups.projects.items.map(projectValue),
-    ...groups.pages.items.map((d) => d.id),
-    ...groups.tests.items.map(testValue),
-    ...groups.runs.items.map(runValue),
-    ...groups.runByNumber.items.map(runNumberValue),
+interface Section {
+  readonly heading: string;
+  readonly rows: readonly RowSpec[];
+}
+
+/**
+ * What the list draws, in its fixed order: Go to, Projects, Pages, Tests,
+ * Runs, Run by number — each only when it has a row.
+ *
+ * ONE array, read by both the JSX and the highlight below, so the rows cmdk is
+ * told about and the rows on screen cannot be two lists that drift apart.
+ */
+function sectionsOf(groups: PaletteGroups): Section[] {
+  const sections: Section[] = [
+    { heading: 'Go to', rows: groups.goTo.map(destinationRow) },
+    { heading: 'Projects', rows: groups.projects.items.map(projectRow) },
+    { heading: 'Pages', rows: groups.pages.items.map(destinationRow) },
+    { heading: 'Tests', rows: groups.tests.items.map(testRow) },
+    { heading: 'Runs', rows: groups.runs.items.map(runResultRow) },
+    { heading: 'Run by number', rows: groups.runByNumber.items.map(runNumberRow) },
   ];
+  return sections.filter((section) => section.rows.length > 0);
 }
 
 function PaletteSearch({ onChoose }: { readonly onChoose: (to: string) => void }) {
   const [raw, setRaw] = useState('');
   const groups = usePaletteSearch(raw);
   const announcement = useResultAnnouncement(groups);
+  const sections = sectionsOf(groups);
+  const values = sections.flatMap((section) => section.rows.map((row) => row.value));
 
   /* ═══ THE HIGHLIGHT IS HELD HERE, BECAUSE cmdk LOSES IT ═══
 
      cmdk keeps the highlighted row's value and, when that row unmounts, is
      meant to move the highlight to the first row left. It schedules that
      check under ONE key per batch, so when several rows unmount in the same
-     commit — the whole "Go to" list as the first search lands, or five
-     results replaced by five others — only the LAST row's check survives,
-     and unless that happens to be the highlighted one the value goes on
-     naming a row that no longer exists. Nothing is then highlighted and
+     commit — the whole "Go to" list as a search lands, or `smo`'s three tests
+     narrowed to the one `smok` still matches — only the LAST row's check
+     survives, and unless that happens to be the highlighted one the value goes
+     on naming a row that no longer exists. Nothing is then highlighted and
      Enter does nothing, on exactly the keystroke a reader makes most.
 
-     So the value is controlled, and a value no longer on screen is handed
-     back as '' — cmdk reads an empty value as "nothing chosen" and picks the
-     first row itself as the new rows mount, through the same path that keeps
-     the input's `aria-activedescendant` in step. */
+     So the value is controlled, and one that is no longer on screen falls to
+     the FIRST row on screen — whether or not any row mounted, which is the
+     case cmdk's own "pick the first" (it runs only as a row mounts) cannot
+     reach. `''` only when there is no row at all. */
   const [highlighted, setHighlighted] = useState('');
-  const value = rowValues(groups).includes(highlighted) ? highlighted : '';
+  const value = values.includes(highlighted) ? highlighted : (values[0] ?? '');
+
+  /* cmdk tells the input which option is highlighted (`aria-activedescendant`)
+     only when IT moves the highlight — a value handed to it from outside, as
+     above, highlights the row and leaves the input naming the old one, or
+     none. A screen reader would then announce nothing as the highlight moves.
+     So the input's attribute is set from the row actually carrying `value`.
+     cmdk renders the same attribute, and when it next moves the highlight
+     itself it writes its own, equally correct, answer over this one. */
+  const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const inputEl = inputRef.current;
+    const listEl = listRef.current;
+    if (inputEl === null || listEl === null) return;
+    const row =
+      value === ''
+        ? undefined
+        : [...listEl.querySelectorAll<HTMLElement>('[cmdk-item]')].find(
+            (item) => item.getAttribute('data-value') === value,
+          );
+    if (row === undefined || row.id === '') inputEl.removeAttribute('aria-activedescendant');
+    else inputEl.setAttribute('aria-activedescendant', row.id);
+  });
 
   return (
     /* `vimBindings` off: cmdk otherwise moves the highlight on Ctrl+K, and
@@ -139,68 +180,38 @@ function PaletteSearch({ onChoose }: { readonly onChoose: (to: string) => void }
       vimBindings={false}
       value={value}
       onValueChange={setHighlighted}
+      onKeyDown={(event) => {
+        /* Enter inside the debounce pause: what is on screen answers what was
+           typed BEFORE, so choosing it would act on the wrong query. The key
+           is swallowed (cmdk honours `defaultPrevented`) and the pause is
+           ended, so the search for what the input says runs now; the next
+           Enter chooses from its answer. An IME composition's Enter is the
+           composition's, not ours. */
+        if (event.key !== 'Enter' || event.nativeEvent.isComposing) return;
+        if (!groups.pending) return;
+        event.preventDefault();
+        groups.flush();
+      }}
     >
       <Command.Input
+        ref={inputRef}
         value={raw}
         onValueChange={setRaw}
         placeholder="Search projects, tests and runs"
         className="h-12 w-full border-b border-default bg-transparent px-4 text-[0.9375rem] text-primary outline-none placeholder:text-faint"
       />
       <Command.List
+        ref={listRef}
         label="Results"
         className="max-h-[min(60vh,26rem)] overflow-x-hidden overflow-y-auto p-1.5"
       >
-        {groups.goTo.length > 0 && (
-          <PaletteGroup heading="Go to">
-            {groups.goTo.map((d) => (
-              <DestinationRow key={d.id} destination={d} onChoose={onChoose} />
+        {sections.map((section) => (
+          <PaletteGroup key={section.heading} heading={section.heading}>
+            {section.rows.map((row) => (
+              <Row key={row.value} row={row} onChoose={onChoose} />
             ))}
           </PaletteGroup>
-        )}
-        {groups.projects.items.length > 0 && (
-          <PaletteGroup heading="Projects">
-            {groups.projects.items.map((p) => (
-              <Row key={p.slug} value={projectValue(p)} to={projectPath(p.slug)} onChoose={onChoose}>
-                <Primary>{p.name}</Primary> <Secondary>{p.slug}</Secondary>
-              </Row>
-            ))}
-          </PaletteGroup>
-        )}
-        {groups.pages.items.length > 0 && (
-          <PaletteGroup heading="Pages">
-            {groups.pages.items.map((d) => (
-              <DestinationRow key={d.id} destination={d} onChoose={onChoose} />
-            ))}
-          </PaletteGroup>
-        )}
-        {groups.tests.items.length > 0 && (
-          <PaletteGroup heading="Tests">
-            {groups.tests.items.map((t) => (
-              <TestRow key={t.id} test={t} onChoose={onChoose} />
-            ))}
-          </PaletteGroup>
-        )}
-        {groups.runs.items.length > 0 && (
-          <PaletteGroup heading="Runs">
-            {groups.runs.items.map((r) => (
-              <RunResultRow key={r.id} run={r} onChoose={onChoose} />
-            ))}
-          </PaletteGroup>
-        )}
-        {groups.runByNumber.items.length > 0 && (
-          <PaletteGroup heading="Run by number">
-            {groups.runByNumber.items.map((hit) => (
-              <Row
-                key={hit.run.id}
-                value={runNumberValue(hit)}
-                to={runPath(hit.run.id)}
-                onChoose={onChoose}
-              >
-                <Primary>{`${runLabel(hit.run)} · ${hit.test.name} · ${hit.test.project.name}`}</Primary>
-              </Row>
-            ))}
-          </PaletteGroup>
-        )}
+        ))}
       </Command.List>
 
       {/* Outside the listbox, so they are read as text rather than skipped as
@@ -209,11 +220,14 @@ function PaletteSearch({ onChoose }: { readonly onChoose: (to: string) => void }
           groups' own order. */}
       <PaletteNotes groups={groups} />
 
-      {announcement !== null && (
-        <p role="status" aria-live="polite" className="sr-only">
-          {announcement}
-        </p>
-      )}
+      {/* Mounted EMPTY for as long as the palette is, and filled once a typed
+          query settles. A screen reader announces a live region's CHANGES; a
+          region mounted already holding its message has not changed, it was
+          inserted (the lesson `ProjectRail`'s own region records). It still
+          exists only while the dialog does, so there is never more than one. */}
+      <p role="status" aria-live="polite" className="sr-only">
+        {announcement ?? ''}
+      </p>
     </Command>
   );
 }
@@ -222,12 +236,10 @@ function PaletteSearch({ onChoose }: { readonly onChoose: (to: string) => void }
  * The count a screen reader hears, or null when there is none to say.
  *
  * Null with nothing typed — "Go to" is not a search result — and null until a
- * typed query has SETTLED for the first time, so the region is never present
- * holding a half-counted number. Once it has a count it KEEPS the last settled
- * one while the next query loads (the rows on screen are still that answer's,
- * by `keepPreviousData`), and changes only when the next answer is complete.
- * A live region that disappeared on every keystroke would be inserted afresh
- * each time, and an inserted region is not a changed one.
+ * typed query has SETTLED for the first time, so the region never holds a
+ * half-counted number. Once it has a count it KEEPS the last settled one while
+ * the next query loads (the rows on screen are still that answer's, by
+ * `keepPreviousData`), and changes only when the next answer is complete.
  */
 function useResultAnnouncement(groups: PaletteGroups): string | null {
   const [last, setLast] = useState<string | null>(null);
@@ -276,25 +288,15 @@ function PaletteGroup({ heading, children }: { readonly heading: string; readonl
   );
 }
 
-/** One option. Its `value` (see `rowValues`) identifies it and is never shown. */
-function Row({
-  value,
-  to,
-  onChoose,
-  children,
-}: {
-  readonly value: string;
-  readonly to: string;
-  readonly onChoose: (to: string) => void;
-  readonly children: ReactNode;
-}) {
+/** One option. Its `value` identifies it to cmdk and is never shown. */
+function Row({ row, onChoose }: { readonly row: RowSpec; readonly onChoose: (to: string) => void }) {
   return (
     <Command.Item
-      value={value}
-      onSelect={() => onChoose(to)}
+      value={row.value}
+      onSelect={() => onChoose(row.to)}
       className="flex max-w-full min-w-0 cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-[0.8125rem] select-none data-[selected=true]:bg-sunken"
     >
-      {children}
+      {row.content}
     </Command.Item>
   );
 }
@@ -310,57 +312,35 @@ function Secondary({ children }: { readonly children: ReactNode }) {
   return <span className="min-w-0 max-w-[50%] shrink-[2] truncate text-muted">{children}</span>;
 }
 
+/**
+ * A result's outcome: the GLYPH in its status colour, the WORD in the primary
+ * text colour.
+ *
+ * Not `marks.tsx`'s `Marked`, which colours the word too — right on the card
+ * ground its other callers sit on, and wrong here: a highlighted row is drawn
+ * on `bg-sunken`, where the failed tone as text measures 4.27:1 and pending
+ * 4.44:1 in the light theme, under AA's 4.5. A glyph is a non-text mark, which
+ * needs 3:1, and both tones clear that on both grounds — the rule `FormField`'s
+ * notice lines already follow. The glyph, word and colour are still the mark's
+ * own, so a status that changes either changes here too.
+ */
 function Outcome({ mark }: { readonly mark: Mark }) {
   return (
-    <span className="ml-auto shrink-0 text-[0.75rem]">
-      <Marked mark={mark} />
+    <span className="ml-auto shrink-0 text-[0.75rem] text-primary">
+      <span aria-hidden="true" style={{ color: mark.colour }}>
+        {mark.glyph}
+      </span>{' '}
+      <span>{mark.label}</span>
     </span>
-  );
-}
-
-function DestinationRow({
-  destination,
-  onChoose,
-}: {
-  readonly destination: Destination;
-  readonly onChoose: (to: string) => void;
-}) {
-  return (
-    <Row value={destination.id} to={destination.to} onChoose={onChoose}>
-      <Primary>{destination.label}</Primary>
-    </Row>
   );
 }
 
 /**
  * One mark for a run's outcome, as the run list's two badges would read in
  * one: a finished run's VERDICT is the news, an unfinished one's STATE is.
- * `STATUS` and `VERDICT` are `marks.tsx`'s, so a glyph or a word changed there
- * changes here too.
  */
 function outcomeMark(status: RunStatus, verdict: RunVerdict | null): Mark {
   return status === 'complete' ? VERDICT[verdict ?? 'none'] : STATUS[status];
-}
-
-function TestRow({
-  test,
-  onChoose,
-}: {
-  readonly test: OrgTestSummary;
-  readonly onChoose: (to: string) => void;
-}) {
-  const latest = test.latestRun;
-  return (
-    <Row value={testValue(test)} to={projectTestPath(test.project.slug, test.slug)} onChoose={onChoose}>
-      <Primary>{test.name}</Primary> <Secondary>{test.project.name}</Secondary>
-      {latest !== null && (
-        <>
-          {' '}
-          <Outcome mark={outcomeMark(latest.status, latest.verdict)} />
-        </>
-      )}
-    </Row>
-  );
 }
 
 /** "Run 12", or the short id a run with no number goes by everywhere else. */
@@ -370,20 +350,73 @@ function runLabel(run: RunRow): string {
     : runName(run.runNumber);
 }
 
-function RunResultRow({ run, onChoose }: { readonly run: RunRow; readonly onChoose: (to: string) => void }) {
+function destinationRow(destination: Destination): RowSpec {
+  // A destination's id is already unique and already prefixed by its kind.
+  return {
+    value: destination.id,
+    to: destination.to,
+    content: <Primary>{destination.label}</Primary>,
+  };
+}
+
+function projectRow(project: ProjectRef): RowSpec {
+  return {
+    value: `project:${project.slug}`,
+    to: projectPath(project.slug),
+    content: (
+      <>
+        <Primary>{project.name}</Primary> <Secondary>{project.slug}</Secondary>
+      </>
+    ),
+  };
+}
+
+function testRow(test: OrgTestSummary): RowSpec {
+  const latest = test.latestRun;
+  return {
+    value: `test:${test.id}`,
+    to: projectTestPath(test.project.slug, test.slug),
+    content: (
+      <>
+        <Primary>{test.name}</Primary> <Secondary>{test.project.name}</Secondary>
+        {latest !== null && (
+          <>
+            {' '}
+            <Outcome mark={outcomeMark(latest.status, latest.verdict)} />
+          </>
+        )}
+      </>
+    ),
+  };
+}
+
+function runResultRow(run: RunRow): RowSpec {
   // The instant the run list shows and orders by: when the load test ran.
   const startedAt = run.toolStartedAt ?? run.startedAt;
   const subject = run.test?.name ?? run.simulation ?? null;
-  return (
-    <Row value={runValue(run)} to={runPath(run.id)} onChoose={onChoose}>
-      <Primary>{runLabel(run)}</Primary>{' '}
-      <Secondary>
-        {subject === null ? run.project.name : `${subject} · ${run.project.name}`}
-      </Secondary>{' '}
-      <time dateTime={startedAt} className="shrink-0 text-[0.75rem] text-muted tabular-nums">
-        {formatListInstant(startedAt)}
-      </time>{' '}
-      <Outcome mark={outcomeMark(run.status, run.verdict)} />
-    </Row>
-  );
+  return {
+    value: `run:${run.id}`,
+    to: runPath(run.id),
+    content: (
+      <>
+        <Primary>{runLabel(run)}</Primary>{' '}
+        <Secondary>
+          {subject === null ? run.project.name : `${subject} · ${run.project.name}`}
+        </Secondary>{' '}
+        <time dateTime={startedAt} className="shrink-0 text-[0.75rem] text-muted tabular-nums">
+          {formatListInstant(startedAt)}
+        </time>{' '}
+        <Outcome mark={outcomeMark(run.status, run.verdict)} />
+      </>
+    ),
+  };
+}
+
+function runNumberRow({ run, test }: RunByNumberHit): RowSpec {
+  return {
+    // `num:`, not `run:` — the same run can also be a Runs result.
+    value: `num:${run.id}`,
+    to: runPath(run.id),
+    content: <Primary>{`${runLabel(run)} · ${test.name} · ${test.project.name}`}</Primary>,
+  };
 }

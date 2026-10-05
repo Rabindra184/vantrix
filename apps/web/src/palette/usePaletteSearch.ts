@@ -41,7 +41,12 @@ export interface RunByNumberHit {
 export interface PaletteGroups {
   /** The DEBOUNCED query: what every group below is an answer to. */
   readonly query: PaletteQuery;
-  /** The empty state's destinations. Empty whenever something is typed. */
+  /**
+   * The empty state's destinations. Empty the moment anything is typed — the
+   * RAW input, not the debounced one: a row on screen is a row Enter can
+   * choose, and "All runs" is not what a reader who has typed `checkout` and
+   * pressed Enter inside the pause is asking for.
+   */
   readonly goTo: readonly Destination[];
   readonly projects: GroupState<ProjectRef>;
   readonly pages: GroupState<Destination>;
@@ -52,6 +57,14 @@ export interface PaletteGroups {
   readonly settled: boolean;
   /** Results across the five search groups. `goTo` is not a result and is not counted. */
   readonly total: number;
+  /**
+   * The input says something the groups have not been asked yet: the reader
+   * is inside the debounce pause. Whatever is on screen answers an earlier
+   * query, so choosing it on Enter would act on what they typed BEFORE.
+   */
+  readonly pending: boolean;
+  /** End the pause now and ask the groups what the input says. */
+  readonly flush: () => void;
 }
 
 /** How long the reader must stop typing before anything is searched. */
@@ -148,10 +161,11 @@ function remoteGroup<T>(enabled: boolean, query: QueryLike<readonly T[]>): Group
  * or lagging leaves the others alone.
  */
 export function usePaletteSearch(raw: string): PaletteGroups {
-  const debounced = useDebouncedValue(raw, PALETTE_DEBOUNCE_MS);
+  const [debounced, flush] = useDebouncedValue(raw, PALETTE_DEBOUNCE_MS);
   const query = useMemo(() => parsePaletteQuery(debounced), [debounced]);
   const { text, runNumber } = query;
   const searching = text !== '';
+  const typed = raw.trim();
   const currentSlug = currentProjectSlug(useLocation().pathname);
 
   const projectList = useQuery({ queryKey: projectsQueryKey, queryFn: fetchProjects });
@@ -233,7 +247,7 @@ export function usePaletteSearch(raw: string): PaletteGroups {
   const groups = [projectsGroup, pagesGroup, testsGroup, runsGroup, runByNumberGroup];
   return {
     query,
-    goTo: searching ? [] : goToDestinations(current),
+    goTo: typed === '' && !searching ? goToDestinations(current) : [],
     projects: projectsGroup,
     pages: pagesGroup,
     tests: testsGroup,
@@ -241,5 +255,7 @@ export function usePaletteSearch(raw: string): PaletteGroups {
     runByNumber: runByNumberGroup,
     settled: groups.every((g) => g.status !== 'loading'),
     total: groups.reduce((sum, g) => sum + g.items.length, 0),
+    pending: typed !== text,
+    flush,
   };
 }

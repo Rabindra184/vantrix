@@ -523,9 +523,14 @@ describe('CommandPalette', () => {
     const { client } = renderPalette({ open: false });
     const user = userEvent.setup();
 
+    // Closed: no region at all.
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Open palette' }));
-    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    /* Open: the region is there from the start, EMPTY. A region mounted
+       already holding its message has not changed, it was inserted — and a
+       screen reader announces a live region's changes. */
+    const region = screen.getByRole('status');
+    expect(region).toBeEmptyDOMElement();
 
     await enter(user, 'smoke');
     await waitFor(() => {
@@ -533,10 +538,12 @@ describe('CommandPalette', () => {
     });
     await screen.findByRole('option', { name: /Search smoke/ });
     // Two tests are on screen, but the runs have not answered: no count yet.
-    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    expect(region).toBeEmptyDOMElement();
 
     heldRuns.resolve(json(runs([RUN_7])));
-    expect(await screen.findByRole('status')).toHaveTextContent(/^3 results$/);
+    await waitFor(() => expect(region).toHaveTextContent(/^3 results$/));
+    // The same node, filled: changed, not inserted.
+    expect(screen.getByRole('status')).toBe(region);
   });
 
   it('keeps the last results on screen while the next query loads', async () => {
@@ -570,6 +577,115 @@ describe('CommandPalette', () => {
     /* Both old rows left in ONE commit — the case cmdk's own bookkeeping
        loses, leaving nothing highlighted and Enter dead. */
     await waitFor(() => expect(soak).toHaveAttribute('aria-selected', 'true'));
+  });
+
+  it('does not navigate to a Go to row when Enter follows typing at once', () => {
+    vi.useFakeTimers();
+    stubApi({ tests: () => json(tests([SMOKE])) });
+    const { onOpenChange } = renderPalette({ route: '/projects/checkout/rules' });
+    // Before anything is typed, Go to is on screen and its first row is highlighted.
+    expect(screen.getByRole('option', { name: 'All runs' })).toHaveAttribute('aria-selected', 'true');
+
+    // A fast typist: the whole word, then Enter, all inside the 150 ms pause.
+    fireEvent.change(input(), { target: { value: 'smoke' } });
+    /* Go to leaves with the first keystroke, not when the pause ends: no row
+       is left on screen for Enter to choose. Asserted BEFORE Enter, because
+       Enter ends the pause and would hide a Go to list that outlived it. */
+    expect(screen.queryByRole('group', { name: 'Go to' })).not.toBeInTheDocument();
+    expect(screen.queryAllByRole('option')).toHaveLength(0);
+    fireEvent.keyDown(input(), { key: 'Enter' });
+
+    expect(screen.getByTestId('where')).toHaveTextContent(/^\/projects\/checkout\/rules$/);
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('searches at once when Enter is pressed during the pause', async () => {
+    vi.useFakeTimers();
+    stubApi({
+      tests: (url) =>
+        url.searchParams.get('q') === 'smo' ? json(tests([SMOKE])) : json(tests([SOAK])),
+    });
+    const { onOpenChange } = renderPalette();
+    const settle = async (ms: number) => {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(ms);
+      });
+    };
+
+    // `smo` has been answered and its row is highlighted.
+    fireEvent.change(input(), { target: { value: 'smo' } });
+    await settle(150);
+    await settle(50);
+    expect(screen.getByRole('option', { name: /Checkout smoke/ })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+
+    // `smok` and Enter inside the pause: the highlighted row answers `smo`, not
+    // what was typed, so Enter must not choose it — it asks for `smok` NOW.
+    fireEvent.change(input(), { target: { value: 'smok' } });
+    fireEvent.keyDown(input(), { key: 'Enter' });
+
+    expect(screen.getByTestId('where')).toHaveTextContent(/^\/runs$/);
+    expect(onOpenChange).not.toHaveBeenCalled();
+    const asked = () => requestsTo('/v1/tests').map((u) => u.searchParams.get('q'));
+    // No time has passed since the keystroke, and the search has been sent.
+    expect(asked()).toEqual(['smo', 'smok']);
+    // The pause's own timer, when it lapses, asks nothing a second time.
+    await settle(150);
+    expect(asked()).toEqual(['smo', 'smok']);
+  });
+
+  it('keeps exactly one row highlighted when the highlighted one is narrowed away', async () => {
+    stubApi({
+      tests: (url) =>
+        url.searchParams.get('q') === 'smok'
+          ? json(tests([SOAK]))
+          : json(tests([SMOKE, SEARCH_SMOKE, SOAK])),
+    });
+    renderPalette();
+    const user = userEvent.setup();
+
+    await enter(user, 'smo');
+    const first = await screen.findByRole('option', { name: /Checkout smoke/ });
+    await waitFor(() => expect(first).toHaveAttribute('aria-selected', 'true'));
+
+    /* `Checkout soak` SURVIVES the narrowing — same row, same key — so no
+       row mounts, and the two that leave include the highlighted one. */
+    await enter(user, 'k');
+    await waitFor(() => {
+      expect(screen.queryByRole('option', { name: /Checkout smoke/ })).not.toBeInTheDocument();
+    });
+    const soak = screen.getByRole('option', { name: /Checkout soak/ });
+    const highlighted = screen
+      .getAllByRole('option')
+      .filter((o) => o.getAttribute('aria-selected') === 'true');
+    expect(highlighted).toEqual([soak]);
+    // A screen reader is told which option that is, too.
+    expect(input()).toHaveAttribute('aria-activedescendant', soak.id);
+
+    await user.keyboard('{Enter}');
+    expect(screen.getByTestId('where')).toHaveTextContent(
+      projectTestPath('checkout', 'checkout-soak'),
+    );
+  });
+
+  it("colours a result's outcome glyph, never its word, on the highlighted row", async () => {
+    stubApi({ tests: () => json(tests([SMOKE])) });
+    renderPalette();
+    const user = userEvent.setup();
+
+    await enter(user, 'smoke');
+    const row = await screen.findByRole('option', { name: /Checkout smoke/ });
+    // Highlighted: the row sits on the sunken ground, where a status colour
+    // as TEXT measures under 4.5:1 in the light theme.
+    await waitFor(() => expect(row).toHaveAttribute('aria-selected', 'true'));
+
+    const glyph = within(row).getByText('✓');
+    expect(glyph.getAttribute('style') ?? '').toContain('--color-status-passed');
+    const word = within(row).getByText('passed');
+    expect(word.closest('[style*="--color-status"]')).toBeNull();
   });
 
   it('returns focus to what had it before the palette opened', async () => {
