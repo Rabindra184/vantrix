@@ -1,6 +1,16 @@
 /** Where an authenticated session with nowhere particular to go ends up. */
 export const DEFAULT_ROUTE = '/runs';
 /**
+ * The org-wide run list, by what it IS rather than by where a session lands.
+ *
+ * Today the two are the same string, which is exactly why they are two names:
+ * `DEFAULT_ROUTE` is a decision about where somebody with nowhere particular
+ * to go ends up, and it can move without the run list moving. A link that
+ * means "all runs" has to keep meaning that, so it reads this and never
+ * `DEFAULT_ROUTE`.
+ */
+export const ALL_RUNS_ROUTE = '/runs';
+/**
  * The create-a-project page.
  *
  * `_new`, NOT `new`, and the underscore is the whole point. React Router
