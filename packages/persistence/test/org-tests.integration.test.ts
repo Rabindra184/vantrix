@@ -394,6 +394,9 @@ describe('TestRepository.listOrg', () => {
         ['a bare test id, the old cursor shape', randomUUID()],
         ['not base64url at all', 'not base64!'],
         ['base64url of something that is not JSON', b64('hello')],
+        // Node's decoder skips what is not base64url, so only the explicit
+        // alphabet check refuses this: it would otherwise decode to a real key.
+        ['a well-formed cursor with a character outside the base64url alphabet', `${b64({ at: null, name: 'a-test', id })}!`],
         ['a JSON array', b64([null, 'x', id])],
         ['a missing id', b64({ at: null, name: 'x' })],
         ['an id that is not a uuid', b64({ at: null, name: 'x', id: 'nope' })],
