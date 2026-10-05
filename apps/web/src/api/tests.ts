@@ -1,6 +1,8 @@
 import {
+  OrgTestListResponseSchema,
   TestListResponseSchema,
   TestSummarySchema,
+  type OrgTestListResponse,
   type TestListResponse,
   type TestSummary,
   type UpdateTestRequest,
@@ -31,6 +33,53 @@ export const projectTestQueryKey = (slug: string, testSlug: string) =>
  */
 export function fetchProjectTests(slug: string): Promise<TestListResponse> {
   return apiFetch(TestListResponseSchema, `/v1/projects/${encodeURIComponent(slug)}/tests`);
+}
+
+/**
+ * The org-wide test search the command palette reads: one answer per
+ * `(search text, page size)`. The cursor is not part of the key — a palette
+ * shows the first page only, and a caller that pages owns its own key.
+ *
+ * Distinct from `projectTestsQueryKey` on purpose: that one is a PROJECT's
+ * whole catalogue and is invalidated by a rename or a delete; this one is a
+ * ranked, truncated slice of the org's and nothing about it is worth
+ * invalidating by prefix.
+ */
+export const orgTestsQueryKey = (q: string, limit: number) => ['org-tests', q, limit] as const;
+
+export interface OrgTestsOptions {
+  /** Search text. Trimmed; empty after trimming sends no `q` at all. */
+  readonly q?: string;
+  readonly limit?: number;
+  /** The `nextCursor` of a previous answer, passed through untouched. */
+  readonly cursor?: string | null;
+}
+
+/**
+ * `GET /v1/tests` — every test in the organisation, most recently run first.
+ *
+ * Each parameter is sent ONLY when given. `limit` in particular is optional
+ * here, unlike `fetchRuns`' always-sent page size: the palette names its own
+ * (5), and a caller with no opinion should get the server's default rather
+ * than a number this module invented.
+ *
+ * `cursor` is the server's opaque string, not an id: it is handed back as
+ * received and never parsed, built or compared here, so the server stays free
+ * to change what it encodes.
+ *
+ * Built with `URLSearchParams`, which percent-encodes. That matters for `q`
+ * because it is whatever somebody typed: a raw `#` would start a URL fragment
+ * and a browser never sends a fragment, so the rest of the query — including
+ * `limit` — would vanish without an error.
+ */
+export function fetchOrgTests(opts: OrgTestsOptions): Promise<OrgTestListResponse> {
+  const query = new URLSearchParams();
+  const q = opts.q?.trim();
+  if (q) query.set('q', q);
+  if (opts.limit !== undefined) query.set('limit', String(opts.limit));
+  if (opts.cursor) query.set('cursor', opts.cursor);
+  const qs = query.toString();
+  return apiFetch(OrgTestListResponseSchema, qs ? `/v1/tests?${qs}` : '/v1/tests');
 }
 
 export function fetchProjectTest(slug: string, testSlug: string): Promise<TestSummary> {
