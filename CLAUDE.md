@@ -171,10 +171,13 @@ pages made it the newest arrival in the org, so "earlier than the cursor"
 matched every other test and page two repeated page one. The cursor is the last
 row's `(latest arrival | null, name, id)` now, opaque base64url, and anything
 that does not decode answers an empty page, never a 500. Each refusal has a row
-that THREW against the decoder before it: Node's base64 decoder silently skips
-characters outside its alphabet (that check's removal SURVIVED until a case
-carried a trailing `!`), and `toISOString()` writes a six-digit year that
-round-trips and still breaks the `timestamptz` cast.
+that FAILS without it: Node's base64 decoder silently skips characters outside
+its alphabet, so without the alphabet check a cursor with a trailing `!` is
+ACCEPTED (its removal survived every other row until that one was added), and
+`toISOString()` writes a six-digit year that round-trips and then breaks the
+`timestamptz` cast. The lone-surrogate name and the years +010000 and -000001
+are the rows that actually THREW against the old decoder, a Prisma error and so
+a 500.
 
 **`cmdk` 1.1.1 LOSES THE HIGHLIGHT WHEN ROWS UNMOUNT, AND DOES NOT TELL THE
 INPUT WHEN YOU MOVE IT FROM OUTSIDE.** It schedules "move to the first row"
@@ -231,16 +234,40 @@ unescaped, the token's project predicate dropped (one case per layer), the p95
 history reading failed runs, `number=` without a test, the debounce at 0 ms, the
 previous rows no longer kept (that case and three whose scenario needs them on
 screen), the typed text surviving a close, the bubble-phase listener. Four
-(the debounce, the previous rows, the typed text, the token predicate) were
-taken again on the final tree, since the fix wave rewrote what they mutate.
+were taken again on the final tree: the debounce, the previous rows and the
+typed text because the fix wave rewrote what they mutate, the token predicate
+because no report had mutated its endpoint half.
+
+**A TEST IS NOT IDENTIFIED BY ITS SLUG.** Found only by running real Gatling:
+`example-paritysimulation` is the slug of a test in `palette-verify`, in
+`web-demo` and in `gatling-demo` — three tests, three projects — and a check
+that matched by slug first false-failed on another project's own test. A result
+is keyed and linked by project slug plus test slug (the palette's link and its
+cmdk value are), never by the test slug alone.
 
 **WHAT WAS RUN.** `typecheck` and `lint` exit 0; `test:unit` **206 / 2867**,
 zero `Errors` lines; `test:integration` **187 / 2492**, exit 0; `pnpm test:e2e
 --workers=2` **192 passed, exit 0** — every total the one counted from the
 source before any suite ran, on the final tree, against the SCRATCH DATABASE
-`perfportal_palette`, a scratch Redis INDEX (db 1) and e2e port 3700, started
-at a 1-minute load under 6. **PENDING, NOT RUN HERE:** the real Gatling runs
-through the Gradle plugin and the three-engine `e2e-cross-browser` dispatch.
+`perfportal_palette`, a scratch Redis INDEX (db 1) and e2e port 3700, started at
+a 1-minute load of 8.6 (unit), 5.1 (integration, after waiting for it to settle)
+and 3.5 (e2e).
+
+**AND THE REAL RUNS, AGAINST THE DEVELOPER DATABASE.** `ParitySimulation`
+through the Gradle plugin, twice, into a new project `palette-verify`: test
+`example-paritysimulation`, Run 1 and Run 2, 895 requests each, both complete
+(Gatling exits 1 by design — its own `Search: 95th percentile of response time
+is less than 100.0` is false, the other two assertions true). `GET
+/v1/tests?q=Parity` with the posting token answers `latestRun` = Run 2, `checks`
+`{ failed: 1, total: 3 }` and `p95Ms` 645.59, equal to the run list's
+`metrics.p95Ms` for that run; `p95History` holds both runs, oldest first, each
+equal to its list row. `?number=1` answers Run 1, `number=99` an empty page and
+`number=abc` a 400 `INVALID_RUN_NUMBER`; `q=` an 8-character id prefix answers
+Run 2; all six responses parse with `OrgTestListResponseSchema` /
+`RunListResponseSchema`; a read token for a different project never sees the
+test. Both runs share one p95, so a run is told apart by its id and number, not
+by that figure. The tokens were revoked and the processes stopped by PID.
+**PENDING, NOT RUN HERE:** the three-engine `e2e-cross-browser` dispatch.
 
 The PR 4 minors branch (`fix/clean-ui-pr4-minors`) added no unit FILE and 4
 cases (2 to `NewRunnerRun.test.tsx`, 1 each to `RunnerStatusLine.test.tsx` and
