@@ -55,6 +55,17 @@ export default function SearchTrigger() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       if (!isPaletteShortcut(event)) return;
+      /* A native modal <dialog> is open — a chart expanded to full screen
+         (`Chart.tsx` calls `showModal()`). HTML makes everything outside it
+         inert and paints it below the top layer, and the palette is portalled
+         to <body>, outside it: it would be invisible and unable to take focus,
+         while Radix's own modal side effects (`aria-hidden` on the page,
+         `pointer-events: none` on <body>) would still engage and stop the
+         chart's Close button responding. So do nothing — and do not prevent
+         the default either, so the browser keeps the key. Any open <dialog>
+         counts, not only a modal one: the palette itself is a Radix div with
+         `role="dialog"`, not a <dialog>, so it never trips its own guard. */
+      if (document.querySelector('dialog[open]') !== null) return;
       event.preventDefault();
       if (event.repeat) return;
       setOpen((current) => !current);

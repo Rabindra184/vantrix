@@ -285,13 +285,53 @@ describe('SearchTrigger — opening', () => {
     expect(screen.getByRole('dialog', { name: 'Search PerfPortal' })).toBeInTheDocument();
   });
 
-  it('stops listening when it unmounts', async () => {
-    const user = userEvent.setup();
+  /**
+   * ASSERTED ON WHAT A LEAKED LISTENER STILL DOES, which is `preventDefault`.
+   * Its `setOpen` would land on an unmounted component — a silent no-op — and
+   * no dialog would appear either way, so "no dialog" passes with the cleanup
+   * deleted. `fireEvent` answers false when the event's default was prevented,
+   * so a listener left on `window` shows up as the key being taken from a page
+   * that no longer has a palette.
+   */
+  it('stops listening when it unmounts', () => {
     const { unmount } = renderTrigger();
+    // Paired positive: while mounted, the key IS taken.
+    expect(fireEvent.keyDown(document.body, { key: 'k', metaKey: true })).toBe(false);
     unmount();
 
-    await user.keyboard('{Meta>}k{/Meta}');
+    expect(fireEvent.keyDown(document.body, { key: 'k', metaKey: true })).toBe(true);
     expect(dialog()).toBeNull();
+  });
+
+  /**
+   * A FULL-SCREEN CHART IS A NATIVE MODAL `<dialog>` (`Chart.tsx` calls
+   * `showModal()`), and HTML makes everything outside one inert and paints it
+   * beneath. The palette is portalled to <body>, outside it — so opening it
+   * there would show nothing and take no focus, while Radix's own modal side
+   * effects (`aria-hidden` on the page, `pointer-events: none` on <body>) would
+   * still engage and stop the chart's Close button responding. So the shortcut
+   * does nothing while one is open, and does not take the key either: the
+   * browser keeps ⌘K for the chart.
+   *
+   * jsdom reflects the `open` attribute without `showModal`, which is all the
+   * guard reads.
+   */
+  it('does nothing, and leaves the key alone, while a native dialog is open', async () => {
+    renderTrigger();
+    const chart = document.createElement('dialog');
+    chart.setAttribute('open', '');
+    document.body.appendChild(chart);
+
+    // `fireEvent` answers true when nothing prevented the default.
+    expect(fireEvent.keyDown(document.body, { key: 'k', metaKey: true })).toBe(true);
+    expect(dialog()).toBeNull();
+
+    // Paired positive, so the case cannot pass against a trigger that never
+    // opens anything: the same key opens it once the chart is closed again.
+    chart.removeAttribute('open');
+    expect(fireEvent.keyDown(document.body, { key: 'k', metaKey: true })).toBe(false);
+    expect(await screen.findByRole('dialog', { name: 'Search PerfPortal' })).toBeInTheDocument();
+    chart.remove();
   });
 });
 
