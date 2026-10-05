@@ -124,6 +124,62 @@ describe('components reach tokens by name, not by arbitrary value', () => {
 });
 
 /**
+ * ═══ A COLOUR UTILITY NAMES A COLOUR `@theme` PUBLISHES, OR IT IS INERT ═══
+ *
+ * Tailwind v4 generates a utility only for a token in `@theme`. A class that
+ * names anything else — `text-faint` — compiles, reads plausibly in review,
+ * and emits NO CSS at all, so the element silently takes its colour from
+ * whatever it inherits. The palette's input placeholder and its group
+ * headings shipped exactly that way (`placeholder:text-faint`, which fell back
+ * to the browser's 50%-of-currentColor placeholder, about 3.4:1 in the light
+ * theme), and so had the dropdown's section label for longer. The built CSS
+ * contained "faint" zero times.
+ *
+ * So every `text-<name>` in the source must be one of: a colour `@theme`
+ * publishes (`--color-<name>` inside its block), Tailwind's own colour
+ * keywords and default palette shades, or one of Tailwind's NON-colour `text-`
+ * utilities (sizes, alignment, wrapping, overflow). Comments are stripped
+ * first — every file that explains why a `text-status-*` utility does not
+ * exist names one, and those are the rule's documentation, not violations of
+ * it.
+ */
+describe('a text colour utility names a published token', () => {
+  it('uses no text-<colour> that @theme does not publish', () => {
+    const css = readFileSync(join(SRC, 'styles/tokens.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const theme = /@theme inline \{([\s\S]*?)\n\}/.exec(css)?.[1] ?? '';
+    const published = new Set([...theme.matchAll(/^\s*--color-([a-z0-9-]+):/gm)].map((m) => m[1]));
+    // Vacuity guard: a regex that stopped finding the block would publish
+    // nothing, and every utility would then be "unpublished" — or, inverted,
+    // a collector that found no classes would pass against anything.
+    expect(published.has('muted')).toBe(true);
+    expect(published.has('primary')).toBe(true);
+
+    const notColour = new Set([
+      'xs', 'sm', 'base', 'lg', 'xl', 'left', 'center', 'right', 'justify', 'start', 'end',
+      'wrap', 'nowrap', 'balance', 'pretty', 'ellipsis', 'clip',
+    ]);
+    const tailwindColour = (name: string) =>
+      ['inherit', 'current', 'transparent', 'black', 'white'].includes(name) ||
+      /^[a-z]+-\d{2,3}$/.test(name);
+
+    const strip = (src: string): string =>
+      src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    let seen = 0;
+    const offenders = sourceFiles(SRC).flatMap((path) => {
+      const names = [...strip(readFileSync(path, 'utf8')).matchAll(
+        /(?<![\w-])text-([a-z][a-z0-9-]*[a-z0-9])(?:\/\d+)?(?![\w-])/g,
+      )].map((m) => m[1]!);
+      seen += names.length;
+      return names
+        .filter((name) => !published.has(name) && !notColour.has(name) && !tailwindColour(name))
+        .map((name) => `${path.slice(SRC.length + 1)}: text-${name}`);
+    });
+    expect(seen, 'the scan found text utilities to check').toBeGreaterThan(50);
+    expect(offenders).toEqual([]);
+  });
+});
+
+/**
  * The shell header's height is ONE decision, consumed from one token.
  *
  * It used to be three files with three spellings that had to agree — `h-14`

@@ -1,5 +1,5 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import type { OrgTestSummary, RunListResponse } from '@perfportal/contracts';
 import { ProblemError } from '../api/fetch';
@@ -58,9 +58,18 @@ export interface PaletteGroups {
   /** Results across the five search groups. `goTo` is not a result and is not counted. */
   readonly total: number;
   /**
-   * The input says something the groups have not been asked yet: the reader
-   * is inside the debounce pause. Whatever is on screen answers an earlier
-   * query, so choosing it on Enter would act on what they typed BEFORE.
+   * What is on screen is not yet the answer to what the input says — so
+   * choosing a row on Enter now would act on something other than what was
+   * typed. Two windows make it true:
+   *
+   *   - the debounce pause: the input says something the groups have not been
+   *     asked yet;
+   *   - the request after it: a group is still loading, which includes one
+   *     showing the PREVIOUS query's rows as placeholder data while this
+   *     query's are fetched (`keepPreviousData`).
+   *
+   * The palette queues an Enter pressed while this is true and chooses once it
+   * is false (see `CommandPalette`).
    */
   readonly pending: boolean;
   /** End the pause now and ask the groups what the input says. */
@@ -155,6 +164,16 @@ function remoteGroup<T>(enabled: boolean, query: QueryLike<readonly T[]>): Group
  * for `chec` is in flight it keeps `che`'s rows on screen, as `loading`, so
  * typing never flashes an empty list (`keepPreviousData`).
  *
+ * ═══ EXCEPT ACROSS A CLEARED BOX ═══
+ *
+ * TanStack's placeholder is the last query that HAD data, not the last one
+ * asked. So a reader who searched `smo`, cleared the box (the groups go idle,
+ * "Go to" returns) and typed `search` would see `smo`'s rows come back as
+ * `search`'s placeholder — rows from a query they had abandoned, which an
+ * Enter could then act on. Narrowing `che` to `chec` refines one question;
+ * clearing starts another, and there is nothing to keep. So the placeholder
+ * is withheld whenever the text the groups were asked before was empty.
+ *
  * Projects and Pages are matched in the browser against `GET /v1/projects`,
  * read under the rail's own key so inside the app it is a cache hit. Tests,
  * Runs and Run-by-number are server searches, each its own query: one failing
@@ -166,6 +185,15 @@ export function usePaletteSearch(raw: string): PaletteGroups {
   const { text, runNumber } = query;
   const searching = text !== '';
   const typed = raw.trim();
+
+  /* The text the groups were asked BEFORE this one — the previous DISTINCT
+     debounced text, not the previous render's. Held as state and moved on
+     during render (React's pattern for state derived from a prop), so the
+     render that first asks `search` already knows it follows `''`. */
+  const [asked, setAsked] = useState({ current: text, previous: '' });
+  if (asked.current !== text) setAsked({ current: text, previous: asked.current });
+  const previousText = asked.current === text ? asked.previous : asked.current;
+  const placeholderData = previousText === '' ? undefined : keepPreviousData;
   const currentSlug = currentProjectSlug(useLocation().pathname);
 
   const projectList = useQuery({ queryKey: projectsQueryKey, queryFn: fetchProjects });
@@ -187,14 +215,14 @@ export function usePaletteSearch(raw: string): PaletteGroups {
     queryKey: orgTestsQueryKey(text, TEST_LIMIT),
     queryFn: () => fetchOrgTests({ q: text, limit: TEST_LIMIT }),
     enabled: searching,
-    placeholderData: keepPreviousData,
+    placeholderData,
   });
 
   const runs = useQuery({
     queryKey: paletteRunsQueryKey(text),
     queryFn: () => searchRuns(text, RUN_LIMIT),
     enabled: searching,
-    placeholderData: keepPreviousData,
+    placeholderData,
   });
 
   const runByNumber = useQuery({
@@ -202,7 +230,7 @@ export function usePaletteSearch(raw: string): PaletteGroups {
     queryFn: () =>
       runNumber === null ? Promise.resolve([]) : lookUpRunByNumber(runNumber.text, runNumber.n),
     enabled: runNumber !== null,
-    placeholderData: keepPreviousData,
+    placeholderData,
   });
 
   const projectsGroup = ((): GroupState<ProjectRef> => {
@@ -245,6 +273,7 @@ export function usePaletteSearch(raw: string): PaletteGroups {
   });
 
   const groups = [projectsGroup, pagesGroup, testsGroup, runsGroup, runByNumberGroup];
+  const settled = groups.every((g) => g.status !== 'loading');
   return {
     query,
     goTo: typed === '' && !searching ? goToDestinations(current) : [],
@@ -253,9 +282,11 @@ export function usePaletteSearch(raw: string): PaletteGroups {
     tests: testsGroup,
     runs: runsGroup,
     runByNumber: runByNumberGroup,
-    settled: groups.every((g) => g.status !== 'loading'),
+    settled,
     total: groups.reduce((sum, g) => sum + g.items.length, 0),
-    pending: typed !== text,
+    // Inside the pause, or a group still loading — placeholder rows included,
+    // because `loading` is exactly how `remoteGroup` reports them.
+    pending: typed !== text || !settled,
     flush,
   };
 }

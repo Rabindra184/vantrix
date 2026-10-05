@@ -221,6 +221,31 @@ describe('SearchTrigger — opening', () => {
   });
 
   /**
+   * WHEN WHAT HAD FOCUS IS GONE, THE SEARCH BUTTON GETS IT. Opened from the
+   * account menu, the palette records a menu node — and the menu shuts as the
+   * palette takes focus, so by Escape that node is no longer in the document.
+   * Handing focus to it would drop a keyboard reader on <body>; the header's
+   * Search button opens this palette and is on every page.
+   */
+  it('returns focus to the Search button when what had focus has gone', async () => {
+    const user = userEvent.setup();
+    renderTrigger();
+    await user.click(screen.getByTestId('account-menu-trigger'));
+    const menu = await screen.findByRole('menu');
+    expect(menu).toContainElement(document.activeElement as HTMLElement);
+
+    await user.keyboard('{Meta>}k{/Meta}');
+    expect(await screen.findByRole('dialog', { name: 'Search PerfPortal' })).toBeInTheDocument();
+    // The premise: the menu that held focus has closed and left the document.
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+    expect(menu.isConnected).toBe(false);
+
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(dialog()).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(trigger()));
+  });
+
+  /**
    * The listener is on `window` in the CAPTURE phase so that nothing between
    * the key and the window can eat it. A Radix menu handles its own keys on its
    * content; this is the case that says an open one does not get to decide

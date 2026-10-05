@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { SearchIcon } from '../components/icons';
 import useIsCompact from '../useIsCompact';
 import CommandPalette from './CommandPalette';
@@ -38,8 +38,11 @@ import { isApplePlatform, isPaletteShortcut } from './shortcut';
  *
  * Returning it to where it was is `CommandPalette`'s: Radix hands it back to a
  * `Dialog.Trigger`, and this dialog has none, so the palette records and
- * restores it itself. `SearchTrigger.test.tsx` asserts it through this
- * component, because that is how a reader opens it.
+ * restores it itself. When what had focus is gone by the time it closes — an
+ * account-menu item, or a control on a page a result navigated away from — it
+ * falls back to THIS button, which is why the button's ref is handed over.
+ * `SearchTrigger.test.tsx` asserts both through this component, because that
+ * is how a reader opens it.
  *
  * ═══ ICON-ONLY BELOW 768px ═══
  *
@@ -51,6 +54,7 @@ import { isApplePlatform, isPaletteShortcut } from './shortcut';
 export default function SearchTrigger() {
   const [open, setOpen] = useState(false);
   const compact = useIsCompact();
+  const button = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -77,6 +81,7 @@ export default function SearchTrigger() {
   return (
     <>
       <button
+        ref={button}
         type="button"
         aria-label="Search"
         aria-keyshortcuts="Meta+K Control+K"
@@ -103,7 +108,7 @@ export default function SearchTrigger() {
           </>
         )}
       </button>
-      <CommandPalette open={open} onOpenChange={setOpen} />
+      <CommandPalette open={open} onOpenChange={setOpen} returnFocusFallback={button} />
     </>
   );
 }

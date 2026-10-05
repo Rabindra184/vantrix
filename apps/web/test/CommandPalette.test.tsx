@@ -2,7 +2,7 @@ import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
@@ -191,13 +191,15 @@ function Harness({
   readonly onOpenChange: (open: boolean) => void;
 }) {
   const [open, setOpen] = useState(initialOpen);
+  const opener = useRef<HTMLButtonElement>(null);
   return (
     <>
-      <button type="button" onClick={() => setOpen(true)}>
+      <button ref={opener} type="button" onClick={() => setOpen(true)}>
         Open palette
       </button>
       <CommandPalette
         open={open}
+        returnFocusFallback={opener}
         onOpenChange={(next) => {
           onOpenChange(next);
           setOpen(next);
@@ -722,6 +724,177 @@ describe('CommandPalette', () => {
     await user.click(opener);
     expect(input()).toHaveFocus();
     await user.keyboard('{Escape}');
-    expect(opener).toHaveFocus();
+    // Radix hands focus back in its close effect, after the keystroke returns.
+    await waitFor(() => expect(opener).toHaveFocus());
+  });
+});
+
+/*
+ * ═══ AN ENTER THAT ARRIVES BEFORE ITS ANSWER WAITS FOR IT ═══
+ *
+ * Two windows separate what the reader typed from the rows answering it: the
+ * 150 ms pause, and the request that follows it — during which the groups go
+ * on showing the PREVIOUS query's rows, as loading (`keepPreviousData`). An
+ * Enter in either is queued rather than swallowed: the pause is ended, and
+ * once every group answers what the input says, the highlighted row — the
+ * first, since the reader has not moved it — is chosen as a normal Enter would
+ * choose it. Anything the reader does in between withdraws it.
+ */
+describe('CommandPalette — an Enter before the answer', () => {
+  const asked = () => requestsTo('/v1/tests').map((u) => u.searchParams.get('q'));
+  const where = () => screen.getByTestId('where');
+
+  it('waits for the answer, then chooses its first row, never the previous query’s', async () => {
+    const heldSearch = deferred();
+    stubApi({
+      // No project is named like `search` here, so no locally matched row
+      // leads the list: the first row on screen is the stale `smo` test until
+      // `search`'s own answer replaces it.
+      projects: () => json({ items: PROJECTS.filter((p) => p.slug !== 'search') }),
+      tests: (url) =>
+        url.searchParams.get('q') === 'search' ? heldSearch.promise : json(tests([SMOKE])),
+    });
+    const { onOpenChange } = renderPalette();
+    const user = userEvent.setup();
+
+    await enter(user, 'smo');
+    const smoke = await screen.findByRole('option', { name: /Checkout smoke/ });
+    await waitFor(() => expect(smoke).toHaveAttribute('aria-selected', 'true'));
+
+    // The whole text replaced in ONE change, then the pause allowed to lapse:
+    // `search` is asked and held, and `smo`'s row is still drawn — the row an
+    // Enter used to choose here.
+    fireEvent.change(input(), { target: { value: 'search' } });
+    await waitFor(() => expect(asked()).toContain('search'));
+    expect(screen.getByRole('option', { name: /Checkout smoke/ })).toBeInTheDocument();
+
+    await user.keyboard('{Enter}');
+    await act(async () => {});
+    expect(where()).toHaveTextContent(/^\/runs$/);
+    expect(onOpenChange).not.toHaveBeenCalled();
+
+    heldSearch.resolve(json(tests([SEARCH_SMOKE])));
+    // `search`'s own first row — not `smo`'s, which was highlighted when Enter
+    // was pressed.
+    await waitFor(() =>
+      expect(where()).toHaveTextContent(projectTestPath('search', 'search-smoke')),
+    );
+    expect(where()).not.toHaveTextContent(projectTestPath('checkout', 'checkout-smoke'));
+    expect(onOpenChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it('chooses the first row once results arrive when Enter follows typing at once', async () => {
+    const held = deferred();
+    stubApi({ tests: () => held.promise });
+    const { onOpenChange } = renderPalette();
+    const user = userEvent.setup();
+
+    await enter(user, 'smoke');
+    await user.keyboard('{Enter}');
+    await act(async () => {});
+    // Nothing has answered, so nothing is chosen yet — and the dialog stays.
+    expect(where()).toHaveTextContent(/^\/runs$/);
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+    held.resolve(json(tests([SMOKE, SEARCH_SMOKE])));
+    await waitFor(() =>
+      expect(where()).toHaveTextContent(projectTestPath('checkout', 'checkout-smoke')),
+    );
+    expect(onOpenChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it('chooses the first row of the answer, not one picked among the previous query’s', async () => {
+    const heldSoak = deferred();
+    stubApi({
+      // No projects, so the tests are the only rows on screen.
+      projects: () => json({ items: [] }),
+      tests: (url) =>
+        url.searchParams.get('q') === 'soak' ? heldSoak.promise : json(tests([SMOKE, SOAK])),
+    });
+    renderPalette();
+    const user = userEvent.setup();
+
+    await enter(user, 'smo');
+    await screen.findByRole('option', { name: /Checkout soak/ });
+    fireEvent.change(input(), { target: { value: 'soak' } });
+    await waitFor(() => expect(asked()).toContain('soak'));
+    // Among `smo`'s rows, still drawn while `soak` is held, the reader arrows
+    // to the one that LOOKS like what they typed, and presses Enter.
+    await user.keyboard('{ArrowDown}');
+    expect(screen.getByRole('option', { name: /Checkout soak/ })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    await user.keyboard('{Enter}');
+
+    // `soak`'s answer leads with another test. The row chosen is the answer's
+    // first, which the reader is asking for — not the stale row the highlight
+    // happened to rest on, which would otherwise survive into this answer.
+    heldSoak.resolve(json(tests([SEARCH_SMOKE, SOAK])));
+    await waitFor(() =>
+      expect(where()).toHaveTextContent(projectTestPath('search', 'search-smoke')),
+    );
+  });
+
+  /* Each variant names the row that answers LAST — `smokex`'s after typing,
+     the held `smoke` one after an arrow — and the case waits for it on
+     screen: that is the moment a queued Enter that had survived would act. */
+  it.each([
+    ['typing', async (user: ReturnType<typeof userEvent.setup>) => enter(user, 'x'), /Checkout soak/],
+    [
+      'an arrow key',
+      async (user: ReturnType<typeof userEvent.setup>) => user.keyboard('{ArrowDown}'),
+      /Checkout smoke/,
+    ],
+  ])('withdraws a queued Enter on %s', async (_label, act2, lastRow) => {
+    const heldSmoke = deferred();
+    stubApi({
+      tests: (url) =>
+        url.searchParams.get('q') === 'smoke' ? heldSmoke.promise : json(tests([SOAK])),
+    });
+    const { onOpenChange } = renderPalette();
+    const user = userEvent.setup();
+
+    await enter(user, 'smoke');
+    await user.keyboard('{Enter}');
+    await act2(user);
+
+    // Every answer arrives — the held one and, after typing, the new one —
+    // and with the Enter withdrawn none of them is chosen.
+    heldSmoke.resolve(json(tests([SMOKE])));
+    await screen.findByRole('option', { name: lastRow });
+    await act(async () => {});
+    expect(where()).toHaveTextContent(/^\/runs$/);
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('shows no row from a query the reader cleared before typing the next', async () => {
+    const heldSearch = deferred();
+    stubApi({
+      tests: (url) =>
+        url.searchParams.get('q') === 'search' ? heldSearch.promise : json(tests([SMOKE])),
+    });
+    renderPalette();
+    const user = userEvent.setup();
+
+    await enter(user, 'smo');
+    await screen.findByRole('option', { name: /Checkout smoke/ });
+
+    await user.clear(input());
+    // Go to returns only once the CLEARED box has outlasted the pause: the
+    // groups have been asked nothing, and `smo` has been abandoned.
+    await screen.findByRole('group', { name: 'Go to' });
+
+    await enter(user, 'search');
+    await waitFor(() => expect(asked()).toContain('search'));
+    await act(async () => {});
+    // `search` is in flight. `smo` was the last query with an answer, and it
+    // is not what this reader is asking any more: no row of it comes back.
+    expect(screen.queryByRole('option', { name: /Checkout smoke/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'Tests' })).not.toBeInTheDocument();
+
+    heldSearch.resolve(json(tests([SEARCH_SMOKE])));
+    expect(await screen.findByRole('option', { name: /Search smoke/ })).toBeInTheDocument();
   });
 });

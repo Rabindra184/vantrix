@@ -1,6 +1,6 @@
 import * as Dialog from '@radix-ui/react-dialog';
 import { Command } from 'cmdk';
-import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { OrgTestSummary, RunStatus, RunVerdict } from '@perfportal/contracts';
 import { formatListInstant } from '../routes/format';
@@ -18,6 +18,12 @@ import {
 export interface CommandPaletteProps {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
+  /**
+   * Where focus goes on close when the element that had it before the palette
+   * opened is GONE — the header's Search button, in the app. Required, with no
+   * default, because forgetting it is silent: focus would fall to `<body>`.
+   */
+  readonly returnFocusFallback: RefObject<HTMLElement | null>;
 }
 
 /**
@@ -34,7 +40,11 @@ export interface CommandPaletteProps {
  * What it shows is `usePaletteSearch`'s; this file only draws it, and every
  * decision about WHICH request runs, and when, is made there.
  */
-export default function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
+export default function CommandPalette({
+  open,
+  onOpenChange,
+  returnFocusFallback,
+}: CommandPaletteProps) {
   const navigate = useNavigate();
   /* Where focus was before the palette took it. Radix's modal content hands
      focus back to its own `Dialog.Trigger` on close — and this dialog has
@@ -55,11 +65,22 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
             returnFocusTo.current = active instanceof HTMLElement ? active : null;
           }}
           onCloseAutoFocus={(event) => {
-            const target = returnFocusTo.current;
+            const recorded = returnFocusTo.current;
             returnFocusTo.current = null;
-            /* Only an element still in the document: choosing a result can
-               navigate away from the page that held it. */
-            if (target !== null && target.isConnected) {
+            /* Only an element still in the document. The one that had focus
+               can be gone by the time the palette closes: an account-menu item
+               (the menu shuts as the palette takes focus), or a control on a
+               page that choosing a result navigated away from. Then the
+               header's Search button, which opens this palette and is on every
+               page — never <body>, which costs a keyboard reader their place. */
+            const fallback = returnFocusFallback.current;
+            const target =
+              recorded !== null && recorded.isConnected
+                ? recorded
+                : fallback !== null && fallback.isConnected
+                  ? fallback
+                  : null;
+            if (target !== null) {
               event.preventDefault();
               target.focus();
             }
@@ -85,6 +106,9 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
     </Dialog.Root>
   );
 }
+
+/** Keys cmdk moves the highlight with. */
+const MOVES_HIGHLIGHT: ReadonlySet<string> = new Set(['ArrowDown', 'ArrowUp', 'Home', 'End']);
 
 /** One row: what cmdk is told it is, where it goes, and what it shows. */
 interface RowSpec {
@@ -148,6 +172,27 @@ function PaletteSearch({ onChoose }: { readonly onChoose: (to: string) => void }
   const [highlighted, setHighlighted] = useState('');
   const value = values.includes(highlighted) ? highlighted : (values[0] ?? '');
 
+  /* ═══ AN ENTER PRESSED BEFORE ITS ANSWER IS QUEUED, NOT SWALLOWED ═══
+
+     While `groups.pending` the rows on screen answer an earlier query (or no
+     query yet), so choosing one would act on what was typed BEFORE. The
+     Enter is held instead: the pause is ended so the search for what the
+     input says runs now, and once every group has answered it the
+     highlighted row is chosen exactly as Enter would choose it. The
+     highlight is reset when the Enter is queued, so that row is the FIRST of
+     the answer: the reader has seen none of it, and a row they had arrowed to
+     before pressing Enter was one of the PREVIOUS query's rows — the very
+     thing this exists not to act on. Typing or moving the highlight after the
+     Enter withdraws it; closing unmounts this component and the flag with it. */
+  const [chooseWhenSettled, setChooseWhenSettled] = useState(false);
+  const rows = sections.flatMap((section) => section.rows);
+  useEffect(() => {
+    if (!chooseWhenSettled || groups.pending) return;
+    setChooseWhenSettled(false);
+    const row = rows.find((r) => r.value === value);
+    if (row !== undefined) onChoose(row.to);
+  });
+
   /* cmdk tells the input which option is highlighted (`aria-activedescendant`)
      only when IT moves the highlight — a value handed to it from outside, as
      above, highlights the row and leaves the input naming the old one, or
@@ -181,24 +226,35 @@ function PaletteSearch({ onChoose }: { readonly onChoose: (to: string) => void }
       value={value}
       onValueChange={setHighlighted}
       onKeyDown={(event) => {
-        /* Enter inside the debounce pause: what is on screen answers what was
-           typed BEFORE, so choosing it would act on the wrong query. The key
-           is swallowed (cmdk honours `defaultPrevented`) and the pause is
-           ended, so the search for what the input says runs now; the next
-           Enter chooses from its answer. An IME composition's Enter is the
-           composition's, not ours. */
+        /* A key that moves the highlight is a reader choosing for themselves:
+           a queued Enter no longer speaks for them. */
+        if (MOVES_HIGHLIGHT.has(event.key)) {
+          setChooseWhenSettled(false);
+          return;
+        }
+        /* Enter while what is on screen does not yet answer what was typed:
+           the key is withheld from cmdk (it honours `defaultPrevented`), the
+           pause is ended so the right search runs now, and the choice is made
+           when that answer is complete — see `chooseWhenSettled` above. An
+           IME composition's Enter is the composition's, not ours. */
         if (event.key !== 'Enter' || event.nativeEvent.isComposing) return;
         if (!groups.pending) return;
         event.preventDefault();
         groups.flush();
+        setHighlighted('');
+        setChooseWhenSettled(true);
       }}
     >
       <Command.Input
         ref={inputRef}
         value={raw}
-        onValueChange={setRaw}
+        onValueChange={(next) => {
+          // More typing is a different question: a queued Enter answered none of it.
+          setChooseWhenSettled(false);
+          setRaw(next);
+        }}
         placeholder="Search projects, tests and runs"
-        className="h-12 w-full border-b border-default bg-transparent px-4 text-[0.9375rem] text-primary outline-none placeholder:text-faint"
+        className="h-12 w-full border-b border-default bg-transparent px-4 text-[0.9375rem] text-primary outline-none placeholder:text-muted"
       />
       <Command.List
         ref={listRef}
@@ -278,7 +334,7 @@ function PaletteGroup({ heading, children }: { readonly heading: string; readonl
   return (
     <Command.Group
       heading={
-        <span className="block px-2 pt-2 pb-1 text-[0.6875rem] tracking-wide text-faint uppercase">
+        <span className="block px-2 pt-2 pb-1 text-[0.6875rem] tracking-wide text-muted uppercase">
           {heading}
         </span>
       }
@@ -323,8 +379,10 @@ function Row({ row, onChoose }: { readonly row: RowSpec; readonly onChoose: (to:
    that grows into whatever space is left, capped at half the row. The primary
    keeps its full width while there is any, shrinks only once the row cannot
    hold it (the one item that then can), and the secondary text reaches nothing
-   before the name has what it needs. As a side effect the times and outcomes
-   that follow it sit flush right, one column down the list. */
+   before the name has what it needs. The OUTCOME that ends a row carries its
+   own `ml-auto`, so it sits flush right, one column down the list; a run's
+   time sits after the secondary text and lines up only while that text has
+   not reached its cap. */
 function Primary({ children }: { readonly children: ReactNode }) {
   return <span className="min-w-0 max-w-full truncate">{children}</span>;
 }

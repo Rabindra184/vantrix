@@ -27,11 +27,18 @@ import { projectTestPath } from '../src/routes/paths.js';
  *
  * ═══ A PALETTE ASKS THE SERVER AFTER A PAUSE, SO THE TEST WAITS FOR THE ROW ═══
  *
- * Results arrive 150 ms after typing stops, and Enter pressed inside that
- * pause is swallowed on purpose (it would act on the previous query). So every
- * case types, then waits for the option it wants to be on screen AND
- * highlighted, and only then presses Enter — which is what a reader does, and
- * is deterministic where a fixed sleep is not.
+ * Results arrive 150 ms after typing stops. Every case types, then waits for
+ * the option it wants to be on screen AND highlighted, and only then presses
+ * Enter — which is what a reader does, and is deterministic where a fixed
+ * sleep is not.
+ *
+ * On a slow engine the keystrokes themselves can be more than 150 ms apart,
+ * so a search for the text typed SO FAR can answer mid-typing and highlight
+ * the right row early; Enter then lands inside the final pause. That Enter is
+ * QUEUED, not swallowed: the palette ends the pause, waits for the answer to
+ * what the input says, and chooses its first row (`CommandPalette.test.tsx`
+ * proves the queue). So the wait above cannot make a case flaky by passing
+ * too soon.
  */
 
 /** The dialog by the name a screen reader announces — exact, since a case-insensitive substring would match any heading. */
@@ -151,6 +158,9 @@ test('exposes a named dialog with a combobox and options to assistive technology
   const combobox = live.find((n) => n.role?.value === 'combobox');
   expect(combobox, 'the input is a combobox in Chromium’s accessibility tree').toBeDefined();
 
+  const listbox = live.find((n) => n.role?.value === 'listbox');
+  expect(listbox, 'the results are a listbox in Chromium’s accessibility tree').toBeDefined();
+
   const options = live.filter((n) => n.role?.value === 'option');
   expect(options.length, 'the list exposes options').toBeGreaterThanOrEqual(1);
 
@@ -234,8 +244,12 @@ test('keeps long names inside the screen at 375 px', async ({ page }) => {
     return { text: range.getBoundingClientRect().width, box: el.getBoundingClientRect().width };
   });
   expect(label.text, 'the label has a width to measure').toBeGreaterThan(0);
+  // The slack is 0.05px, not less: a box's width is laid out in whole layout
+  // units (1/64 px in Chromium and WebKit, 1/60 in Firefox — about 0.016), so a
+  // tolerance under one unit fails on rounding rather than on an ellipsis. A clipped label is short by at least
+  // part of a glyph — the 0.3px the first fix left — far above this.
   expect(label.text, 'a run is named in full, not clipped to its first letters').toBeLessThanOrEqual(
-    label.box + 0.01,
+    label.box + 0.05,
   );
 
   const geometry = await dialog.evaluate((el) => {
