@@ -6,13 +6,13 @@ import { decodeOrgTestCursor } from '../src/repositories/test-cursor.js';
 
 /**
  * ═══ EVERY TEST IN THE ORG, WITH ITS LATEST RUN AND ITS p95 HISTORY ═══
- * (docs/superpowers/specs/2026-10-05-portfolio-and-command-palette-design.md)
+ * (docs/superpowers/specs/2026-10-05-portfolio-home-and-command-palette-design.md)
  *
  * `TestRepository.listOrg` is what `GET /v1/tests` reads. Three things in it
  * are easy to get subtly wrong and none of them shows in a happy-path row:
  *
- *   - "latest run" is the newest ARRIVAL (`created_at DESC, id DESC`), which is
- *     the order run numbers follow — NOT the run list's by-start order. Every
+ *   - "latest run" is the newest ARRIVAL (`created_at DESC, id DESC`) — usually,
+ *     not always, the highest-numbered run — NOT the run list's by-start order. Every
  *     run here carries a `created_at` and a `started_at` that DISAGREE, because
  *     a fixture where the two agree cannot tell the two orderings apart.
  *   - the keyset over `ORDER BY latest DESC NULLS LAST, name, id` has three
@@ -84,16 +84,19 @@ interface RunOpts {
   /** Present = a run-scope response-time stat row carrying these. */
   stat?: { percentiles: Record<string, unknown>; minMs: number; maxMs: number };
   projectId?: string;
+  /** Another org's run, for the cases that hand the reads a foreign id. */
+  orgId?: string;
 }
 
 async function seedRun(opts: RunOpts): Promise<string> {
   const id = randomUUID();
   const startedAt = opts.startedAt ?? opts.createdAt;
   const project = opts.projectId ?? projectId;
+  const org = opts.orgId ?? orgId;
   await prisma.run.create({
     data: {
       id,
-      orgId,
+      orgId: org,
       projectId: project,
       testId: opts.testId,
       runNumber: opts.runNumber ?? null,
@@ -125,7 +128,7 @@ async function seedRun(opts: RunOpts): Promise<string> {
       [
         randomUUID(),
         id,
-        orgId,
+        org,
         project,
         opts.stat.minMs,
         opts.stat.maxMs,
@@ -402,9 +405,17 @@ describe('TestRepository.listOrg', () => {
         ['an id that is not a uuid', b64({ at: null, name: 'x', id: 'nope' })],
         ['a name that is not a string', b64({ at: null, name: 7, id })],
         ['a name holding a NUL, which Postgres refuses in text', b64({ at: null, name: 'a\u0000b', id })],
+        // A lone surrogate survives JSON (it is written as an escape) and is
+        // not UTF-8, so the driver throws binding it — a 500, not a page.
+        ['a name holding a lone surrogate, which is not UTF-8', b64({ at: null, name: 'a\ud800b', id })],
         ['an instant that does not parse', b64({ at: 'yesterday', name: 'x', id })],
         ['an instant that is a number', b64({ at: 1_788_000_000_000, name: 'x', id })],
         ['an instant not in the spelling the repository writes', b64({ at: '2026-09-01', name: 'x', id })],
+        // Both ROUND-TRIP through `toISOString()`, which writes an expanded
+        // six-digit year for anything outside 0000-9999 — so only a check on
+        // the four-digit year refuses them before the query does.
+        ['an instant in the year 10000', b64({ at: '+010000-01-01T00:00:00.000Z', name: 'x', id })],
+        ['an instant before the year 0', b64({ at: '-000001-01-01T00:00:00.000Z', name: 'x', id })],
       ])('returns an empty page for %s', async (_label, cursor) => {
         await fourTests();
         // Empty, not a restart from the top, and above all not a thrown cast.
@@ -531,6 +542,42 @@ describe('TestRepository.listOrg', () => {
     });
     const { items } = await repo.listOrg(scope(), { limit: 25 });
     expect(slugsOf(items)).toEqual(['mine']);
+  });
+
+  /**
+   * The two per-id reads behind every page — the latest run and the p95
+   * history — are handed ids a scoped query already chose, and they filter by
+   * the org as well, so even a caller that skipped that step cannot read
+   * another org's runs through them. Private, so reached by name: the
+   * property is about the reads themselves, and no public path can hand them
+   * a foreign id to show it.
+   */
+  it('reads no latest run or history for a test id from another org', async () => {
+    const other = await prisma.org.create({ data: { slug: 'other', name: 'Other' } });
+    const otherProject = await prisma.project.create({
+      data: { orgId: other.id, slug: 'other-p', name: 'Other P', settings: {} },
+    });
+    const theirs = await prisma.test.create({
+      data: {
+        orgId: other.id, projectId: otherProject.id, slug: 'theirs', name: 'theirs',
+        simulationClass: 'example.theirs',
+      },
+    });
+    await seedRun({
+      testId: theirs.id,
+      createdAt: '2026-09-01T10:00:00Z',
+      orgId: other.id,
+      projectId: otherProject.id,
+      stat: { percentiles: { p95: 40 }, minMs: 5, maxMs: 90 },
+    });
+    const ids = [theirs.id];
+
+    // Paired positive: asked as the org that owns it, the same id has both.
+    expect((await repo['latestRuns'](other.id, ids)).size).toBe(1);
+    expect((await repo['p95Histories'](other.id, ids)).size).toBe(1);
+
+    expect((await repo['latestRuns'](orgId, ids)).size).toBe(0);
+    expect((await repo['p95Histories'](orgId, ids)).size).toBe(0);
   });
 
   describe('p95 history', () => {

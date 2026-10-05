@@ -26,7 +26,11 @@
  * to `uuid` and `timestamptz` in SQL, where a malformed one would THROW and
  * surface as a 500 for what every other unresolvable cursor answers with an
  * empty page; and the name is refused if it holds a NUL, which Postgres will
- * not store in text and would reject the same way. `null` from `decode` means
+ * not store in text, or a lone UTF-16 surrogate, which is not UTF-8 at all —
+ * either would be rejected the same way. The instant must carry a FOUR-digit
+ * year: `toISOString()` writes years outside 0000-9999 in an expanded form
+ * (`+010000-…`, `-000001-…`) that round-trips here and that the driver then
+ * refuses to bind. `null` from `decode` means
  * "answer an empty page", never "start over" — a silent restart resurfaces
  * tests the reader already saw.
  *
@@ -43,6 +47,15 @@ export interface OrgTestCursorKey {
 
 const BASE64URL = /^[A-Za-z0-9_-]+$/;
 const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** An instant `encode` can have written for a real run: a plain four-digit year. */
+const FOUR_DIGIT_YEAR = /^\d{4}-/;
+/**
+ * A lone UTF-16 surrogate — exactly what `String.prototype.isWellFormed()`
+ * refuses. Spelled as a pattern because this package compiles against
+ * ES2022's lib, which predates that method. In `u` mode a PAIRED surrogate is
+ * one code point and does not match, so only a lone one does.
+ */
+const LONE_SURROGATE = /\p{Surrogate}/u;
 
 export function encodeOrgTestCursor(key: OrgTestCursorKey): string {
   const tuple = {
@@ -66,10 +79,10 @@ export function decodeOrgTestCursor(cursor: string): OrgTestCursorKey | null {
   const { at, name, id } = parsed as Record<string, unknown>;
 
   if (typeof id !== 'string' || !UUID_SHAPE.test(id)) return null;
-  if (typeof name !== 'string' || name.includes('\u0000')) return null;
+  if (typeof name !== 'string' || name.includes('\u0000') || LONE_SURROGATE.test(name)) return null;
 
   if (at === null) return { latestAt: null, name, id };
-  if (typeof at !== 'string') return null;
+  if (typeof at !== 'string' || !FOUR_DIGIT_YEAR.test(at)) return null;
   const latestAt = new Date(at);
   // Round-trip, so only the canonical spelling `encode` writes is accepted.
   if (Number.isNaN(latestAt.getTime()) || latestAt.toISOString() !== at) return null;

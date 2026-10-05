@@ -356,6 +356,32 @@ export function runNumberClause(param: number): string {
 }
 
 /**
+ * The ON clause that joins a run to its RUN-SCOPE RESPONSE-TIME statistics
+ * row: the same row, in the same project and org, under the same
+ * scope/name/family triple the stats endpoint calls the run's totals.
+ *
+ * ONE DEFINITION, TWO READERS, for the reason `runP95` gives: the run list's
+ * `metrics.p95Ms` and the org-wide test list's latest run and p95 history all
+ * read their p95 through this join, so a copy that drifted — another family,
+ * a dropped tenant column — would put two different numbers on one run with
+ * every assertion about either list still passing.
+ *
+ * `stat` and `run` are the two tables' ALIASES in the caller's SQL, never
+ * values: both are compile-time constants at every call site, so nothing a
+ * request carries reaches this string.
+ */
+export function runScopeStatOn(stat: string, run: string): string {
+  return (
+    `${stat}.run_id = ${run}.id` +
+    ` AND ${stat}.org_id = ${run}.org_id` +
+    ` AND ${stat}.project_id = ${run}.project_id` +
+    ` AND ${stat}.scope = 'run'` +
+    ` AND ${stat}.name = ''` +
+    ` AND ${stat}.family = 'response_time'`
+  );
+}
+
+/**
  * A run's headline p95, read off its run-scope response-time statistics row —
  * or null where that row has no usable one.
  *
@@ -1111,17 +1137,11 @@ export class RunRepository {
       JOIN project p ON p.id = r.project_id
       -- LEFT, for the same reason the test join is: a run still parsing, or
       -- one whose bundle produced nothing, is an ordinary row in this list and
-      -- an inner join would silently drop it. The scope/name/family triple is
-      -- the run-scope response-time row -- the same selection the stats
-      -- endpoint calls the run's totals, so this column and the run page
-      -- cannot disagree.
-      LEFT JOIN run_stat s
-        ON s.run_id = r.id
-       AND s.org_id = r.org_id
-       AND s.project_id = r.project_id
-       AND s.scope = 'run'
-       AND s.name = ''
-       AND s.family = 'response_time'
+      -- an inner join would silently drop it. The ON clause is the run-scope
+      -- response-time row -- the same selection the stats endpoint calls the
+      -- run's totals, so this column and the run page cannot disagree -- and
+      -- it is runScopeStatOn, the one the org-wide test list reads too.
+      LEFT JOIN run_stat s ON ${runScopeStatOn('s', 'r')}
       -- LEFT, and that is the whole point: a run with no test is an ordinary
       -- run — still pending, or a bundle that never parsed — and an inner join
       -- would drop it out of the list it belongs in.
