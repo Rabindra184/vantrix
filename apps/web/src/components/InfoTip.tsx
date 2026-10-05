@@ -33,16 +33,26 @@ import { InfoIcon } from './icons';
  * NEVER INSIDE A HEADING OR A `<th>` — only beside one. Their accessible names
  * are computed from their content, so a trigger inside either adds "About …"
  * to their name, and the hidden copy adds its words to their `textContent`,
- * which `run-tables.spec.ts` reads to pin each tab's heading outline.
+ * which `run-tables.spec.ts` reads to pin each tab's heading outline. The same
+ * holds for a `<label>`: a trigger inside one joins the control's name.
+ *
+ * `descriptionId` puts the hidden copy at an id the CALLER chooses. A form
+ * field's hint is the field's description as well as the ⓘ's, and pointing the
+ * field's `aria-describedby` here keeps one copy of the words in the document
+ * rather than two (`FormField`).
  */
 export default function InfoTip({
   label,
   children,
+  descriptionId: given,
 }: {
   readonly label: string;
   readonly children: ReactNode;
+  readonly descriptionId?: string;
 }) {
-  const descriptionId = useId();
+  // Called unconditionally, whether or not an id is given: hook order.
+  const generated = useId();
+  const descriptionId = given ?? generated;
   return (
     <span className="inline-flex items-center">
       <Popover.Root>

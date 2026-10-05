@@ -25,7 +25,6 @@ import type { ReactNode } from 'react';
  */
 export default function Card({
   title,
-  description,
   actions,
   as: Element = 'section',
   padding = 'md',
@@ -34,7 +33,9 @@ export default function Card({
   children,
 }: {
   readonly title?: string;
-  readonly description?: string;
+  /* No `description` (clean UI PR 4). The programme's first firm limit — no
+     description line under a card or section title — lives in the type, so a
+     page that tries to write one fails `pnpm typecheck`. */
   readonly actions?: ReactNode;
   /**
    * `div` IS FOR A CARD THAT IS PURELY A SURFACE, and choosing it is not a
@@ -102,20 +103,11 @@ export default function Card({
     >
       {title !== undefined && (
         <div className={`flex items-start justify-between gap-3 ${padding === 'none' ? 'p-5 pb-3' : ''}`}>
-          <div className="flex min-w-0 flex-col gap-1">
-            <Heading className={`${headingSize} font-semibold tracking-tight text-primary`}>
-              {title}
-            </Heading>
-            {description !== undefined && <p className="text-[0.8125rem] text-muted">{description}</p>}
-          </div>
+          <Heading className={`min-w-0 ${headingSize} font-semibold tracking-tight text-primary`}>
+            {title}
+          </Heading>
           {actions !== undefined && <div className="flex shrink-0 items-center gap-1">{actions}</div>}
         </div>
-      )}
-      {/* The description renders here only when there is no title to sit
-          under — the titled case is handled above so the two stay grouped as
-          one block against the actions. */}
-      {title === undefined && description !== undefined && (
-        <p className="text-[0.8125rem] text-muted">{description}</p>
       )}
       {children}
     </Element>

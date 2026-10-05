@@ -60,9 +60,19 @@ describe('Card', () => {
     expect(card).not.toHaveClass('text-base');
   });
 
-  it('renders the description under the title when both are given', () => {
+  /**
+   * ═══ A CARD TITLE STANDS ALONE (clean UI PR 4) ═══
+   *
+   * The programme's first firm limit — no description line under a card or
+   * section title — is enforced by the type: `description` was deleted, so a
+   * page that tries to bring one back fails `pnpm typecheck`. This case is
+   * that refusal's witness: if the prop returns, the directive below has no
+   * error to absorb and `tsc` reports it unused (TS2578).
+   */
+  it('takes no description: a card title stands alone', () => {
+    // @ts-expect-error — `description` was deleted (clean UI PR 4): nothing is written under a card title.
     render(<Card title="Requests" description="per second">{null}</Card>);
     expect(screen.getByRole('heading', { name: 'Requests' })).toBeInTheDocument();
-    expect(screen.getByText('per second')).toBeInTheDocument();
+    expect(screen.queryByText('per second')).toBeNull();
   });
 });

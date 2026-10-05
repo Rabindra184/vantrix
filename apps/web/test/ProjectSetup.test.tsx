@@ -160,6 +160,32 @@ describe('ProjectSetup — the three ways in', () => {
     expect(document.body.textContent ?? '').not.toMatch(/three ways to get a run/i);
   });
 
+  /**
+   * ═══ EACH CARD IS A TITLE AND ITS ACTION (clean UI PR 4) ═══
+   *
+   * Every card carried a description under its title, the runner card a
+   * paragraph about streaming, CI a sentence about secret stores. The
+   * picker — Import's action — sat behind "Show me how". It is on the card
+   * now, outside any disclosure, and the descriptions are gone.
+   */
+  it('shows the picker at once and carries no description under any card', async () => {
+    renderPage();
+    await ready();
+
+    const importCard = await entry('Import results');
+    const picker = importCard.querySelector('input[type="file"]');
+    expect(picker).not.toBeNull();
+    expect(picker!.closest('details')).toBeNull();
+
+    const text = document.body.textContent ?? '';
+    for (const gone of [/finished Gatling report/, /No bundle yet/, /trend line keeps itself/, /streams the log/, /secret store/]) {
+      expect(text).not.toMatch(gone);
+    }
+    for (const name of ['Import results', 'Run a test', 'Configure CI']) {
+      expect(screen.getByRole('heading', { name, level: 2 })).toBeInTheDocument();
+    }
+  });
+
   it('names the token it needs and links to it, instead of managing tokens', async () => {
     renderPage();
     await ready();
@@ -173,22 +199,24 @@ describe('ProjectSetup — the three ways in', () => {
      * not there, and it is exactly the vocabulary drift review 09-13 N01 is
      * about. Asserted by DESTINATION plus the two words that must agree, so a
      * future rename of that page fails here rather than drifting again. */
-    const link = within(await entry('Import results')).getByRole('link', {
-      name: /create one under api tokens/i,
-    });
+    const link = within(await entry('Import results')).getByRole('link', { name: 'Create one' });
     expect(link).toHaveAttribute('href', '/projects/alpha/access');
     expect(link.textContent ?? '').not.toMatch(/mint/i);
 
-    /* ═══ AND SO DOES THE SENTENCE AROUND IT ═══
+    /* ═══ THE TOKEN BELONGS TO THE TERMINAL, NOT TO THE CARD (clean UI PR 4) ═══
      *
-     * The link was corrected and the clause carrying it was not: it read
-     * "Needs a token with the Completed reports SCOPE", pointing at a page
-     * whose fieldset, column heading and cells all say "Permissions". Same
-     * drift as the link itself, one clause to its left, and it survived
-     * because the assertion above reads `link.textContent` — which stops at
-     * the anchor. Scoped to the CARD so it reads the whole sentence. */
+     * The card said "Needs a token with the Completed reports permission" over
+     * a picker that needs none: a signed-in upload goes through the session.
+     * Only the curl needs `PERFPORTAL_TOKEN`, so the requirement lives inside
+     * the disclosure that holds it — and nothing outside it mentions a token.
+     * Still free of the vocabulary M18 retired ("mint", "scope"). */
     const card = await entry('Import results');
-    expect(card.textContent ?? '').toMatch(/completed reports.{0,20}permission/i);
+    const details = card.querySelector('details');
+    expect(details).not.toBeNull();
+    expect(details).toContainElement(link);
+    expect(details!.textContent ?? '').toMatch(/PERFPORTAL_TOKEN.{0,3}\(Completed reports\)/);
+    const outside = (card.textContent ?? '').replace(details!.textContent ?? '', '');
+    expect(outside).not.toMatch(/token/i);
     expect(card.textContent ?? '').not.toMatch(/\bscoped?s?\b/i);
 
     expect(screen.queryByRole('button', { name: /create token/i })).toBeNull();
@@ -227,7 +255,7 @@ describe('ProjectSetup — the three ways in', () => {
  * ======================================================================== */
 
 describe('ProjectSetup — the runner’s status is only as strong as the evidence', () => {
-  const runnerStatus = async () => within(await entry('Run a test')).getByTestId('entry-status');
+  const runnerStatus = async () => within(await entry('Run a test')).getByTestId('runner-status');
 
   it('says nothing is known when this project has never queued a job', async () => {
     renderPage();
@@ -253,11 +281,10 @@ describe('ProjectSetup — the runner’s status is only as strong as the eviden
      * process is `infra/README.md`'s — so the action names the deployment and
      * links to the page that mints the credential it needs. */
     const setup = within(card).getByTestId('runner-setup');
-    expect(setup).toHaveTextContent(/on-prem runner/i);
-    expect(within(setup).getByRole('link', { name: /create one under api tokens/i })).toHaveAttribute(
-      'href',
-      '/projects/alpha/access',
-    );
+    // One link, not a paragraph (clean UI PR 4): the action is the token.
+    expect(setup).toHaveRole('link');
+    expect(setup).toHaveAccessibleName('Create a runner token');
+    expect(setup).toHaveAttribute('href', '/projects/alpha/access');
   });
 
   /**
@@ -278,11 +305,11 @@ describe('ProjectSetup — the runner’s status is only as strong as the eviden
 
     for (const name of ['Import results', 'Configure CI']) {
       const card = await entry(name);
-      expect(within(card).queryByTestId('entry-status')).toBeNull();
+      expect(within(card).queryByTestId('runner-status')).toBeNull();
       expect(card.textContent ?? '').not.toMatch(/available now/i);
     }
     // And the one that does vary still reports.
-    expect(within(await entry('Run a test')).getByTestId('entry-status')).toBeInTheDocument();
+    expect(within(await entry('Run a test')).getByTestId('runner-status')).toBeInTheDocument();
   });
 
   it('reports a claimed job as a runner that is there', async () => {
@@ -312,7 +339,11 @@ describe('ProjectSetup — the runner’s status is only as strong as the eviden
 
     const card = await entry('Run a test');
     await within(card).findByText(/no job in flight/i);
-    expect(card.textContent ?? '').toMatch(/unknown/i);
+    // "Whether one is listening now" is the caveat every state shares, behind
+    // the line's ⓘ (clean UI PR 4).
+    expect(within(card).getByRole('button', { name: 'About runner status' })).toHaveAccessibleDescription(
+      /known only once a job is claimed/,
+    );
     expect((await runnerStatus()).textContent ?? '').not.toMatch(/available|ready|online/i);
   });
 
@@ -327,7 +358,10 @@ describe('ProjectSetup — the runner’s status is only as strong as the eviden
 
     const card = await entry('Run a test');
     await within(card).findByText(/status unavailable/i);
-    expect(card.textContent ?? '').toMatch(/nothing is known about the runner either way/i);
+    expect(card.textContent ?? '').toMatch(/The job list could not be loaded/);
+    // A failed list is not a runner state, so it carries none of the states'
+    // caveat either.
+    expect(within(card).queryByRole('button', { name: 'About runner status' })).toBeNull();
   });
 
   /** Whatever the status, the action is still reachable — a status panel that
@@ -401,18 +435,53 @@ describe('ProjectSetup — the workflows are choices before they are documents',
     renderPage();
     await ready();
 
+    /* ═══ TWO DISCLOSURES, NEITHER INSIDE THE OTHER (clean UI PR 4) ═══
+     *
+     * The terminal recipe sat behind its own `<details>` INSIDE Import's card
+     * disclosure, which is the nesting Playwright's WebKit path cannot assert
+     * through. With the picker on the card, Import's terminal recipe IS that
+     * card's disclosure, so the page holds exactly two — Import's and CI's —
+     * both in the accordion, and nothing nested. */
     const all = [...document.querySelectorAll('details')];
-    const nested = all.filter((d) => d.parentElement?.closest('details') != null);
-    const cards = all.filter((d) => d.parentElement?.closest('details') == null);
+    expect(all).toHaveLength(2);
+    expect(all.map((d) => d.getAttribute('name'))).toEqual(['add-results', 'add-results']);
+    expect(all.filter((d) => d.parentElement?.closest('details') != null)).toEqual([]);
+  });
 
-    expect(cards.length).toBeGreaterThan(1);
-    expect(new Set(cards.map((d) => d.getAttribute('name')))).toEqual(new Set(['add-results']));
+  /** CI's notes ride behind an info; the plugin keeps one line (clean UI PR 4). */
+  it('puts the CI notes behind an info and keeps one line about the plugin', async () => {
+    renderPage();
+    await ready();
 
-    // Asserted as present, not merely as nameless: `every` over an empty list
-    // is true, so without this the rule would pass on a page that lost the
-    // terminal recipe altogether.
-    expect(nested.length).toBeGreaterThan(0);
-    expect(nested.map((d) => d.getAttribute('name'))).toEqual(nested.map(() => null));
+    const details = (await entry('Configure CI')).querySelector('details')!;
+    expect(within(details).getByRole('link', { name: 'Create one' })).toHaveAttribute('href', '/projects/alpha/access');
+    expect(details.textContent ?? '').toMatch(/PERFPORTAL_TOKEN.{0,3}in your pipeline secrets/);
+    expect(within(details).getByRole('button', { name: 'About the CI step' })).toHaveAccessibleDescription(/commitSha/);
+    expect(details.textContent ?? '').toMatch(/Gradle plugin\s*dev\.vantrix\.gatling/);
+    // FINAL REVIEW, IMPORTANT 3: and where it lives — it is on no public
+    // portal, so a coordinate alone is "plugin not found".
+    expect(details.textContent ?? '').toMatch(/clients\/gatling-gradle/);
+  });
+
+  /**
+   * FINAL REVIEW, IMPORTANT (re-graded): "Create a runner token" is the
+   * never-seen-a-runner action. A list that is still loading, or failed to
+   * load, has seen nothing either way — offering setup there is the wrong
+   * advice M12 was about, under a status that says it does not know.
+   */
+  it('offers no runner setup while the job list loads or after it fails', async () => {
+    fetchRunnerJobsMock.mockReturnValueOnce(new Promise(() => {}));
+    renderPage();
+    const loading = await entry('Run a test');
+    expect(within(loading).getByTestId('runner-status')).toHaveTextContent(/Checking…/);
+    expect(within(loading).queryByTestId('runner-setup')).toBeNull();
+    cleanup();
+
+    fetchRunnerJobsMock.mockRejectedValueOnce(new Error('gateway down'));
+    renderPage();
+    const failed = await entry('Run a test');
+    await within(failed).findByText(/status unavailable/i);
+    expect(within(failed).queryByTestId('runner-setup')).toBeNull();
   });
 
   /**
@@ -443,7 +512,7 @@ describe('ProjectSetup — the workflows are choices before they are documents',
     for (const name of ['Import results', 'Run a test', 'Configure CI']) {
       expect(screen.getByRole('heading', { name, level: 2 })).toBeInTheDocument();
     }
-    expect(within(await entry('Run a test')).getByTestId('entry-status')).toBeInTheDocument();
+    expect(within(await entry('Run a test')).getByTestId('runner-status')).toBeInTheDocument();
   });
 
   /* ====================================================================== *

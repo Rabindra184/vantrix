@@ -278,10 +278,10 @@ test('the project nav reaches the three configuration pages', async ({ page }) =
   // opens must agree about what the page is, and "Access" promised members and
   // roles this product does not have.
   //
-  // SCOPED TO THE NAV, and that is not decoration: the Add results page
-  // carries its own "Create one under API tokens" link, and Playwright matches
-  // accessible names as a case-insensitive SUBSTRING — so a page-wide query
-  // for 'API tokens' resolves two elements here and fails strict mode.
+  // SCOPED TO THE NAV. The Add results page links to API tokens from its own
+  // cards ("Create one", "Create a runner token"), and Playwright matches
+  // accessible names as a case-insensitive SUBSTRING — a page-wide query for a
+  // link name was one card rewording away from resolving two elements.
   await nav.getByRole('link', { name: 'API tokens', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Create token' })).toBeVisible();
 
@@ -333,46 +333,31 @@ test('opening one workflow on Add results collapses the other', async ({ page })
   // moved this selector. Exactly the trap CLAUDE.md records for this component:
   // grep for the derived value, not just the label.
   const importCard = page.getByTestId('entry-import-results');
-  // `.first()`, because this card now holds TWO disclosures: the card's own,
-  // and the "Or post it from a terminal" one the curl moved into when the
-  // picker took the primary slot. The outer one is the card's.
-  await importCard.getByRole('group').first().locator('summary').first().click();
-  // The command is now one level further in — opening the card reveals the
-  // picker, and the terminal recipe sits behind its own summary.
+  // One click: the terminal recipe IS this card's disclosure now (clean UI
+  // PR 4) — the picker is on the card, so nothing else is folded here.
   await importCard.getByText('Or post it from a terminal').click();
   await expect(importCmd).toBeVisible();
 
   // And the chosen one is the only one — the browser closed the first when the
   // second opened, because they share a `name`.
   const ciCard = page.getByTestId('entry-configure-ci');
-  await ciCard.getByRole('group').locator('summary').click();
+  await ciCard.getByText('Show me how').click();
   await expect(ciCmd).toBeVisible();
 
-  /* ═══ NOT `toBeHidden()`, AND THE REASON IS THE HARNESS RATHER THAN THE PAGE ═══
+  /* ═══ THE ATTRIBUTE AND THE ENGINE'S OWN ANSWER, BOTH ═══
    *
-   * It WAS `toBeHidden()`, and it passed on all three engines until M05 put the
-   * terminal recipe behind its own `<details>` inside this card. `upload-command`
-   * now has two disclosure ancestors — the nested one still OPEN, the card's own
-   * CLOSED by the accordion — and Playwright's WebKit path reads only the
-   * nearest, so the closed ancestor is masked.
-   *
-   * MEASURED, after the click, with the identical DOM in all three:
-   *
-   *   ancestors (innermost first)   {name: null, open: true}, {name: add-results, open: false}
-   *   element.checkVisibility()     false     false     false        <- the ENGINE's own answer
-   *   playwright isVisible()        false     false     TRUE         <- chromium, firefox, WEBKIT
-   *
-   * So WebKit itself agrees the reader cannot see this; only the harness's
-   * substitute for `checkVisibility()` disagrees — the same
-   * `browserNameForWorkarounds === 'webkit'` branch CLAUDE.md already records
-   * for a forced-open `<details>`, met from the other side.
-   *
-   * Both halves are asserted because they are different claims. The `open`
-   * property is what the ACCORDION did; `checkVisibility()` is what the reader
-   * gets, in the engine's own words rather than through the harness. Asserting
-   * only the attribute would pass against a stylesheet that kept a closed
-   * card's content on screen. */
-  await expect(importCard.getByRole('group').first()).toHaveJSProperty('open', false);
+   * This used to be two disclosures deep — the terminal recipe behind its own
+   * `<details>` inside the card's — and Playwright's WebKit path reads only
+   * the NEAREST disclosure ancestor, so `toBeHidden()` could not pass there
+   * even when the page was right (measured: the engine's `checkVisibility()`
+   * said false in all three, the harness said visible on WebKit). Since clean
+   * UI PR 4 there is one ancestor, which removes that trap; the pair is kept
+   * because they are different claims. The `open` property is what the
+   * ACCORDION did; `checkVisibility()` is what the reader gets, in the
+   * engine's own words. The attribute alone would pass against a stylesheet
+   * that kept a closed card's content on screen. */
+  const importDisclosure = importCard.locator('details');
+  await expect(importDisclosure).toHaveJSProperty('open', false);
   await expect
     .poll(() => importCmd.evaluate((el) => el.checkVisibility()))
     .toBe(false);
@@ -399,10 +384,10 @@ test('a bundle can be uploaded from the browser and becomes a run', async ({ pag
   await signIn(page, admin);
   await page.goto('/projects/checkout/setup');
 
+  // Nothing to open first: the picker is on the card (clean UI PR 4).
   const card = page.getByTestId('entry-import-results');
-  await card.getByRole('group').first().locator('summary').first().click();
-
-  const input = page.getByTestId('bundle-file');
+  const input = card.getByTestId('bundle-file');
+  await expect(input).toBeVisible();
   // The formats are declared ON the control, so the OS picker greys out the
   // rest — the constraint is where the choice is made, not in prose below it.
   await expect(input).toHaveAttribute('accept', '.tgz,.tar.gz');

@@ -107,12 +107,12 @@ const SECTIONS: readonly {
  */
 export default function ProjectShell({
   current,
-  intro,
   children,
 }: {
   readonly current: ProjectSection;
-  /** One sentence under the nav saying what THIS section is for. */
-  readonly intro?: string;
+  /* No `intro` (clean UI PR 4): a section is named by the nav, and a sentence
+     under it saying what the section is for is the description the text rule
+     deletes. Gone from the type, so `tsc` refuses a caller that brings one. */
   readonly children: (project: { slug: string; name: string }) => ReactNode;
 }) {
   const { slug = '' } = useParams<{ slug: string }>();
@@ -272,8 +272,6 @@ export default function ProjectShell({
           );
         })}
       </nav>
-
-      {intro !== undefined && <p className="-mt-3 text-[0.8125rem] text-muted">{intro}</p>}
 
       {children({ slug, name })}
     </div>

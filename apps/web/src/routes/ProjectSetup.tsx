@@ -1,14 +1,15 @@
 import type { ReactNode } from 'react';
-import type { RunnerJobListResponse } from '@perfportal/contracts';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { linkButtonClasses } from '../components/Button';
 import Card from '../components/Card';
+import InfoTip from '../components/InfoTip';
 import { PlayIcon, TokenIcon, UploadIcon } from '../components/icons';
 import { fetchRunnerJobs, runnerJobsQueryKey } from '../api/runner';
 import ProjectShell from './ProjectShell';
 import { projectAccessPath, projectNewRunnerRunPath } from './paths';
-import { runnerReadiness, type RunnerReadinessKind } from './runnerReadiness';
+import { runnerReadiness } from './runnerReadiness';
+import RunnerStatusLine from './RunnerStatusLine';
 import BundleUpload from './BundleUpload';
 
 /**
@@ -24,12 +25,13 @@ import BundleUpload from './BundleUpload';
  * past it, and the most prominent action on the page was "New on-prem run" —
  * useless to somebody who already has a results bundle in their hand.
  *
- * ═══ THREE EXPLICIT CHOICES, EACH WITH A STATUS ═══
+ * ═══ THREE EXPLICIT CHOICES ═══
  *
  * The three are the three real ways in, named for what the reader is trying
  * to do rather than for the mechanism:
  *
- *   Import via API   — a bundle already exists. `POST /v1/runs`.
+ *   Import results   — a bundle already exists: the picker, or `POST /v1/runs`
+ *                      from a terminal.
  *   Run a test       — no bundle yet; the on-prem runner makes one.
  *   Configure CI     — the same import, but from a pipeline, every build.
  *
@@ -41,9 +43,11 @@ import BundleUpload from './BundleUpload';
  *
  * ═══ THE CREDENTIAL IS A NAMED PREREQUISITE, NOT A PLACE TO HIDE ═══
  *
- * Importing still needs a token. The fix is not to drop the dependency, it is
- * to state it and link to it — the opposite of the old arrangement, where the
- * import instructions were a paragraph inside the credentials screen.
+ * Posting from a terminal or a pipeline needs a token (the picker does not: a
+ * signed-in upload goes through the session). The fix is not to drop the
+ * dependency, it is to state it where it applies and link to it — the
+ * opposite of the old arrangement, where the import instructions were a
+ * paragraph inside the credentials screen.
  */
 export default function ProjectSetup() {
   return (
@@ -52,8 +56,8 @@ export default function ProjectSetup() {
      * This read "Three ways to get a run into this project. Pick the one that
      * matches what you already have." The review's copy table replaces that
      * whole pattern with "`Add results` with short workflow choices", and M04
-     * already built the choices: three collapsed cards, each a title, a status
-     * and one sentence, under a nav whose current section is called Add
+     * already built the choices: three cards, each a title and its action
+     * since clean UI PR 4, under a nav whose current section is called Add
      * results.
      *
      * So the sentence was narrating what the reader could already see — it
@@ -62,9 +66,8 @@ export default function ProjectSetup() {
      * paragraph between them is the over-explanation the same review's N04
      * objects to elsewhere.
      *
-     * `intro` stays on `ProjectShell` — it is optional and `ProjectRulesPage`
-     * already passes none, so a section with no intro is the existing shape
-     * rather than a new state. */
+     * `ProjectShell` has no `intro` at all since clean UI PR 4 — a section is
+     * named by its nav, and `tsc` refuses a page that tries to add one. */
     <ProjectShell current="setup">{({ slug }) => <AddResults key={slug} slug={slug} />}</ProjectShell>
   );
 }
@@ -120,98 +123,69 @@ function AddResults({ slug }: { readonly slug: string }) {
       <EntryCard
         title="Import results"
         icon={<UploadIcon className="h-4 w-4" />}
-        description="You already have a finished Gatling report. Choose the bundle and PerfPortal parses it."
-        steps={
-          <>
-          <BundleUpload slug={slug} />
-
-          {/* The curl stays, one rung down. CI has no file picker, and
-              "Configure CI" below points back at this command — but the reader
-              holding a bundle no longer has to read a shell snippet to use it.
-              A DISCLOSURE rather than the only way in. */}
-          <details className="mt-1">
-            <summary className="cursor-pointer text-[0.8125rem] text-muted">
-              Or post it from a terminal
-            </summary>
-          <pre
-            data-testid="upload-command"
-            className="overflow-x-auto rounded-lg border border-default bg-sunken p-3 font-mono text-xs leading-relaxed text-primary"
-          >
-  {`curl -H "Authorization: Bearer $PERFPORTAL_TOKEN" \\
-    -F bundle=@results.tgz \\
-    -F 'metadata={"tool":"gatling"}' \\
-    ${instanceOrigin}/v1/runs`}
-          </pre>
-
-          {/* This read "There is no browser upload form yet." It was true, it
-              was the honest thing to say while that was the case, and it is now
-              exactly the kind of stale claim this repo keeps paying for — so it
-              goes with the thing it described. What survives is the fact a CI
-              author still needs. */}
-          <p className="text-[0.75rem] leading-snug text-muted">
-            The picker above and this command reach the same ingest pipeline; use whichever suits
-            the machine you are on.
-          </p>
-          <p className="text-[0.75rem] leading-snug text-muted">
-            The bundle is a <code className="font-mono">.tgz</code> containing the run directory
-            Gatling wrote, <code className="font-mono">simulation.log</code> included. The response is
-            a 202 with the run’s id; the worker parses it in the background.
-          </p>
-          </details>
-          </>
-        }
+        disclosure={{
+          summary: 'Or post it from a terminal',
+          children: (
+            <>
+              {/* THE TOKEN BELONGS HERE, NOT ON THE CARD (clean UI PR 4). The
+                  card used to say "Needs a token with the Completed reports
+                  permission" over a picker that needs none — a signed-in upload
+                  goes through the session. Only this command needs one. */}
+              <p className="flex flex-wrap items-center gap-x-1 text-[0.8125rem] text-muted">
+                <span>
+                  Needs <code className="font-mono text-primary">PERFPORTAL_TOKEN</code> (Completed
+                  reports) ·{' '}
+                  <Link to={projectAccessPath(slug)} className="text-accent underline underline-offset-2">
+                    Create one
+                  </Link>
+                </span>
+                <InfoTip label="About posting results">
+                  The picker above and this command reach the same ingest pipeline. The bundle is a
+                  .tgz of the run directory Gatling wrote, simulation.log included; the response is a
+                  202 with the run’s id, and the worker parses it in the background.
+                </InfoTip>
+              </p>
+              <pre
+                data-testid="upload-command"
+                className="overflow-x-auto rounded-lg border border-default bg-sunken p-3 font-mono text-xs leading-relaxed text-primary"
+              >
+                {`curl -H "Authorization: Bearer $PERFPORTAL_TOKEN" \\
+  -F bundle=@results.tgz \\
+  -F 'metadata={"tool":"gatling"}' \\
+  ${instanceOrigin}/v1/runs`}
+              </pre>
+            </>
+          ),
+        }}
       >
-        <p className="text-[0.8125rem] leading-relaxed text-muted">
-          Needs a token with the <span className="text-primary">Completed reports</span> permission.{' '}
-          <Link to={projectAccessPath(slug)} className="text-accent underline underline-offset-2">
-            Create one under API tokens
-          </Link>
-          , then export it as <code className="font-mono text-primary">PERFPORTAL_TOKEN</code>.
-        </p>
+        {/* The picker is the card's action, so it is ON the card rather than
+            behind a disclosure (clean UI PR 4). */}
+        <BundleUpload slug={slug} />
       </EntryCard>
 
-      <EntryCard
-        title="Run a test"
-        icon={<PlayIcon className="h-4 w-4" />}
-        description="No bundle yet. Upload a Gatling jar or bundle and let an on-prem runner execute it."
-        status={runnerStatus(jobs.isPending, jobs.isError, jobs.data?.items ?? [])}
-      >
-        <p className="text-[0.8125rem] leading-relaxed text-muted">
-          The runner streams the log as it is written, so the run’s page is live while the test is
-          still going. It executes one job at a time.
-        </p>
-        {/* ═══ AND A WAY TO GET ONE, WHEN THERE HAS NEVER BEEN ONE ═══
-            (review 09-13, "Copy changes to make immediately")
-
-            The row is "No runner seen yet + inference paragraphs" ->
-            "`Runner availability unknown` + a useful connection/setup action".
-            M12 delivered the headline and removed the affordance that asked
-            the reader to QUEUE A LOAD TEST as a connectivity check; what it
-            left behind was a state that says what is not known and offers
-            nothing to do about it.
-
-            THE TOKEN IS THE HALF THIS APP OWNS. Deploying a runner is a
-            process you start beside the API and worker — `infra/README.md`
-            has the variables — and no route can own that. What it needs FROM
-            here is a credential carrying the On-prem runner permission, which
-            is minted on the API tokens page and nowhere else. So the action
-            names the deployment and links to the part a reader can actually
-            do in the product, rather than linking somewhere plausible and
-            leaving them to discover the rest.
+      <EntryCard title="Run a test" icon={<PlayIcon className="h-4 w-4" />}>
+        <RunnerStatusLine query={jobs} />
+        {/* ═══ A WAY TO GET A RUNNER, WHEN THERE HAS NEVER BEEN ONE ═══
+            The review 09-13 copy table asks for "`Runner availability unknown`
+            + a useful connection/setup action". The token is the half this app
+            owns — deploying the process is `infra/README.md`'s — so the action
+            is the one link a reader can follow in the product (clean UI PR 4:
+            a link, where it used to be a three-sentence paragraph).
 
             `needsSetup` is true for the `unknown` state ALONE. `idle` and
-            `stalled` mean a runner HAS been seen and has stopped claiming —
-            telling that reader to go set one up is the wrong advice
-            confidently given, which is the shape M12 was about. */}
-        {runnerReadiness(jobs.data?.items ?? []).needsSetup && (
-          <p className="text-[0.8125rem] leading-relaxed text-muted" data-testid="runner-setup">
-            To connect one, deploy the runner process beside this instance and give it a token
-            carrying the <span className="text-primary">On-prem runner</span> permission.{' '}
-            <Link to={projectAccessPath(slug)} className="text-accent underline underline-offset-2">
-              Create one under API tokens
-            </Link>
-            .
-          </p>
+            `stalled` mean a runner HAS been seen, and telling that reader to
+            go set one up is wrong advice confidently given — review M12. */}
+        {/* Only on a SETTLED list: one still loading, or one that failed, has
+            seen nothing either way, and offering setup under "Checking…" or
+            "Status unavailable" is the wrong advice M12 was about. */}
+        {jobs.isSuccess && runnerReadiness(jobs.data.items).needsSetup && (
+          <Link
+            to={projectAccessPath(slug)}
+            data-testid="runner-setup"
+            className="w-fit text-[0.8125rem] text-accent underline underline-offset-2"
+          >
+            Create a runner token
+          </Link>
         )}
         <div>
           <Link to={projectNewRunnerRunPath(slug)} className={linkButtonClasses}>
@@ -224,134 +198,80 @@ function AddResults({ slug }: { readonly slug: string }) {
       <EntryCard
         title="Configure CI"
         icon={<TokenIcon className="h-4 w-4" />}
-        description="Send reports from your CI pipeline, so the trend line keeps itself up to date."
-        steps={
-          <>
-          <pre
-            data-testid="ci-command"
-            className="overflow-x-auto rounded-lg border border-default bg-sunken p-3 font-mono text-xs leading-relaxed text-primary"
-          >
-  {`# after gradlew gatlingRun
-  tar -czf results.tgz -C build/reports/gatling .
-  curl -fsS -H "Authorization: Bearer $PERFPORTAL_TOKEN" \\
-    -F bundle=@results.tgz \\
-    -F 'metadata={"tool":"gatling","branch":"'"$CI_BRANCH"'","commitSha":"'"$CI_COMMIT"'"}' \\
-    ${instanceOrigin}/v1/runs`}
-          </pre>
-          <p className="text-[0.75rem] leading-snug text-muted">
-            <span className="text-primary">branch</span> and{' '}
-            <span className="text-primary">commitSha</span> are what let the Compare page tell a
-            regression from a different build, so they are worth wiring up even though both are
-            optional.
-          </p>
-          {/* NO VERSION NUMBER. The Gradle plugin is built from this repository
-              and is not on a public plugin portal, so a coordinate quoted here
-              would be a string this page cannot verify — which is exactly how
-              the plugin's own e2e script came to name a version that had not
-              existed for two releases. */}
-          <p className="text-[0.75rem] leading-snug text-muted">
-            For a LIVE view while the build runs rather than a report afterwards, there is a Gradle
-            plugin (<code className="font-mono">dev.vantrix.gatling</code>) that streams the log as
-            Gatling writes it. It ships with this repository under{' '}
-            <code className="font-mono">clients/gatling-gradle</code>; its README carries the
-            coordinates and its JDK 21 requirement.
-          </p>
-          </>
-        }
-      >
-        <p className="text-[0.8125rem] leading-relaxed text-muted">
-          Add one step after your existing Gatling task. The token belongs in the pipeline’s secret
-          store, never in the repository.
-        </p>
-      </EntryCard>
+        disclosure={{
+          summary: 'Show me how',
+          children: (
+            <>
+              <p className="flex flex-wrap items-center gap-x-1 text-[0.8125rem] text-muted">
+                <span>
+                  Store the token as <code className="font-mono text-primary">PERFPORTAL_TOKEN</code> in
+                  your pipeline secrets ·{' '}
+                  <Link to={projectAccessPath(slug)} className="text-accent underline underline-offset-2">
+                    Create one
+                  </Link>
+                </span>
+                <InfoTip label="About the CI step">
+                  branch and commitSha let the Compare page tell a regression from a different build;
+                  both are optional.
+                </InfoTip>
+              </p>
+              <pre
+                data-testid="ci-command"
+                className="overflow-x-auto rounded-lg border border-default bg-sunken p-3 font-mono text-xs leading-relaxed text-primary"
+              >
+                {`# after gradlew gatlingRun
+tar -czf results.tgz -C build/reports/gatling .
+curl -fsS -H "Authorization: Bearer $PERFPORTAL_TOKEN" \\
+  -F bundle=@results.tgz \\
+  -F 'metadata={"tool":"gatling","branch":"'"$CI_BRANCH"'","commitSha":"'"$CI_COMMIT"'"}' \\
+  ${instanceOrigin}/v1/runs`}
+              </pre>
+              {/* NO VERSION NUMBER. The Gradle plugin is built from this
+                  repository and is not on a public plugin portal, so a
+                  coordinate quoted here would be a string this page cannot
+                  verify — which is how the plugin's own e2e script came to name
+                  a version that had not existed for two releases. */}
+              <p className="text-[0.8125rem] text-muted">
+                Live view while the build runs: Gradle plugin{' '}
+                <code className="font-mono text-primary">dev.vantrix.gatling</code> (
+                <code className="font-mono text-primary">clients/gatling-gradle</code>)
+              </p>
+            </>
+          ),
+        }}
+      />
     </div>
   );
 }
 
 /* ======================================================================== *
- * STATUS — THE HALF THAT MUST NOT OVERCLAIM
+ * THE CARD — A TITLE AND ITS ACTION
  * ======================================================================== */
-
-type EntryStatus = {
-  readonly kind: 'ready' | 'unknown' | 'busy' | 'problem';
-  readonly label: string;
-  readonly note?: string;
-};
-
-/**
- * The runner's own status, phrased for a card that is offering a choice.
- *
- * The query's OWN failure is a status too, and a distinct one: "this page
- * could not ask" is not the same claim as "no runner is there", and rendering
- * the second for the first would send somebody to restart a healthy machine.
- */
-function runnerStatus(
-  pending: boolean,
-  errored: boolean,
-  items: RunnerJobListResponse['items'],
-): EntryStatus {
-  if (pending) return { kind: 'unknown', label: 'Checking…' };
-  if (errored) {
-    return {
-      kind: 'unknown',
-      label: 'Status unavailable',
-      note: 'The job list could not be loaded, so nothing is known about the runner either way.',
-    };
-  }
-  const readiness = runnerReadiness(items);
-  return { kind: STATUS_KIND[readiness.kind], label: readiness.headline, note: readiness.detail };
-}
-
-const STATUS_KIND: Record<RunnerReadinessKind, EntryStatus['kind']> = {
-  busy: 'busy',
-  waiting: 'busy',
-  stalled: 'problem',
-  // NOT 'ready'. An idle project proves a runner worked once, and nothing at
-  // all about now — see `runnerReadiness`'s docstring.
-  idle: 'unknown',
-  unknown: 'unknown',
-};
-
-/* The status tokens are declared on `:root` rather than inside `@theme`, so
-   Tailwind generates NO `text-status-*` utility for them — a class here would
-   emit nothing and the label would silently inherit the body colour. CLAUDE.md
-   records this trap twice; `var()` is how every other consumer reads them. */
-const STATUS_COLOR: Record<EntryStatus['kind'], string> = {
-  ready: 'var(--color-status-passed)',
-  busy: 'var(--color-status-pending)',
-  problem: 'var(--color-status-failed)',
-  unknown: 'var(--color-status-not-applicable)',
-};
 
 function EntryCard({
   title,
   icon,
-  description,
-  status,
   children,
-  steps,
+  disclosure,
 }: {
   readonly title: string;
   readonly icon: ReactNode;
-  readonly description: string;
-  /* ═══ OPTIONAL, BECAUSE ONLY ONE CARD HAS A STATE (review 09-13 N04) ═══
-   *
-   * Two of the three read `Available now`, which was true the moment the
-   * endpoint existed and could never say anything else — a badge that cannot
-   * vary is decoration, and three identical green dots taught the reader to
-   * skip the one that matters. The runner's IS a real state (unknown / busy /
-   * waiting / stalled / idle, computed from the project's own job history),
-   * and it reads as a status again now that it is the only one. */
-  readonly status?: EntryStatus;
-  readonly children: ReactNode;
+  /* No description prop (clean UI PR 4): each card is a title and then its
+     action, and a sentence under the title restated what the action shows.
+     No status prop: only the runner has a state, and its card draws it as
+     its first child (`RunnerStatusLine`, clean UI PR 4). Review 09-13 N04
+     removed the badges that could not vary; three identical green dots
+     taught the reader to skip the one that matters. */
+  readonly children?: ReactNode;
   /**
-   * The commands and caveats — everything review M04 says must not be on
-   * screen for all three paths at once. Optional: a path whose whole content
-   * is already one short choice (running a test is a button) has no steps to
+   * The commands — everything review M04 says must not be on screen for all
+   * three paths at once — behind a summary the caller names ("Or post it
+   * from a terminal", "Show me how"). Optional: a path whose whole content is
+   * already one short choice (running a test is a button) has nothing to
    * hide, and wrapping it in a disclosure would bury an action rather than
    * shorten a document.
    */
-  readonly steps?: ReactNode;
+  readonly disclosure?: { readonly summary: string; readonly children: ReactNode };
 }) {
   return (
     <Card headingLevel={2} data-testid={`entry-${title.toLowerCase().replace(/\s+/g, '-')}`}>
@@ -365,25 +285,7 @@ function EntryCard({
                 rung's 15px. review.md 20, "consistent heading sizes". */}
             <h2 className="text-base font-semibold tracking-tight text-primary">{title}</h2>
           </div>
-          {/* The dot is `aria-hidden` and the WORDS carry the state, so the
-              status is not a colour a reader has to have learnt. */}
-          {status !== undefined && (
-            <span
-              className="inline-flex items-center gap-1.5 font-mono text-[0.6875rem] font-medium tracking-[0.06em] uppercase"
-              style={{ color: STATUS_COLOR[status.kind] }}
-              data-testid="entry-status"
-            >
-              <span aria-hidden="true">●</span>
-              {status.label}
-            </span>
-          )}
         </div>
-        <p className="text-[0.8125rem] leading-relaxed text-muted">{description}</p>
-        {status?.note !== undefined && (
-          <p className="rounded-lg border border-default bg-sunken p-3 text-[0.75rem] leading-snug text-muted">
-            {status.note}
-          </p>
-        )}
         {children}
 
         {/* ═══ THE WORKFLOW, BEHIND ONE CLICK — review M04 ═══
@@ -393,9 +295,8 @@ function EntryCard({
          * implementation caveats at once. What it asks for is three short
          * choices with only the chosen workflow expanded.
          *
-         * So the CHOICE stays on screen — icon, title, status and the one
-         * sentence saying when this path is the right one — and the commands
-         * and caveats move in here.
+         * So the CHOICE stays on screen — icon, title and the card's action
+         * (since clean UI PR 4) — and the commands and caveats move in here.
          *
          * `name` MAKES IT AN ACCORDION WITH NO JAVASCRIPT. Browsers close the
          * other `<details>` sharing a name, which is exactly "expand only the
@@ -409,13 +310,12 @@ function EntryCard({
          * query these three by `level: 2`. The same shape as the `aria-hidden`
          * TableFrame defect this repo already paid for: markup that looks
          * tidier and quietly removes something only a screen reader uses. */}
-        {steps !== undefined && (
-          <details name="add-results" className="group">
+        {disclosure !== undefined && (
+          <details name="add-results">
             <summary className="w-fit cursor-pointer list-none text-[0.75rem] font-medium text-accent hover:underline hover:underline-offset-2">
-              <span className="group-open:hidden">Show me how</span>
-              <span className="hidden group-open:inline">Hide the steps</span>
+              {disclosure.summary}
             </summary>
-            <div className="mt-3 flex flex-col gap-3">{steps}</div>
+            <div className="mt-3 flex flex-col gap-3">{disclosure.children}</div>
           </details>
         )}
       </div>

@@ -128,7 +128,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **199 files / 2733 tests**, it
+`nvm use` first, and if a run reports fewer than **201 files / 2753 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -145,6 +145,126 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The clean-UI project-area branch (`feat/clean-ui-project-area`, PR 4 of four
+in `docs/superpowers/specs/2026-10-04-clean-ui-design.md`, its own spec
+`docs/superpowers/specs/2026-10-04-clean-ui-project-area-design.md`) added TWO
+unit files — `apps/web/test/FormField.test.tsx` (5) and
+`apps/web/test/RunnerStatusLine.test.tsx` (8) — and 7 cases net elsewhere
+(New on-prem run's Review cases deleted with the group), from **199 / 2733 to
+201 / 2753**. Integration stays **182 / 2357** (`runnerReadiness.test.ts`, the
+one `.ts` file touched, was re-pointed in place) and **e2e stays 188** (every
+browser change went inside an existing case). Add results, New on-prem run,
+SLA rules (both pages), API tokens, New project and Packages lose their prose;
+one shared `FormField` (label, ⓘ hint, visible notice and error lines) and one
+shared `RunnerStatusLine` (headline · one fact · ⓘ caveat) carry what is left.
+**And `Card.description` and `ProjectShell.intro` are deleted**: the
+programme's first firm limit, no description line under a card or section
+title, now lives in the types.
+
+**MEASURED BEFORE AND AFTER**, the same headless pass as PRs 1–3 (developer
+database, 1440x900, words inside `<main>` / prose words):
+
+```
+  Add results      180/145 ->  59/24   left: the runner status line (data) and
+                                       the picker's own format line (kept)
+  API tokens       403/38  -> 349/0
+  SLA rules         71/24  ->  47/0
+  New on-prem run  295/76  -> 206/12   left: the runner status line
+  A test's page    319/42  -> 288/11   left: "No rules for this test — the
+                                       project-wide rules below apply."
+  Packages          64/0   ->  64/0
+  New project       — /0   ->  10/0    (after only; PR 3's audit hit a 404)
+```
+
+**A DELETED PROP IS A TYPE GUARD ONLY IF SOMETHING PROVES IT STAYS DELETED.**
+`Card.test.tsx` and `ProjectShell.test.tsx` each render the deleted prop under
+`// @ts-expect-error`. Re-add `description` (or `intro`) and the directive has
+no error to absorb: `pnpm typecheck` fails with **TS2578, unused
+`@ts-expect-error`**, at the test's own line. Red-verified both ways. vitest
+does not typecheck, so this guard lives in the gate's FIRST command and
+nowhere else.
+
+**AN ⓘ NAMED AFTER ITS FIELD MATCHES THE FIELD'S LOOSE LABEL QUERY.**
+`aria-label` is a label source, so `getByLabelText(/system properties/i)`
+resolved both the textarea and its "About System properties" button, and four
+suites failed "Found multiple elements". The ⓘ's name is right; the queries
+are anchored (`/^system properties/i`, `/^new test slug/i`,
+`/^applies to/i`). Playwright's `getByLabel` is a substring match too — the e2e
+suite was grepped and nothing queries these fields loosely. **A new ⓘ beside a
+label is a new element sharing that label's words.**
+
+**A MARGIN IS NOT A SPACE.** The private `Field`'s "(optional)" sat after an
+`ml-1`, so its accessible name was "Branch(optional)" — and `FormField`'s
+first case caught it in jsdom. The runner status line had the same defect
+twice over: a flex gap between headline, dot and fact, so its text read
+"Runner availability unknown·No run queued…". Both carry real `{' '}` text
+nodes now. **A gap or a margin moves pixels; a screen reader and a copy read
+text nodes.**
+
+**A STATUS COLOUR AS TEXT FAILS AA ON THE SUNKEN GROUND, AND A FORM FIELD CAN
+SIT ON EITHER.** The final review (Opus) measured the System properties error
+at **4.27:1** in the light theme — `--color-status-failed` on New on-prem
+run's sunken Advanced body — and pending is 4.44:1 there. The old Review box
+had the same ground and the same ratio, so it was inherited, but this is the
+trap `palette.test.ts`' entry already records: it gates the tones against the
+CARD. `FormField`'s notice and error lines keep their words in the primary
+colour and carry the status colour as a left rule, a non-text mark needing
+3:1, which both tones clear on both grounds.
+
+**MOVING A RULE BEHIND AN ⓘ TAKES IT OFF THE SCREEN, SO SOMETHING ELSE HAS TO
+SAY IT WHEN IT IS BROKEN.** The spec said a slug's format rule would be
+carried by "the placeholder example and the inline error" — and there was no
+inline error: "Checkout Soak" was refused only by the server, after Queue run.
+Both slug fields now check the shared `DeclaredTestSlugSchema` as they are
+typed (the final review found it). And the deleted Review group turned out to
+be the one place a malformed system property showed while typing; that
+message is the field's own error line now, and the submit still refuses it.
+**When a piece of UI is deleted for repeating things, list what it showed that
+nothing else does before deleting it.**
+
+**A QUERY THAT HAS NOT ANSWERED HAS SEEN NOTHING EITHER WAY.**
+`runnerReadiness(jobs.data?.items ?? [])` read a pending or failed job list as
+"never queued", so "Create a runner token" flashed under "Checking…" and sat
+under "Status unavailable" — the wrong advice review M12 was about, in a block
+this branch rewrote. It is `jobs.isSuccess && …` now, with a case for both
+states.
+
+**AND EVERY BASH CALL STARTS ON NODE 20.** `nvm use` in one call does not
+survive to the next, so the first red run of this branch reported `Tests no
+tests` with `webidl.util.markAsUncloneable is not a function` — the trap at the
+top of this section, met in a command rather than a session. The ledger's env
+file sourced `nvm use` in every command from then on.
+
+**RULINGS, EACH A DECISION RATHER THAN AN OVERSIGHT:**
+
+  - The Review group's other claims are not re-homed: the Package option
+    already reads "name · file · size", the upload's default package name is
+    the Package name placeholder, and the textarea is its own readback.
+  - The picker's one-line format note ("A gzipped Gatling results directory
+    (.tgz or .tar.gz), up to 512 MB.") stays: a constraint on the control.
+  - The Gradle line names `clients/gatling-gradle` — the plugin is on no
+    public portal, so a coordinate alone is "plugin not found".
+  - The Package and Execution legends stay over a Package label (labels, not
+    prose).
+
+**KNOWN AND LEFT, EACH A DECISION RATHER THAN AN OVERSIGHT:** a malformed
+property is invisible while Advanced is collapsed (the submit alert names the
+line); the error shows from the first keystroke; ProjectRules' "beside Save"
+assertion is vacuous (the ⓘ's div's parent is the form); Add results'
+summaries lost their open/closed cue; the status line has no spoken separator
+between headline and fact; the `?package=` notice is two sentences; nothing on
+Add results says a runner process must be deployed until one stalls.
+
+**WHAT WAS RUN.** `typecheck` and `lint` exit 0 by their own exit codes;
+`test:unit` **201 / 2753**, zero `Errors` lines, after the fix pass;
+`test:integration` COLLECTED **182 / 2357** on the tree before the fix pass
+(which touched `.tsx` files and comments only) with ONE failure,
+`window-bench`'s stopwatch budget at a load of ~10 and ~4,500 free pages,
+which passed alone at 4.16 and 11,135; `pnpm test:e2e` **188 passed, exit 0**,
+before and after the fix pass — every total the one predicted from the source,
+against a SCRATCH DATABASE (`perfportal_cleanui4`), a scratch Redis INDEX
+(db 8 — db 4 held 184 keys of an earlier run) and e2e port 3800.
 
 The clean-UI run-lists branch (`feat/clean-ui-run-lists`, PR 3 of four in
 `docs/superpowers/specs/2026-10-04-clean-ui-design.md`, its own spec

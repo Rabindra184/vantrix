@@ -1,6 +1,6 @@
 import type { RunnerJob, RunnerJobStatus } from '@perfportal/contracts';
 import { describe, expect, it } from 'vitest';
-import { agoLabel, durationLabel, runnerReadiness } from '../src/routes/runnerReadiness.js';
+import { RUNNER_STATUS_INFO, agoLabel, durationLabel, runnerReadiness } from '../src/routes/runnerReadiness.js';
 
 /**
  * ═══ WHAT THIS FILE IS GUARDING, AND IT IS NOT THE WORDING ═══
@@ -52,11 +52,13 @@ describe('runnerReadiness', () => {
     // The HEADLINE may now say "availability unknown", which is the point —
     // what must never appear is a claim that one IS available.
     expect(state.headline).toMatch(/unknown/i);
-    expect(`${state.headline} ${state.detail}`).not.toMatch(
+    expect(`${state.headline} ${state.fact}`).not.toMatch(
       /\bavailable now\b|\bonline\b|\bready\b/i,
     );
     // And it must not ask the reader to queue work as a health check.
-    expect(state.detail).not.toMatch(/queue one to find out/i);
+    expect(state.fact).not.toMatch(/queue one to find out/i);
+    // One short fact (clean UI PR 4); the caveat rides behind the ⓘ.
+    expect(state.fact).toBe('No run queued from this project yet');
   });
 
   it('reports a claimed job as proof a runner is there, with the queue depth', () => {
@@ -64,7 +66,7 @@ describe('runnerReadiness', () => {
     expect(state.kind).toBe('busy');
     // One running plus one queued — a run started now is third.
     expect(state.ahead).toBe(2);
-    expect(state.detail).toContain('2 jobs');
+    expect(state.fact).toBe('A new run waits behind 2 jobs');
   });
 
   it.each<RunnerJobStatus>(['starting', 'running', 'closing'])(
@@ -78,6 +80,7 @@ describe('runnerReadiness', () => {
     const state = runnerReadiness([job('queued', 3_000)], NOW);
     expect(state.kind).toBe('waiting');
     expect(state.ahead).toBe(1);
+    expect(state.fact).toBe('1 job queued, none claimed yet');
   });
 
   /**
@@ -96,16 +99,21 @@ describe('runnerReadiness', () => {
     // because the reader keeps adding work to it.
     const state = runnerReadiness([job('queued', 600_000), job('queued', 1_000)], NOW);
     expect(state.kind).toBe('stalled');
-    expect(state.detail).toContain('10 minutes');
+    expect(state.fact).toContain('10 minutes');
+    // The one fact that carries an action keeps it on screen, never only
+    // behind the ⓘ (review focus 1).
+    expect(state.fact).toMatch(/Check a runner is running and pointed at this instance\.$/);
   });
 
   it('will not call a project with only finished jobs available', () => {
     const state = runnerReadiness([job('complete', 20 * 60_000), job('failed', 90 * 60_000)], NOW);
     expect(state.kind).toBe('idle');
     expect(state.ahead).toBe(0);
-    // It reports the most recent job, and says outright that "now" is unknown.
-    expect(state.detail).toContain('20 minutes ago');
-    expect(state.detail).toMatch(/unknown/i);
+    // It reports the most recent job. That "now" is unknown is the caveat
+    // every state shares, so it is stated once — behind the ⓘ — rather than
+    // in this fact (clean UI PR 4).
+    expect(state.fact).toBe('Last job finished 20 minutes ago');
+    expect(RUNNER_STATUS_INFO).toMatch(/known only once a job is claimed/);
   });
 
   it('counts a cancelled job as finished, since nothing is holding the node', () => {

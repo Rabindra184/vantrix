@@ -15,10 +15,9 @@ import ProjectRules from './ProjectRules';
  * rules` tab in `ProjectShell`, carrying `aria-current="page"`. It used to be
  * named by this page's own `<h1>`; M10 made the `<h1>` the PROJECT and left
  * the section to the nav, which is the same arrangement `RunShell` uses (no
- * tab repeats its own name as a heading). The panel's DESCRIPTION is kept
- * either way — `Card` renders it on its own when there is no title — and it is
- * the sentence that says what a rule does and that a run with none gets no
- * verdict.
+ * tab repeats its own name as a heading). The panel has no description
+ * since clean UI PR 4: the empty state says a run with no rules gets no
+ * verdict, and the tables' info icons say which runs each set judges.
  *
  * `key={slug}` for the reason `ProjectRuns` and `TestRuns` carry one: a
  * same-route param change otherwise reuses the instance and carries a

@@ -10,6 +10,7 @@ import {
 } from '@perfportal/contracts';
 import Button from '../components/Button';
 import Card from '../components/Card';
+import FormField, { hintId } from '../components/FormField';
 import { EmptyState, ErrorState, LoadingState } from '../components/States';
 import TableFrame from '../components/TableFrame';
 import { CheckIcon, CopyIcon, TokenIcon } from '../components/icons';
@@ -60,12 +61,7 @@ export default function ProjectAccess() {
        this page issues and revokes API tokens and nothing else. The URL stays
        `/access`: a label is not a bookmark, and `paths.ts` already argues
        that case for `/setup`. */
-    <ProjectShell
-      current="access"
-      intro="Credentials for CI, load generators and runner hosts — each carrying only the permissions you give it."
-    >
-      {({ slug }) => <AccessLoaded key={slug} slug={slug} />}
-    </ProjectShell>
+    <ProjectShell current="access">{({ slug }) => <AccessLoaded key={slug} slug={slug} />}</ProjectShell>
   );
 }
 
@@ -170,7 +166,6 @@ function AccessLoaded({ slug }: { readonly slug: string }) {
       <Card
         headingLevel={2}
         title="Create a token"
-        description="Name it after whatever will use it, and tick only what that needs. The secret is shown once and never again."
         data-testid="token-mint"
       >
         <form className="flex max-w-2xl flex-col gap-4" onSubmit={submit}>
@@ -210,29 +205,32 @@ function AccessLoaded({ slug }: { readonly slug: string }) {
             ))}
           </fieldset>
 
-          <label className="flex max-w-xs min-w-0 flex-col gap-1.5">
-            <span className="text-[0.8125rem] font-medium text-primary">Expires</span>
-            <select
-              data-testid="token-expiry"
-              className={INPUT}
-              value={expiresInDays === null ? '' : String(expiresInDays)}
-              onChange={(event) =>
-                setExpiresInDays(event.target.value === '' ? null : Number(event.target.value))
-              }
+          <div className="max-w-xs min-w-0">
+            <FormField
+              label="Expires"
+              id="token-expiry"
+              hint="An expired token stops authenticating; it is not deleted, and the list still says it existed."
             >
-              {/* "Never" first and selected: it is what this page did before
-                  this control existed, so a reader who ignores the field gets
-                  exactly the behaviour they had. */}
-              <option value="">Never</option>
-              <option value="30">In 30 days</option>
-              <option value="90">In 90 days</option>
-              <option value="365">In a year</option>
-            </select>
-            <span className="text-[0.75rem] text-muted">
-              An expired token stops authenticating; it is not deleted, and the list still says it
-              existed.
-            </span>
-          </label>
+              <select
+                id="token-expiry"
+                data-testid="token-expiry"
+                aria-describedby={hintId('token-expiry')}
+                className={INPUT}
+                value={expiresInDays === null ? '' : String(expiresInDays)}
+                onChange={(event) =>
+                  setExpiresInDays(event.target.value === '' ? null : Number(event.target.value))
+                }
+              >
+                {/* "Never" first and selected: it is what this page did before
+                    this control existed, so a reader who ignores the field gets
+                    exactly the behaviour they had. */}
+                <option value="">Never</option>
+                <option value="30">In 30 days</option>
+                <option value="90">In 90 days</option>
+                <option value="365">In a year</option>
+              </select>
+            </FormField>
+          </div>
 
           {mintMutation.isError && (
             <div
@@ -393,9 +391,8 @@ function TokenTable({
     return (
       <EmptyState
         title="No tokens yet"
-        /* WHAT A TOKEN IS FOR, not a second copy of the intro above — which
-           already names the three consumers, and is on screen at the same time
-           as this. A browser session carries `read`, `ingest` and `runner`
+        /* WHAT A TOKEN IS FOR. (The page's intro, which named the consumers,
+           went in clean UI PR 4.) A browser session carries `read`, `ingest` and `runner`
            itself (`auth.middleware.ts`), so the honest distinction is not
            "nothing can post without a token": it is that a token is how a
            MACHINE gets in without one. */
