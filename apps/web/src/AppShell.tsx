@@ -6,6 +6,7 @@ import RouteFallback from './components/RouteFallback';
 import RouteErrorBoundary from './components/RouteErrorBoundary';
 import ProjectRail from './ProjectRail';
 import AccountMenu from './AccountMenu';
+import SearchTrigger from './palette/SearchTrigger';
 import { ActivityIcon } from './components/icons';
 import { DEFAULT_ROUTE } from './routes/paths';
 
@@ -348,6 +349,11 @@ export default function AppShell() {
           </span>
           <span className="text-[0.9375rem] font-semibold tracking-tight text-primary">PerfPortal</span>
         </Link>
+
+        {/* The palette's one entry point, and the owner of its ⌘K shortcut:
+            mounted here, once, so the shortcut exists on every authenticated
+            page and a page can neither forget it nor add a second. */}
+        <SearchTrigger />
 
         {/* ═══ ONE CONTROL, NOT THREE (review 09-13 N03) ═══
          *

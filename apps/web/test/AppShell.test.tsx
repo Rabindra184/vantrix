@@ -68,6 +68,28 @@ describe('AppShell', () => {
     // duplication that would break auth.spec.ts under strict mode.
     expect(await screen.findAllByRole('menuitem', { name: /sign out/i })).toHaveLength(1);
   });
+
+  /**
+   * ONE trigger, in the header, between the brand and the account menu. The
+   * count is the cheap guard against a second mount (a page that renders its
+   * own) which would give the document two controls named Search and every
+   * `getByRole` over it a strict-mode violation; the order is where the
+   * header's own comment says it sits.
+   */
+  it('renders exactly one Search control in the header', async () => {
+    renderShell();
+    expect(await screen.findByRole('navigation', { name: 'Projects' })).toBeInTheDocument();
+
+    const header = screen.getByRole('banner');
+    const inHeader = within(header).getAllByRole('button', { name: 'Search' });
+    expect(inHeader).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: 'Search' })).toHaveLength(1);
+
+    const brand = within(header).getByRole('link', { name: /PerfPortal/ });
+    const account = screen.getByTestId('account-menu-trigger');
+    expect(brand.compareDocumentPosition(inHeader[0]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(inHeader[0]!.compareDocumentPosition(account) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
 });
 
 /* ======================================================================== *

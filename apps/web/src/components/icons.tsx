@@ -32,6 +32,7 @@ import {
   Plus,
   RefreshCw,
   Repeat,
+  Search,
   Settings,
   Square,
   Sun,
@@ -136,6 +137,9 @@ export const ZoomOutIcon = icon(ZoomOut);
 
 /** A retry / re-check action. */
 export const RefreshIcon = icon(RefreshCw);
+
+/** The header's search control — a magnifier, which is what it opens. */
+export const SearchIcon = icon(Search);
 
 export const PlayIcon = icon(Play);
 export const StopIcon = icon(Square);
