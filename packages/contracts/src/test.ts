@@ -33,7 +33,14 @@ export const TestSummarySchema = z.object({
    */
   runCount: z.number().int().nonnegative(),
   /**
-   * This test's most recent run, by the same ordering `GET /v1/runs` uses.
+   * This test's most recent run by ARRIVAL (`created_at DESC, id DESC`), which
+   * is the order run numbers follow — so it is always the test's
+   * highest-numbered run. That is NOT the order `GET /v1/runs` uses: the run
+   * list sorts by when the test RAN (`COALESCE(tool_started_at, started_at)`),
+   * and the two differ only for a bundle uploaded after a newer one, which is
+   * the latest run here and sits lower in that list. (This docstring used to
+   * claim the run list's ordering; the code never used it.)
+   *
    * Null for a test whose every run has since been deleted; NOT null merely
    * because a run is unfinished.
    *
@@ -58,6 +65,97 @@ export const TestListResponseSchema = z.object({
   tests: z.array(TestSummarySchema),
 });
 export type TestListResponse = z.infer<typeof TestListResponseSchema>;
+
+/**
+ * One row of the ORG-WIDE test list (`GET /v1/tests`): a test, the project it
+ * belongs to, the run it is currently about, and a short p95 history. It
+ * serves the portfolio home table and the command palette, so everything a
+ * row draws is here and neither has to ask per test.
+ *
+ * Loose on the way out like `TestSummarySchema`, for the same reason: a stored
+ * row that fails a tighter shape must not 500 a list the reader may see. That
+ * is also why no string here is bounded — the trimmed-input guard would
+ * demand `.trim()` of a bound, and trimming a value we only RETURN would
+ * quietly rewrite what is stored.
+ */
+export const OrgTestSummarySchema = z.object({
+  id: z.string().uuid(),
+  slug: z.string(),
+  name: z.string(),
+  /** The tool's own class name; see `TestSummarySchema.simulationClass`. */
+  simulationClass: z.string(),
+  /** How many runs this test has. */
+  runCount: z.number().int().nonnegative(),
+  /** The owning project, so a row can name and link it without a lookup. */
+  project: z.object({ slug: z.string(), name: z.string() }),
+  /**
+   * The test's latest run by ARRIVAL (`created_at DESC, id DESC`) — the order
+   * run numbers follow, NOT the run list's by-start order. Null for a test
+   * that has never run, or whose every run was deleted.
+   */
+  latestRun: z
+    .object({
+      id: z.string().uuid(),
+      /** "Run 12". Null for a run with no test number; see `RunNumberSchema`. */
+      runNumber: RunNumberSchema.nullable(),
+      /**
+       * `status` rides along with `verdict` for the reason `TestSummarySchema`
+       * records: a pending run has no verdict yet, which is not "not
+       * evaluated".
+       */
+      status: RunStatusSchema,
+      verdict: RunVerdictSchema.nullable(),
+      /**
+       * When the LOAD TEST started — `COALESCE(tool_started_at, started_at)`,
+       * the same instant the run list's Started column shows — and not when
+       * the run arrived.
+       */
+      startedAt: z.string().datetime(),
+      /** Null until the run has a measured duration. */
+      durationMs: z.number().int().nullable(),
+      /**
+       * Failed and total simulation checks (the assertions the tool recorded).
+       * Null when the run recorded none, which is different from `0 / 0`.
+       */
+      checks: z.object({ failed: z.number().int(), total: z.number().int() }).nullable(),
+      /**
+       * The run-scope response-time p95, clamped to that run's own min and
+       * max — the figure the run list's `metrics.p95Ms` shows. Null when the
+       * run has no usable one.
+       */
+      p95Ms: z.number().nullable(),
+    })
+    .nullable(),
+  /**
+   * The p95 of this test's last runs that completed, OLDEST FIRST, for a
+   * sparkline. At most ten: the query takes ten, and the cap is stated here
+   * as well so a longer array fails to parse rather than growing the row. A
+   * run with no usable p95 contributes no point, so this can be shorter than
+   * the number of recent runs, and is empty for a test that has never
+   * completed one. Each point equals the `p95Ms` on that run's list row.
+   */
+  p95History: z
+    .array(
+      z.object({
+        runId: z.string().uuid(),
+        runNumber: RunNumberSchema.nullable(),
+        p95Ms: z.number(),
+      }),
+    )
+    .max(10),
+});
+export type OrgTestSummary = z.infer<typeof OrgTestSummarySchema>;
+
+export const OrgTestListResponseSchema = z.object({
+  items: z.array(OrgTestSummarySchema),
+  /**
+   * Opaque. A string asks the caller to request the next page with it; null
+   * means this was the last. Required, not optional: an absent cursor would
+   * be neither answer.
+   */
+  nextCursor: z.string().nullable(),
+});
+export type OrgTestListResponse = z.infer<typeof OrgTestListResponseSchema>;
 
 /**
  * What a caller may change about a test, which is deliberately only what a
