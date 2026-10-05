@@ -186,3 +186,28 @@ export function parseCursor(raw: string | undefined): string | undefined {
   }
   return parsed.data;
 }
+
+/**
+ * A query parameter that must be ONE string, or a 400 naming it.
+ *
+ * Express parses a repeated parameter (`?q=a&q=b`) into an array, and a
+ * bracketed one (`?q[x]=1`) into an object, while `@Query('q') q?: string`
+ * types it as a string regardless. The run lists then called `.trim()` on it
+ * (a TypeError) or handed it to Prisma as a slug (a validation error): a 500
+ * for a request only the caller can have got wrong. Typing the parameter
+ * `unknown` and passing it through here is what makes that shape refusable.
+ *
+ * `limit` does not need it: `parseLimit` already reads anything it cannot use
+ * as the default page size, by design.
+ */
+export function singleValue(name: string, value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string') {
+    throw badRequest(
+      'INVALID_QUERY',
+      `"${name}" must be given once, as a single value.`,
+      `Send "${name}" at most once, for example ?${name}=checkout.`,
+    );
+  }
+  return value;
+}
