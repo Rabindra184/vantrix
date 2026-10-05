@@ -352,9 +352,13 @@ describe('TestRepository.listOrg', () => {
       const otherProject = await prisma.project.create({
         data: { orgId: other.id, slug: 'other-p', name: 'Other P', settings: {} },
       });
+      // NAMED TO SORT BEFORE EVERYTHING HERE ('0' precedes any letter). A
+      // foreign cursor that did resolve would then read "start after '0-foreign'
+      // among never-run tests" and return a-test and b-test; named 'foreign' it
+      // would sort after them, return nothing, and pass for the wrong reason.
       const foreign = await prisma.test.create({
         data: {
-          orgId: other.id, projectId: otherProject.id, slug: 'foreign', name: 'foreign',
+          orgId: other.id, projectId: otherProject.id, slug: 'foreign', name: '0-foreign',
           simulationClass: 'example.foreign',
         },
       });
