@@ -1,6 +1,7 @@
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { Suspense } from 'react';
 import { Link, MemoryRouter, useLocation, useNavigationType } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -195,6 +196,24 @@ function Where() {
   );
 }
 
+/**
+ * A way to HOLD an address change back, as React Router's own transition does
+ * when the render it triggers is slow: while a location whose search is `hold.
+ * search` is pending, this suspends, and a suspended TRANSITION keeps the old
+ * location on screen while urgent updates (a keystroke, the component's own
+ * state) commit in between. That is the interleaving a real browser produces
+ * and a synchronous test router never does.
+ */
+let hold: { readonly search: string; readonly promise: Promise<void> } | null = null;
+beforeEach(() => {
+  hold = null;
+});
+function Gate() {
+  const { search } = useLocation();
+  if (hold !== null && search === hold.search) throw hold.promise;
+  return null;
+}
+
 function renderTests(initialEntry = '/', handler: Handler = answer) {
   requests = [];
   vi.stubGlobal('fetch', (input: RequestInfo | URL) => {
@@ -209,6 +228,10 @@ function renderTests(initialEntry = '/', handler: Handler = answer) {
         <Where />
         {/* The rail's own link to this page: same route, no query string. */}
         <Link to="/">Back to the top</Link>
+        <Link to="/?q=other">Another filter</Link>
+        <Suspense fallback={null}>
+          <Gate />
+        </Suspense>
         <HomeTests />
       </MemoryRouter>
     </QueryClientProvider>,
@@ -440,16 +463,112 @@ describe('HomeTests, the filter', () => {
     await waitFor(() => expect(asked().at(-1)).toEqual({ q: null, cursor: null }));
   });
 
-  it('keeps the address in step with the filter: a navigation that drops ?q= does not clear it', async () => {
+  /**
+   * ═══ THE ADDRESS IS THE FILTER (review, Important 1) ═══
+   *
+   * The brief: "the filter's value lives in `?q=`". Anything other than this
+   * component that moves it wins — the rail's Home row and the brand link both
+   * go to the same route without a query string.
+   */
+  it('follows a navigation that drops ?q=: the box empties and the list is asked for without it', async () => {
     renderTests('/?q=chec');
     await screen.findAllByTestId('home-test-row');
 
     fireEvent.click(screen.getByRole('link', { name: 'Back to the top' }));
-    // The address is put back rather than left saying "unfiltered" over a filtered table...
+    await waitFor(() => expect(asked().at(-1)).toEqual({ q: null, cursor: null }));
+    expect((filterBox() as HTMLInputElement).value).toBe('');
+    expect(where()).toBe('');
+    // The click pushed ONE entry and nothing wrote another over it: a write
+    // would show as a REPLACE, and Back would then land on an identical page.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, HOME_FILTER_DEBOUNCE_MS + 100));
+    });
+    expect(where()).toBe('');
+    expect(screen.getByTestId('how')).toHaveTextContent('PUSH');
+    expect(asked()).toEqual([
+      { q: 'chec', cursor: null },
+      { q: null, cursor: null },
+    ]);
+  });
+
+  it('follows a navigation to another filter at once: the box re-seeds and that filter is fetched', async () => {
+    renderTests('/?q=chec');
+    await screen.findAllByTestId('home-test-row');
+
+    const before = performance.now();
+    fireEvent.click(screen.getByRole('link', { name: 'Another filter' }));
+    await waitFor(() => expect(asked().at(-1)).toEqual({ q: 'other', cursor: null }));
+    // No debounce: nobody is typing, so there is nothing to wait for.
+    expect(performance.now() - before).toBeLessThan(HOME_FILTER_DEBOUNCE_MS);
+    expect((filterBox() as HTMLInputElement).value).toBe('other');
+    expect(where()).toBe('?q=other');
+    expect(screen.getByTestId('how')).toHaveTextContent('PUSH');
+  });
+
+  it('does not take the box back to what it last wrote when it is left alone afterwards', async () => {
+    renderTests('/?q=chec');
+    await screen.findAllByTestId('home-test-row');
+    fireEvent.click(screen.getByRole('link', { name: 'Back to the top' }));
+    await waitFor(() => expect((filterBox() as HTMLInputElement).value).toBe(''));
+    // The stale settled value ("chec") must not be written back once its wait lapses.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, HOME_FILTER_DEBOUNCE_MS + 100));
+    });
+    expect(where()).toBe('');
+    expect(asked().some((r, i) => i > 0 && r.q === 'chec')).toBe(false);
+  });
+
+  it('applies a value typed back inside the wait that follows an outside change', async () => {
+    renderTests('/?q=chec');
+    await screen.findAllByTestId('home-test-row');
+    fireEvent.click(screen.getByRole('link', { name: 'Back to the top' }));
+    await waitFor(() => expect((filterBox() as HTMLInputElement).value).toBe(''));
+
+    // Inside the quarter-second that the old settled value is still "chec"...
+    type('chec');
+    // ...the box and the address must not be left disagreeing.
     await waitFor(() => expect(where()).toBe('?q=chec'));
-    // ...and the box and the table never moved.
+    expect(asked().at(-1)).toEqual({ q: 'chec', cursor: null });
+  });
+
+  /**
+   * React Router applies a location change in a TRANSITION, so the render that
+   * records "this component wrote `chec`" can commit before the render in which
+   * the address says `chec`. Compared naively, that interval looks like an
+   * outside navigation and the box is reset under the reader's hands.
+   */
+  it('does not wipe text typed while its own write is still on its way', async () => {
+    let release!: () => void;
+    hold = {
+      search: '?q=chec',
+      promise: new Promise<void>((resolve) => {
+        release = () => {
+          // Stop suspending BEFORE the retry, or the gate throws the resolved promise again.
+          hold = null;
+          resolve();
+        };
+      }),
+    };
+    renderTests();
+    await screen.findAllByTestId('home-test-row');
+
+    type('chec');
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, HOME_FILTER_DEBOUNCE_MS + 150));
+    });
+    // The write has been made and its location change is held back.
+    expect(where()).toBe('');
     expect((filterBox() as HTMLInputElement).value).toBe('chec');
-    expect(asked().every((r) => r.q === 'chec')).toBe(true);
+
+    // More typing lands while it is in flight...
+    type('checo');
+    release();
+    await waitFor(() => expect(where()).toBe('?q=chec'));
+    // ...and the landing of the OLD write leaves it alone.
+    expect((filterBox() as HTMLInputElement).value).toBe('checo');
+
+    // The extra letter is then applied in its own right.
+    await settleFilter('checo');
   });
 
   it('treats typing only spaces as no filter at all', async () => {
@@ -642,6 +761,88 @@ describe('HomeTests, when there is nothing to show', () => {
     expect(within(section).getByRole('searchbox', { name: 'Filter tests' })).toBeInTheDocument();
     expect(screen.queryByRole('table')).toBeNull();
     expect(screen.queryByRole('navigation', { name: 'Test pages' })).toBeNull();
+    // On page one there is nowhere "back" to go.
+    expect(screen.queryByRole('button', { name: 'Back to the first page' })).toBeNull();
+  });
+});
+
+// ─── A page past the first that has gone wrong ───────────────────────────────
+
+/**
+ * ═══ NO DEAD ENDS PAST PAGE ONE (review, Important 2) ═══
+ *
+ * The pager is hidden on a page with no rows, so an empty or failed page two
+ * must carry its own way back. And an empty page that is not the first is not
+ * "no tests": the list moved under the reader, and "No tests yet" would be
+ * false as well as a dead end.
+ */
+describe('HomeTests, past the first page', () => {
+  const NO_LONGER_HERE = 'These tests are no longer here';
+  const BACK = 'Back to the first page';
+  const emptyPast: Handler = (url) =>
+    url.searchParams.has('cursor') ? json(list([], null)) : answer(url);
+
+  it('says the list has changed, not that there are no tests, and offers the way back', async () => {
+    renderTests('/', emptyPast);
+    await screen.findAllByTestId('home-test-row');
+    fireEvent.click(next());
+
+    expect(await screen.findByText(NO_LONGER_HERE)).toBeInTheDocument();
+    expect(screen.getByText('The list may have changed since you started paging.')).toBeInTheDocument();
+    expect(screen.queryByText('No tests yet')).toBeNull();
+    expect(screen.queryByText(/No tests match/)).toBeNull();
+    // Nothing to turn: the pager stays hidden and the one button is the way out.
+    expect(screen.queryByRole('navigation', { name: 'Test pages' })).toBeNull();
+    expect(screen.queryByRole('table')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: BACK }));
+    await screen.findByRole('link', { name: SMOKE.name });
+    expect(asked().at(-1)).toEqual({ q: null, cursor: null });
+    expect(screen.queryByText(NO_LONGER_HERE)).toBeNull();
+    expect(previous()).toBeDisabled();
+  });
+
+  it('says it before it says anything about the filter', async () => {
+    renderTests('/?q=zz', (url) =>
+      url.searchParams.has('cursor') ? json(list([], null)) : json(FILTERED),
+    );
+    await screen.findAllByTestId('home-test-row');
+    fireEvent.click(next());
+
+    expect(await screen.findByText(NO_LONGER_HERE)).toBeInTheDocument();
+    expect(screen.queryByText(/No tests match/)).toBeNull();
+
+    // Back to the first page of the SAME filter: the address and the box are untouched.
+    fireEvent.click(screen.getByRole('button', { name: BACK }));
+    await screen.findByRole('link', { name: SOAK.name });
+    expect(asked().at(-1)).toEqual({ q: 'zz', cursor: null });
+    expect(where()).toBe('?q=zz');
+  });
+
+  it('still says "No tests yet" for an empty FIRST page', async () => {
+    renderTests('/', () => json(list([], null)));
+    expect(await screen.findByText('No tests yet')).toBeInTheDocument();
+    expect(screen.queryByText(NO_LONGER_HERE)).toBeNull();
+    expect(screen.queryByRole('button', { name: BACK })).toBeNull();
+  });
+
+  it('offers the same way back when page two fails to load', async () => {
+    renderTests('/', (url) =>
+      url.searchParams.has('cursor')
+        ? json({ code: 'INTERNAL', detail: 'Page two broke.', remediation: 'Try again later.' }, 500)
+        : answer(url),
+    );
+    await screen.findAllByTestId('home-test-row');
+    fireEvent.click(next());
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Page two broke.');
+    const back = within(alert).getByRole('button', { name: BACK });
+
+    fireEvent.click(back);
+    await screen.findByRole('link', { name: SMOKE.name });
+    expect(asked().at(-1)).toEqual({ q: null, cursor: null });
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 });
 

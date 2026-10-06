@@ -27,23 +27,44 @@ import Sparkline from './Sparkline';
  * question "which of my tests should I look at"; this is the answer to "what
  * tests do I have", and the two read different windows of the same data.
  *
- * ═══ ONE FILTER, TWO PLACES, AND ONLY ONE OF THEM IS A DECISION ═══
+ * ═══ THE ADDRESS IS THE FILTER, AND THE BOX IS A DRAFT OF IT ═══
  *
- * The box holds what has been TYPED; `q` is what has been settled on — the
- * typed text, trimmed, once it has stopped changing for a quarter of a second.
- * Only `q` goes anywhere: it is written to the address as `?q=` (replacing the
- * history entry, so Back leaves the page instead of walking back through every
- * word, and removed when blank, so an unfiltered page has a clean URL), it is
- * what is asked of the server, and it is what a cursor belongs to. A request
- * per keystroke would ask for `c`, `ch` and `che` when only the last was ever
- * wanted, and the slowest answer is free to land last.
+ * `q` is read from `?q=` on every render, trimmed, and nothing else decides
+ * what is asked of the server or what a cursor belongs to. The box holds what
+ * has been TYPED, which is allowed to run ahead of the address: only once the
+ * typed text has stopped changing for a quarter of a second is it WRITTEN to
+ * `?q=` (replacing the history entry, so Back leaves the page instead of
+ * walking back through every word, and removing the parameter when blank, so
+ * an unfiltered page has a clean URL; other parameters are left alone). A
+ * request per keystroke would ask for `c`, `ch` and `che` when only the last
+ * was ever wanted, and the slowest answer is free to land last.
  *
- * The URL FOLLOWS the settled filter and never the other way round, after
- * the first render. That is deliberate and it has one visible consequence: a
- * same-route navigation that drops `?q=` (the rail's own link to this page,
- * while a filter is applied) does not clear the filter — the effect below puts
- * the address back, so what the reader sees and what the address says never
- * disagree. Opening the page on `?q=chec` filters it from the first request.
+ * Anything ELSE that moves `?q=` is an outside change and wins: a link to this
+ * page without it (the rail's Home row, the brand), Back or Forward onto
+ * another entry, a link carrying a different filter. The box is re-seeded from
+ * it and the table asks for it at once — there is no quarter-second wait,
+ * because nobody is typing. This component never overwrites an address it did
+ * not write. (It used to: the address followed the settled filter, so a Home
+ * click while filtered did nothing and left two identical history entries.)
+ * `RunList` is the precedent — its filters derive from the URL and its draft
+ * re-seeds from them.
+ *
+ * ═══ TELLING ITS OWN WRITE FROM AN OUTSIDE CHANGE ═══
+ *
+ * Re-seeding on EVERY change of `q` would throw away text typed while this
+ * component's own write was still on its way, so the two have to be told
+ * apart — and that cannot be done by comparing `q` with what was last written
+ * and nothing more. React Router applies a location change in a TRANSITION, so
+ * the render that records "I wrote `chec`" can commit BEFORE the render in
+ * which the address says `chec`; compared naively, the interval between them
+ * looks like an outside navigation and wipes the box. Two pieces of state
+ * settle it: `seen` is the last `q` this component rendered, so a re-seed is
+ * considered only when `q` has actually CHANGED; and `written` is the last
+ * value it wrote (or re-seeded from), so a change to exactly that value is its
+ * own landing and is left alone. The write effect is also gated on the
+ * debounce having caught up with the box (`settled === text.trim()`), so after
+ * a re-seed the stale settled value cannot be written back over it, and a
+ * reader who retypes the old value inside the wait still gets it applied.
  *
  * ═══ A CURSOR BELONGS TO THE FILTER IT CAME FROM ═══
  *
@@ -96,26 +117,37 @@ const LINK =
 export default function HomeTests() {
   const compact = useIsCompact();
   const [params, setParams] = useSearchParams();
-  const urlQ = (params.get('q') ?? '').trim();
-  const [text, setText] = useState(urlQ);
-  const [q] = useDebouncedValue(text.trim(), HOME_FILTER_DEBOUNCE_MS);
+  const q = (params.get('q') ?? '').trim();
+  const [text, setText] = useState(q);
+  const [seen, setSeen] = useState(q);
+  const [written, setWritten] = useState(q);
+  if (q !== seen) {
+    // The address changed since the last render. If it is the value this
+    // component wrote, that is its own write landing (see the docstring); if it
+    // is anything else it is an outside change, and the box follows it.
+    setSeen(q);
+    if (q !== written) {
+      setWritten(q);
+      setText(q);
+    }
+  }
+  const [settled] = useDebouncedValue(text.trim(), HOME_FILTER_DEBOUNCE_MS);
 
-  // The address follows the settled filter. `urlQ` is a dependency so that an
-  // address that drifts from it is put back; when they already agree this
-  // returns before touching the router, which is also what keeps the first
-  // render from writing a navigation for a URL that was already right.
   useEffect(() => {
-    if (q === urlQ) return;
+    // Write only a value the reader has paused on (`settled` has caught up with
+    // the box) and only when it is news to the address.
+    if (settled !== text.trim() || settled === q) return;
+    setWritten(settled);
     setParams(
       (prev) => {
         const next = new URLSearchParams(prev);
-        if (q === '') next.delete('q');
-        else next.set('q', q);
+        if (settled === '') next.delete('q');
+        else next.set('q', settled);
         return next;
       },
       { replace: true },
     );
-  }, [q, urlQ, setParams]);
+  }, [settled, text, q, setParams]);
 
   const [paging, setPaging] = useState<{ readonly q: string; readonly cursors: readonly string[] }>({
     q,
@@ -133,6 +165,12 @@ export default function HomeTests() {
     queryFn: () => fetchOrgTests({ q, limit: HOME_TESTS_LIMIT, cursor }),
     placeholderData: keepPreviousData,
   });
+
+  const backToFirstPage = (
+    <Button size="sm" variant="primary" onClick={() => setPaging({ q, cursors: [] })}>
+      Back to the first page
+    </Button>
+  );
 
   let body: ReactNode;
   if (tests.isPending || (tests.isPlaceholderData && tests.data.items.length === 0)) {
@@ -153,6 +191,23 @@ export default function HomeTests() {
         title="The tests could not be loaded"
         detail={problem?.detail ?? tests.error.message}
         remediation={problem?.remediation}
+        // Past page one the filter is no way out: the same filter asks for the
+        // same cursor. The first page needs no cursor at all.
+        action={cursors.length > 0 ? backToFirstPage : undefined}
+      />
+    );
+  } else if (tests.data.items.length === 0 && cursors.length > 0) {
+    // CHECKED BEFORE THE FILTER'S WORDS. An empty page that is not the first is
+    // not "no tests": there are tests, and the list has moved under the reader
+    // (tests deleted between clicks, or a cursor the server can no longer
+    // resolve, which it answers with an empty page). "No tests yet" here would
+    // be false, and with the pager hidden it would be a dead end too. The
+    // words are `RunList`'s own for the same state.
+    body = (
+      <EmptyState
+        title="These tests are no longer here"
+        body="The list may have changed since you started paging."
+        action={backToFirstPage}
       />
     );
   } else if (tests.data.items.length === 0) {
