@@ -115,17 +115,38 @@ describe('GET /v1/activity', () => {
     expect(body.lastRun?.test).toEqual({ slug: 'checkout-smoke', name: 'checkout-smoke' });
   });
 
-  it('echoes the zone it was asked for, and counts days in it', async () => {
-    const before = dateIn('Asia/Kolkata');
+  it('echoes the zone it was asked for, as sent', async () => {
     const res = await asSession(`${PATH}?tz=Asia/Kolkata`);
-    const after = dateIn('Asia/Kolkata');
 
     expect(res.status).toBe(200);
-    const body = parse(res.body);
     // AS SENT: ICU would answer `Asia/Calcutta`, a zone the caller never named.
-    expect(body.window.tz).toBe('Asia/Kolkata');
-    // Both ends of the request, so a midnight crossed mid-test cannot flake it.
-    expect([before, after]).toContain(body.days[6]!.date);
+    expect(parse(res.body).window.tz).toBe('Asia/Kolkata');
+  });
+
+  /**
+   * TWO ZONES WHOSE DATES ALWAYS DIFFER. Kiritimati is UTC+14 and Pago Pago
+   * UTC-11, twenty-five hours apart with no daylight saving in either, so at
+   * every instant their local dates are a day or two apart — unlike Kolkata
+   * against UTC, which differ only from 18:30 to midnight UTC and left a case
+   * built on them able to fail for a quarter of the day. If `tz` did not reach
+   * the calendar, both answers would name the same today.
+   */
+  it('counts days in the zone it was asked for', async () => {
+    const zones = ['Pacific/Kiritimati', 'Pacific/Pago_Pago'] as const;
+    const todays: string[] = [];
+    for (const zone of zones) {
+      const before = dateIn(zone);
+      const res = await asSession(`${PATH}?tz=${encodeURIComponent(zone)}`);
+      const after = dateIn(zone);
+
+      expect(res.status).toBe(200);
+      const body = parse(res.body);
+      expect(body.window.tz).toBe(zone);
+      // Both ends of the request, so a midnight crossed mid-test cannot flake it.
+      expect([before, after], zone).toContain(body.days[6]!.date);
+      todays.push(body.days[6]!.date);
+    }
+    expect(todays[0]).not.toBe(todays[1]);
   });
 
   /**

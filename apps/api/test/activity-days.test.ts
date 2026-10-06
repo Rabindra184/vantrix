@@ -112,11 +112,18 @@ describe('glanceDays', () => {
   });
 
   it.each([
-    // Cuba springs forward at 00:00 on the second Sunday of March: 00:00 CST
-    // never happens, and 01:00 CDT (UTC-4) is 05:00Z.
-    ['America/Havana', '2027-03-14', '2027-03-14T05:00:00.000Z'],
-    // The Azores spring forward at 00:00 (UTC-1) to 01:00 (UTC+0), at 01:00Z.
-    ['Atlantic/Azores', '2027-03-28', '2027-03-28T01:00:00.000Z'],
+    // PAST transitions, not future ones: a rule a government has not yet
+    // applied is a prediction the next tzdata release is free to change, and
+    // a case pinned to one would turn red with no code change. Both were read
+    // off Node 22's ICU (tzdata 2025b): the millisecond before is 23:59 on the
+    // day before, and the instant below is 01:00.
+    //
+    // Cuba sprang forward at 00:00 on 2024-03-10: 00:00 CST never happened,
+    // and 01:00 CDT (UTC-4) is 05:00Z.
+    ['America/Havana', '2024-03-10', '2024-03-10T05:00:00.000Z'],
+    // The Azores sprang forward at 00:00 (UTC-1) to 01:00 (UTC+0) on
+    // 2024-03-31, at 01:00Z.
+    ['Atlantic/Azores', '2024-03-31', '2024-03-31T01:00:00.000Z'],
   ])('skips a midnight in %s on %s the same way, so the fix is not Chile’s alone', (zone, day, first) => {
     const { dates, boundaries } = glanceDays(zone, new Date(`${day}T20:00:00Z`));
 

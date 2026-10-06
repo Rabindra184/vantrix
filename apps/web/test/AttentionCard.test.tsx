@@ -206,21 +206,33 @@ describe('AttentionCard, filled', () => {
     expect(screen.queryByRole('link', { name: 'All runs' })).toBeNull();
   });
 
+  /**
+   * The ORDER is the same on both (list first, glance after), and only the
+   * desktop layout can put the glance BESIDE the list: its container-query
+   * row is there, and a phone has a single column with nothing conditional
+   * on its container. jsdom lays nothing out, so "beside" is the class that
+   * makes it — the same claim `Home.test.tsx` makes for the page's grid.
+   */
   it('puts the glance beside the table on a desktop and after it on a phone, in the same document order', () => {
     const order = () => {
       const table = document.querySelector('table, [data-testid="attention-cards"]')!;
       const glance = screen.getByRole('figure', { name: 'Runs per day' });
       return table.compareDocumentPosition(glance) & Node.DOCUMENT_POSITION_FOLLOWING;
     };
+    const layout = () => screen.getByTestId('attention-layout');
 
     mount(FILLED);
     expect(screen.getByRole('table')).toBeInTheDocument();
     expect(order()).toBeTruthy();
+    expect(layout().className).toMatch(/@2xl:flex-row/);
+    expect(layout()).toContainElement(screen.getByRole('figure', { name: 'Runs per day' }));
 
     cleanup();
     useIsCompactMock.mockReturnValue(true);
     mount(FILLED);
     expect(order()).toBeTruthy();
+    expect(layout().className).not.toMatch(/flex-row/);
+    expect(layout()).toContainElement(screen.getByRole('figure', { name: 'Runs per day' }));
   });
 
   it('is a list of cards on a phone, with every field the table row had', () => {

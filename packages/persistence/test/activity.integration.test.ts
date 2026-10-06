@@ -105,6 +105,9 @@ interface RunOpts {
   createdAt: Date;
   /** When the load test ran. Deliberately independent of `createdAt`. */
   toolStartedAt?: Date | null;
+  /** When the platform received the run; a minute before arrival unless a
+   *  case needs it elsewhere — after a LATER arrival, say. */
+  startedAt?: Date;
   status?: string;
   verdict?: string | null;
   runNumber?: number | null;
@@ -139,7 +142,7 @@ async function seedRun(opts: RunOpts): Promise<string> {
       // bookkeeping for the row; they are separate columns, and a fixture that
       // stamps both the same cannot tell a reader of one from a reader of the
       // other.
-      startedAt: new Date(opts.createdAt.getTime() - 60_000),
+      startedAt: opts.startedAt ?? new Date(opts.createdAt.getTime() - 60_000),
       startedOn: new Date(opts.createdAt.toISOString().slice(0, 10)),
       toolStartedAt: opts.toolStartedAt ?? null,
       durationMs: opts.durationMs ?? null,
@@ -230,9 +233,13 @@ describe('ActivityRepository.read', () => {
   it('lists a test only when its latest run in the window needs attention', async () => {
     const a = await newTest('test-a');
     const b = await newTest('test-b');
-    await failedRun({ testId: a.id, createdAt: ago(5 * HOUR) });
+    // Each test's OLDER arrival STARTED later — a bundle uploaded late for a
+    // load test run after the newer one — so "latest" read off the start
+    // instead of the arrival picks the other run of each and gets both wrong.
+    const startedLater = { startedAt: ago(1 * HOUR), toolStartedAt: ago(1 * HOUR) };
+    await failedRun({ testId: a.id, createdAt: ago(5 * HOUR), ...startedLater });
     await seedRun({ testId: a.id, createdAt: ago(2 * HOUR) });
-    await seedRun({ testId: b.id, createdAt: ago(5 * HOUR) });
+    await seedRun({ testId: b.id, createdAt: ago(5 * HOUR), ...startedLater });
     const bFailed = await failedRun({ testId: b.id, createdAt: ago(2 * HOUR) });
 
     const { attention, attentionTotal } = await repo.read(scope(), window);
@@ -287,7 +294,9 @@ describe('ActivityRepository.read', () => {
   });
 
   it('lists each failed upload with no test as its own row, and not an in-flight one', async () => {
-    const one = await failedRun({ createdAt: ago(3 * HOUR) });
+    // The older arrival STARTED later, so the newest-first order is pinned to
+    // arrival: sorted by start, `one` would come first.
+    const one = await failedRun({ createdAt: ago(3 * HOUR), startedAt: ago(1 * HOUR), toolStartedAt: ago(1 * HOUR) });
     const two = await failedRun({ createdAt: ago(2 * HOUR) });
     await seedRun({ createdAt: ago(1 * HOUR), status: 'pending', verdict: null });
 
@@ -303,9 +312,22 @@ describe('ActivityRepository.read', () => {
     const outside = await newTest('outside');
     const afterwards = await newTest('afterwards');
     // The first instant of the window is in it, and the millisecond before is
-    // not — whatever the 168 hours before now would have said about it.
-    const listed = await failedRun({ testId: inside.id, createdAt: boundaries[0]! });
-    await failedRun({ testId: outside.id, createdAt: new Date(boundaries[0]!.getTime() - 1) });
+    // not — whatever the 168 hours before now would have said about it. And
+    // it is ARRIVAL that is windowed: the run inside STARTED a day before the
+    // window, and the run outside started an hour ago, so a window on the
+    // start would have it the other way round.
+    const listed = await failedRun({
+      testId: inside.id,
+      createdAt: boundaries[0]!,
+      startedAt: new Date(boundaries[0]!.getTime() - DAY),
+      toolStartedAt: new Date(boundaries[0]!.getTime() - DAY),
+    });
+    await failedRun({
+      testId: outside.id,
+      createdAt: new Date(boundaries[0]!.getTime() - 1),
+      startedAt: ago(1 * HOUR),
+      toolStartedAt: ago(1 * HOUR),
+    });
     // The window ends at the instant the caller named, so a run that arrived
     // after it is not in it, however failed it is.
     await failedRun({ testId: afterwards.id, createdAt: new Date(now.getTime() + HOUR) });
@@ -433,7 +455,15 @@ describe('ActivityRepository.read', () => {
 
   it('answers lastRun by arrival with no window', async () => {
     const t = await newTest('old-test');
-    await seedRun({ testId: t.id, createdAt: ago(61 * DAY), runNumber: 1 });
+    // The older arrival STARTED later than the newest one (a late upload of a
+    // later load test), so "last" read off the start would name it instead.
+    await seedRun({
+      testId: t.id,
+      createdAt: ago(61 * DAY),
+      startedAt: ago(59 * DAY),
+      toolStartedAt: ago(59 * DAY),
+      runNumber: 1,
+    });
     const newest = await seedRun({
       testId: t.id,
       createdAt: ago(60 * DAY),

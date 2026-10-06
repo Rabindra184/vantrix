@@ -499,18 +499,37 @@ describe('HomeTests, the filter', () => {
     ]);
   });
 
+  /**
+   * "At once" is an ORDERING claim, so it is asserted as one: the request for
+   * the new filter is made while no timer has been allowed to fire. A wall
+   * clock (`performance.now()` against the debounce) measures the machine as
+   * much as the component, and passes a debounce shorter than the slowest
+   * render. `setTimeout` is faked, and only it, so React's and the router's
+   * own scheduling still run; the debounce cannot.
+   */
   it('follows a navigation to another filter at once: the box re-seeds and that filter is fetched', async () => {
     renderTests('/?q=chec');
     await screen.findAllByTestId('home-test-row');
 
-    const before = performance.now();
-    fireEvent.click(screen.getByRole('link', { name: 'Another filter' }));
-    await waitFor(() => expect(asked().at(-1)).toEqual({ q: 'other', cursor: null }));
-    // No debounce: nobody is typing, so there is nothing to wait for.
-    expect(performance.now() - before).toBeLessThan(HOME_FILTER_DEBOUNCE_MS);
-    expect((filterBox() as HTMLInputElement).value).toBe('other');
-    expect(where()).toBe('?q=other');
-    expect(screen.getByTestId('how')).toHaveTextContent('PUSH');
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      fireEvent.click(screen.getByRole('link', { name: 'Another filter' }));
+      // Flush promises and React's work — but no timer, so a debounced ask
+      // could not have happened yet.
+      for (let i = 0; i < 5; i += 1) {
+        await act(async () => {
+          await Promise.resolve();
+        });
+      }
+      expect(vi.getTimerCount(), 'the debounce is still waiting').toBeGreaterThan(0);
+      // No debounce: nobody is typing, so there is nothing to wait for.
+      expect(asked().at(-1)).toEqual({ q: 'other', cursor: null });
+      expect((filterBox() as HTMLInputElement).value).toBe('other');
+      expect(where()).toBe('?q=other');
+      expect(screen.getByTestId('how')).toHaveTextContent('PUSH');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('does not take the box back to what it last wrote when it is left alone afterwards', async () => {

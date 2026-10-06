@@ -143,7 +143,10 @@ function WithGlance({
 }) {
   return (
     <div className="@container">
-      <div className={`flex flex-col gap-6 ${compact ? '' : '@2xl:flex-row @2xl:items-start'}`}>
+      <div
+        data-testid="attention-layout"
+        className={`flex flex-col gap-6 ${compact ? '' : '@2xl:flex-row @2xl:items-start'}`}
+      >
         <div className="min-w-0 flex-1">{children}</div>
         <div className={compact ? '' : '@2xl:w-64 @2xl:shrink-0'}>
           <Glance days={days} />
