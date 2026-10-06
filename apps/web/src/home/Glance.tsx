@@ -37,6 +37,13 @@ type Day = ActivityResponse['days'][number];
  * `--chart-status-*` is not. `routes/marks.tsx` and `Badge` read the same
  * values, so a failed run is the same red here as on its own row.
  *
+ * THAT BENDS A SPLIT KNOWINGLY. Everywhere else the text palette is for words
+ * and the chart palette for marks (`palette.test.ts` records the split and
+ * this file as its one exception): a bar is a mark. It is taken here because
+ * the bars must clear 3:1 against the card as a non-text mark, the text
+ * palette is the one gated for contrast against the card, and nothing
+ * categorical is drawn beside the bars for a status colour to be mistaken for.
+ *
  * The column label is the weekday, day and month in the VIEWER'S locale and
  * formatted in UTC from noon of the API's date: the date is already the
  * viewer's local calendar day, so the label has to name that day and not

@@ -141,9 +141,10 @@ export function daysAgo(iso: string, now: Date): string {
 
 /**
  * What to call a row of the attention table: its test's name, else the
- * simulation the run recorded, else — for a bundle that never parsed a header
- * and so knows nothing about itself — `Upload` and the start of its id, which
- * is at least the same words for the same upload every time it is seen.
+ * simulation the run recorded (a run whose test was deleted still has one),
+ * else — for a bundle that never parsed a header and so knows nothing about
+ * itself — `Upload` and the start of its id, which is at least the same words
+ * for the same upload every time it is seen.
  */
 export function attentionRowLabel(row: ActivityResponse['attention'][number]): string {
   return row.test?.name ?? row.run.simulation ?? `Upload ${row.run.id.slice(0, 8)}`;

@@ -234,11 +234,13 @@ describe('Home — the heading', () => {
   it('states the activity window from the answer, with the same Intl call', async () => {
     renderHome();
     const a = activity();
+    // ONE range, so the year the two ends share is printed once ("Sep 30 –
+    // Oct 6, 2026"), not after each date. Compared as the exact string:
+    // `formatRange` puts THIN spaces around its dash, and `toHaveTextContent`
+    // normalises the element's whitespace and not the expectation's.
     const day = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
-    const expected = `Activity in the last 7 days (${day.format(new Date(a.window.from))} – ${day.format(
-      new Date(a.window.to),
-    )})`;
-    expect(await screen.findByTestId('home-activity-line')).toHaveTextContent(expected);
+    const expected = `Activity in the last 7 days (${day.formatRange(new Date(a.window.from), new Date(a.window.to))})`;
+    expect((await screen.findByTestId('home-activity-line')).textContent).toBe(expected);
   });
 
   it('names the document after the page', async () => {

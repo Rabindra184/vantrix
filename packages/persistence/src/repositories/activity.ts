@@ -70,8 +70,9 @@ export function needsAttentionSql(alias: string): string {
 }
 
 /** The tenant predicate every read here starts with: the org, and the project
- *  as well when the caller is a token. `first` is the placeholder number the
- *  org id takes; the project's, when there is one, follows it. */
+ *  as well when the caller is a token. The org id is always `$1` and the
+ *  project's, when there is one, `$2`; a caller appends its own parameters
+ *  after `params` and numbers them from `params.length`. */
 function tenantFilter(
   scope: TenantScope,
   alias: string,
@@ -171,7 +172,9 @@ export interface ActivityRunRow {
 }
 
 export interface ActivityAttentionRow {
-  /** Null for a run no test claims: an upload that never resolved one. */
+  /** Null for a run no test claims: an upload that never resolved one, or a
+   *  run whose test was deleted (deleting a test sets its runs' `test_id` to
+   *  NULL). */
   test: { slug: string; name: string } | null;
   project: { slug: string; name: string };
   run: ActivityRunRow;
@@ -317,7 +320,8 @@ export class ActivityRepository {
    * Tuesday and passed on Wednesday is not listed, and one whose only runs are
    * outside the window is not listed at all.
    *
-   * A run no test claims has no later run to supersede it, so each one is its
+   * A run no test claims — an upload that never resolved one, or a run whose
+   * test was deleted — has no later run to supersede it, so each one is its
    * own row: UNION ALL with every in-window run whose `test_id` is NULL. An
    * in-flight one is not an attention case (none of the four clauses holds for
    * a run that has not finished), so the same predicate drops it.

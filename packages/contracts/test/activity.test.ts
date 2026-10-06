@@ -204,8 +204,9 @@ describe('ActivityAttentionRowSchema', () => {
   });
 
   /**
-   * A run that never parsed a header cannot be grouped under a test, so it is
-   * its own row — the "stuck ingest" — and its simulation may be unknown too.
+   * A run no test claims — one that never parsed a header (the "stuck
+   * ingest"), or one whose test was deleted — cannot be grouped under a test,
+   * so it is its own row, and its simulation may be unknown too.
    */
   it('accepts a row with no test, no number, no duration, no checks and no simulation', () => {
     const stuck = {

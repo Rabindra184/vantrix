@@ -47,12 +47,18 @@ import { ALL_RUNS_ROUTE, projectPath } from './paths';
  *
  * ═══ THE LAST GOOD ANSWER STAYS ON SCREEN ═══
  *
- * Every card reads `data` before `error`. TanStack keeps the last successful
+ * Every card in THIS file — the attention card, Running now and Runs by
+ * project — reads `data` before `error`. TanStack keeps the last successful
  * answer across a failed refetch, so `isError` and `data` can both hold — the
  * ordinary shape of "loaded, then one poll failed" while something is
  * running. Swapping a good page for an error over one missed poll would throw
  * away what the reader can still act on, and the next poll is thirty seconds
  * away (the rail's projects follow the same rule).
+ *
+ * The tests table is the exception: it is `HomeTests`', it checks `isError`
+ * first, and its query does not poll — so what replaces its rows with the
+ * error is a failed refetch on window focus, or a failed page or filter the
+ * reader asked for, never a missed poll.
  */
 export default function Home() {
   useDocumentTitle('Home');
@@ -137,6 +143,11 @@ export default function Home() {
  * `Activity in the last 7 days (<from> – <to>)`, the attention window's own
  * bounds as dates in the VIEWER's zone.
  *
+ * ONE RANGE, NOT TWO DATES. Formatting each end on its own printed the year
+ * twice ("Sep 30, 2026 – Oct 6, 2026"); `formatRange` writes what the two ends
+ * share once, as Gatling Enterprise's heading does ("Sep 30 – Oct 6, 2026"),
+ * and still spells both years out on a range across New Year.
+ *
  * The formatter is built PER CALL, never at module scope: an
  * `Intl.DateTimeFormat` built at import freezes the zone it was built in
  * (CLAUDE.md, the time-window entry), and a test that pins a zone would then
@@ -145,9 +156,7 @@ export default function Home() {
 function activityLine(range: ActivityResponse['window']): string {
   // `range`, not `window`: a parameter of that name would shadow the global.
   const day = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
-  return `Activity in the last 7 days (${day.format(new Date(range.from))} – ${day.format(
-    new Date(range.to),
-  )})`;
+  return `Activity in the last 7 days (${day.formatRange(new Date(range.from), new Date(range.to))})`;
 }
 
 type Activity = UseQueryResult<ActivityResponse>;

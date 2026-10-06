@@ -35,7 +35,10 @@ test('a nested group page loads from a pasted URL', async ({ page }) => {
   await page.goto(`/runs/${runId}/groups/${encodeURIComponent(NESTED)}`);
 
   await expect(page.getByRole('heading', { level: 1 })).toHaveText(NESTED);
-  expect(new URL(page.url()).pathname).not.toBe('/runs');
+  // Where the URL said, %2F and all: a normalised one does not match
+  // `/groups/:name` and lands on the run route's not-found child with its
+  // longer path, which "not /runs" could never see.
+  expect(new URL(page.url()).pathname).toBe(`/runs/${runId}/groups/${encodeURIComponent(NESTED)}`);
 
   // §10-6 / §9 checkpoint 1: this page renders no run shell. Design §3a's own
   // routing assumption was verified by hand once and never pinned — without

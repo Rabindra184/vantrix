@@ -665,15 +665,15 @@ test('each tab of a LIVE run is its own URL, reachable directly', async ({ page 
  * The Load generators tab lived at `/telemetry` before it was
  * `/load-generators` (a Report section now, reached by a redirect). Before the
  * not-found route existed, any such URL matched nothing under `/runs/:runId`
- * and fell through to `App.tsx`'s global `<Route path="*">`,
- * which redirects to `/runs`. The reader was silently moved from the run they
- * had open to the top of the run list.
+ * and fell through to `App.tsx`'s global `<Route path="*">`, which redirects
+ * to `DEFAULT_ROUTE` — the run list then, the home page `/` now. The reader
+ * was silently moved from the run they had open to the top of another page.
  *
  * ONLY A BROWSER CAN SEE THIS. It is a claim about the real router resolving
  * a real URL — jsdom tests mount one component under a stand-in route table,
  * which is exactly the layer the bug lived above.
  */
-test('an unknown run section keeps the run on screen instead of redirecting to the list', async ({
+test('an unknown run section keeps the run on screen instead of redirecting away from it', async ({
   page,
 }) => {
   const admin = await seedAdmin();

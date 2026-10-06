@@ -156,8 +156,8 @@ function WithGlance({
   );
 }
 
-/** Where a row leads: its test, or — a run that never parsed a header has no
- *  test — the run itself. */
+/** Where a row leads: its test, or — a run with none (it never parsed a
+ *  header, or its test was deleted) — the run itself. */
 function RowLink({ row }: { readonly row: AttentionRow }) {
   const to =
     row.test === null ? runPath(row.run.id) : projectTestPath(row.project.slug, row.test.slug);

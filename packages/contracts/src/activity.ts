@@ -42,8 +42,10 @@ const ActivityDaySchema = z.object({
 
 /**
  * A test whose latest run in the window needs attention, or — when `test` is
- * null — a run that never parsed a header and so cannot be grouped under a
- * test (a stuck ingest). Each such run is its own row.
+ * null — a run no test claims, so it cannot be grouped under one: a run that
+ * never parsed a header (a stuck ingest), or a run whose test was DELETED
+ * (deleting a test sets its runs' `test_id` to NULL; the runs stay). Each
+ * such run is its own row.
  */
 export const ActivityAttentionRowSchema = z.object({
   test: NamedRefSchema.nullable(),

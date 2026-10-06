@@ -276,8 +276,9 @@ without re-deriving it.
 **The attention rule is Gatling Enterprise's:** per test, the latest run in
 the attention window; kept when it needs attention. A test that failed and
 then passed is not listed. A run with no test (a failed upload that never
-parsed a header) cannot be grouped, so each such run in the window is its own
-row; these are the "stuck ingests". Its Test cell reads the run's simulation
+parsed a header — a "stuck ingest" — or, since deleting a test sets its runs'
+`test_id` to NULL, a run whose test was deleted) cannot be grouped, so each
+such run in the window is its own row. Its Test cell reads the run's simulation
 when one was recorded, else "Upload" and the short id, linking to the run.
 
 **`successful`** is finished (`complete`) and not needing attention. Runs still
@@ -388,7 +389,11 @@ checkpoint commit, with the replacement count asserted.
     × checks combination;
   - a test that failed and then passed is not listed;
   - a failed upload with no test is listed;
-  - a run at 167 h is in the window and one at 169 h is not;
+  - a run at the window's first instant (the oldest glance day's first
+    instant) is in it and one a millisecond earlier is not, and a run that
+    arrived in the 168 hours before now but before that instant is in no
+    count and no row (the attention window was corrected at the final review;
+    see "Two windows");
   - `byProject` order and limit; another org's runs never counted;
   - `running` ignores the window.
 - Unit, page: all four attention states; each card failing alone; `/` is
