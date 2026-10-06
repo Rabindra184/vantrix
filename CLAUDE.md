@@ -146,6 +146,53 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The audit-proxy-addr-source-map-js branch (`fix/audit-proxy-addr-source-map-js`)
+added no test and moves no floor: unit stays **201 / 2757**, integration
+**182 / 2368** and **e2e 188**. Its diff is two `pnpm.overrides` lines and the
+lockfile they regenerate, which moves `proxy-addr` 2.0.7 to 2.0.8 and
+`source-map-js` 1.2.1 to 1.2.2 and nothing else.
+
+**THE AUDIT GATE MEASURED THE WORLD AGAIN, THE SAME DAY THE PALETTE PR WAS
+READY TO MERGE.** The command-palette PR's `build` failed on `pnpm audit
+--prod` after main had been merged into it. Its previous run had passed that
+step with the same dependency tree. Two advisories had been published in
+between: proxy-addr before 2.0.8 (GHSA-jqcg-44mw-7w3h, **critical**, IP
+spoofing through an IPv4-mapped IPv6 trust subnet, reached through
+`@nestjs/platform-express > express@5.2.1`) and source-map-js before 1.2.2
+(GHSA-68fv-2mgg-jv7q, high, an event-loop denial of service, reached through
+postcss, css-tree and the `better-auth > vitest` chain). The
+audit-multer-undici entry below records the first time. The fix is that
+entry's mechanism: overrides inside the majors already in use, never an
+`ignoreGhsas` entry while a patched release exists.
+
+**A CRITICAL IN THE GRAPH IS NOT A CRITICAL IN THIS CONFIGURATION, AND THAT
+CHANGES NOTHING ABOUT THE FIX.** proxy-addr's subnet matching runs only for
+the addresses `trust proxy` is set to trust. This API never enables `trust
+proxy`; `security-headers.ts` argues against it, because it grants far more
+than reading `x-forwarded-proto` for HSTS needs. So the advisory's code path
+is very likely unreachable here. That is argued from the configuration and
+was not measured. The gate fails all the same, and the override is right all
+the same: a deployment that someday sets `trust proxy` would inherit the
+defect silently.
+
+**AND THE SHA-PINNED CHECK READ IS WHAT KEPT IT OUT OF `main`.** The read took
+`headRefOid` on both sides of `gh pr checks`, and it reported `build: FAILURE`
+for the head that had just been pushed. Pairing a finished check list with
+whatever SHA happens to be current can return a green belonging to the
+previous commit. This read could not.
+
+**WHAT WAS RUN.** `pnpm audit --prod` "No known vulnerabilities found";
+`pnpm build`, `typecheck` and `lint` exit 0 by their own exit codes;
+`test:unit` **201 / 2757**, zero `Errors` lines; `test:integration`
+**182 / 2368, exit 0, zero failures**; `pnpm test:e2e --workers=2` **188 passed,
+exit 0** — against the scratch database
+`perfportal_palette`, a scratch Redis index (db 1) and e2e port 3700, each the
+prediction exactly, with integration started at a 1-minute load of 7.88. Every
+gate ran, not only the audit, because both packages run code a suite reaches:
+proxy-addr is on every request Express serves, and source-map-js sits under
+the postcss that builds the web bundle and the jsdom that every component
+test loads.
+
 The runs-repeated-query branch (`fix/runs-repeated-query`) added no unit FILE
 and no unit case — unit stays **201 / 2757** — and 11 cases to
 `apps/api/test/read.integration.test.ts`, from **182 / 2357 to 182 / 2368**.
