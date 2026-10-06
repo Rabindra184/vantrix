@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Param, Put, Query, Req, Res, UseGuards } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { problemFromIngestError } from '../common/problem.js';
-import { badRequest, parseCursor, parseLimit, uuidParam } from '../common/validation.js';
+import { badRequest, parseCursor, parseLimit, singleValue, uuidParam } from '../common/validation.js';
 import { IngestError, type IngestErrorCode } from '@perfportal/core';
 import {
   NOTE_MAX_LENGTH,
@@ -48,13 +48,21 @@ export class RunsController {
   async list(
     @Req() req: Request,
     @Query('limit') limit = '25',
-    @Query('cursor') cursor?: string,
-    @Query('project') project?: string,
-    @Query('test') test?: string,
-    @Query('q') q?: string,
-    @Query('status') status?: string,
-    @Query('verdict') verdict?: string,
+    @Query('cursor') cursorParam?: unknown,
+    @Query('project') projectParam?: unknown,
+    @Query('test') testParam?: unknown,
+    @Query('q') qParam?: unknown,
+    @Query('status') statusParam?: unknown,
+    @Query('verdict') verdictParam?: unknown,
   ): Promise<RunListResponse> {
+    // One string each, or a 400 before anything reads them: a repeated
+    // parameter arrives as an array (see `singleValue`).
+    const cursor = singleValue('cursor', cursorParam);
+    const project = singleValue('project', projectParam);
+    const test = singleValue('test', testParam);
+    const q = singleValue('q', qParam);
+    const status = singleValue('status', statusParam);
+    const verdict = singleValue('verdict', verdictParam);
     const tenant = req.tenant!;
     let projectId = tenant.projectId;
 
@@ -358,11 +366,16 @@ export class ProjectRunsController {
     @Param('slug') slug: string,
     @Req() req: Request,
     @Query('limit') limit = '25',
-    @Query('cursor') cursor?: string,
-    @Query('q') q?: string,
-    @Query('status') status?: string,
-    @Query('verdict') verdict?: string,
+    @Query('cursor') cursorParam?: unknown,
+    @Query('q') qParam?: unknown,
+    @Query('status') statusParam?: unknown,
+    @Query('verdict') verdictParam?: unknown,
   ): Promise<RunListResponse> {
+    // The same single-value rule as GET /v1/runs, for the same reason.
+    const cursor = singleValue('cursor', cursorParam);
+    const q = singleValue('q', qParam);
+    const status = singleValue('status', statusParam);
+    const verdict = singleValue('verdict', verdictParam);
     const tenant = req.tenant!;
     // A session names no project, but this route names one in its URL and
     // has no other tenancy check: RunRepository.list (below) drops the

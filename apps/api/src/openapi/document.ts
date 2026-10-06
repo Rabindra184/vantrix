@@ -598,7 +598,8 @@ const responses: Record<string, ResponseObject> = {
     description:
       'A path or query parameter was malformed (e.g. "id" or "cursor" is not a UUID), or ' +
       '(code RUN_FILTER_INVALID, on the run list routes) "status" or "verdict" named a value ' +
-      'outside its enum. application/problem+json with a required "remediation" that says ' +
+      'outside its enum, or (code INVALID_QUERY, on the run list routes) a parameter was given ' +
+      'more than once. application/problem+json with a required "remediation" that says ' +
       'what a valid value looks like.',
     content: problem(),
   },
@@ -606,6 +607,7 @@ const responses: Record<string, ResponseObject> = {
     description:
       'Either a query parameter was malformed (e.g. "cursor" is not a valid cursor), or (code ' +
       'RUN_FILTER_INVALID) "status" or "verdict" named a value outside its enum, or (code ' +
+      'INVALID_QUERY) a parameter was given more than once, or (code ' +
       'PROJECT_REQUIRED) the caller authenticated with a session, which names no project — ' +
       'only a project-scoped token can list a project\'s runs by slug. The remediation names ' +
       'GET /v1/runs as the session-reachable equivalent. application/problem+json with a ' +
