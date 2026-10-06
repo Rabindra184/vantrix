@@ -1,4 +1,4 @@
-import type { RunListResponse } from '@perfportal/contracts';
+import { needsAttention, type RunListResponse } from '@perfportal/contracts';
 import InfoTip from '../components/InfoTip';
 
 type RunListItem = RunListResponse['items'][number];
@@ -18,6 +18,10 @@ type RunListItem = RunListResponse['items'][number];
  * beside it means. WHAT EACH COUNT INCLUDES, that a run can sit in two, and
  * that the counts cover this page alone ride behind one ⓘ — the trigger's
  * accessible description too, so a screen reader hears them on focus.
+ *
+ * "Needs attention" is the contract's own rule (`needsAttention` in
+ * `@perfportal/contracts`), shared with the home page and the activity
+ * endpoint, so the three cannot disagree about which runs count.
  *
  * All four always draw, zeros included, so the line keeps its shape from page
  * to page. Each count is its own `<div>` with a derived testid: the number,
@@ -89,18 +93,6 @@ function tally(items: readonly RunListItem[]) {
       unjudged: next.unjudged + (run.verdict === null || run.verdict === 'not_evaluated' ? 1 : 0),
     }),
     { needsAttention: 0, inFlight: 0, passed: 0, unjudged: 0 },
-  );
-}
-
-function needsAttention(run: RunListItem): boolean {
-  return (
-    run.status === 'failed' ||
-    run.status === 'incomplete' ||
-    run.verdict === 'failed' ||
-    // A run whose platform verdict passed while its simulation's own
-    // assertion failed is exactly what "Needs attention: 0" once hid.
-    // `checks` is null for a run that reported none, which is not a failure.
-    (run.checks != null && run.checks.failed > 0)
   );
 }
 

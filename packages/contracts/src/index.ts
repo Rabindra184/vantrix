@@ -13,4 +13,6 @@ export * from './live-delta.js';
 export * from './runner.js';
 export * from './rules.js';
 export * from './test.js';
+export * from './attention.js';
+export * from './activity.js';
 export * from './package.js';
