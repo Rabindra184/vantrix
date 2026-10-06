@@ -9,7 +9,7 @@ import {
 import { TestRepository, type OrgTestRow } from '@perfportal/persistence';
 import type { Request } from 'express';
 import { Scopes } from '../auth/scopes.decorator.js';
-import { badRequest, parseLimit } from '../common/validation.js';
+import { parseLimit, singleValue } from '../common/validation.js';
 import { checkTally } from '../runs/check-tally.js';
 
 /**
@@ -74,24 +74,6 @@ export class OrgTestsController {
       nextCursor: page.nextCursor,
     });
   }
-}
-
-/**
- * A query parameter that must be one string. A repeated one (`q=a&q=b`) arrives
- * as an array, and `.trim()` on that is a TypeError — a 500 for a request the
- * caller can only have got wrong, which is the shape `?number=1&number=2` is
- * already refused for on the run list.
- */
-function singleValue(name: string, value: unknown): string | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value !== 'string') {
-    throw badRequest(
-      'INVALID_QUERY',
-      `"${name}" must be given once, as a single value.`,
-      `Send "${name}" at most once, for example ?${name}=checkout.`,
-    );
-  }
-  return value;
 }
 
 /**

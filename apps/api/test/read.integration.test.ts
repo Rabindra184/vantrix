@@ -830,3 +830,56 @@ describe('GET /v1/runs — the list clamps like every other surface', () => {
     expect(await p95Of(id)).toBe(1234.5);
   });
 });
+
+/**
+ * A REPEATED QUERY PARAMETER IS A 400, NEVER A 500.
+ *
+ * Express parses `?q=a&q=b` into an ARRAY, and both run lists used to read
+ * every filter as a string: `q.trim()` on an array is a TypeError, and a
+ * repeated `project` or `test` reached Prisma as an array. Both are a request
+ * the caller can only have got wrong, so each answers 400 `INVALID_QUERY`
+ * naming the parameter — the refusal `GET /v1/tests` gives the same mistake.
+ * `cursor` already answered 400, but as INVALID_CURSOR quoting `"a,b"`, which
+ * blames the value rather than the repetition; it is the same refusal now.
+ * `limit` is left alone on purpose: `parseLimit` coerces anything unreadable
+ * to the default page size, which is that parameter's documented rule.
+ */
+describe('a repeated query parameter', () => {
+  const refusesTwice = (res: request.Response, name: string) => {
+    expect(res.status, JSON.stringify(res.body)).toBe(400);
+    expect(res.body.code).toBe('INVALID_QUERY');
+    expect(res.body.detail).toContain(`"${name}"`);
+    expect(res.body.remediation).toContain(name);
+  };
+
+  it.each(['q', 'status', 'verdict', 'project', 'test', 'cursor'])(
+    'is refused on GET /v1/runs: %s',
+    async (name) => {
+      ctx = await createTestApp();
+      const res = await request(ctx.app.getHttpServer())
+        .get(`/v1/runs?${name}=a&${name}=b`)
+        .set(auth());
+      refusesTwice(res, name);
+    },
+  );
+
+  it.each(['q', 'status', 'verdict', 'cursor'])(
+    'is refused on GET /v1/projects/:slug/runs: %s',
+    async (name) => {
+      ctx = await createTestApp();
+      const res = await request(ctx.app.getHttpServer())
+        .get(`/v1/projects/checkout/runs?${name}=a&${name}=b`)
+        .set(auth());
+      refusesTwice(res, name);
+    },
+  );
+
+  it('still answers a single value of each, so the refusal is about the repetition', async () => {
+    ctx = await createTestApp();
+    const res = await request(ctx.app.getHttpServer())
+      .get('/v1/runs?q=checkout&status=complete&verdict=passed&project=checkout')
+      .set(auth());
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    RunListResponseSchema.parse(res.body);
+  });
+});

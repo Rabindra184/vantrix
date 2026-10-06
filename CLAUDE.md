@@ -267,7 +267,47 @@ Run 2; all six responses parse with `OrgTestListResponseSchema` /
 `RunListResponseSchema`; a read token for a different project never sees the
 test. Both runs share one p95, so a run is told apart by its id and number, not
 by that figure. The tokens were revoked and the processes stopped by PID.
-**PENDING, NOT RUN HERE:** the three-engine `e2e-cross-browser` dispatch.
+**THE THREE-ENGINE DISPATCH ON `cbafa10` (run 37373081910)** collected **576**
+(192 × chromium, firefox, webkit), passed 567, skipped 9 and failed none, with
+no flaky case; one `signIn` stall on `/login` was absorbed by the helper's own
+retry, the navigation stall this file already records.
+
+The runs-repeated-query branch (`fix/runs-repeated-query`) added no unit FILE
+and no unit case — unit stays **201 / 2757** — and 11 cases to
+`apps/api/test/read.integration.test.ts`, from **182 / 2357 to 182 / 2368**.
+**e2e stays 188.**
+
+**`?q=a&q=b` ON `GET /v1/runs` ANSWERED 500.** Express parses a repeated query
+parameter into an ARRAY (and `?q[x]=1` into an object), while
+`@Query('q') q?: string` types it as a string regardless — so the run list
+called `.trim()` on an array, a TypeError, and `ProblemFilter` reported it as
+the server's fault, with "Retry the request" as the remediation. **A decorator's
+type annotation is a claim about the wire, and nothing checks it.**
+`singleValue(name, value)` in `common/validation.ts` takes `unknown` and
+answers **400 `INVALID_QUERY`** naming the parameter; both run lists route
+every filter through it (`cursor`, `project`, `test`, `q`, `status`,
+`verdict` org-wide; `cursor`, `q`, `status`, `verdict` per project). A
+repeated `cursor` used to reach `parseCursor` and come back
+`INVALID_CURSOR` quoting `"a,b"` — a value nobody sent. `limit` is left to
+`parseLimit`, which reads anything it cannot use as the default page size by
+design.
+
+**RED-VERIFIED, EACH MUTATION ON ITS OWN CASES:** the org list's `q` read raw
+again fails the org `q` case alone; the project list's `status` read raw fails
+its `status` case alone; `singleValue` never refusing fails all ten repeat
+cases and leaves the single-value control green.
+
+**AND THE COMMAND-PALETTE BRANCH CARRIED A PRIVATE COPY.** Its
+`org-tests.controller.ts` defined a local `singleValue` for `GET /v1/tests`,
+byte-for-byte this one. It merged second, so it imports this one now, and its
+`number=` on the same handler is typed `unknown` beside the other six
+(`parseRunNumber` already refused a non-string).
+
+**WHAT WAS RUN.** `typecheck` and `lint` exit 0 by their own exit codes;
+`test:unit` **201 / 2757**, zero `Errors` lines; `test:integration`
+**182 / 2368, exit 0, zero failures**; `pnpm test:e2e` **188 passed, exit 0** —
+each the predicted total, against a SCRATCH DATABASE and a scratch Redis index
+on e2e port 3800.
 
 The PR 4 minors branch (`fix/clean-ui-pr4-minors`) added no unit FILE and 4
 cases (2 to `NewRunnerRun.test.tsx`, 1 each to `RunnerStatusLine.test.tsx` and
