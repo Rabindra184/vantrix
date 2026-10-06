@@ -4,10 +4,11 @@ import { apiFetch } from './fetch';
 /**
  * ═══ THE HOME PAGE'S ONE QUESTION (docs/superpowers/specs/2026-10-05-portfolio-home-and-command-palette-design.md) ═══
  *
- * `GET /v1/activity` answers everything the page draws — the seven-day glance,
- * the pass rate, what is running, the busiest projects, the tests that need
- * attention and the last run — so the page asks once, and `AuthGate` asks the
- * very same question on a cold load to learn whether the signed-in user has an
+ * `GET /v1/activity` answers everything the page draws above its tests table
+ * (which is `GET /v1/tests`'s) — the window, the seven-day glance, the pass
+ * rate, what is running, the busiest projects, the tests that need attention
+ * and the last run — so the page asks once, and `AuthGate` asks the very same
+ * question on a cold load to learn whether the signed-in user has an
  * organisation at all. Both read it under this key, which is what lets the
  * landing page render from the probe's own result instead of asking again.
  *

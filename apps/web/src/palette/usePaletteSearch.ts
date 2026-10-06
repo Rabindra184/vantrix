@@ -44,8 +44,8 @@ export interface PaletteGroups {
   /**
    * The empty state's destinations. Empty the moment anything is typed — the
    * RAW input, not the debounced one: a row on screen is a row Enter can
-   * choose, and "All runs" is not what a reader who has typed `checkout` and
-   * pressed Enter inside the pause is asking for.
+   * choose, and "Home" — the first, highlighted row — is not what a reader who
+   * has typed `checkout` and pressed Enter inside the pause is asking for.
    */
   readonly goTo: readonly Destination[];
   readonly projects: GroupState<ProjectRef>;

@@ -141,6 +141,42 @@ describe('ProjectRail', () => {
     expect(screen.queryByRole('link', { name: /new project/i })).toBeNull();
   });
 
+  /**
+   * ═══ HOME IS THE RAIL'S FIRST ROW, AND IT IS CURRENT ON `/` ALONE ═══
+   *
+   * `/` is a prefix of every path in the app, and a Home row current on every
+   * page would claim the reader is home wherever they are. These cases pin the
+   * BEHAVIOUR, not a mechanism: the row carries `end`, but React Router
+   * 7.18.2 never prefix-matches a `to` of `/` anyway (measured — removing
+   * `end` leaves this file green; see the rail's comment), so whichever of the
+   * two is doing the work, "not current on `/runs`" is what fails if neither
+   * is. And the two org-wide rows are two DIFFERENT places now: `/` is the
+   * portfolio and `/runs` the run list, where until the home page existed the
+   * rail's one org-wide row went to whichever the default route happened to be.
+   */
+  it('leads with a Home row, then All runs, each going where its name says', async () => {
+    renderRail(PROJECTS);
+    const home = await screen.findByRole('link', { name: 'Home' });
+    const allRuns = screen.getByRole('link', { name: 'All runs' });
+    expect(home).toHaveAttribute('href', '/');
+    expect(allRuns).toHaveAttribute('href', '/runs');
+    const links = screen.getAllByRole('link');
+    expect(links[0]).toBe(home);
+    expect(links[1]).toBe(allRuns);
+  });
+
+  it('marks Home, and not All runs, as current on /', async () => {
+    renderRail(PROJECTS, { route: '/' });
+    expect(await screen.findByRole('link', { name: 'Home' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('link', { name: 'All runs' })).not.toHaveAttribute('aria-current');
+  });
+
+  it('does not mark Home as current anywhere else', async () => {
+    renderRail(PROJECTS, { route: '/runs' });
+    expect(await screen.findByRole('link', { name: 'All runs' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('link', { name: 'Home' })).not.toHaveAttribute('aria-current');
+  });
+
   it('marks All runs as the current page on /runs', async () => {
     renderRail(PROJECTS, { route: '/runs' });
     expect(await screen.findByRole('link', { name: 'All runs' })).toHaveAttribute(
@@ -155,6 +191,7 @@ describe('ProjectRail', () => {
     expect(checkout).toHaveAttribute('aria-current', 'page');
     // `end` on the All runs NavLink is what makes this true.
     expect(screen.getByRole('link', { name: 'All runs' })).not.toHaveAttribute('aria-current');
+    expect(screen.getByRole('link', { name: 'Home' })).not.toHaveAttribute('aria-current');
   });
 
   /**
@@ -190,6 +227,7 @@ describe('ProjectRail', () => {
     // /runs as a prefix match for /runs/:runId, and the rail would claim the
     // reader is on the org-wide list while they are reading one run.
     expect(screen.getByRole('link', { name: 'All runs' })).not.toHaveAttribute('aria-current');
+    expect(screen.getByRole('link', { name: 'Home' })).not.toHaveAttribute('aria-current');
   });
 
   it('says so when the projects cannot be loaded, and keeps All runs', async () => {
@@ -329,7 +367,10 @@ describe('ProjectRail collapse', () => {
     for (const { name } of PROJECTS) {
       expect(screen.getByRole('link', { name: new RegExp(name) }).textContent).toBe(name);
     }
-    expect(screen.getByRole('link', { name: 'All runs' })).toBeInTheDocument();
+    // The two org-wide rows too: an icon (empty textContent) and their label,
+    // nothing else, in both states.
+    expect(screen.getByRole('link', { name: 'Home' }).textContent).toBe('Home');
+    expect(screen.getByRole('link', { name: 'All runs' }).textContent).toBe('All runs');
   });
 
   it('remembers the choice across a remount', async () => {

@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   ALL_RUNS_ROUTE,
+  HOME_ROUTE,
   NEW_PROJECT_ROUTE,
   projectAccessPath,
   projectNewRunnerRunPath,
@@ -61,15 +62,19 @@ describe('currentProjectSlug', () => {
 });
 
 describe('goToDestinations', () => {
-  it('offers All runs and New project when no project is current', () => {
+  /* Home LEADS: it is a destination like the rest, the rail's first row, and
+     the commonest trip from anywhere in the app — so it is also the row the
+     palette highlights before anything is typed. */
+  it('offers Home, All runs and New project when no project is current', () => {
     const ds = goToDestinations(null);
-    expect(labels(ds)).toEqual(['All runs', 'New project']);
-    expect(ds.map((d) => d.to)).toEqual([ALL_RUNS_ROUTE, NEW_PROJECT_ROUTE]);
+    expect(labels(ds)).toEqual(['Home', 'All runs', 'New project']);
+    expect(ds.map((d) => d.to)).toEqual([HOME_ROUTE, ALL_RUNS_ROUTE, NEW_PROJECT_ROUTE]);
   });
 
   it('adds the current project’s seven pages after them', () => {
     const ds = goToDestinations(checkout);
     expect(labels(ds)).toEqual([
+      'Home',
       'All runs',
       'New project',
       'Tests · Checkout',
@@ -80,8 +85,8 @@ describe('goToDestinations', () => {
       'API tokens · Checkout',
       'New on-prem run · Checkout',
     ]);
-    expect(ds[4]?.to).toBe(projectPackagesPath('checkout'));
-    expect(ds[6]?.to).toBe(projectRulesPath('checkout'));
+    expect(ds[5]?.to).toBe(projectPackagesPath('checkout'));
+    expect(ds[7]?.to).toBe(projectRulesPath('checkout'));
   });
 
   it('gives every destination its own stable id', () => {
@@ -90,7 +95,7 @@ describe('goToDestinations', () => {
     expect(goToDestinations(checkout).map((d) => d.id)).toEqual(ids);
     // Two projects must not share an id either: cmdk keys items on it.
     const other = goToDestinations(billing).map((d) => d.id);
-    expect(ids.filter((id) => other.includes(id))).toEqual(['go:all-runs', 'go:new-project']);
+    expect(ids.filter((id) => other.includes(id))).toEqual(['go:home', 'go:all-runs', 'go:new-project']);
   });
 });
 

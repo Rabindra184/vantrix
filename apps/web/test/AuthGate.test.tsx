@@ -1,9 +1,12 @@
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { ActivityResponseSchema } from '@perfportal/contracts';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import AuthGate from '../src/AuthGate';
+import { activityQueryKey, browserTimeZone } from '../src/api/activity';
+import { NO_ORG_ROUTE } from '../src/routes/paths';
 
 afterEach(cleanup);
 
@@ -17,25 +20,45 @@ afterEach(cleanup);
  * Driven through `fetch` rather than by exporting the two inner components:
  * they are internal on purpose, and a test that reached past `AuthGate` to
  * render them directly would stop proving that the GATE ever chooses them.
+ *
+ * Every request is RECORDED, and anything that is neither the session nor the
+ * membership probe answers 404: the probe moved from the run list's first page
+ * to `GET /v1/activity`, and a stub that answered every non-session URL alike
+ * would go on passing whichever endpoint the gate asked.
  */
-function renderGate({ session, runs }: { session: () => unknown; runs?: () => unknown }) {
-  vi.stubGlobal('fetch', (input: RequestInfo) =>
-    String(input).includes('/auth/get-session')
-      ? (session() as Promise<Response>)
-      : ((runs?.() ?? new Promise<Response>(() => {})) as Promise<Response>),
-  );
+let requests: URL[] = [];
+
+function renderGate({ session, probe }: { session: () => unknown; probe?: () => unknown }) {
+  requests = [];
+  vi.stubGlobal('fetch', (input: RequestInfo | URL) => {
+    const url = new URL(String(input), 'http://localhost');
+    requests.push(url);
+    if (url.pathname === '/auth/get-session') return session() as Promise<Response>;
+    if (url.pathname === '/v1/activity') {
+      return (probe?.() ?? new Promise<Response>(() => {})) as Promise<Response>;
+    }
+    return Promise.resolve(
+      new Response(JSON.stringify({ code: 'NOT_FOUND', detail: 'No such route.', remediation: 'None.' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/problem+json' },
+      }),
+    );
+  });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
+  const view = render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={['/runs']}>
         <Routes>
           <Route element={<AuthGate />}>
             <Route path="/runs" element={<p>page content stand-in</p>} />
           </Route>
+          <Route path={NO_ORG_ROUTE} element={<p>no organisation stand-in</p>} />
+          <Route path="/login" element={<p>login stand-in</p>} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
   );
+  return { ...view, client };
 }
 
 /** Never settles, so the gate stays on whichever step is waiting for it. */
@@ -55,23 +78,48 @@ const signedIn = () =>
     }),
   );
 
+/** A problem document, as the API's perimeter sends every refusal. */
+const problem = (status: number, body: { code: string; detail: string; remediation: string }) => () =>
+  Promise.resolve(
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { 'Content-Type': 'application/problem+json' },
+    }),
+  );
+
 /**
- * The outage page's detail and remediation come from the RUNS probe, not the
- * session: a session failure carries only a JS error message, because reading
- * Better Auth's error shape is the login form's job (`AuthGate`'s own
+ * The outage page's detail and remediation come from the MEMBERSHIP probe, not
+ * the session: a session failure carries only a JS error message, because
+ * reading Better Auth's error shape is the login form's job (`AuthGate`'s own
  * comment). Getting that backwards is what the first draft of this file did.
  */
-const runsOutage = () =>
-  Promise.resolve(
-    new Response(
-      JSON.stringify({
-        code: 'INTERNAL',
-        detail: 'The API did not answer.',
-        remediation: 'Check that the worker and database are running.',
-      }),
-      { status: 500, headers: { 'Content-Type': 'application/problem+json' } },
-    ),
-  );
+const probeOutage = problem(500, {
+  code: 'INTERNAL',
+  detail: 'The API did not answer.',
+  remediation: 'Check that the worker and database are running.',
+});
+
+function json(body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+/** A real activity answer, through the real schema, so the gate's success path parses. */
+const ACTIVITY = ActivityResponseSchema.parse({
+  window: { from: '2026-09-29T12:00:00.000Z', to: '2026-10-06T12:00:00.000Z', tz: 'UTC' },
+  days: ['2026-09-30', '2026-10-01', '2026-10-02', '2026-10-03', '2026-10-04', '2026-10-05', '2026-10-06'].map(
+    (date) => ({ date, total: 0, successful: 0, needsAttention: 0 }),
+  ),
+  runCount: 0,
+  passRate: null,
+  running: 0,
+  byProject: [],
+  attention: [],
+  attentionTotal: 0,
+  lastRun: null,
+});
 
 describe('AuthGate — the cold start', () => {
   /**
@@ -102,7 +150,7 @@ describe('AuthGate — the outage page', () => {
    * same element.
    */
   it('keeps the main landmark, with the alert inside it rather than over it', async () => {
-    renderGate({ session: signedIn, runs: runsOutage });
+    renderGate({ session: signedIn, probe: probeOutage });
     // AWAITED ON THE ALERT, NOT ON `main`: `Bootstrapping` renders a `<main>`
     // too, so waiting for the landmark resolves on the page BEFORE this one and
     // the alert has not been drawn yet. Same shape as the skeleton locator that
@@ -119,7 +167,7 @@ describe('AuthGate — the outage page', () => {
    * of the page, and it stops being a heading a reader can navigate to.
    */
   it('leaves the page title outside the live region', async () => {
-    renderGate({ session: signedIn, runs: runsOutage });
+    renderGate({ session: signedIn, probe: probeOutage });
     const heading = await screen.findByRole('heading', { level: 1 });
     expect(heading).toHaveTextContent('PerfPortal is not answering');
     expect(screen.getByRole('alert')).not.toContainElement(heading);
@@ -132,7 +180,7 @@ describe('AuthGate — the outage page', () => {
    * tell the reader nothing.
    */
   it('announces the server’s own detail and remediation, and only those', async () => {
-    renderGate({ session: signedIn, runs: runsOutage });
+    renderGate({ session: signedIn, probe: probeOutage });
     const alert = await screen.findByRole('alert');
     expect(within(alert).getByText('The API did not answer.')).toBeInTheDocument();
     expect(
@@ -150,3 +198,121 @@ describe('AuthGate — the outage page', () => {
     expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument();
   });
 });
+
+describe('AuthGate — the membership probe', () => {
+  /**
+   * The probe is the home page's own question, asked under the home page's own
+   * query key, so the landing page renders from the gate's answer rather than
+   * asking again. Its URL is the claim: a gate that went on asking the run
+   * list would still pass every case below that only reads what was rendered.
+   */
+  it('asks GET /v1/activity, and nothing else beyond the session', async () => {
+    renderGate({ session: signedIn, probe: never });
+    await screen.findByRole('status');
+    await waitFor(() => expect(requests.some((u) => u.pathname === '/v1/activity')).toBe(true));
+    const probes = requests.filter((u) => u.pathname !== '/auth/get-session');
+    expect(probes.map((u) => `${u.pathname}${u.search}`).every((p) => p.startsWith('/v1/activity'))).toBe(
+      true,
+    );
+  });
+
+  /**
+   * Authenticated, but a member of no organisation: the API's perimeter
+   * answers 403 before any route runs, and the gate sends the reader to the
+   * page that explains it — never to /login, which would loop.
+   */
+  it('sends a user with no organisation to the no-org page on a 403', async () => {
+    renderGate({
+      session: signedIn,
+      probe: problem(403, {
+        code: 'FORBIDDEN',
+        detail: 'This user belongs to no organisation.',
+        remediation: 'Ask an administrator to add you to one.',
+      }),
+    });
+    expect(await screen.findByText('no organisation stand-in')).toBeInTheDocument();
+    expect(screen.queryByText('page content stand-in')).toBeNull();
+  });
+
+  /**
+   * ═══ A 400 IS THE GATE PASSED, NOT AN OUTAGE ═══
+   *
+   * The run-list probe could not answer 400; the activity probe can —
+   * `INVALID_TIMEZONE`, when this browser's zone is one the server's ICU
+   * rejects. A 400 comes from a ROUTE, and a route runs only after the auth
+   * middleware has accepted the session and its membership (a 401 or 403 is
+   * the middleware's, before any route). So the reader is in: the app renders,
+   * and the home page's attention card — reading the same query — shows the
+   * refusal in its own error state. Treated as an outage it would lock every
+   * reader in that zone out of the whole product over one card.
+   */
+  it('renders the app on a 400, not the not-answering page', async () => {
+    renderGate({
+      session: signedIn,
+      probe: problem(400, {
+        code: 'INVALID_TIMEZONE',
+        detail: 'The time zone "Mars/Olympus" is not one this server knows.',
+        remediation: 'Send an IANA zone such as Europe/London.',
+      }),
+    });
+    expect(await screen.findByText('page content stand-in')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'PerfPortal is not answering' })).toBeNull();
+  });
+
+  /**
+   * ═══ ONCE THE GATE HAS PASSED, ONLY THE PERIMETER CAN TAKE IT BACK ═══
+   *
+   * The probe is now the HOME PAGE's query, and the home page polls it every
+   * thirty seconds while something is running; the run-list probe it replaced
+   * was asked once. So a later read of it failing is ordinary — one missed
+   * poll, a dropped connection — and it must not swap whatever page the reader
+   * is on for "PerfPortal is not answering": the session and the membership
+   * were settled by the read that succeeded, and nothing about a 502 unsettles
+   * them. The home page keeps its last good answer on screen meanwhile.
+   *
+   * A 401 or a 403 on a later read DOES still act — the session expired, or
+   * the user was removed from the organisation — because those are answers to
+   * the gate's own two questions.
+   */
+  it('keeps the app on screen when a later read of the probe fails', async () => {
+    let calls = 0;
+    const { client } = renderGate({
+      session: signedIn,
+      probe: () => {
+        calls += 1;
+        return calls === 1 ? Promise.resolve(json(ACTIVITY)) : probeOutage();
+      },
+    });
+    expect(await screen.findByText('page content stand-in')).toBeInTheDocument();
+
+    await client.refetchQueries({ queryKey: ['activity'] });
+    await waitFor(() => expect(calls).toBe(2));
+    // The refetch really did fail (the paired fact), and the page stayed.
+    await waitFor(() =>
+      expect(client.getQueryCache().find({ queryKey: activityQueryKey(browserTimeZone()) })?.state.status).toBe('error'),
+    );
+    expect(screen.getByText('page content stand-in')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'PerfPortal is not answering' })).toBeNull();
+  });
+
+  it('still sends the reader to the no-org page when a later read answers 403', async () => {
+    let calls = 0;
+    const { client } = renderGate({
+      session: signedIn,
+      probe: () => {
+        calls += 1;
+        return calls === 1
+          ? Promise.resolve(json(ACTIVITY))
+          : problem(403, {
+              code: 'FORBIDDEN',
+              detail: 'This user belongs to no organisation.',
+              remediation: 'Ask an administrator to add you to one.',
+            })();
+      },
+    });
+    expect(await screen.findByText('page content stand-in')).toBeInTheDocument();
+    await client.refetchQueries({ queryKey: ['activity'] });
+    expect(await screen.findByText('no organisation stand-in')).toBeInTheDocument();
+  });
+});
+

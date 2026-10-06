@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { AlertMark } from './components/States';
 import { ActivityIcon } from './components/icons';
 import { ProblemError } from './api/fetch';
-import { fetchRuns, runsQueryKey } from './api/runs';
+import { activityQueryKey, browserTimeZone, fetchActivity } from './api/activity';
 import { getSession, sessionQueryKey } from './api/session';
 import { NO_ORG_ROUTE, loginPathFor } from './routes/paths';
 
@@ -15,21 +15,40 @@ import { NO_ORG_ROUTE, loginPathFor } from './routes/paths';
  * It takes TWO questions to decide, not one:
  *
  *   1. `/auth/get-session` — is there a session at all?
- *   2. `GET /v1/runs` — does that session's user belong to an organisation?
+ *   2. `GET /v1/activity` — does that session's user belong to an organisation?
  *
  * The second is not redundant. A user with no `org_member` row has a
  * completely valid Better Auth session, so `getSession()` reports a happy,
  * signed-in user and nothing else in that response distinguishes them. The
  * 403 comes from the API's own perimeter (apps/api/src/auth/auth.middleware.ts),
- * which is the only component that knows about membership.
+ * which is the only component that knows about membership — so ANY `/v1` read
+ * would do as the probe, and the choice of which is a choice about caching.
  *
  * The branch is on the numeric `status`, never on the `code` string: status
  * is the contract (spec §7), while a code is a label the API is free to make
  * more specific later.
  *
- * The probe is issued under the run list's own query key via its own
- * fetcher, so Task 6's list renders from this cached result rather than
- * repeating the request.
+ * ═══ THE PROBE IS THE HOME PAGE'S OWN QUESTION ═══
+ *
+ * It was the run list's first page, back when `/` redirected to the run list
+ * and that list was the landing page. The landing page is the portfolio home
+ * now, so the probe asks what Home asks — under Home's own query key, with
+ * Home's own fetcher — and the page renders from this result on first paint
+ * rather than asking again behind a second loading state. The run list, in
+ * turn, now asks for its own first page, so a cold load of `/runs` draws its
+ * skeleton where it used to arrive already filled.
+ *
+ * ═══ AND A 400 MEANS THE GATE PASSED ═══
+ *
+ * The run-list probe could not answer 400. This one can: `INVALID_TIMEZONE`,
+ * when the browser reports a zone the server's ICU does not know. A 400 is the
+ * HANDLER's answer (`apps/api/src/activity/days.ts`), and a handler runs only
+ * after the perimeter has accepted the session AND its membership — a 401 or
+ * 403 is the perimeter's own, sent before any handler — so a 400 settles
+ * exactly the two questions this gate asks. The app renders, and the home
+ * page's attention card, reading the same query, shows the refusal in its own
+ * error state. Treating it as an outage would lock every reader in that zone
+ * out of the whole product over one card.
  */
 export default function AuthGate() {
   const location = useLocation();
@@ -40,15 +59,17 @@ export default function AuthGate() {
   const intended = `${location.pathname}${location.search}${location.hash}`;
 
   const session = useQuery({ queryKey: sessionQueryKey, queryFn: getSession });
-  const runs = useQuery({
-    // `runsQueryKey()` with no cursor is the run list's FIRST page, by
-    // construction (`['runs', null, null]`) — so this probe's result is what
-    // RunList renders on first paint rather than a second loading state.
-    // Wrapped in an arrow, not passed as `queryFn: fetchRuns`: TanStack
-    // hands the query function a QueryFunctionContext, which `fetchRuns`
-    // would now read as its `cursor`.
-    queryKey: runsQueryKey(),
-    queryFn: () => fetchRuns(),
+  // Computed per render rather than once at import: it is cheap, and a module
+  // that read the zone at import would freeze it there (CLAUDE.md records the
+  // same trap for a module-scope `Intl.DateTimeFormat`). Home computes it the
+  // same way, so the two name one query.
+  const tz = browserTimeZone();
+  const membership = useQuery({
+    queryKey: activityQueryKey(tz),
+    // Wrapped in an arrow rather than passed as `queryFn: fetchActivity`:
+    // TanStack hands the query function a QueryFunctionContext, which
+    // `fetchActivity` would read as its zone.
+    queryFn: () => fetchActivity(tz),
     // Never probe without a session: an unauthenticated probe would answer
     // 401 and land in the same place, having paid a request to learn what
     // step 1 already knew.
@@ -69,10 +90,10 @@ export default function AuthGate() {
 
   if (session.data === null) return <Navigate to={loginPathFor(intended)} replace />;
 
-  if (runs.isPending) return <Bootstrapping />;
+  if (membership.isPending) return <Bootstrapping />;
 
-  if (runs.isError) {
-    const error = runs.error;
+  if (membership.isError) {
+    const error = membership.error;
     if (error instanceof ProblemError) {
       // The session expired between the two calls — rare, but the only way
       // to reach a 401 here.
@@ -81,6 +102,23 @@ export default function AuthGate() {
       // /login: that is the infinite loop this whole branch exists to
       // prevent (design §5.1).
       if (error.status === 403) return <Navigate to={NO_ORG_ROUTE} replace />;
+      // The gate PASSED: a handler refused the question, which only happens
+      // once the session and the membership are both accepted. See this
+      // component's docstring; the home page reports the refusal itself.
+      if (error.status === 400) return <Outlet />;
+    }
+    // ═══ ONCE PASSED, ONLY THE PERIMETER CAN TAKE IT BACK ═══
+    //
+    // A LATER read failing — the home page polls this query every thirty
+    // seconds while something is running, and any page refetches it on window
+    // focus — is not an outage of the session or the membership: the read
+    // that succeeded already settled both, and only a 401 or a 403 above
+    // answers either question again. TanStack keeps that successful answer
+    // across the failed refetch, so `data` is how the gate knows it passed.
+    // Swapping the reader's page for "PerfPortal is not answering" over one
+    // missed poll would be the outage page lying in the other direction.
+    if (membership.data !== undefined) return <Outlet />;
+    if (error instanceof ProblemError) {
       // Anything else is the API failing, and a failing API must never
       // present itself as "please sign in". Surface what the server said,
       // including the remediation it is required to send, and stay put.

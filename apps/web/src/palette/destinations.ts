@@ -1,6 +1,7 @@
 import { matchPath } from 'react-router-dom';
 import {
   ALL_RUNS_ROUTE,
+  HOME_ROUTE,
   NEW_PROJECT_ROUTE,
   projectAccessPath,
   projectNewRunnerRunPath,
@@ -138,7 +139,13 @@ export function projectPages(project: ProjectRef): Destination[] {
   return pageDestinations(project).map((p) => p.destination);
 }
 
+/**
+ * Home LEADS. It is a destination like the others — the rail's first row, and
+ * the palette is "find and go" — and the first row is the one the palette
+ * highlights before anything is typed (`CommandPalette.test.tsx` pins that).
+ */
 const ALWAYS: readonly Destination[] = [
+  { id: 'go:home', label: 'Home', to: HOME_ROUTE },
   { id: 'go:all-runs', label: 'All runs', to: ALL_RUNS_ROUTE },
   { id: 'go:new-project', label: 'New project', to: NEW_PROJECT_ROUTE },
 ];
@@ -146,9 +153,9 @@ const ALWAYS: readonly Destination[] = [
 /**
  * The palette's opening state: nothing typed, so nothing searched.
  *
- * All runs and New project are always there. The project's own pages follow
- * when the reader is inside one — "go to this project's rules" is the commonest
- * trip from a project page and costs no typing.
+ * Home, All runs and New project are always there. The project's own pages
+ * follow when the reader is inside one — "go to this project's rules" is the
+ * commonest trip from a project page and costs no typing.
  */
 export function goToDestinations(current: ProjectRef | null): Destination[] {
   return current === null ? [...ALWAYS] : [...ALWAYS, ...projectPages(current)];

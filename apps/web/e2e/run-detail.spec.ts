@@ -407,6 +407,15 @@ test('another org run is not readable', async ({ page }) => {
   await expect(page.getByTestId('problem-remediation')).not.toBeEmpty();
   // And none of the run itself leaks through the error.
   await expect(page.getByTestId('run-duration')).toHaveCount(0);
+  // The way out goes to the RUN LIST, which is what its words say. It read the
+  // default route, which was the run list until the home page took `/`; a link
+  // that means "all runs" reads `ALL_RUNS_ROUTE` and never the default.
+  // `exact`, because Playwright's name match is a case-insensitive substring:
+  // the claim is about this one link, not about any whose name contains it.
+  await expect(page.getByRole('link', { name: 'Back to all runs', exact: true })).toHaveAttribute(
+    'href',
+    '/runs',
+  );
 });
 
 test('each tab is its own URL, reachable directly', async ({ page }) => {

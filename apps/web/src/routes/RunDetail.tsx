@@ -7,7 +7,7 @@ import { ChevronLeftIcon } from '../components/icons';
 import { ProblemError } from '../api/fetch';
 import { useLiveRun } from '../api/live';
 import { POLL_CAP_MS, pollIntervalFor } from '../api/run';
-import { DEFAULT_ROUTE } from './paths';
+import { ALL_RUNS_ROUTE } from './paths';
 import { useRunTerminal } from './useRunWindow';
 import RunShell from './RunShell';
 import useIsCompact from '../useIsCompact';
@@ -218,10 +218,13 @@ function NotARun() {
  * `onClick` that navigates. It is a destination, so it must middle-click into
  * a new tab and show its target in the status bar, which only a real anchor
  * does (see `Button`'s docstring on why there is no `asChild` escape hatch).
+ *
+ * To `ALL_RUNS_ROUTE`, because that is what "all runs" means — never the
+ * default route, which was the same place until the home page took `/`.
  */
 function BackToRuns() {
   return (
-    <Link to={DEFAULT_ROUTE} className={`${linkButtonClasses} mt-1`}>
+    <Link to={ALL_RUNS_ROUTE} className={`${linkButtonClasses} mt-1`}>
       <ChevronLeftIcon className="h-3.5 w-3.5" />
       Back to all runs
     </Link>
