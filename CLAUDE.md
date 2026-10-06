@@ -263,6 +263,13 @@ migrated first) and a scratch Redis INDEX (db 3). e2e was not run: the diff
 changes no rendered string (`format.ts`'s output is identical, measured
 above) and no spec.
 
+**AND CI MEASURED ALL THREE CLEAN** on the same tree (`c4d8a37`, run
+37410937337), read off the `build` job's own log: `test:unit` **207 / 2878**
+(2877 passed, 1 skipped), `test:integration` **188 / 2514** (2513 passed, 1
+skipped, zero failures) and `pnpm test:e2e` **192 passed** — the guard
+running in both vitest configs, 11 cases each. So the blobs timeout above was
+this container's MinIO and nothing else.
+
 **THE BRANCH IS `rb/quirky-hawking-p7plzk`**, the cloud session's designated
 branch, cut at `origin/main` with `git log --oneline origin/main..HEAD`
 empty; "eslint-spread-rule-inert" is this entry's name for it.
