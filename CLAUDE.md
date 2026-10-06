@@ -128,7 +128,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **207 files / 2878 tests**, it
+`nvm use` first, and if a run reports fewer than **207 files / 2880 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -145,6 +145,72 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The palette-placeholder-after-clear branch added no unit FILE and 2 cases to
+`apps/web/test/CommandPalette.test.tsx`, from **206 / 2867 to 206 / 2869**.
+Integration stays **187 / 2503** (that config collects `.test.ts` files only,
+and none of them imports the palette) and **e2e stays 192**.
+On Linux the unit run reads `2868 passed | 1 skipped (2869)`: the skip is
+`loopback.test.ts`' macOS-only case, and the floor is the total.
+
+**THE CLEARED-BOX GUARD COVERED ONE QUERY AFTER THE CLEAR, NOT ALL OF THEM.**
+`usePaletteSearch` withheld `keepPreviousData` when the text asked JUST
+BEFORE was empty. TanStack's placeholder is the last query its observer HAD
+data for, not the last one asked — so `smo` (answers), clear, `sea` (held),
+then `sear` before `sea` answered: the text before `sear` is `sea`, the guard
+let the placeholder through, and the last answer the observer had was still
+`smo`'s. Enter was safe (a placeholder row is `loading`, so a queued Enter
+waits); the rows on screen were not. **A rule about the PREVIOUS TEXT cannot
+govern a placeholder chosen by the observer's LAST DATA**; they agree only on
+the first query after a clear, which is the one case the original test drove.
+
+`placeholderData` is now a function that keeps the previous data only when
+that data's own query HASH is among the keys asked since the debounced text
+was last `''`. Keys, not texts: run-by-number's key holds the text before the
+`#N`, so a record of texts would let `checkout` (asked after a clear) vouch
+for a `checkout #7` lookup made before it. One `searchKeys` helper feeds both
+the three `useQuery` calls and that record, so the two cannot drift.
+
+**RED-VERIFIED FROM THE CHECKPOINT COMMIT**, each replacement count asserted,
+restored from HEAD after each:
+
+```
+  the guard ignored (plain keepPreviousData)  both new cases + the one-query cleared case
+  a clear never resets the record             the same three
+  Tests alone on keepPreviousData             the two-queries case + the one-query case
+  Runs alone on keepPreviousData              the two-queries case ALONE, at its Runs line
+  Run-by-number alone on keepPreviousData     the run-by-number case ALONE
+  no placeholder at all                       four narrowing cases (`smo` -> `smok`
+                                              among them); every cleared case passes
+  guard ignored AND checkpoints deleted       both new cases, on the MutationObserver
+                                              list alone ("Checkout smoke…", "Run 7…")
+```
+
+The last row is why the cases carry a `MutationObserver`: a checkpoint
+`queryByRole` sees one moment, and "never drawn" is a claim about all of them.
+
+**WHAT WAS RUN.** `pnpm build`, `typecheck` and `lint` exit 0 by their own
+exit codes; `test:unit` **206 / 2869**, zero `Errors` lines; the two new
+cases failed on the code before the fix, for the reason they name. Integration
+was not run: nothing it collects imports the palette. **e2e WAS reachable**
+(`command-palette.spec.ts` drives the real palette) **and was not run
+locally**: in the cloud container `dockerd` starts by hand and
+`mirror.gcr.io` serves Postgres and Redis past Docker Hub's 429, but no
+MinIO image or binary was reachable, and the e2e fixtures ingest through S3.
+CI's `build` job is the arbiter for that suite, **and it measured all three on
+`e82e056`** (run 37406566341), read off the job's own log: unit
+`206 passed (206)` / `2868 passed | 1 skipped (2869)`, integration
+`187 passed (187)` / `2502 passed | 1 skipped (2503)`, and e2e
+`Running 192 tests` → `192 passed`, the four `command-palette.spec.ts` cases
+among them. Each is the prediction exactly.
+
+**RE-COUNTED AFTER MERGING `main`**, where the eslint-spread-rule-inert branch
+had landed underneath it (one unit file, eleven cases, all `.ts`): the merged
+tree's floors are that branch's plus this one's two `.tsx` cases — unit
+**207 / 2880**, integration **188 / 2514** (the two cases are `.tsx`, which
+that config never collects) and **e2e 192**. That is arithmetic; CI's `build`
+job on the merge commit is what measures it. The conflict was `CLAUDE.md`
+alone, resolved by keeping both entries.
 
 The eslint-spread-rule-inert branch added ONE unit file —
 `packages/core/test/lint-rules-compose.test.ts` (11) — from **206 / 2867 to

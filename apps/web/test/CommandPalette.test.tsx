@@ -922,3 +922,151 @@ describe('CommandPalette — an Enter before the answer', () => {
     expect(await screen.findByRole('option', { name: /Search smoke/ })).toBeInTheDocument();
   });
 });
+
+/*
+ * ═══ NO ROW FROM BEFORE A CLEAR, HOWEVER MANY QUERIES LATER ═══
+ *
+ * TanStack's `keepPreviousData` hands a query the last answer its observer
+ * HAD, not the answer to the text asked just before. So withholding the
+ * placeholder from the first query after a clear is not enough: type `sea`
+ * and then `sear` before `sea` answers, and the last answer the observer had
+ * is still `smo`'s, from before the clear. These cases hold every post-clear
+ * answer so that is exactly the state `sear` is asked in.
+ */
+describe('CommandPalette — a cleared box stays cleared', () => {
+  /**
+   * Every option drawn from now until `stop()` whose text matches `name`.
+   *
+   * A checkpoint `queryByRole` sees only the moment it runs; a stale row drawn
+   * and replaced between two checkpoints passes it. A MutationObserver is
+   * handed every node React inserts — including one already removed by the
+   * time anything is asserted, which still carries its text.
+   */
+  function watchForOption(name: RegExp): { stop(): string[] } {
+    const seen: string[] = [];
+    const scan = (node: Node) => {
+      const el = node instanceof Element ? node : node.parentElement;
+      if (el === null) return;
+      const enclosing = el.closest('[role="option"]');
+      const options = [...(enclosing ? [enclosing] : []), ...el.querySelectorAll('[role="option"]')];
+      for (const o of options) {
+        const text = o.textContent ?? '';
+        if (name.test(text)) seen.push(text);
+      }
+    };
+    const record = (records: MutationRecord[]) => {
+      for (const r of records) {
+        r.addedNodes.forEach(scan);
+        if (r.type === 'characterData') scan(r.target);
+      }
+    };
+    const observer = new MutationObserver(record);
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    return {
+      stop() {
+        record(observer.takeRecords());
+        observer.disconnect();
+        return seen;
+      },
+    };
+  }
+
+  it('shows no row from a query cleared two queries ago', async () => {
+    const held = { sea: deferred(), sear: deferred() };
+    const heldRuns = { sea: deferred(), sear: deferred() };
+    const isHeld = (q: string | null): q is keyof typeof held => q === 'sea' || q === 'sear';
+    stubApi({
+      tests: (url) => {
+        const q = url.searchParams.get('q');
+        return isHeld(q) ? held[q].promise : json(tests([SMOKE]));
+      },
+      runs: (url) => {
+        const q = url.searchParams.get('q');
+        return isHeld(q) ? heldRuns[q].promise : json(runs([RUN_7]));
+      },
+    });
+    renderPalette();
+    const user = userEvent.setup();
+    const asked = (pathname: string) => requestsTo(pathname).map((u) => u.searchParams.get('q'));
+
+    // `smo` answers in BOTH server groups: a test row and a run row.
+    await enter(user, 'smo');
+    await screen.findByRole('option', { name: /^Checkout smoke/ });
+    await screen.findByRole('option', { name: /^Run 7/ });
+
+    await user.clear(input());
+    await screen.findByRole('group', { name: 'Go to' });
+    expect(screen.queryByRole('option', { name: /Checkout smoke/ })).not.toBeInTheDocument();
+    const watch = watchForOption(/Checkout smoke/);
+
+    // `sea` is asked and held. The placeholder is withheld from it — the first
+    // query after the clear, which the guard before this one already covered.
+    await enter(user, 'sea');
+    await waitFor(() => expect(asked('/v1/tests')).toContain('sea'));
+    await waitFor(() => expect(asked('/v1/runs')).toContain('sea'));
+
+    // `sear` before `sea` has answered. The text asked just before it is `sea`,
+    // not empty — but the last answer either group HAD is still `smo`'s.
+    await enter(user, 'r');
+    await waitFor(() => expect(asked('/v1/tests')).toContain('sear'));
+    await waitFor(() => expect(asked('/v1/runs')).toContain('sear'));
+    await act(async () => {});
+    expect(screen.queryByRole('group', { name: 'Tests' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'Runs' })).not.toBeInTheDocument();
+
+    // The abandoned `sea` answers late, then `sear` itself.
+    held.sea.resolve(json(tests([SOAK])));
+    heldRuns.sea.resolve(json(runs([])));
+    await act(async () => {});
+    held.sear.resolve(json(tests([SEARCH_SMOKE])));
+    heldRuns.sear.resolve(json(runs([])));
+    expect(await screen.findByRole('option', { name: /^Search smoke/ })).toBeInTheDocument();
+
+    // Not one `smo` row — test or run — was drawn at any point after the clear.
+    expect(watch.stop()).toEqual([]);
+  });
+
+  it('shows no run-by-number row from a lookup cleared two queries ago', async () => {
+    const heldNumbers = new Map([
+      ['1', deferred()],
+      ['12', deferred()],
+    ]);
+    stubApi({
+      tests: (url) =>
+        url.searchParams.get('q') === 'checkout' ? json(tests([SMOKE])) : json(tests([])),
+      runs: (url) => {
+        const n = url.searchParams.get('number');
+        if (n === null) return json(runs([]));
+        return heldNumbers.get(n)?.promise ?? json(runs([RUN_7]));
+      },
+    });
+    renderPalette();
+    const user = userEvent.setup();
+    const asked = () => numberLookups().map((u) => u.searchParams.get('number'));
+
+    await enter(user, 'checkout #7');
+    const group = await screen.findByRole('group', { name: 'Run by number' });
+    expect(optionNames(group)).toEqual(['Run 7 · Checkout smoke · Checkout']);
+
+    await user.clear(input());
+    await screen.findByRole('group', { name: 'Go to' });
+    expect(screen.queryByRole('option', { name: /^Run 7/ })).not.toBeInTheDocument();
+    const watch = watchForOption(/^Run 7/);
+
+    await enter(user, 'checkout #1');
+    await waitFor(() => expect(asked()).toContain('1'));
+    // `checkout #12` before run 1's lookup has answered.
+    await enter(user, '2');
+    await waitFor(() => expect(asked()).toContain('12'));
+    await act(async () => {});
+    expect(screen.queryByRole('group', { name: 'Run by number' })).not.toBeInTheDocument();
+
+    heldNumbers.get('1')?.resolve(json(runs([])));
+    await act(async () => {});
+    heldNumbers.get('12')?.resolve(json(runs([RUN_12])));
+    const answered = await screen.findByRole('group', { name: 'Run by number' });
+    expect(optionNames(answered)).toEqual(['Run 12 · Checkout smoke · Checkout']);
+
+    expect(watch.stop()).toEqual([]);
+  });
+});
