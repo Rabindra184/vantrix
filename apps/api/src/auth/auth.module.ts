@@ -2,6 +2,7 @@ import { Global, Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { PrismaClient } from '@prisma/client';
 import {
+  ActivityRepository,
   createPool,
   createPrisma,
   OrgMemberRepository,
@@ -32,6 +33,7 @@ export const CONFIG = Symbol('CONFIG');
     { provide: RunRepository, useFactory: (p: PrismaClient) => new RunRepository(p), inject: [PrismaClient] },
     { provide: RuleRepository, useFactory: (p: PrismaClient) => new RuleRepository(p), inject: [PrismaClient] },
     { provide: TestRepository, useFactory: (p: PrismaClient) => new TestRepository(p), inject: [PrismaClient] },
+    { provide: ActivityRepository, useFactory: (p: PrismaClient) => new ActivityRepository(p), inject: [PrismaClient] },
     AuthGuard,
     AuthMiddleware,
     // Global so @Scopes() is enforced everywhere by default — a handler
@@ -40,6 +42,6 @@ export const CONFIG = Symbol('CONFIG');
     // AuthGuard provider above, not a second one.
     { provide: APP_GUARD, useExisting: AuthGuard },
   ],
-  exports: [CONFIG, PrismaClient, pg.Pool, TokenRepository, OrgMemberRepository, ProjectRepository, RunnerRepository, RunRepository, RuleRepository, TestRepository, AuthGuard, AuthMiddleware],
+  exports: [CONFIG, PrismaClient, pg.Pool, TokenRepository, OrgMemberRepository, ProjectRepository, RunnerRepository, RunRepository, RuleRepository, TestRepository, ActivityRepository, AuthGuard, AuthMiddleware],
 })
 export class AuthModule {}

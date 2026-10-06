@@ -1,8 +1,10 @@
 import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { mkdtempSync, mkdirSync, readFileSync, copyFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ActivityResponseSchema } from '@perfportal/contracts';
 import { hashToken, mintToken } from '@perfportal/core';
 import { OrgMemberRepository } from '@perfportal/persistence';
 import { Queue } from 'bullmq';
@@ -562,6 +564,92 @@ describe('cross-org isolation on every session-reachable endpoint', () => {
     // A search that matches both orgs' tests still answers only the caller's.
     expect(await slugs(ours, '?q=smoke')).toEqual(['ours-smoke']);
     expect(await slugs(theirs, '?q=smoke')).toEqual(['theirs-smoke']);
+  });
+
+  /**
+   * `GET /v1/activity` is the home page's one request and names no run, so the
+   * id-shaped loop above cannot cover it either: a session sees its WHOLE org
+   * through it, and "its whole org and nothing more" is the property. It
+   * answers five questions and a leak in any one of them is a different
+   * disclosure, so the case reads all five — the attention list, the runs per
+   * project, the last run, the running count and the day counts — in two orgs
+   * that each have one failing, test-owned run and one run in flight. The
+   * two-sided toEqual is what makes it discriminating: an answer that leaked
+   * fails on the extra slug and one that answered nothing on the missing one.
+   */
+  it('shows each org’s session its own activity at GET /v1/activity, and never the other’s', async () => {
+    ctx = await createTestApp();
+    const otherOrg = await ctx.prisma.org.create({ data: { slug: 'other-org-activity', name: 'Other' } });
+    const otherProject = await ctx.prisma.project.create({
+      data: { orgId: otherOrg.id, slug: 'other-project', name: 'Other Project' },
+    });
+    const seedActivity = async (orgId: string, projectId: string, slug: string) => {
+      const test = await ctx.prisma.test.create({
+        data: { orgId, projectId, slug, name: slug, simulationClass: `com.acme.${slug}` },
+      });
+      const failed = new Date(Date.now() - 2 * 3_600_000);
+      for (const [testId, status, createdAt] of [
+        [test.id, 'failed', failed],
+        [null, 'running', new Date(Date.now() - 3_600_000)],
+      ] as const) {
+        const id = randomUUID();
+        await ctx.prisma.run.create({
+          data: {
+            id,
+            orgId,
+            projectId,
+            testId,
+            status,
+            verdict: null,
+            tool: 'gatling',
+            bundleKey: `runs/${projectId}/${id}.tgz`,
+            bundleSha256: 'a'.repeat(64),
+            bundleBytes: BigInt(1),
+            createdAt,
+            startedAt: createdAt,
+            startedOn: new Date(createdAt.toISOString().slice(0, 10)),
+            engineOptions: {},
+          },
+        });
+      }
+    };
+    await seedActivity(ctx.orgId, ctx.projectId, 'ours-smoke');
+    await seedActivity(otherOrg.id, otherProject.id, 'theirs-smoke');
+
+    const ours = await signUpAsOrgMember(ctx, 'activity-ours@example.test');
+    const member = await signUp(ctx.app, 'activity-theirs@example.test');
+    await ctx.app.get(OrgMemberRepository).add(member.userId, otherOrg.id, 'member');
+    const theirs = member.cookie;
+
+    const seen = async (cookie: string) => {
+      const res = await request(ctx.app.getHttpServer())
+        .get('/v1/activity')
+        .set('Cookie', cookie)
+        .expect(200);
+      const body = ActivityResponseSchema.parse(res.body);
+      return {
+        attention: body.attention.map((a) => a.test?.slug),
+        projects: body.byProject.map((p) => p.project.slug),
+        lastRunProject: body.lastRun?.project.slug,
+        running: body.running,
+        runCount: body.runCount,
+      };
+    };
+
+    expect(await seen(ours)).toEqual({
+      attention: ['ours-smoke'],
+      projects: ['checkout'],
+      lastRunProject: 'checkout',
+      running: 1,
+      runCount: 2,
+    });
+    expect(await seen(theirs)).toEqual({
+      attention: ['theirs-smoke'],
+      projects: ['other-project'],
+      lastRunProject: 'other-project',
+      running: 1,
+      runCount: 2,
+    });
   });
 });
 
