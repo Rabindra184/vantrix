@@ -104,15 +104,21 @@ OrgTestListResponse = { items: OrgTestSummary[], nextCursor: string | null }
 ```
 
 - **"Latest run"** is ARRIVAL order, `created_at DESC, id DESC`: the order
-  the project catalogue already uses and run numbers follow, so the latest run
-  is always the test's highest-numbered one. It is read per test with a
+  the project catalogue already uses. It is read per test with a
   `LATERAL … LIMIT 1` over the existing `run_test_id_created_at_idx`.
+  - **It is USUALLY the test's highest-numbered run, not always** (corrected
+    while planning PR 2; this bullet first said "always"). A run is numbered
+    when it JOINS its test — an upload when the worker finalizes it, a live
+    run when its log header arrives — so two overlapping ingests of one test
+    can be numbered in the other order from the one they arrived in. Arrival
+    stays the rule: PR 1 shipped it, and the home page's windows are about
+    what arrived. `OrgTestLatestRun`'s docstring and the `listTests` OpenAPI
+    text already say this.
   - **This is not the run list's order, and the spec first said it was.**
     `RunRepository.list` sorts by when the test RAN,
     `COALESCE(tool_started_at, started_at) DESC, id DESC`. The two differ only
     for a bundle uploaded after a newer one: it is the latest run here and sits
-    lower in the run list. Run numbering is arrival order, so arrival is the
-    honest meaning of "latest" for a test.
+    lower in the run list.
   - `TestSummary.latestRun`'s docstring claims the run list's ordering; the
     code never used it. The docstring is corrected in PR 1.
 - **`p95Ms` and `p95History`** are the run-scope response-time p95 the run
@@ -206,10 +212,12 @@ response echoes the zone used. A zone `Intl` rejects is 400
 `INVALID_TIMEZONE`, with a remediation giving `Europe/London` as an example.
 
 **Two windows, both copied from Gatling Enterprise, both on `run.created_at`**
-(arrival: the order "latest run" and run numbers follow, served by the existing
-`(status, created_at)` and `(test_id, created_at)` indexes. The run list itself
-sorts by when the test ran, so a late upload counts here on the day it
-arrived):
+(arrival: the order "latest run" follows. The per-test reads use the existing
+`(test_id, created_at)` index and `running` the `(status, created_at)` one; the
+org-wide day counts get a new `(org_id, created_at)` index, because nothing
+served an org-wide arrival range and `AuthGate` asks this endpoint on every
+cold load (corrected while planning PR 2). The run list itself sorts by when
+the test ran, so a late upload counts here on the day it arrived):
 
 - **Attention window:** the last 168 hours before now.
 - **Glance days:** the 7 calendar days ending today in `tz`. Node computes the
