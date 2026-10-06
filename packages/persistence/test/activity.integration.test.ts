@@ -233,8 +233,10 @@ describe('ActivityRepository.read', () => {
   it('lists a test only when its latest run in the window needs attention', async () => {
     const a = await newTest('test-a');
     const b = await newTest('test-b');
-    // Each test's OLDER arrival STARTED later — a bundle uploaded late for a
-    // load test run after the newer one — so "latest" read off the start
+    // Start and arrival disagree on ORDER here: each test's older arrival is
+    // given the later start. (In life the same disagreement comes the other
+    // way round — the NEWER arrival is a late upload of an EARLIER load test —
+    // but either way only the order matters.) So "latest" read off the start
     // instead of the arrival picks the other run of each and gets both wrong.
     const startedLater = { startedAt: ago(1 * HOUR), toolStartedAt: ago(1 * HOUR) };
     await failedRun({ testId: a.id, createdAt: ago(5 * HOUR), ...startedLater });
@@ -455,8 +457,10 @@ describe('ActivityRepository.read', () => {
 
   it('answers lastRun by arrival with no window', async () => {
     const t = await newTest('old-test');
-    // The older arrival STARTED later than the newest one (a late upload of a
-    // later load test), so "last" read off the start would name it instead.
+    // Start and arrival disagree on order: the older arrival is given the later
+    // start (in life, the newer arrival would be a late upload of an earlier
+    // load test — only the order matters), so "last" read off the start would
+    // name it instead.
     await seedRun({
       testId: t.id,
       createdAt: ago(61 * DAY),

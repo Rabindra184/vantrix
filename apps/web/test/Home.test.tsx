@@ -227,9 +227,10 @@ describe('Home — the heading', () => {
   });
 
   /**
-   * The dates are the attention window's own, in the VIEWER's zone — formatted
-   * by the very `Intl` call the page makes, so this case is right in Kolkata
-   * and in UTC alike, and fails the day the page formats them some other way.
+   * The dates are the attention window's own, in the zone the answer names
+   * (`window.tz`) — formatted by the very `Intl` call the page makes, so this
+   * case is right on any runner, and fails the day the page formats them some
+   * other way.
    */
   it('states the activity window from the answer, with the same Intl call', async () => {
     renderHome();
@@ -238,9 +239,31 @@ describe('Home — the heading', () => {
     // Oct 6, 2026"), not after each date. Compared as the exact string:
     // `formatRange` puts THIN spaces around its dash, and `toHaveTextContent`
     // normalises the element's whitespace and not the expectation's.
-    const day = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
+    const day = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeZone: a.window.tz });
     const expected = `Activity in the last 7 days (${day.formatRange(new Date(a.window.from), new Date(a.window.to))})`;
     expect((await screen.findByTestId('home-activity-line')).textContent).toBe(expected);
+  });
+
+  /**
+   * After a refused zone the server answers in UTC while the viewer is
+   * elsewhere, so the heading has to follow the ANSWER's zone or it names a
+   * range a day off the glance under it. Kiritimati (UTC+14) is far enough
+   * from both UTC and this runner's own zone that the two readings differ for
+   * this window — asserted first, so the case cannot pass vacuously.
+   */
+  it('prints the window in the zone the server answered in, not the viewer’s', async () => {
+    const window = {
+      from: '2026-09-30T10:00:00.000Z', // midnight 1 Oct in Kiritimati
+      to: '2026-10-06T12:00:00.000Z', //   02:00 7 Oct in Kiritimati
+      tz: 'Pacific/Kiritimati',
+    };
+    renderHome({ activity: () => json(activity({ window })) });
+    const range = (f: Intl.DateTimeFormat) =>
+      `Activity in the last 7 days (${f.formatRange(new Date(window.from), new Date(window.to))})`;
+    const inAnswerZone = range(new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeZone: window.tz }));
+    const inViewerZone = range(new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }));
+    expect(inAnswerZone).not.toBe(inViewerZone);
+    expect((await screen.findByTestId('home-activity-line')).textContent).toBe(inAnswerZone);
   });
 
   it('names the document after the page', async () => {

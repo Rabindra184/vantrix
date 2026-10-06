@@ -141,7 +141,14 @@ export default function Home() {
 
 /**
  * `Activity in the last 7 days (<from> – <to>)`, the attention window's own
- * bounds as dates in the VIEWER's zone.
+ * bounds as dates in the zone the SERVER ANSWERED IN (`window.tz`).
+ *
+ * Not the viewer's default zone: the two are the same except when the server
+ * refused the browser's zone and `fetchActivity` asked again in UTC. Then the
+ * window's bounds are UTC midnights, the glance's columns are UTC dates, and a
+ * heading printed in the viewer's own zone would name a range a day off the
+ * seven columns under it. A zone this browser cannot format either falls back
+ * to its default rather than throwing.
  *
  * ONE RANGE, NOT TWO DATES. Formatting each end on its own printed the year
  * twice ("Sep 30, 2026 – Oct 6, 2026"); `formatRange` writes what the two ends
@@ -155,8 +162,16 @@ export default function Home() {
  */
 function activityLine(range: ActivityResponse['window']): string {
   // `range`, not `window`: a parameter of that name would shadow the global.
-  const day = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
+  const day = dayFormat(range.tz);
   return `Activity in the last 7 days (${day.formatRange(new Date(range.from), new Date(range.to))})`;
+}
+
+function dayFormat(tz: string): Intl.DateTimeFormat {
+  try {
+    return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeZone: tz });
+  } catch {
+    return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
+  }
 }
 
 type Activity = UseQueryResult<ActivityResponse>;
