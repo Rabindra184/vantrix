@@ -50,8 +50,8 @@ test('the project rail stays usable at twenty projects', async ({ page }) => {
 
   // Every project is present — the rail caps nothing.
   const rows = rail.getByRole('link');
-  // 20 seeded + seedAdmin's own 'checkout' + the "All runs" row.
-  await expect(rows).toHaveCount(22);
+  // 20 seeded + seedAdmin's own 'checkout' + the "Home" and "All runs" rows.
+  await expect(rows).toHaveCount(23);
 
   /* IT SCROLLS WITHIN ITSELF. `lg:overflow-y-auto` is what makes a
      twenty-first project reachable instead of clipped, and it is the one thing

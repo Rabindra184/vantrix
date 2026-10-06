@@ -52,6 +52,8 @@ test('lists the org runs in a real table', async ({ page }) => {
   await seedRunsAt(admin.orgId, seeded);
 
   await signIn(page, admin);
+  // Sign-in lands on Home; the run list is its own page.
+  await page.goto('/runs');
   await expect(page.getByRole('table')).toBeVisible();
   await expect(page.getByRole('row')).toHaveCount(seeded.length + 1); // + header
 });
@@ -83,6 +85,7 @@ test('orders by the same value it displays', async ({ page }) => {
   ]);
 
   await signIn(page, admin);
+  await page.goto('/runs');
   await expect(page.getByRole('table')).toBeVisible();
 
   // The `datetime` attribute, not the cell's text: the rendered text is
@@ -120,6 +123,7 @@ test('follows the cursor to the next page', async ({ page }) => {
   );
 
   await signIn(page, admin);
+  await page.goto('/runs');
   const first = await firstRowId(page);
   await page.getByRole('button', { name: 'Next' }).click();
   // Polled, never a single read: the previous page's rows are still on

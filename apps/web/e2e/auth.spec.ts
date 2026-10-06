@@ -20,33 +20,43 @@ test.beforeAll(async () => {
   admin = await seedAdmin();
 });
 
-test('signing in lands on the run list', async ({ page }) => {
+test('signing in lands on Home', async ({ page }) => {
   await page.goto('/login');
   await page.getByLabel('Email').fill(admin.email);
   await page.getByLabel('Password').fill(admin.password);
   await page.getByRole('button', { name: 'Sign in' }).click();
-  await expect(page).toHaveURL(/\/runs$/);
+  // `/` is the portfolio home since PR 2 of the portfolio-home spec; it was the
+  // run list until then. The pathname, because `/runs` and `/` differ only in
+  // what follows the origin.
+  await expect.poll(() => new URL(page.url()).pathname).toBe('/');
+  await expect(page.getByRole('heading', { level: 1, name: /^Hello, / })).toBeVisible();
 });
 
 // The cookie round trip - the reason this sub-project exists.
 test('the session survives a full page reload', async ({ page }) => {
   // One run, seeded HERE rather than in beforeAll because this is the only
   // test in this file that needs the org to be non-empty: without a run the
-  // list renders its empty state and there is no table to assert on. A
-  // single direct-Prisma row (no HTTP, no pipeline) costs one insert.
+  // home page's "Runs by project" is empty and there is nothing of the org's
+  // own to assert on. A single direct-Prisma row (no HTTP, no pipeline) costs
+  // one insert.
   await seedRunsAt(admin.orgId, [{ startedAt: new Date('2026-06-01T09:00:00Z') }]);
 
   await signIn(page, admin);
   await page.reload();
-  await expect(page).toHaveURL(/\/runs$/);
+  await expect.poll(() => new URL(page.url()).pathname).toBe('/');
+  await expect(page.getByRole('heading', { level: 1, name: /^Hello, / })).toBeVisible();
   // Sign out lives in the account menu now (review 09-13 N03), and the panel
   // is unmounted while shut — so this opens it rather than asserting on a
   // control the closed header no longer contains.
   await openAccountMenu(page);
   await expect(page.getByRole('menuitem', { name: 'Sign out' })).toBeVisible();
   // The session survived far enough to fetch org-scoped data and render it,
-  // not merely far enough to keep a Sign out button on screen.
-  await expect(page.getByRole('table')).toBeVisible();
+  // not merely far enough to keep a Sign out button on screen. Sign-in lands on
+  // Home now, which draws no table for an org whose only run is a pending one
+  // with no test; the org's own project in "Runs by project" is that data. The
+  // name is the fixture's (`seedAdmin`'s project is "Checkout"), and the row is
+  // there whatever else this worker's org has been given.
+  await expect(page.getByTestId('by-project-row').filter({ hasText: 'Checkout' })).toBeVisible();
 });
 
 test('an unauthenticated deep link redirects to login and comes back', async ({ page }) => {
