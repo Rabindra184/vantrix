@@ -45,6 +45,97 @@ const ECHARTS_MESSAGE =
 const FORBIDDEN_ECHARTS_PATHS = [{ name: 'echarts', message: ECHARTS_MESSAGE }];
 const FORBIDDEN_ECHARTS_PATTERNS = [{ group: ['echarts/*'], message: ECHARTS_MESSAGE }];
 
+/*
+ * ═══ A CONDITIONAL SPREAD IS A HOLE IN TYPE CHECKING ═══
+ *
+ * TypeScript's excess-property check applies to an object LITERAL assigned
+ * to a typed target. A literal SPREAD into one is not that literal, so
+ *
+ *     ...(job.testSlug ? { test: job.testSlug } : {})
+ *
+ * compiles against a target whose field is `declaredTestSlug`, and the
+ * value silently never arrives. That is not hypothetical: it is how the
+ * on-prem runner's declared-test feature shipped completely broken with
+ * every gate green, and it took executing a real Gatling run to find
+ * (CLAUDE.md, `live-sink.ts`).
+ *
+ * MEASURED BOTH WAYS on `CreateLiveRunInput`, the same type that defect
+ * was about — one typo, two spellings:
+ *
+ *     declaredTestSlugTYPO: cond ? v : undefined     TS2561, "Did you mean…"
+ *     ...(cond ? { declaredTestSlugTYPO: v } : {})   exit 0, no errors
+ *
+ * THE FIX IS TO NAME THE KEY: `key: cond ? value : undefined`. That is a
+ * real property of a real literal, so the compiler sees it again — and it
+ * is equivalent at runtime, because `exactOptionalPropertyTypes` is off
+ * here, `JSON.stringify` drops an undefined value, and Prisma reads
+ * `undefined` as "not provided" (which is exactly what the spread meant).
+ *
+ * Where a branch is a whole object rather than a key — a `where` clause
+ * with two shapes — annotate the value instead (`const w: Prisma.XWhereInput
+ * = cond ? A : B`) and spread THAT: a typed value is checked, an inline
+ * literal is not.
+ *
+ * ONLY LITERALS WITH PROPERTIES ARE FLAGGED. `...(cond ? typedValue : {})`
+ * is safe — the value carries its own type — and the selector leaves it
+ * alone.
+ */
+const NO_CONDITIONAL_SPREAD = [
+  {
+    selector: 'SpreadElement > ConditionalExpression > ObjectExpression[properties.length>0]',
+    message:
+      'A conditional spread hides a mistyped key from the compiler: an object literal spread into a typed target is not excess-property checked. Write `key: cond ? value : undefined`, or annotate the branches and spread a typed value. See eslint.config.js.',
+  },
+];
+
+/*
+ * ═══ AVERAGING PERCENTILES IS A DEFECT (FR-STAT-4, AC-STAT-3) ═══
+ *
+ * A percentile is an order statistic. The mean of two of them is not a
+ * percentile of anything: `(p95 + p99) / 2` answers no question, and
+ * averaging one endpoint's p95 with another's is the classic way to report
+ * a latency nobody experienced. The whole reason this product stores a
+ * DDSketch per row is that percentiles must be merged by combining sketches
+ * and re-quantiling, never by arithmetic on the outputs.
+ *
+ * The PRD states this twice and says static analysis enforces it in CI
+ * ("A violation fails CI", AC-STAT-3; "Static analysis enforces it in CI",
+ * section 24). It did not exist. Measured before writing this: NOTHING in
+ * the codebase currently averages a percentile, so this guards a property
+ * that holds today rather than fixing one that is broken — which is the
+ * only state in which a guard like this can be added at all.
+ *
+ * ═══ WHAT IT CATCHES, AND WHAT IT DOES NOT ═══
+ *
+ * It catches a SUM of percentile reads used as the numerator of a division
+ * — the arithmetic-mean shape — and a `reduce` over a `percentiles` object
+ * or array. It deliberately does NOT flag a bare division like
+ * `p95 / 1000`, which is a unit conversion and correct.
+ *
+ * It is a syntactic guard and cannot see through an alias: assign a
+ * percentile to `const x` and average `x`, and this says nothing. That is
+ * the honest limit of a selector, and it is still worth having — the
+ * shapes it does catch are the ones somebody writes by reflex when asked
+ * to "roll these up".
+ */
+const NO_AVERAGED_PERCENTILES = [
+  {
+    // ONE report per offending expression, not one per percentile it
+    // mentions: `:has()` puts the constraint on the SUM rather than
+    // matching each operand, so `(p95 + p99) / 2` is a single error
+    // rather than two for one defect.
+    selector:
+      "BinaryExpression[operator='/'] > BinaryExpression[operator='+']:has(Identifier[name=/^p[0-9]+(Ms)?$/], MemberExpression[property.name=/^p[0-9]+(Ms)?$/], MemberExpression[object.name=/[Pp]ercentiles/])",
+    message:
+      'Averaging percentiles is a defect (FR-STAT-4, AC-STAT-3): the mean of two order statistics is not a percentile of anything. Merge the sketches and re-quantile instead. See eslint.config.js.',
+  },
+  {
+    selector: "CallExpression[callee.property.name='reduce'][callee.object.name=/[Pp]ercentiles/]",
+    message:
+      'Reducing a percentile set to one number averages or sums order statistics, which is a defect (FR-STAT-4, AC-STAT-3). Merge the sketches and re-quantile instead. See eslint.config.js.',
+  },
+];
+
 export default tseslint.config(
   // `.claude/worktrees/**` holds ENTIRE OTHER CHECKOUTS of this repository, not
   // source. The harness creates a worktree there per background task, so while
@@ -76,56 +167,42 @@ export default tseslint.config(
   ...tseslint.configs.recommended,
 
   /*
-   * ═══ A CONDITIONAL SPREAD IS A HOLE IN TYPE CHECKING ═══
+   * ═══ `no-restricted-syntax` IS SET WHOLE, BECAUSE FLAT CONFIG REPLACES A
+   *     RULE'S OPTIONS RATHER THAN MERGING THEM ═══
    *
-   * TypeScript's excess-property check applies to an object LITERAL assigned
-   * to a typed target. A literal SPREAD into one is not that literal, so
+   * When two config objects match one file and both set the same rule, the
+   * LATER object's options win outright: ESLint does not concatenate the two
+   * selector lists. This file used to set `no-restricted-syntax` in two
+   * blocks with no `files:` key — the conditional-spread selector first, the
+   * averaged-percentiles selectors after it — and both match every file
+   * eslint lints, so the second silently replaced the first everywhere.
    *
-   *     ...(job.testSlug ? { test: job.testSlug } : {})
+   * Measured 2026-10-06: `eslint --print-config` on a file under
+   * apps/web/src, apps/api/src and packages/statistics/src each showed the
+   * two percentile selectors and no SpreadElement one, and a probe holding
+   * `...(c ? { k: 1 } : {})` linted with exit 0. The spread rule had been
+   * inert since the percentile block merged, with `pnpm lint` green the
+   * whole time — an inert rule and a clean tree print the same thing.
    *
-   * compiles against a target whose field is `declaredTestSlug`, and the
-   * value silently never arrives. That is not hypothetical: it is how the
-   * on-prem runner's declared-test feature shipped completely broken with
-   * every gate green, and it took executing a real Gatling run to find
-   * (CLAUDE.md, `live-sink.ts`).
-   *
-   * MEASURED BOTH WAYS on `CreateLiveRunInput`, the same type that defect
-   * was about — one typo, two spellings:
-   *
-   *     declaredTestSlugTYPO: cond ? v : undefined     TS2561, "Did you mean…"
-   *     ...(cond ? { declaredTestSlugTYPO: v } : {})   exit 0, no errors
-   *
-   * THE FIX IS TO NAME THE KEY: `key: cond ? value : undefined`. That is a
-   * real property of a real literal, so the compiler sees it again — and it
-   * is equivalent at runtime, because `exactOptionalPropertyTypes` is off
-   * here, `JSON.stringify` drops an undefined value, and Prisma reads
-   * `undefined` as "not provided" (which is exactly what the spread meant).
-   *
-   * Where a branch is a whole object rather than a key — a `where` clause
-   * with two shapes — annotate the value instead (`const w: Prisma.XWhereInput
-   * = cond ? A : B`) and spread THAT: a typed value is checked, an inline
-   * literal is not.
-   *
-   * ONLY LITERALS WITH PROPERTIES ARE FLAGGED. `...(cond ? typedValue : {})`
-   * is safe — the value carries its own type — and the selector leaves it
-   * alone.
+   * So every selector set is a named array above, and every block that sets
+   * this rule lists EVERY array that should be in force for the files it
+   * matches. A new selector set is a new array plus a line in each such
+   * block, never a new block of its own: a block of its own is exactly the
+   * shape that disarmed the spread rule. The guard is
+   * `packages/core/test/lint-rules-compose.test.ts`, which lints an
+   * offending snippet at real paths and reads the computed rule of every
+   * file eslint lints, so a later block narrowing either set for any glob
+   * fails naming the files it reaches.
    */
   {
     rules: {
-      'no-restricted-syntax': [
-        'error',
-        {
-          selector: 'SpreadElement > ConditionalExpression > ObjectExpression[properties.length>0]',
-          message:
-            'A conditional spread hides a mistyped key from the compiler: an object literal spread into a typed target is not excess-property checked. Write `key: cond ? value : undefined`, or annotate the branches and spread a typed value. See eslint.config.js.',
-        },
-      ],
+      'no-restricted-syntax': ['error', ...NO_CONDITIONAL_SPREAD, ...NO_AVERAGED_PERCENTILES],
     },
   },
   /*
-   * ═══ EXEMPT, AND THE REASON IS A MEASUREMENT ═══
+   * ═══ EXEMPT FROM THE SPREAD RULE, AND THE REASON IS A MEASUREMENT ═══
    *
-   * `Chart.tsx` assembles the ECharts option bag. The rule above exists
+   * `Chart.tsx` assembles the ECharts option bag. The spread rule exists
    * because a spread loses the excess-property check on a typed target — and
    * here there is no such check TO lose: `EChartsOption` carries index
    * signatures, so the literal handed to `setOption` accepts anything.
@@ -133,71 +210,22 @@ export default tseslint.config(
    *
    *     bogusKeyThatCannotExist: 1,      pnpm typecheck -> exit 0
    *
-   * Converting its six conditional spreads would therefore buy no safety at
+   * Converting its conditional spreads would therefore buy no safety at
    * all, in the most delicate rendering file in the app. Recorded as an
    * exemption with its evidence rather than waved through — and if ECharts
    * ever tightens that type, delete this block and do the conversion.
+   *
+   * THE EXEMPTION IS FROM THE SPREAD SELECTOR ONLY. This block used to read
+   * `'no-restricted-syntax': 'off'`, which switches off every selector the
+   * rule carries; the percentile block then sat after it on purpose, so that
+   * the exemption would not reach statistics for an ECharts reason — and in
+   * doing so it replaced the spread selector for every OTHER file. The
+   * percentile selectors have nothing to do with ECharts' types and stay in
+   * force here, which the guard pins.
    */
   {
     files: ['apps/web/src/charts/Chart.tsx'],
-    rules: { 'no-restricted-syntax': 'off' },
-  },
-  /*
-   * ═══ AVERAGING PERCENTILES IS A DEFECT (FR-STAT-4, AC-STAT-3) ═══
-   *
-   * A percentile is an order statistic. The mean of two of them is not a
-   * percentile of anything: `(p95 + p99) / 2` answers no question, and
-   * averaging one endpoint's p95 with another's is the classic way to report
-   * a latency nobody experienced. The whole reason this product stores a
-   * DDSketch per row is that percentiles must be merged by combining sketches
-   * and re-quantiling, never by arithmetic on the outputs.
-   *
-   * The PRD states this twice and says static analysis enforces it in CI
-   * ("A violation fails CI", AC-STAT-3; "Static analysis enforces it in CI",
-   * section 24). It did not exist. Measured before writing this: NOTHING in
-   * the codebase currently averages a percentile, so this guards a property
-   * that holds today rather than fixing one that is broken — which is the
-   * only state in which a guard like this can be added at all.
-   *
-   * ═══ WHAT IT CATCHES, AND WHAT IT DOES NOT ═══
-   *
-   * It catches a SUM of percentile reads used as the numerator of a division
-   * — the arithmetic-mean shape — and a `reduce` over a `percentiles` object
-   * or array. It deliberately does NOT flag a bare division like
-   * `p95 / 1000`, which is a unit conversion and correct.
-   *
-   * It is a syntactic guard and cannot see through an alias: assign a
-   * percentile to `const x` and average `x`, and this says nothing. That is
-   * the honest limit of a selector, and it is still worth having — the
-   * shapes it does catch are the ones somebody writes by reflex when asked
-   * to "roll these up".
-   *
-   * Placed AFTER the Chart.tsx exemption above deliberately. That block turns
-   * `no-restricted-syntax` off entirely for one file; folding these selectors
-   * into the same array would have exempted them there too, silently, for a
-   * reason (ECharts index signatures) that has nothing to do with statistics.
-   */
-  {
-    rules: {
-      'no-restricted-syntax': [
-        'error',
-        {
-          // ONE report per offending expression, not one per percentile it
-          // mentions: `:has()` puts the constraint on the SUM rather than
-          // matching each operand, so `(p95 + p99) / 2` is a single error
-          // rather than two for one defect.
-          selector:
-            "BinaryExpression[operator='/'] > BinaryExpression[operator='+']:has(Identifier[name=/^p[0-9]+(Ms)?$/], MemberExpression[property.name=/^p[0-9]+(Ms)?$/], MemberExpression[object.name=/[Pp]ercentiles/])",
-          message:
-            'Averaging percentiles is a defect (FR-STAT-4, AC-STAT-3): the mean of two order statistics is not a percentile of anything. Merge the sketches and re-quantile instead. See eslint.config.js.',
-        },
-        {
-          selector: "CallExpression[callee.property.name='reduce'][callee.object.name=/[Pp]ercentiles/]",
-          message:
-            'Reducing a percentile set to one number averages or sums order statistics, which is a defect (FR-STAT-4, AC-STAT-3). Merge the sketches and re-quantile instead. See eslint.config.js.',
-        },
-      ],
-    },
+    rules: { 'no-restricted-syntax': ['error', ...NO_AVERAGED_PERCENTILES] },
   },
   {
     files: ['packages/{core,plugin-gatling,statistics,sla}/src/**/*.ts'],

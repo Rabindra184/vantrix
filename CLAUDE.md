@@ -128,7 +128,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **206 files / 2867 tests**, it
+`nvm use` first, and if a run reports fewer than **207 files / 2880 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -145,6 +145,200 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The palette-placeholder-after-clear branch added no unit FILE and 2 cases to
+`apps/web/test/CommandPalette.test.tsx`, from **206 / 2867 to 206 / 2869**.
+Integration stays **187 / 2503** (that config collects `.test.ts` files only,
+and none of them imports the palette) and **e2e stays 192**.
+On Linux the unit run reads `2868 passed | 1 skipped (2869)`: the skip is
+`loopback.test.ts`' macOS-only case, and the floor is the total.
+
+**THE CLEARED-BOX GUARD COVERED ONE QUERY AFTER THE CLEAR, NOT ALL OF THEM.**
+`usePaletteSearch` withheld `keepPreviousData` when the text asked JUST
+BEFORE was empty. TanStack's placeholder is the last query its observer HAD
+data for, not the last one asked — so `smo` (answers), clear, `sea` (held),
+then `sear` before `sea` answered: the text before `sear` is `sea`, the guard
+let the placeholder through, and the last answer the observer had was still
+`smo`'s. Enter was safe (a placeholder row is `loading`, so a queued Enter
+waits); the rows on screen were not. **A rule about the PREVIOUS TEXT cannot
+govern a placeholder chosen by the observer's LAST DATA**; they agree only on
+the first query after a clear, which is the one case the original test drove.
+
+`placeholderData` is now a function that keeps the previous data only when
+that data's own query HASH is among the keys asked since the debounced text
+was last `''`. Keys, not texts: run-by-number's key holds the text before the
+`#N`, so a record of texts would let `checkout` (asked after a clear) vouch
+for a `checkout #7` lookup made before it. One `searchKeys` helper feeds both
+the three `useQuery` calls and that record, so the two cannot drift.
+
+**RED-VERIFIED FROM THE CHECKPOINT COMMIT**, each replacement count asserted,
+restored from HEAD after each:
+
+```
+  the guard ignored (plain keepPreviousData)  both new cases + the one-query cleared case
+  a clear never resets the record             the same three
+  Tests alone on keepPreviousData             the two-queries case + the one-query case
+  Runs alone on keepPreviousData              the two-queries case ALONE, at its Runs line
+  Run-by-number alone on keepPreviousData     the run-by-number case ALONE
+  no placeholder at all                       four narrowing cases (`smo` -> `smok`
+                                              among them); every cleared case passes
+  guard ignored AND checkpoints deleted       both new cases, on the MutationObserver
+                                              list alone ("Checkout smoke…", "Run 7…")
+```
+
+The last row is why the cases carry a `MutationObserver`: a checkpoint
+`queryByRole` sees one moment, and "never drawn" is a claim about all of them.
+
+**WHAT WAS RUN.** `pnpm build`, `typecheck` and `lint` exit 0 by their own
+exit codes; `test:unit` **206 / 2869**, zero `Errors` lines; the two new
+cases failed on the code before the fix, for the reason they name. Integration
+was not run: nothing it collects imports the palette. **e2e WAS reachable**
+(`command-palette.spec.ts` drives the real palette) **and was not run
+locally**: in the cloud container `dockerd` starts by hand and
+`mirror.gcr.io` serves Postgres and Redis past Docker Hub's 429, but no
+MinIO image or binary was reachable, and the e2e fixtures ingest through S3.
+CI's `build` job is the arbiter for that suite, **and it measured all three on
+`e82e056`** (run 37406566341), read off the job's own log: unit
+`206 passed (206)` / `2868 passed | 1 skipped (2869)`, integration
+`187 passed (187)` / `2502 passed | 1 skipped (2503)`, and e2e
+`Running 192 tests` → `192 passed`, the four `command-palette.spec.ts` cases
+among them. Each is the prediction exactly.
+
+**RE-COUNTED AFTER MERGING `main`**, where the eslint-spread-rule-inert branch
+had landed underneath it (one unit file, eleven cases, all `.ts`): the merged
+tree's floors are that branch's plus this one's two `.tsx` cases — unit
+**207 / 2880**, integration **188 / 2514** (the two cases are `.tsx`, which
+that config never collects) and **e2e 192**. That is arithmetic; CI's `build`
+job on the merge commit is what measures it. The conflict was `CLAUDE.md`
+alone, resolved by keeping both entries.
+
+The eslint-spread-rule-inert branch added ONE unit file —
+`packages/core/test/lint-rules-compose.test.ts` (11) — from **206 / 2867 to
+207 / 2878**. That file is a `.ts` integration runs too, so integration moves
+from **187 / 2503 to 188 / 2514**, and **e2e stays 192**. Its diff is
+`eslint.config.js`, the guard, and one line of `apps/web/src/routes/format.ts`.
+
+**THE CONDITIONAL-SPREAD RULE WAS OFF FOR FOURTEEN DAYS, AND `pnpm lint` WAS
+GREEN THE WHOLE TIME.** ESLint flat config does not MERGE a rule's options
+across config objects: when two objects match one file and both set the same
+rule, the later one REPLACES the earlier one's options outright.
+`eslint.config.js` set `no-restricted-syntax` twice — the conditional-spread
+selector (PR #191, 2026-09-20) and the averaged-percentiles selectors (PR #208,
+2026-09-22) — in two blocks with no `files:` key, so both matched every file
+eslint lints and the second won everywhere. Measured:
+
+```
+  eslint --print-config <file>, no-restricted-syntax
+  apps/web/src/routes/RunTally.tsx         the two percentile selectors, no SpreadElement
+  apps/api/src/main.ts                     the same
+  packages/statistics/src/percentile.ts    the same
+  a probe holding ...(c ? { k: 1 } : {})   eslint exit 0
+```
+
+**AN INERT RULE AND A CLEAN TREE PRINT THE SAME THING.** The
+averaged-percentiles entry says it about a selector that stops MATCHING ("a lint rule
+that matches nothing passes exactly as quietly as one that works"); this is the
+same silence one level up — the selector still matched, it was no longer
+CONFIGURED. That entry's own guard could not see it: it proves its own rule at
+one path, and it was the OTHER rule that went.
+
+**AND THE BRANCH THAT DISARMED IT HAD WRITTEN THE MECHANISM DOWN, POINTED THE
+OTHER WAY.** "An exemption written for one rule becomes an exemption for every
+rule that shares its name" — true, and the percentile block was placed AFTER
+`Chart.tsx`'s `'off'` so as not to inherit it. Placing it after is exactly what
+made it replace the spread selector on every OTHER file. **Two selector sets
+sharing a rule name share its exemptions AND its overrides**; the sentence was
+half of the fact.
+
+**ONE SPREAD CREPT BACK IN WHILE THE RULE WAS OFF.** `formatListInstant`
+(`c97cf9a`, the clean-UI run-lists branch, 2026-10-04) built its options with
+`...(sameYear ? {} : { year: 'numeric' as const })`, and is
+`year: sameYear ? undefined : 'numeric'` now. It is an `Intl.DateTimeFormat`
+options bag, not a wire payload, and ECMA-402 reads an undefined option as
+absent — but that was MEASURED rather than argued: both spellings over 7
+locales x 4 instants x 3 zones (UTC, Asia/Kolkata, America/New_York) gave
+identical strings AND identical `resolvedOptions()`, 84 of 84, and
+`format.test.ts` passed 31/31. It was the only one: the full `pnpm lint` with
+the rule restored reported exactly that line.
+
+**THE FIX IS ONE ARRAY PER SELECTOR SET, LISTED IN EVERY BLOCK THAT SETS THE
+RULE.** `NO_CONDITIONAL_SPREAD` and `NO_AVERAGED_PERCENTILES` are named
+constants; the global block lists both, and `Chart.tsx`'s exemption lists the
+percentile array alone instead of `'off'`. That exemption was measured against
+ECharts' index signatures, which say nothing about statistics, so the
+percentile selectors stay in force there exactly as #208 meant them to. **A
+new selector set is a new array plus a line in each such block, never a block
+of its own** — a block of its own is the shape that disarmed this one.
+
+**THE GUARD SWEEPS EVERY LINTED FILE, NOT A SAMPLE, BECAUSE A SAMPLE IS WHAT
+THE NEXT OVERRIDE SLIPS PAST.** `lint-rules-compose.test.ts` uses the ESLint
+API in-process — no second copy of any selector, rules recognised by their
+MESSAGE, which a selector rewrite keeps — and asks two things:
+
+  - it lints an offending snippet (one spread, one averaged pair, one reduce)
+    at eight source paths across `apps/web`, `api`, `worker`, `runner` and
+    three packages and requires exactly one report of each; at `Chart.tsx` it
+    requires the spread report absent and both percentile reports present; and
+    a legitimate snippet (`...(c ? typed : {})`, a named key, `p95 / 1000`)
+    must be clean — the spread rule shipped with no test of its own at all
+  - it computes the effective config of every file `git ls-files` lists and
+    `isPathIgnored` admits — 659 of them, well under a second — and fails naming
+    each file where a set is missing, with its exemption list pinned both ways
+    (a listed file the rule IS in force on fails as stale)
+
+**FOUR MUTATIONS, FROM THE CHECKPOINT COMMIT, EACH ANCHOR'S COUNT ASSERTED,
+THE TREE CLEAN AFTER EACH:**
+
+```
+  eslint.config.js restored from main      9 of 11: every probe {"spread":0,"average":1,"reduce":1},
+                                           the sweep naming 658 files; the Chart.tsx and legitimate
+                                           cases pass (main gave Chart.tsx the right answer by order)
+  Chart.tsx back to 'off'                  the Chart.tsx case (all zeros) and the sweep (average missing)
+  a later block for apps/worker/src/live/**,
+    spread selector only                   the sweep ALONE (2 files missing average); 8 of 8 probes pass
+  Chart.tsx given both arrays              the Chart.tsx case and the sweep's stale-exemption check
+```
+
+**THE THIRD ROW IS THE ARGUMENT FOR THE SWEEP.** A probe list is a sample of
+globs, and an override scoped to a directory no probe sits in passes every
+probe. The computed config of every file cannot be outside the glob.
+
+**A FRESH CLOUD CONTAINER HAS NO `node_modules`, NO PRISMA CLIENT AND NO
+DOCKER DAEMON.** `pnpm typecheck` failed TS7006 on Prisma callbacks until
+`prisma generate` and `pnpm build` ran (the fresh-worktree note above). For
+integration, `dockerd` had to be started by hand, compose refused without its
+three variables, and Docker Hub refused `minio/minio` outright
+(`insufficient_scope`); CI's own pinned `bitnamilegacy/minio@sha256:451f…`
+pulled, so the three services were started the way CI's `build` job starts
+them — `docker run`, ports 5433 / 6380 / 9000.
+
+**WHAT WAS RUN.** `pnpm typecheck` and `lint` exit 0 by their own exit codes
+(typecheck only after `prisma generate` and `pnpm build`, above);
+`test:unit` **207 / 2878**, exit 0, zero `Errors` lines (2877 passed and 1
+skipped, `loopback.test.ts`' macOS-only case on Linux); `test:integration`
+COLLECTED **188 / 2514** — both the prediction exactly — and exited 1 on ONE
+case: `blobs.integration.test.ts`' multi-megabyte upload, "Test timed out in
+30000ms" at 36.1 s, in a 970 s run. That is the container-MinIO budget the
+wheel-lands entry records, in `packages/storage`, which this diff does not
+touch (`git diff origin/main --name-only`: the config, the guard,
+`format.ts`). Alone, at a 1-minute load of 0.00, that file passed 4 of 4
+three times, the case itself at 27.6 s and 26.5 s — under its 30 s budget by
+less than three seconds even idle, so a full run in this container tips it
+over. Against a SCRATCH DATABASE (`perfportal_eslintspread`, created and
+migrated first) and a scratch Redis INDEX (db 3). e2e was not run: the diff
+changes no rendered string (`format.ts`'s output is identical, measured
+above) and no spec.
+
+**AND CI MEASURED ALL THREE CLEAN** on the same tree (`c4d8a37`, run
+37410937337), read off the `build` job's own log: `test:unit` **207 / 2878**
+(2877 passed, 1 skipped), `test:integration` **188 / 2514** (2513 passed, 1
+skipped, zero failures) and `pnpm test:e2e` **192 passed** — the guard
+running in both vitest configs, 11 cases each. So the blobs timeout above was
+this container's MinIO and nothing else.
+
+**THE BRANCH IS `rb/quirky-hawking-p7plzk`**, the cloud session's designated
+branch, cut at `origin/main` with `git log --oneline origin/main..HEAD`
+empty; "eslint-spread-rule-inert" is this entry's name for it.
 
 The command-palette branch (`feat/command-palette`, PR 1 of the portfolio-home
 and command-palette spec,
@@ -8379,6 +8573,12 @@ ECharts index signatures that has nothing to do with statistics. Folding
 these selectors into the existing array would have exempted them there too —
 silently, and for somebody else's reason. **An exemption written for one rule
 becomes an exemption for every rule that shares its name.**
+**[Corrected later: placing it after the exemption kept these selectors on
+`Chart.tsx` and REPLACED the conditional-spread selector on every other file,
+because flat config replaces a rule's options rather than merging them — the
+spread rule was inert from this merge (PR #208) until the
+eslint-spread-rule-inert branch. An override shares a rule name the same way
+an exemption does. See that entry.]**
 
 **AND THE GUARD HAS A GUARD, BECAUSE A LINT RULE THAT MATCHES NOTHING PASSES
 EXACTLY AS QUIETLY AS ONE THAT WORKS.** `pnpm lint` is green whether the
@@ -10274,6 +10474,11 @@ SIX MONTHS.** `SpreadElement > ConditionalExpression > ObjectExpression[properti
 is deliberately allowed: the value carries its own type, so there is nothing
 to lose. Red-verified by putting one spread back, which fails `pnpm lint` with
 the file and line.
+**[Corrected later: true for two days. The averaged-percentiles branch (PR
+#208) set `no-restricted-syntax` again in a later block, which replaced this
+selector on every file; a spread then linted clean until the
+eslint-spread-rule-inert branch, which records it and the guard that now keeps
+both selector sets in force.]**
 
 **`Chart.tsx` IS EXEMPT, AND THE REASON IS A MEASUREMENT RATHER THAN A
 PREFERENCE.** Its six spreads assemble the ECharts option bag, and the rule's
