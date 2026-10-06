@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  OrgTestListResponseSchema,
   TestListResponseSchema,
   TestSummarySchema,
   UpdateTestRequestSchema,
@@ -68,6 +69,126 @@ describe('TestSummarySchema', () => {
 describe('TestListResponseSchema', () => {
   it('accepts a project with no tests', () => {
     expect(TestListResponseSchema.parse({ tests: [] }).tests).toEqual([]);
+  });
+});
+
+/**
+ * ═══ THE ORG-WIDE LIST: ONE ROW PER TEST, WITH THE RUN IT IS ABOUT ═══
+ *
+ * `GET /v1/tests` serves the portfolio home table and the command palette, so
+ * a row carries what both draw without a request per test: the project it
+ * belongs to, its latest run with the figures a row shows, and a short p95
+ * history for a sparkline.
+ */
+const ORG_ROW = {
+  id: '11111111-1111-4111-8111-111111111111',
+  slug: 'checkout-soak',
+  name: 'Checkout soak',
+  simulationClass: 'example.ParitySimulation',
+  runCount: 12,
+  project: { slug: 'checkout', name: 'Checkout' },
+  latestRun: {
+    id: '33333333-3333-4333-8333-333333333333',
+    runNumber: 12,
+    status: 'complete',
+    verdict: 'failed',
+    startedAt: '2026-10-05T09:30:00.000Z',
+    durationMs: 62136,
+    checks: { failed: 1, total: 3 },
+    p95Ms: 645.59,
+  },
+  p95History: [
+    { runId: '44444444-4444-4444-8444-444444444444', runNumber: 11, p95Ms: 612.4 },
+    { runId: '33333333-3333-4333-8333-333333333333', runNumber: 12, p95Ms: 645.59 },
+  ],
+};
+
+describe('OrgTestListResponseSchema', () => {
+  it('parses a test with a latest run and a p95 history', () => {
+    const body = { items: [ORG_ROW], nextCursor: 'opaque-cursor' };
+    expect(OrgTestListResponseSchema.parse(body)).toEqual(body);
+  });
+
+  /**
+   * A test can be declared and never run (or have every run deleted), so the
+   * run, its figures and its history are all absent together rather than
+   * half-present: `latestRun: null` with an empty history is the whole shape.
+   */
+  it('parses a test that has never run', () => {
+    const body = {
+      items: [{ ...ORG_ROW, runCount: 0, latestRun: null, p95History: [] }],
+      nextCursor: null,
+    };
+    expect(OrgTestListResponseSchema.parse(body)).toEqual(body);
+  });
+
+  /**
+   * A latest run that is still running, or that carries no statistics yet,
+   * has no verdict, no check tally and no p95 — each is null on its own, and
+   * a consumer that read `verdict` alone would call it "not evaluated".
+   */
+  it('carries an unfinished latest run with its measurements null', () => {
+    const body = {
+      items: [
+        {
+          ...ORG_ROW,
+          latestRun: {
+            ...ORG_ROW.latestRun,
+            runNumber: null,
+            status: 'running',
+            verdict: null,
+            durationMs: null,
+            checks: null,
+            p95Ms: null,
+          },
+        },
+      ],
+      nextCursor: null,
+    };
+    expect(OrgTestListResponseSchema.parse(body)).toEqual(body);
+  });
+
+  /**
+   * The history is a sparkline, so it is bounded where it is produced (the
+   * query takes ten) and bounded again here: a contract that let a longer one
+   * through would let a row grow without anything noticing.
+   */
+  it('refuses a p95 history longer than ten points', () => {
+    const point = (n: number) => ({
+      runId: `44444444-4444-4444-8444-${String(n).padStart(12, '0')}`,
+      runNumber: n,
+      p95Ms: 600 + n,
+    });
+    const ten = Array.from({ length: 10 }, (_, i) => point(i + 1));
+    const eleven = Array.from({ length: 11 }, (_, i) => point(i + 1));
+
+    expect(
+      OrgTestListResponseSchema.safeParse({
+        items: [{ ...ORG_ROW, p95History: ten }],
+        nextCursor: null,
+      }).success,
+    ).toBe(true);
+    expect(
+      OrgTestListResponseSchema.safeParse({
+        items: [{ ...ORG_ROW, p95History: eleven }],
+        nextCursor: null,
+      }).success,
+    ).toBe(false);
+  });
+
+  /**
+   * `nextCursor` is how a client knows there is no more: null means the last
+   * page, a string means ask again. Absent means neither, which a consumer
+   * would read as "more" or "none" at random, so the schema refuses it.
+   */
+  it('requires nextCursor to be present, null or a string', () => {
+    expect(OrgTestListResponseSchema.safeParse({ items: [ORG_ROW] }).success).toBe(false);
+    expect(OrgTestListResponseSchema.safeParse({ items: [ORG_ROW], nextCursor: null }).success).toBe(
+      true,
+    );
+    expect(OrgTestListResponseSchema.safeParse({ items: [ORG_ROW], nextCursor: 'c' }).success).toBe(
+      true,
+    );
   });
 });
 

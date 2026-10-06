@@ -128,7 +128,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **201 files / 2757 tests**, it
+`nvm use` first, and if a run reports fewer than **206 files / 2867 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -145,6 +145,153 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The command-palette branch (`feat/command-palette`, PR 1 of the portfolio-home
+and command-palette spec,
+`docs/superpowers/specs/2026-10-05-portfolio-home-and-command-palette-design.md`)
+added FIVE unit files — `apps/web/test/CommandPalette.test.tsx` (26),
+`SearchTrigger.test.tsx` (22), `paletteDestinations.test.ts` (36),
+`paletteQuery.test.ts` (9) and `searchApi.test.ts` (10) — and 7 cases net
+elsewhere (`AppShell.test.tsx` 1, `tokens.test.ts` 1,
+`packages/contracts/test/test.test.ts` 5), from **201 / 2757 to 206 / 2867**.
+Integration gains the two `*.integration.test.ts` files
+(`packages/persistence/test/org-tests.integration.test.ts` 42,
+`apps/api/test/org-tests.integration.test.ts` 16), the three new `.ts` unit
+files and the `.ts` cases (run-number 12 + 2, `openapi` 1, `session-auth` 1,
+tokens 1, contracts 5): **182 / 2357 to 187 / 2492**. **e2e rises to 192**
+(`apps/web/e2e/command-palette.spec.ts`, 4, one Chromium-only). It adds
+`GET /v1/tests` (every test in the org, its latest run and a ten-point p95
+history), `?number=` on `GET /v1/runs`, and the ⌘K palette (`cmdk` + Radix
+Dialog, opened by a header button and by ⌘K / Ctrl+K).
+
+**AN ID-ONLY KEYSET CURSOR REPEATS A PAGE WHEN ITS OWN SORT KEY MOVES.** The
+plan's cursor was the last test's id, re-resolved on the next request to that
+test's CURRENT latest arrival. A run landing on the cursor test between two
+pages made it the newest arrival in the org, so "earlier than the cursor"
+matched every other test and page two repeated page one. The cursor is the last
+row's `(latest arrival | null, name, id)` now, opaque base64url, and anything
+that does not decode answers an empty page, never a 500. Each refusal has a row
+that FAILS without it: Node's base64 decoder silently skips characters outside
+its alphabet, so without the alphabet check a cursor with a trailing `!` is
+ACCEPTED (its removal survived every other row until that one was added), and
+`toISOString()` writes a six-digit year that round-trips and then breaks the
+`timestamptz` cast. The lone-surrogate name and the years +010000 and -000001
+are the rows that actually THREW against the old decoder, a Prisma error and so
+a 500.
+
+**`cmdk` 1.1.1 LOSES THE HIGHLIGHT WHEN ROWS UNMOUNT, AND DOES NOT TELL THE
+INPUT WHEN YOU MOVE IT FROM OUTSIDE.** It schedules "move to the first row"
+under one key per batch, so when a whole group unmounts in one commit only the
+last row's check survives and the value goes on naming a row that is gone:
+nothing highlighted, Enter dead, on the most common keystroke. The value is
+controlled, and one no longer on screen falls to the FIRST row on screen. A
+value handed in from outside highlights the row without refreshing
+`aria-activedescendant`, so a layout effect sets it from the row carrying the
+value; the e2e reads Chromium's own tree over CDP to prove it names an `option`.
+
+**A Radix Dialog WITH NO `Dialog.Trigger` DOES NOT RESTORE FOCUS, AND THE
+ELEMENT YOU RECORDED CAN BE GONE.** This dialog is opened by a header button and
+a window shortcut, so focus fell to `<body>`. The opener is recorded in
+`onOpenAutoFocus` and focused in `onCloseAutoFocus`; opened from an account-menu
+item, that item has unmounted by then, so the header's Search button is the
+fallback — a REQUIRED prop with no default, because forgetting it is silent.
+**A WINDOW-LEVEL SHORTCUT MUST STAND DOWN UNDER A NATIVE `showModal()`
+DIALOG:** with `Chart.tsx`'s full-screen `<dialog>` open, ⌘K opened the palette
+UNDER the chart and took the key from the browser. The listener returns before
+`preventDefault()` when a `dialog[open]` exists; the case asserts the key was
+left alone AND that, with the dialog gone, the same key opens the palette.
+
+**A COLOUR UTILITY NAMED FOR A TOKEN THAT IS NOT IN `@theme` EMITS NOTHING.**
+`placeholder:text-faint` (and `dropdown-menu.tsx`'s, older than this branch)
+compiled to no rule at all — the emitted CSS held "faint" zero times — and
+nothing failed. `tokens.test.ts` reads the `--color-*` names `@theme` publishes
+and fails any `text-<name>` in `apps/web/src` that is neither one nor a
+Tailwind keyword or size.
+
+**AN ENTER PRESSED BEFORE ITS ANSWER MUST WAIT FOR IT, AND AN IME'S ENTER IS
+NOT ONE OF THEM.** Swallowing Enter inside the 150 ms pause was not enough: once
+the request is in flight `keepPreviousData` still draws the PREVIOUS query's
+rows, and Enter chose one. It is queued now (pause ended, highlight reset to the
+answer's first row) and chosen once every group has answered the current text;
+typing or an arrow withdraws it. That fix brought a regression the re-review
+found: cmdk skips Enter on `isComposing || keyCode === 229`, and Safari's
+composition-COMMIT Enter has `isComposing` false with `keyCode` 229, so ours was
+queued and navigated on the key that confirms a character. Both are checked;
+the case fires `{ key: 'Enter', keyCode: 229 }` during a pending query and,
+with the `keyCode` arm removed, fails by navigating to the test.
+
+**TWO OF THE PLAN'S CASES COULD NOT FAIL FOR WHAT THEY NAMED, AND A RED-VERIFY
+SAID SO.** "Opens while the account menu is open" passes with a bubble-phase
+listener (Radix's menu does not stop a modified key); an ancestor that calls
+`stopPropagation` is what the capture phase beats, and that case is where the
+mutation lands. "Stops listening when it unmounts" asserted nothing a leaked
+listener would break; it asserts the key's fate after `unmount()` now.
+
+**RED-VERIFIED**, every mutation from a committed tree with its replacement
+count asserted (persistence rebuilt around each persistence one), each on the
+case written for it: the plan's nine — latest run by start not arrival, `q`
+unescaped, the token's project predicate dropped (one case per layer), the p95
+history reading failed runs, `number=` without a test, the debounce at 0 ms, the
+previous rows no longer kept (that case and three whose scenario needs them on
+screen), the typed text surviving a close, the bubble-phase listener. Four
+were taken again on the final tree: the debounce, the previous rows and the
+typed text because the fix wave rewrote what they mutate, the token predicate
+because no report had mutated its endpoint half.
+
+**A TEST IS NOT IDENTIFIED BY ITS SLUG.** Found only by running real Gatling:
+`example-paritysimulation` is the slug of a test in `palette-verify`, in
+`web-demo` and in `gatling-demo` — three tests, three projects — and a check
+that matched by slug first false-failed on another project's own test. A result
+is keyed and linked by project slug plus test slug (the palette's link and its
+cmdk value are), never by the test slug alone.
+
+**WHAT WAS RUN.** `typecheck` and `lint` exit 0; `test:unit` **206 / 2867**,
+zero `Errors` lines; `test:integration` **187 / 2492**, exit 0; `pnpm test:e2e
+--workers=2` **192 passed, exit 0** — every total the one counted from the
+source before any suite ran, on the final tree, against the SCRATCH DATABASE
+`perfportal_palette`, a scratch Redis INDEX (db 1) and e2e port 3700, started at
+a 1-minute load of 8.6 (unit), 5.1 (integration, after waiting for it to settle)
+and 3.5 (e2e).
+
+**AND THE REAL RUNS, AGAINST THE DEVELOPER DATABASE.** `ParitySimulation`
+through the Gradle plugin, twice, into a new project `palette-verify`: test
+`example-paritysimulation`, Run 1 and Run 2, 895 requests each, both complete
+(Gatling exits 1 by design — its own `Search: 95th percentile of response time
+is less than 100.0` is false, the other two assertions true). `GET
+/v1/tests?q=Parity` with the posting token answers `latestRun` = Run 2, `checks`
+`{ failed: 1, total: 3 }` and `p95Ms` 645.59, equal to the run list's
+`metrics.p95Ms` for that run; `p95History` holds both runs, oldest first, each
+equal to its list row. `?number=1` answers Run 1, `number=99` an empty page and
+`number=abc` a 400 `INVALID_RUN_NUMBER`; `q=` an 8-character id prefix answers
+Run 2; all six responses parse with `OrgTestListResponseSchema` /
+`RunListResponseSchema`; a read token for a different project never sees the
+test. Both runs share one p95, so a run is told apart by its id and number, not
+by that figure. The tokens were revoked and the processes stopped by PID.
+**THE THREE-ENGINE DISPATCH ON `cbafa10` (run 37373081910)** collected **576**
+(192 × chromium, firefox, webkit), passed 567, skipped 9 and failed none, with
+no flaky case; one `signIn` stall on `/login` was absorbed by the helper's own
+retry, the navigation stall this file already records.
+
+**RE-MEASURED AFTER MERGING `main`**, where the runs-repeated-query branch had
+landed underneath it: `pnpm build`, `typecheck` and `lint` exit 0; `test:unit`
+**206 / 2867**, zero `Errors` lines (that branch added no unit case);
+`test:integration` **187 / 2503, exit 0, zero failures** (this branch's 2492
+plus its eleven); `pnpm test:e2e --workers=2` **192 passed, exit 0** — each
+predicted before the run, on the same scratch stores. Integration started at a
+1-minute load of 26 after the gate expired, which this file counts as a pass
+because it passed.
+
+**AND AGAIN AFTER THE AUDIT OVERRIDES LANDED UNDERNEATH IT.** This branch's
+first CI run after that merge failed `pnpm audit --prod` on two advisories
+published in between; the audit-proxy-addr-source-map-js entry below records
+them. The overrides were merged into this branch before they reached `main`,
+and the CLAUDE.md conflict was resolved by keeping both entries. On that tree
+(`c3746ec`): `pnpm install --frozen-lockfile` and `pnpm audit --prod` clean;
+`pnpm build`, `typecheck` and `lint` exit 0; `test:unit` **206 / 2867**, zero
+`Errors` lines; `test:integration` **187 / 2503, exit 0, zero failures**,
+started at a 1-minute load of 7.58; `pnpm test:e2e --workers=2` **192 passed,
+exit 0**. Each total was predicted before the run and is unchanged, as an
+override-only merge requires, on the same scratch stores.
 
 The audit-proxy-addr-source-map-js branch (`fix/audit-proxy-addr-source-map-js`)
 added no test and moves no floor: unit stays **201 / 2757**, integration
@@ -218,11 +365,11 @@ again fails the org `q` case alone; the project list's `status` read raw fails
 its `status` case alone; `singleValue` never refusing fails all ten repeat
 cases and leaves the single-value control green.
 
-**AND THE COMMAND-PALETTE BRANCH CARRIES A PRIVATE COPY.** Its
-`org-tests.controller.ts` defines a local `singleValue` for `GET /v1/tests`;
-whichever of the two merges second should import this one instead, and resolve
-the `runs.controller.ts` conflict (that branch adds `number=` to the same
-handler).
+**AND THE COMMAND-PALETTE BRANCH CARRIED A PRIVATE COPY.** Its
+`org-tests.controller.ts` defined a local `singleValue` for `GET /v1/tests`,
+byte-for-byte this one. It merged second, so it imports this one now, and its
+`number=` on the same handler is typed `unknown` beside the other six
+(`parseRunNumber` already refused a non-string).
 
 **WHAT WAS RUN.** `typecheck` and `lint` exit 0 by their own exit codes;
 `test:unit` **201 / 2757**, zero `Errors` lines; `test:integration`

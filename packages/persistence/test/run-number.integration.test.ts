@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { createPool, createPrisma, SCHEMA_TABLES, TestRepository } from '../src/index.js';
+import { createPool, createPrisma, runNumberClause, SCHEMA_TABLES, TestRepository } from '../src/index.js';
 
 /**
  * ═══ A RUN'S NUMBER, AT THE PERSISTENCE LAYER ═══
@@ -154,5 +154,54 @@ describe('deleting a test', () => {
     const byId = new Map(rows.map((r) => [r.id, r]));
     expect(byId.get(stray.id)).toMatchObject({ testId: null, runNumber: null });
     expect(byId.get(grouped.id)).toMatchObject({ testId: null, runNumber: null });
+  });
+});
+
+describe('the run-number filter', () => {
+  /**
+   * THE PLAN, NOT JUST THE ROWS — every row assertion passes against a
+   * sequential scan, so nothing else can tell the unique index from a
+   * decorative one. `SET LOCAL enable_seqscan = off` removes the planner's
+   * preference for a scan on a table too small to have one; an expression the
+   * index cannot serve still plans as `Seq Scan`, so the plan names the index
+   * only when the predicate really is one it can use. `SET LOCAL` inside a
+   * transaction, never a bare `SET`, because Prisma hands out a pooled
+   * connection and a bare one would leak onto whichever test drew it next.
+   *
+   * BUILT FROM THE SAME FUNCTION `RunRepository.list` builds from, so a change
+   * to the real predicate is a change to this one.
+   */
+  it('is served by run_test_id_run_number_key', async () => {
+    const test = await testRow('checkout-soak');
+    await runRow({ testId: test.id, runNumber: 2, createdAt: '2026-09-02T10:00:00Z', startedAt: '2026-09-02T10:00:00Z' });
+
+    const plan = await prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe('SET LOCAL enable_seqscan = off');
+      return tx.$queryRawUnsafe<{ 'QUERY PLAN': string }[]>(
+        `EXPLAIN (COSTS OFF)
+       SELECT r.id FROM run r
+        WHERE r.test_id = $1::uuid
+          AND ${runNumberClause(2)}`,
+        test.id,
+        2,
+      );
+    });
+    const text = plan.map((row) => row['QUERY PLAN']).join('\n');
+
+    // Guard first: EXPLAIN really did return a plan.
+    expect(text.length).toBeGreaterThan(0);
+    expect(text).toContain('run_test_id_run_number_key');
+    expect(text).not.toContain('Seq Scan on run');
+    // NAMING THE INDEX IS NOT ENOUGH, and it was measured not to be: with the
+    // predicate written `run_number::text = …` the plan still names this
+    // index — it serves `test_id`, the key's first column — and filters every
+    // one of that test's runs for the number. The number has to be in the
+    // INDEX CONDITION, which is what makes the lookup one row rather than a
+    // test's whole history.
+    expect(text).toMatch(/Index Cond:.*\brun_number = /);
+  });
+
+  it('spells the predicate as an int comparison against the placeholder it is given', () => {
+    expect(runNumberClause(4)).toBe('r.run_number = $4::int');
   });
 });

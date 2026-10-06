@@ -1,5 +1,8 @@
 import type { PrismaClient } from '@prisma/client';
-import type { ProjectScope } from './tenant.js';
+import { escapeLike } from './like.js';
+import { runP95, runScopeStatOn, type RunRecord } from './run.js';
+import { decodeOrgTestCursor, encodeOrgTestCursor } from './test-cursor.js';
+import type { ProjectScope, TenantScope } from './tenant.js';
 
 /**
  * A test as a reader's list sees it: the row, plus the two facts a list is
@@ -25,6 +28,128 @@ export interface UpdateTestInput {
 }
 
 /**
+ * A test's newest run, as the org-wide list shows it.
+ *
+ * "Newest" is by ARRIVAL (`created_at DESC, id DESC`) — the order
+ * `listForProject` and `findBySlug` report — and NOT the run list's by-start
+ * order. That is USUALLY the test's highest-numbered run and not always: an
+ * upload is numbered when the worker finalizes it and a live run when its log
+ * header arrives, so two ingests that overlap can be numbered in the other
+ * order from the one they arrived in. `startedAt` is when the load test RAN,
+ * which can be earlier than a run that arrived before this one.
+ */
+export interface OrgTestLatestRun {
+  id: string;
+  runNumber: number | null;
+  status: string;
+  verdict: string | null;
+  /** `COALESCE(tool_started_at, started_at)`: when the load test ran. */
+  startedAt: Date;
+  durationMs: number | null;
+  toolAssertions: RunRecord['toolAssertions'];
+  /** The run-scope p95, clamped; null where it has none. See `runP95`. */
+  p95Ms: number | null;
+}
+
+/** One point of a test's p95 history. */
+export interface OrgTestP95Point {
+  runId: string;
+  runNumber: number | null;
+  p95Ms: number;
+}
+
+/** A test as the org-wide list sees it: the row, its project, its newest run. */
+export interface OrgTestRow {
+  id: string;
+  slug: string;
+  name: string;
+  simulationClass: string;
+  runCount: number;
+  project: { slug: string; name: string };
+  latestRun: OrgTestLatestRun | null;
+  /** At most `P95_HISTORY_POINTS`, complete runs only, oldest first. */
+  p95History: OrgTestP95Point[];
+}
+
+export interface ListOrgTestsOptions {
+  readonly limit: number;
+  /** The previous page's `nextCursor`: opaque, and an empty page if it is not
+   *  one this repository minted. */
+  readonly cursor?: string;
+  /** Free text over the test's name, slug and class and its project's name
+   *  and slug. Already trimmed by the caller; matched literally. */
+  readonly q?: string;
+}
+
+/**
+ * How many points a test's p95 history carries. The wire schema caps it at the
+ * same number, and a query that returned one more would make the browser's
+ * parse of the WHOLE response throw — so the cap lives in the query, not in
+ * whoever remembers to slice.
+ */
+export const P95_HISTORY_POINTS = 10;
+
+/**
+ * The newest ARRIVAL per test, as a LATERAL join the list's ORDER BY, its
+ * keyset predicate and the `latestAt` a page's cursor is minted from all read —
+ * one definition, because the keyset is only correct while the key it resumes
+ * from and the key the rows were sorted by are the same expression. Served by
+ * `run_test_id_created_at_idx`.
+ */
+const LATEST_ARRIVAL_JOIN = `
+  LEFT JOIN LATERAL (
+    SELECT r.created_at FROM run r WHERE r.test_id = t.id
+    ORDER BY r.created_at DESC, r.id DESC LIMIT 1
+  ) lr ON true`;
+
+interface OrgTestSqlRow {
+  id: string;
+  slug: string;
+  name: string;
+  simulationClass: string;
+  projectSlug: string;
+  projectName: string;
+  /** The test's latest arrival: the first part of its sort key, and so of the
+   *  cursor a page ends with. Null for a test that has never run. */
+  latestAt: Date | null;
+}
+
+interface LatestRunSqlRow {
+  testId: string;
+  id: string;
+  runNumber: number | null;
+  status: string;
+  verdict: string | null;
+  startedAt: Date;
+  durationMs: number | null;
+  toolAssertions: unknown;
+  statPercentiles: unknown;
+  statMinMs: number | null;
+  statMaxMs: number | null;
+}
+
+interface HistorySqlRow {
+  testId: string;
+  runId: string;
+  runNumber: number | null;
+  statPercentiles: unknown;
+  statMinMs: number | null;
+  statMaxMs: number | null;
+}
+
+/**
+ * The four fields a project's test list and a single test report for their
+ * latest run, taken off the fuller shape `latestRuns` reads for the org-wide
+ * list — so the three readers share one query and one ordering and differ only
+ * in how much of its answer they show.
+ */
+function summaryOf(run: OrgTestLatestRun | undefined): TestRow['latestRun'] {
+  return run === undefined
+    ? null
+    : { id: run.id, status: run.status, verdict: run.verdict, runNumber: run.runNumber };
+}
+
+/**
  * Tests within one project.
  *
  * ═══ EVERY METHOD TAKES THE TENANT IN ITS `where`, NOT AS A CHECK AFTER ═══
@@ -43,13 +168,23 @@ export class TestRepository {
    *
    * A project has a handful of tests, and the obvious shape — fetch the tests,
    * then per test fetch a count and a newest run — is 1 + 2N round trips for a
-   * page nobody paginates. `groupBy` gives every count in one, and the latest
-   * run comes from a single ordered scan the caller reduces.
+   * page nobody paginates. `groupBy` gives every count in one, and `latestRuns`
+   * gives every newest run in one.
    *
-   * `latestRun` is chosen by `createdAt DESC, id DESC` — the SAME ordering
-   * `RunRepository.list` uses, so the run a reader sees at the top of a test's
-   * history is the run this reports. Two orderings would disagree exactly when
-   * two runs share a timestamp, which is precisely when a reader is looking.
+   * It used to load EVERY run of EVERY test and keep the first per test. That
+   * was right for a handful of runs and a scan of the whole history for a
+   * project that has been running for a year; the newest-per-test read is a
+   * LATERAL over `run_test_id_created_at_idx` now, one index probe per test.
+   *
+   * `latestRun` is the newest ARRIVAL: `created_at DESC, id DESC` — usually the
+   * test's highest-numbered run, and not always, because an upload is numbered
+   * at finalize and a live run at its log header, so two ingests that overlap
+   * can be numbered out of arrival order. It is NOT the run list's order. `RunRepository.list` sorts by when the test RAN,
+   * `COALESCE(tool_started_at, started_at) DESC, id DESC`, and the two differ
+   * for a bundle uploaded after a newer one: that bundle is the latest run here
+   * and sits lower in the run list. `listOrg` reads through the same
+   * `latestRuns`, so the portfolio and the project catalogue agree with each
+   * other about which run is latest.
    */
   async listForProject(scope: ProjectScope): Promise<TestRow[]> {
     const tests = await this.prisma.test.findMany({
@@ -59,32 +194,16 @@ export class TestRepository {
     if (tests.length === 0) return [];
 
     const ids = tests.map((t) => t.id);
-    const [counts, runs] = await Promise.all([
+    const [counts, latest] = await Promise.all([
       this.prisma.run.groupBy({
         by: ['testId'],
         where: { testId: { in: ids } },
         _count: { _all: true },
       }),
-      this.prisma.run.findMany({
-        where: { testId: { in: ids } },
-        select: { id: true, testId: true, status: true, verdict: true, runNumber: true },
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-      }),
+      this.latestRuns(scope.orgId, ids),
     ]);
 
     const countBy = new Map(counts.map((c) => [c.testId, c._count._all]));
-    // First wins, and the ordering above is what makes that the newest.
-    const latestBy = new Map<
-      string,
-      { id: string; status: string; verdict: string | null; runNumber: number | null }
-    >();
-    for (const run of runs) {
-      if (run.testId !== null && !latestBy.has(run.testId)) {
-        latestBy.set(run.testId, {
-          id: run.id, status: run.status, verdict: run.verdict, runNumber: run.runNumber,
-        });
-      }
-    }
 
     return tests.map((t) => ({
       id: t.id,
@@ -95,7 +214,7 @@ export class TestRepository {
       createdAt: t.createdAt,
       updatedAt: t.updatedAt,
       runCount: countBy.get(t.id) ?? 0,
-      latestRun: latestBy.get(t.id) ?? null,
+      latestRun: summaryOf(latest.get(t.id)),
     }));
   }
 
@@ -108,11 +227,7 @@ export class TestRepository {
 
     const [runCount, latest] = await Promise.all([
       this.prisma.run.count({ where: { testId: test.id } }),
-      this.prisma.run.findFirst({
-        where: { testId: test.id },
-        select: { id: true, status: true, verdict: true, runNumber: true },
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-      }),
+      this.latestRuns(scope.orgId, [test.id]),
     ]);
 
     return {
@@ -124,8 +239,262 @@ export class TestRepository {
       createdAt: test.createdAt,
       updatedAt: test.updatedAt,
       runCount,
-      latestRun: latest,
+      latestRun: summaryOf(latest.get(test.id)),
     };
+  }
+
+  /**
+   * ═══ EVERY TEST IN THE ORG (OR THE TOKEN'S PROJECT), NEWEST ACTIVITY FIRST ═══
+   *
+   * What `GET /v1/tests` reads: the portfolio's list and the command palette's
+   * test search. It is raw SQL for the reason `RunRepository.list` is — Prisma's
+   * builder cannot ORDER BY a LATERAL's column — and it paginates by keyset for
+   * the same reason that one does: an offset would resurface or skip rows as
+   * tests arrive between pages.
+   *
+   * THE ORDER IS `latest arrival DESC NULLS LAST, name ASC, id ASC`. A test
+   * that has run floats to the top by when its newest run ARRIVED; tests that
+   * have never run sit below them, alphabetically, because there is nothing
+   * else to sort a never-run test by. `NULLS LAST` has to be written out: a
+   * descending sort puts nulls FIRST by default, which would lead the page with
+   * the tests that have done nothing.
+   *
+   * THE CURSOR IS THE LAST ROW'S SORT KEY, `(latest arrival, name, id)`, as
+   * that page showed it (see `test-cursor.ts`), and the next page is everything
+   * strictly after that tuple in the same order. It is NOT a test id looked up
+   * again on the next request: this key moves whenever a run lands, so a cursor
+   * test that got a run between two pages would re-resolve to the newest
+   * arrival in the org and page two would repeat page one. There are three
+   * boundaries to resume across and each has its own predicate:
+   *
+   *   - dated to dated      later arrival, or the same arrival and a later name/id
+   *   - dated to never-run  every never-run test follows a dated one
+   *   - never-run to same   a never-run cursor continues by name/id alone
+   *
+   * What a carried key cannot do is follow a test that moves WHILE the reader
+   * pages: one already shown stays where it was shown, and one not yet shown
+   * that gets a run jumps above the cursor and is not on this walk — it is at
+   * the top of the next fresh request. Keyset paging trades that for never
+   * repeating or skipping a row that stays put.
+   *
+   * A cursor that does not decode answers an EMPTY page rather than starting
+   * over, because a silent restart resurfaces tests the reader already saw. The
+   * run list's rule, and the reason it is spelled the same way here.
+   *
+   * `latestRuns` and `p95Histories` are separate reads over the page's ids
+   * rather than columns of this one: they are per-test lookups against the run
+   * table, and joining them in would multiply the page's rows.
+   */
+  async listOrg(
+    scope: TenantScope,
+    opts: ListOrgTestsOptions,
+  ): Promise<{ items: OrgTestRow[]; nextCursor: string | null }> {
+    const none = { items: [], nextCursor: null };
+
+    const filters: string[] = ['t.org_id = $1::uuid'];
+    const params: unknown[] = [scope.orgId];
+    if (scope.projectId) {
+      params.push(scope.projectId);
+      filters.push(`t.project_id = $${params.length}::uuid`);
+    }
+
+    if (opts.cursor) {
+      const at = decodeOrgTestCursor(opts.cursor);
+      if (at === null) return none;
+      params.push(at.name, at.id);
+      const name = `$${params.length - 1}::text`;
+      const id = `$${params.length}::uuid`;
+      if (at.latestAt === null) {
+        filters.push(`(lr.created_at IS NULL AND (t.name, t.id) > (${name}, ${id}))`);
+      } else {
+        params.push(at.latestAt);
+        const when = `$${params.length}::timestamptz(3)`;
+        filters.push(
+          `(lr.created_at < ${when}` +
+            ` OR (lr.created_at = ${when} AND (t.name, t.id) > (${name}, ${id}))` +
+            ` OR lr.created_at IS NULL)`,
+        );
+      }
+    }
+
+    // FREE TEXT over the test's own words and its project's. Unlike the run
+    // list's search this does not resolve the projects first: a project has a
+    // handful of tests and an organisation a handful of projects, so there is
+    // no index worth keeping a BitmapOr for, and one join is the plainer query.
+    if (opts.q) {
+      params.push(`%${escapeLike(opts.q)}%`);
+      const q = `$${params.length}`;
+      filters.push(
+        `(t.name ILIKE ${q} ESCAPE '\\' OR t.slug ILIKE ${q} ESCAPE '\\'` +
+          ` OR t.simulation_class ILIKE ${q} ESCAPE '\\'` +
+          ` OR p.name ILIKE ${q} ESCAPE '\\' OR p.slug ILIKE ${q} ESCAPE '\\')`,
+      );
+    }
+    params.push(opts.limit + 1);
+
+    const rows = await this.prisma.$queryRawUnsafe<OrgTestSqlRow[]>(
+      `
+      SELECT t.id, t.slug, t.name, t.simulation_class AS "simulationClass",
+             p.slug AS "projectSlug", p.name AS "projectName",
+             lr.created_at AS "latestAt"
+      FROM test t
+      JOIN project p ON p.id = t.project_id
+      ${LATEST_ARRIVAL_JOIN}
+      WHERE ${filters.join(' AND ')}
+      ORDER BY lr.created_at DESC NULLS LAST, t.name ASC, t.id ASC
+      LIMIT $${params.length}
+      `,
+      ...params,
+    );
+    const page = rows.slice(0, opts.limit);
+    if (page.length === 0) return none;
+    const last = page[page.length - 1];
+    const nextCursor =
+      rows.length > opts.limit && last !== undefined
+        ? encodeOrgTestCursor({ latestAt: last.latestAt, name: last.name, id: last.id })
+        : null;
+
+    const ids = page.map((row) => row.id);
+    const [counts, latest, history] = await Promise.all([
+      this.prisma.run.groupBy({
+        by: ['testId'],
+        where: { testId: { in: ids } },
+        _count: { _all: true },
+      }),
+      this.latestRuns(scope.orgId, ids),
+      this.p95Histories(scope.orgId, ids),
+    ]);
+    const countBy = new Map(counts.map((c) => [c.testId, c._count._all]));
+
+    return {
+      items: page.map((row) => ({
+        id: row.id,
+        slug: row.slug,
+        name: row.name,
+        simulationClass: row.simulationClass,
+        runCount: countBy.get(row.id) ?? 0,
+        project: { slug: row.projectSlug, name: row.projectName },
+        latestRun: latest.get(row.id) ?? null,
+        p95History: history.get(row.id) ?? [],
+      })),
+      nextCursor,
+    };
+  }
+
+  /**
+   * Each given test's newest run by ARRIVAL, keyed by test id; a test with no
+   * run is simply absent. One probe per test against
+   * `run_test_id_created_at_idx` — no scan of the history.
+   *
+   * THE IDS ARE ALREADY TENANT-SCOPED — every caller resolved them through a
+   * query that carried the scope — and the LATERAL filters by the org as well,
+   * so a caller that skipped that step still reads nothing of another org's:
+   * an id from elsewhere finds no run here. It costs nothing, since the probe
+   * already lands on the test's own rows.
+   *
+   * The run-scope statistics row rides along (LEFT: a run still parsing has
+   * none) so `p95Ms` costs no second round trip and is the SAME number the
+   * run list's row shows, through `runP95`.
+   */
+  private async latestRuns(
+    orgId: string,
+    testIds: string[],
+  ): Promise<Map<string, OrgTestLatestRun>> {
+    const rows = await this.prisma.$queryRawUnsafe<LatestRunSqlRow[]>(
+      `
+      SELECT lr.test_id AS "testId", lr.id, lr.run_number AS "runNumber", lr.status, lr.verdict,
+             COALESCE(lr.tool_started_at, lr.started_at) AS "startedAt",
+             lr.duration_ms AS "durationMs", lr.tool_assertions AS "toolAssertions",
+             s.percentiles AS "statPercentiles", s.min_ms AS "statMinMs", s.max_ms AS "statMaxMs"
+      FROM unnest($1::uuid[]) AS t(id)
+      CROSS JOIN LATERAL (
+        SELECT r.test_id, r.id, r.org_id, r.project_id, r.run_number, r.status, r.verdict,
+               r.tool_started_at, r.started_at, r.duration_ms, r.tool_assertions
+        FROM run r WHERE r.test_id = t.id AND r.org_id = $2::uuid
+        ORDER BY r.created_at DESC, r.id DESC LIMIT 1
+      ) lr
+      LEFT JOIN run_stat s ON ${runScopeStatOn('s', 'lr')}
+      `,
+      testIds,
+      orgId,
+    );
+    return new Map(
+      rows.map((row) => [
+        row.testId,
+        {
+          id: row.id,
+          runNumber: row.runNumber,
+          status: row.status,
+          verdict: row.verdict,
+          startedAt: row.startedAt,
+          durationMs: row.durationMs,
+          toolAssertions: (row.toolAssertions ?? null) as RunRecord['toolAssertions'],
+          p95Ms: runP95({
+            percentiles: row.statPercentiles,
+            minMs: row.statMinMs,
+            maxMs: row.statMaxMs,
+          }),
+        },
+      ]),
+    );
+  }
+
+  /**
+   * Each given test's p95 over its last `P95_HISTORY_POINTS` MEASURED complete
+   * runs, keyed by test id, oldest first.
+   *
+   * The statistics row is an INNER join and the window is cut AFTER it: the
+   * history is of runs that were measured, so a newer run that never produced
+   * statistics does not push a measured one out of the ten. A run whose row has
+   * no usable p95 (a project whose percentile set omits it) still takes its
+   * place in the ten and then contributes no point — dropped here rather than
+   * in SQL, because "usable" is `runP95`'s question and not a second
+   * definition kept in a WHERE clause.
+   *
+   * Newest-first inside the LATERAL so `LIMIT` keeps the most recent, reversed
+   * here so a sparkline reads left to right. Ordered again on the way out
+   * because a LATERAL's inner order is not a promise about its outer rows.
+   *
+   * Filtered by the org as well as by the ids, for the reason `latestRuns`
+   * gives.
+   */
+  private async p95Histories(
+    orgId: string,
+    testIds: string[],
+  ): Promise<Map<string, OrgTestP95Point[]>> {
+    const rows = await this.prisma.$queryRawUnsafe<HistorySqlRow[]>(
+      `
+      SELECT h.test_id AS "testId", h.id AS "runId", h.run_number AS "runNumber",
+             h.percentiles AS "statPercentiles", h.min_ms AS "statMinMs", h.max_ms AS "statMaxMs"
+      FROM unnest($1::uuid[]) AS t(id)
+      CROSS JOIN LATERAL (
+        SELECT r.test_id, r.id, r.run_number, r.created_at,
+               s.percentiles, s.min_ms, s.max_ms
+        FROM run r
+        JOIN run_stat s ON ${runScopeStatOn('s', 'r')}
+        WHERE r.test_id = t.id AND r.org_id = $2::uuid AND r.status = 'complete'
+        ORDER BY r.created_at DESC, r.id DESC
+        LIMIT ${P95_HISTORY_POINTS}
+      ) h
+      ORDER BY h.test_id, h.created_at DESC, h.id DESC
+      `,
+      testIds,
+      orgId,
+    );
+    const byTest = new Map<string, OrgTestP95Point[]>();
+    for (const row of rows) {
+      const p95Ms = runP95({
+        percentiles: row.statPercentiles,
+        minMs: row.statMinMs,
+        maxMs: row.statMaxMs,
+      });
+      if (p95Ms === null) continue;
+      const points = byTest.get(row.testId) ?? [];
+      points.push({ runId: row.runId, runNumber: row.runNumber, p95Ms });
+      byTest.set(row.testId, points);
+    }
+    for (const points of byTest.values()) points.reverse();
+    return byTest;
   }
 
   /**

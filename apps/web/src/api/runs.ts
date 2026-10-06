@@ -97,3 +97,50 @@ export function fetchRuns(
   if (activeFilters.verdict) query.set('verdict', activeFilters.verdict);
   return apiFetch(RunListResponseSchema, `/v1/runs?${query.toString()}`);
 }
+
+/**
+ * The command palette's run search: `GET /v1/runs?limit=&q=` — the first page
+ * of the org-wide list, matched by the same `q` the run list's own search box
+ * sends, and nothing else.
+ *
+ * Deliberately not `fetchRuns`: that one always sends the list's own page size
+ * and takes a cursor, a project, a test and two filters, and a palette wants
+ * none of them. A separate function means a palette search cannot be narrowed
+ * by a parameter somebody later adds to the list. `q` is trimmed and an empty
+ * one is not sent, which `normaliseFilters` does for the list for the same
+ * reason: whitespace is not a search.
+ */
+export function searchRuns(q: string, limit: number): Promise<RunListResponse> {
+  const query = new URLSearchParams({ limit: String(limit) });
+  const text = q.trim();
+  if (text) query.set('q', text);
+  return apiFetch(RunListResponseSchema, `/v1/runs?${query.toString()}`);
+}
+
+/**
+ * One run, by its number within its test: `GET /v1/runs?limit=1&project=&test=&number=`.
+ *
+ * A run number names nothing on its own — "Run 12" is the twelfth run of ONE
+ * test — so both slugs are required parameters here, and the API's own rule
+ * (400 NUMBER_NEEDS_TEST without a resolved test, and a test slug is unique
+ * only within its project) is unreachable from this client rather than left
+ * for every caller to remember. The answer is a list of zero or one: a test
+ * that has no run N is an empty list, not an error, because a palette typing
+ * `#999` is not making a mistake the server should refuse. A project or test
+ * slug that names nothing IS an error — the API answers 404, as it does for
+ * any unknown slug on the run list — and the caller decides what that means
+ * (the palette counts a test deleted between two requests as no hit).
+ */
+export function fetchRunByNumber(
+  projectSlug: string,
+  testSlug: string,
+  n: number,
+): Promise<RunListResponse> {
+  const query = new URLSearchParams({
+    limit: '1',
+    project: projectSlug,
+    test: testSlug,
+    number: String(n),
+  });
+  return apiFetch(RunListResponseSchema, `/v1/runs?${query.toString()}`);
+}
