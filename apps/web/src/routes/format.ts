@@ -74,7 +74,7 @@ export function formatListInstant(iso: string, now: Date = new Date()): string {
     day: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
-    ...(at.getFullYear() === now.getFullYear() ? {} : { year: 'numeric' as const }),
+    year: at.getFullYear() === now.getFullYear() ? undefined : 'numeric',
   }).format(at);
 }
 
