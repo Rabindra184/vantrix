@@ -197,7 +197,12 @@ was not run: nothing it collects imports the palette. **e2e WAS reachable**
 locally**: in the cloud container `dockerd` starts by hand and
 `mirror.gcr.io` serves Postgres and Redis past Docker Hub's 429, but no
 MinIO image or binary was reachable, and the e2e fixtures ingest through S3.
-CI's `build` job is the arbiter for that suite.
+CI's `build` job is the arbiter for that suite, **and it measured all three on
+`e82e056`** (run 37406566341), read off the job's own log: unit
+`206 passed (206)` / `2868 passed | 1 skipped (2869)`, integration
+`187 passed (187)` / `2502 passed | 1 skipped (2503)`, and e2e
+`Running 192 tests` → `192 passed`, the four `command-palette.spec.ts` cases
+among them. Each is the prediction exactly.
 
 The command-palette branch (`feat/command-palette`, PR 1 of the portfolio-home
 and command-palette spec,
