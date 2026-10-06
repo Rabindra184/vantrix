@@ -61,6 +61,10 @@ test('signing in lands on Home, and the brand link returns there', async ({ page
   // From somewhere else, the brand is the way back. It is named after the
   // product, never "Home" — that word is the rail's.
   await page.goto('/runs');
+  // Something POSITIVE first: an absence assertion passes at once on a page
+  // still loading, so "no Hello" alone would not prove the reader left Home.
+  await expect(page).toHaveURL(/\/runs$/);
+  await expect(page.getByRole('heading', { level: 1, name: 'Runs', exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { level: 1, name: /^Hello, / })).toHaveCount(0);
   await page.getByRole('link', { name: 'PerfPortal', exact: true }).click();
   await expect.poll(() => new URL(page.url()).pathname).toBe('/');

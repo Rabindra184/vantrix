@@ -112,16 +112,33 @@ test('the cold start says what it is doing rather than showing nothing', async (
   await seedRunWithData(admin.orgId);
   await signIn(page, admin);
 
-  /* STALLS THE GATE'S PROBE, NOT THE SESSION — which is what actually produces
+  /* HOLDS THE GATE'S PROBE, NOT THE SESSION — which is what actually produces
      this screen. `AuthGate` renders `Bootstrapping()` for a pending session OR
      a pending membership probe, and on a cold load the second is the slower of
      the two. The probe is `GET /v1/activity` now (the home page's read); it was
      the org-wide runs page, and this stalled `/v1/runs` to match. Left that way
      the case went on PASSING after the probe moved — the screen it waits for
      still flashes by on a loaded machine, so the stall had stopped being the
-     reason it was there, and nothing said so. Stalling the probe holds the
-     screen for the whole two seconds, whatever the machine. */
-  await stall(page, '**/v1/activity**', 2_000);
+     reason it was there, and nothing said so.
+
+     So the probe is held until THIS CASE releases it, not for a fixed time, and
+     the case proves the hold is what it sees. Counting hits alone would not do
+     that: with the hold on the old `/v1/runs`, the run list asks that URL as
+     soon as the gate passes, so a count goes above zero either way. What only
+     a held PROBE produces is a screen that is STILL "Checking your session…"
+     after the hold has caught a request — a screen merely flashing by is gone
+     by then and does not come back. Inlined rather than `stall()`, because
+     the release and the count belong to this one case. */
+  let held = 0;
+  let release!: () => void;
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route('**/v1/activity**', async (route) => {
+    held += 1;
+    await released;
+    await route.continue();
+  });
   await page.goto('/runs');
 
   /* A STATUS, NOT A SPINNER ALONE. A reader who cannot see a spinner — or is
@@ -132,7 +149,12 @@ test('the cold start says what it is doing rather than showing nothing', async (
   await expect(status).toBeVisible();
   await expect(status).toContainText(/checking your session/i);
 
-  // And it resolves rather than sticking, once the stall expires.
+  // The hold caught the gate's probe, and the screen is still up because of it.
+  await expect.poll(() => held, 'the gate never asked GET /v1/activity').toBeGreaterThan(0);
+  await expect(status).toContainText(/checking your session/i);
+
+  // And it resolves rather than sticking, once the probe is answered.
+  release();
   await expect(page.getByTestId('run-row').first()).toBeVisible({ timeout: 15_000 });
 });
 

@@ -205,6 +205,13 @@ test('an empty org says so instead of showing an empty table', async ({ page }) 
   const emptyOrgAdmin = await seedAdminForEmptyOrg();
 
   await signIn(page, emptyOrgAdmin);
+  /* ON THE RUN LIST, AND PROVEN TO BE. Sign-in lands on Home, whose own empty
+     state also reads "No runs yet", draws no table and has no Next — so without
+     this every assertion below passed against the wrong page, and RunList's own
+     empty state was checked by no browser case. The h1 is the positive half:
+     text Home shares cannot satisfy it. */
+  await page.goto('/runs');
+  await expect(page.getByRole('heading', { level: 1, name: 'Runs', exact: true })).toBeVisible();
   await expect(page.getByText(/no runs yet/i)).toBeVisible();
   // A table with a header row and nothing under it looks like a list that
   // failed to load, which is the confusion the empty state exists to remove.
