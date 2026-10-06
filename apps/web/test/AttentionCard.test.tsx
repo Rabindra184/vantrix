@@ -87,7 +87,7 @@ const LAST_RUN = {
 
 function activity(over: Record<string, unknown> = {}): ActivityResponse {
   return ActivityResponseSchema.parse({
-    window: { from: '2026-09-29T12:00:00.000Z', to: '2026-10-06T12:00:00.000Z', tz: 'UTC' },
+    window: { from: '2026-09-30T00:00:00.000Z', to: '2026-10-06T12:00:00.000Z', tz: 'UTC' },
     days: DAYS,
     runCount: 14,
     passRate: 0.9,

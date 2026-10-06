@@ -1,10 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  ATTENTION_WINDOW_MS,
-  GLANCE_DAYS,
-  glanceDays,
-  resolveTimeZone,
-} from '../src/activity/days.js';
+import { GLANCE_DAYS, glanceDays, resolveTimeZone } from '../src/activity/days.js';
 
 /**
  * The home page's seven-day glance counts runs per LOCAL calendar day, and
@@ -32,8 +27,10 @@ const HOUR_MS = 3_600_000;
 const DAY_MS = 24 * HOUR_MS;
 
 describe('the constants', () => {
-  it('is seven days of milliseconds and a seven-day glance', () => {
-    expect(ATTENTION_WINDOW_MS).toBe(7 * DAY_MS);
+  // There is no attention-window constant any more: the window starts at
+  // `boundaries[0]` (activity.integration.test.ts pins that), so a week is
+  // spelled once, as seven glance days.
+  it('is a seven-day glance', () => {
     expect(GLANCE_DAYS).toBe(7);
   });
 });

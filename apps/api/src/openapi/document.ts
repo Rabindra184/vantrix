@@ -280,8 +280,9 @@ const parameters: Record<string, ParameterObject> = {
       'exactly as sent in "window.tz" (the server never substitutes the canonical spelling, so ' +
       'Asia/Kolkata does not come back as Asia/Calcutta). A name the server does not recognise ' +
       'is a 400 INVALID_TIMEZONE; give it once — a repeated "tz" is a 400 INVALID_QUERY. It ' +
-      'moves where a day starts and nothing else: the attention window is the same seven ' +
-      'days of arrival whatever the zone.',
+      'decides where each of the seven days starts, and so where the attention window starts ' +
+      'too: that window begins at the first instant of the oldest of the seven days in this ' +
+      'zone.',
     schema: { type: 'string' },
   },
   ProjectFilter: {
@@ -1663,7 +1664,7 @@ const paths: Record<string, PathItemObject> = {
         'Requires the "read" scope. Scoped by the credential, not by the URL, exactly like ' +
         'GET /v1/tests: a project-scoped token sees only that project\'s activity; a session ' +
         'names no project and sees its whole organisation. Another organisation\'s runs are ' +
-        'never counted. Both windows are by ARRIVAL — "created_at", when a run reached the ' +
+        'never counted. Every count is by ARRIVAL — "created_at", when a run reached the ' +
         'platform — never by when its load test started, so a bundle uploaded today for a test ' +
         'that ran last month counts for today. "days" is the seven local calendar days in "tz" ' +
         'ending today, oldest first: each day\'s "total" is every run that arrived in it, ' +
@@ -1671,8 +1672,12 @@ const paths: Record<string, PathItemObject> = {
         'do, so a run still in flight is in "total" and in neither of the others. "runCount" is ' +
         'the sum of the days\' totals, and "passRate" is successful over successful plus ' +
         'needing attention, as a FRACTION between 0 and 1 (null when both are zero). "window" ' +
-        'is the attention window: the 604 800 000 ms before the request, with "tz" echoed as ' +
-        'sent. A run needs attention when its status is failed or incomplete, its SLA verdict ' +
+        'is the attention window, and it is the same seven days: "from" is the first instant of ' +
+        'the oldest day in "tz" and "to" is the moment the server answered, with "tz" echoed as ' +
+        'sent — so "attention", "attentionTotal", "runCount" and "passRate" all count one set of ' +
+        'runs (not the 168 hours before the request, which would put a run arriving before the ' +
+        'first day\'s midnight in the attention list and in no day). A run needs attention when ' +
+        'its status is failed or incomplete, its SLA verdict ' +
         'is failed, or a check its simulation declared failed; "attention" lists the tests ' +
         'whose latest run in the window does, newest first and at most twenty, each with the ' +
         '"reasons" it is listed for, and "attentionTotal" is the uncapped count of them. ' +

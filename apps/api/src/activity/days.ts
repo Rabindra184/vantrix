@@ -1,12 +1,5 @@
 import { badRequest } from '../common/validation.js';
 
-/**
- * The attention window: the seven days of arrival before now. Milliseconds,
- * not "7 days", so the SQL comparing it against `created_at` and the glance
- * below cannot read "a week" two different ways.
- */
-export const ATTENTION_WINDOW_MS = 604_800_000;
-
 /** How many local calendar days the home page's glance draws, today included. */
 export const GLANCE_DAYS = 7;
 
@@ -42,7 +35,10 @@ export function resolveTimeZone(raw: string | undefined): string {
 
 /**
  * The seven local calendar days in `tz` ending today, and the eight instants
- * that fence them, for the glance to bucket runs by.
+ * that fence them, for the glance to bucket runs by. The first of them is also
+ * where the attention window starts (`ActivityController`): one window for
+ * every number the home page shows, so a run is in the glance, the pass rate
+ * and the attention list together or in none of them.
  *
  * `dates` are `YYYY-MM-DD`, oldest first, the last being today in `tz`.
  * `boundaries[i]` is the FIRST instant whose local date in `tz` is

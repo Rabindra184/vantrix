@@ -11,7 +11,7 @@ import type { Request } from 'express';
 import { Scopes } from '../auth/scopes.decorator.js';
 import { singleValue } from '../common/validation.js';
 import { checkTally } from '../runs/check-tally.js';
-import { ATTENTION_WINDOW_MS, glanceDays, resolveTimeZone } from './days.js';
+import { glanceDays, resolveTimeZone } from './days.js';
 
 /**
  * What the portfolio home page draws, in one response: a seven-day glance, a
@@ -27,13 +27,25 @@ import { ATTENTION_WINDOW_MS, glanceDays, resolveTimeZone } from './days.js';
  * sees that project alone. The scope below is that one rule, and nothing here
  * names a project by slug, so there is no slug to point at another project with.
  *
- * ═══ BOTH WINDOWS ARE ON ARRIVAL, AND `tz` ONLY DRAWS THE CALENDAR ═══
+ * ═══ ONE WINDOW, ON ARRIVAL, STARTING AT THE GLANCE'S FIRST MIDNIGHT ═══
  *
  * Every count is on `run.created_at`, the moment a run arrived, never on when
- * its load test ran. `tz` decides where a calendar day starts and so which of
- * the seven glance days a run lands in; it does not move the attention window,
- * which is the 604 800 000 ms before now whatever the zone. A request without
- * `tz` is asked in UTC.
+ * its load test ran. `tz` decides where a calendar day starts, and so which of
+ * the seven glance days a run lands in AND where the attention window starts:
+ * that window is `[boundaries[0], now]`, from the first instant of the oldest
+ * glance day to the request's own "now". A request without `tz` is asked in
+ * UTC.
+ *
+ * It used to be the 604 800 000 ms before now, Gatling Enterprise's 168 hours,
+ * beside a glance of seven CALENDAR days. The two disagree by a slice as long
+ * as what is left of the day a week ago — 24 hours minus today's time of day —
+ * and a run that arrived in that slice was inside the window and outside the
+ * glance: listed as needing attention over seven empty columns if it failed,
+ * and, if it passed, "Coverage gap · No runs in the last 7 days" under a
+ * heading whose own range held it. One window cannot disagree with itself, so
+ * the heading, the columns, the pass rate, the attention list and the gap all
+ * describe the same seven calendar days now. (A deliberate departure from the
+ * spec's 168 hours, made at the final review; the contract's `window` says so.)
  *
  * ═══ ZONE FIRST, THEN THE CALENDAR ═══
  *
@@ -63,7 +75,9 @@ export class ActivityController {
     // "today" and the attention read all agree about what "now" is.
     const now = new Date();
     const { dates, boundaries } = glanceDays(zone, now);
-    const attentionFrom = new Date(now.getTime() - ATTENTION_WINDOW_MS);
+    // The window starts where the glance does (see the docstring): the first
+    // instant of the oldest of the seven days, in the caller's zone.
+    const attentionFrom = boundaries[0]!;
 
     const rows = await this.activity.read(
       { orgId: tenant.orgId, projectId: tenant.projectId },

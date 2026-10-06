@@ -146,7 +146,9 @@ export function activityDaysQuery(
 /** What `read` needs besides the tenant: the attention window, and the eight
  *  boundaries of the seven glance days. */
 export interface ActivityWindow {
-  /** Inclusive. The attention window is the week before now. */
+  /** Inclusive. The caller passes the first glance boundary (`ActivityController`),
+   *  so the attention list and the day counts cover the same seven days; this
+   *  file takes whatever it is given and does not assume that. */
   readonly attentionFrom: Date;
   /** Inclusive. */
   readonly attentionTo: Date;

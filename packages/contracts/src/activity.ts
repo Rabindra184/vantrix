@@ -79,8 +79,22 @@ export const ActivityAttentionRowSchema = z.object({
 
 export const ActivityResponseSchema = z.object({
   /**
-   * The attention window: the seven days before the request, on arrival. `tz`
-   * is the zone the caller sent, echoed as sent (trimmed) — never the
+   * The attention window, on arrival: `from` is the first instant of the
+   * oldest of the seven `days` in `tz` (that day's local midnight, or its
+   * first real instant on a day whose midnight was skipped), and `to` is the
+   * moment the server answered. So it is the same seven calendar days the
+   * glance draws, and `attention`, `attentionTotal`, `runCount` and `passRate`
+   * all count one set of runs.
+   *
+   * NOT THE SPEC'S 168 HOURS, ON PURPOSE. Gatling Enterprise's window is the
+   * 604 800 000 ms before now, and beside a glance of seven calendar days that
+   * leaves a slice — the 24 hours minus today's time of day before the
+   * glance's first midnight — inside one and outside the other. A run in it
+   * was in this window and in no day, so the page could say "No runs in the
+   * last 7 days" beside a run six days old under a heading whose range held
+   * it. Corrected at the final review: there is one window.
+   *
+   * `tz` is the zone the caller sent, echoed as sent (trimmed) — never the
    * canonical name ICU resolves it to, which can differ (`Asia/Kolkata` is
    * `Asia/Calcutta` there) and would read as a bug.
    */

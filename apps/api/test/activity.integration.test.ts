@@ -106,9 +106,11 @@ describe('GET /v1/activity', () => {
     const body = parse(res.body);
     expect(body.days).toHaveLength(7);
     expect(body.window.tz).toBe('UTC');
-    // The attention window is exactly the 604 800 000 ms before the instant the
-    // response names as `to`, so a reader can state "last 7 days" from it alone.
-    expect(Date.parse(body.window.to) - Date.parse(body.window.from)).toBe(604_800_000);
+    // The attention window starts where the glance does — the first instant of
+    // the oldest of the seven days, which in UTC is that date's midnight — and
+    // ends at the moment the server answered.
+    expect(body.window.from).toBe(`${body.days[0]!.date}T00:00:00.000Z`);
+    expect(Date.parse(body.window.to)).toBeGreaterThan(Date.parse(body.window.from));
     expect(body.runCount).toBe(1);
     expect(body.lastRun?.test).toEqual({ slug: 'checkout-smoke', name: 'checkout-smoke' });
   });
@@ -124,6 +126,66 @@ describe('GET /v1/activity', () => {
     expect(body.window.tz).toBe('Asia/Kolkata');
     // Both ends of the request, so a midnight crossed mid-test cannot flake it.
     expect([before, after]).toContain(body.days[6]!.date);
+  });
+
+  /**
+   * ═══ ONE WINDOW: A RUN BEFORE THE OLDEST DAY'S MIDNIGHT IS IN NONE OF IT ═══
+   *
+   * The 168 hours before now reach back past the first instant of the oldest
+   * glance day by a slice of 24 hours minus the local time of day. A run that
+   * arrived in that slice used to be in the attention list and in no day — so
+   * the page said "No runs in the last 7 days" beside it. It is in neither now:
+   * not listed, not counted, and the org it is the only run of is a coverage
+   * gap (`homeFormat.test.ts` pins that last step from this same answer).
+   *
+   * The zone is chosen so that it is between 02:00 and 14:00 there whenever
+   * this runs: the slice is then at least ten hours wide and no local midnight
+   * can be crossed mid-test. A fixed offset (`Etc/GMT…`, whose sign is
+   * inverted: `Etc/GMT-5` is UTC+5) has no daylight saving, so the oldest day's
+   * first instant is its date's UTC midnight minus the offset, computed here
+   * without the code under test.
+   */
+  it('leaves a run that arrived before the oldest day’s midnight out of the window', async () => {
+    const at = new Date();
+    const offset = [...Array(27).keys()]
+      .map((i) => i - 12)
+      .find((h) => {
+        const local = (at.getUTCHours() + at.getUTCMinutes() / 60 + h + 48) % 24;
+        return local >= 2 && local < 14;
+      })!;
+    const tz = offset === 0 ? 'UTC' : `Etc/GMT${offset > 0 ? '-' : '+'}${Math.abs(offset)}`;
+    const [y, m, d] = dateIn(tz, at).split('-').map(Number) as [number, number, number];
+    const oldest = new Date(Date.UTC(y, m - 1, d - 6));
+    const oldestStart = oldest.getTime() - offset * HOUR;
+
+    const smoke = await seedTest('checkout-smoke');
+    const arrived = new Date(oldestStart - HOUR);
+    // In the slice: inside the 168 hours before now, and before the window.
+    expect(arrived.getTime()).toBeGreaterThan(Date.now() - 168 * HOUR);
+    const runId = await seedRun(0, {
+      testId: smoke.id,
+      status: 'failed',
+      verdict: null,
+      createdAt: arrived,
+      startedAt: arrived,
+      startedOn: new Date(arrived.toISOString().slice(0, 10)),
+    });
+
+    const res = await asSession(`${PATH}?tz=${encodeURIComponent(tz)}`);
+
+    expect(res.status).toBe(200);
+    const body = parse(res.body);
+    // A failed run, so the only thing keeping it off the list is the window.
+    // Asserted first: being listed while counted in no day is the defect.
+    expect(body.attention).toEqual([]);
+    expect(body.attentionTotal).toBe(0);
+    expect(body.runCount).toBe(0);
+    expect(body.passRate).toBeNull();
+    // The positive control: the run is there, and it is this org's.
+    expect(body.lastRun?.id).toBe(runId);
+    // And the window the response names starts where the glance does.
+    expect(body.days[0]!.date).toBe(oldest.toISOString().slice(0, 10));
+    expect(body.window.from).toBe(new Date(oldestStart).toISOString());
   });
 
   it('treats a blank tz as UTC', async () => {

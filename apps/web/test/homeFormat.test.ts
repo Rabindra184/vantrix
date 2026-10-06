@@ -30,12 +30,10 @@ import { STATUS, VERDICT } from '../src/routes/marks';
 const id = (n: number) => `1a2b3c4d-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const CHECKOUT = { slug: 'checkout', name: 'Checkout' };
 
-const DAYS = Array.from({ length: 7 }, (_, i) => ({
-  date: `2026-10-0${i + 1}`,
-  total: 0,
-  successful: 0,
-  needsAttention: 0,
-}));
+/** The seven days the fixture's window starts on: `window.from` is the first's midnight. */
+const DAYS = ['2026-09-30', '2026-10-01', '2026-10-02', '2026-10-03', '2026-10-04', '2026-10-05', '2026-10-06'].map(
+  (date) => ({ date, total: 0, successful: 0, needsAttention: 0 }),
+);
 
 const ROW = {
   test: { slug: 'soak', name: 'Soak' },
@@ -63,7 +61,7 @@ const LAST_RUN = {
 
 function activity(over: Record<string, unknown> = {}): ActivityResponse {
   return ActivityResponseSchema.parse({
-    window: { from: '2026-09-29T12:00:00.000Z', to: '2026-10-06T12:00:00.000Z', tz: 'UTC' },
+    window: { from: '2026-09-30T00:00:00.000Z', to: '2026-10-06T12:00:00.000Z', tz: 'UTC' },
     days: DAYS,
     runCount: 0,
     passRate: null,
@@ -87,6 +85,27 @@ describe('attentionState', () => {
 
   it('is a gap when the window is quiet but the org has run before', () => {
     expect(attentionState(activity({ runCount: 0, lastRun: LAST_RUN }))).toBe('gap');
+  });
+
+  /**
+   * The org whose only run arrived in the slice before the oldest day's
+   * midnight — inside the 168 hours before now and outside the window — as
+   * `activity.integration.test.ts` has the API answer it: nothing listed,
+   * nothing counted, and that run as the last one. One window, so the page
+   * reads a coverage gap rather than listing a run under seven empty columns.
+   */
+  it('is a gap for an org whose only run arrived before the window’s first instant', () => {
+    const from = '2026-09-30T00:00:00.000Z';
+    const arrivedBefore = { ...LAST_RUN, startedAt: '2026-09-29T23:00:00.000Z' };
+    const answer = activity({
+      window: { from, to: '2026-10-06T12:00:00.000Z', tz: 'UTC' },
+      runCount: 0,
+      attention: [],
+      attentionTotal: 0,
+      lastRun: arrivedBefore,
+    });
+    expect(Date.parse(answer.lastRun!.startedAt)).toBeLessThan(Date.parse(answer.window.from));
+    expect(attentionState(answer)).toBe('gap');
   });
 
   it('is empty when the org has never had a run', () => {

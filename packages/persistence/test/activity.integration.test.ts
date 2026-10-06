@@ -44,8 +44,6 @@ afterAll(async () => {
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
-/** The attention window: the 604 800 000 ms before now. */
-const WEEK = 7 * DAY;
 
 /** One instant for the whole file, so a fixture "ten hours ago" and the window
  *  the read is handed agree about what "ago" means. */
@@ -60,8 +58,10 @@ const boundaries = Array.from({ length: 8 }, (_, i) => new Date(todayStart + (i 
 /** Somewhere inside glance day `i` that is not its first millisecond. */
 const inDay = (i: number) => new Date(boundaries[i]!.getTime() + 12 * HOUR);
 
+/** The window the endpoint hands in: from the first glance boundary to now, so
+ *  the attention list and the day counts cover the same seven days. */
 const window: ActivityWindow = {
-  attentionFrom: ago(WEEK),
+  attentionFrom: boundaries[0]!,
   attentionTo: now,
   dayBoundaries: boundaries,
 };
@@ -298,12 +298,14 @@ describe('ActivityRepository.read', () => {
     expect(attention.map((row) => row.test)).toEqual([null, null]);
   });
 
-  it('bounds the attention window at 168 hours, and at its own end', async () => {
+  it('bounds the attention window at the instant it is handed, inclusive, and at its own end', async () => {
     const inside = await newTest('inside');
     const outside = await newTest('outside');
     const afterwards = await newTest('afterwards');
-    const listed = await failedRun({ testId: inside.id, createdAt: ago(167 * HOUR) });
-    await failedRun({ testId: outside.id, createdAt: ago(169 * HOUR) });
+    // The first instant of the window is in it, and the millisecond before is
+    // not — whatever the 168 hours before now would have said about it.
+    const listed = await failedRun({ testId: inside.id, createdAt: boundaries[0]! });
+    await failedRun({ testId: outside.id, createdAt: new Date(boundaries[0]!.getTime() - 1) });
     // The window ends at the instant the caller named, so a run that arrived
     // after it is not in it, however failed it is.
     await failedRun({ testId: afterwards.id, createdAt: new Date(now.getTime() + HOUR) });

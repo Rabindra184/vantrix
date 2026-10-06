@@ -119,7 +119,7 @@ function json(body: unknown): Response {
 
 /** A real activity answer, through the real schema, so the gate's success path parses. */
 const ACTIVITY = ActivityResponseSchema.parse({
-  window: { from: '2026-09-29T12:00:00.000Z', to: '2026-10-06T12:00:00.000Z', tz: 'UTC' },
+  window: { from: '2026-09-30T00:00:00.000Z', to: '2026-10-06T12:00:00.000Z', tz: 'UTC' },
   days: ['2026-09-30', '2026-10-01', '2026-10-02', '2026-10-03', '2026-10-04', '2026-10-05', '2026-10-06'].map(
     (date) => ({ date, total: 0, successful: 0, needsAttention: 0 }),
   ),

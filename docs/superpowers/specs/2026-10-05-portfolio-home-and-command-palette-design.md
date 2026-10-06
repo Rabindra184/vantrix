@@ -211,15 +211,31 @@ document and the session isolation cases.
 response echoes the zone used. A zone `Intl` rejects is 400
 `INVALID_TIMEZONE`, with a remediation giving `Europe/London` as an example.
 
-**Two windows, both copied from Gatling Enterprise, both on `run.created_at`**
-(arrival: the order "latest run" follows. The per-test reads use the existing
-`(test_id, created_at)` index and `running` the `(status, created_at)` one; the
-org-wide day counts get a new `(org_id, created_at)` index, because nothing
-served an org-wide arrival range and `AuthGate` asks this endpoint on every
-cold load (corrected while planning PR 2). The run list itself sorts by when
-the test ran, so a late upload counts here on the day it arrived):
+**Two windows, both from Gatling Enterprise, both on `run.created_at`, and —
+since the final review — both starting at the same instant**
+(arrival: the order "latest run" follows. The day counts and the attention read
+are both org-wide arrival ranges, served by a new `(org_id, created_at)` index
+because nothing served one and `AuthGate` asks this endpoint on every cold load
+(corrected while planning PR 2); `running` uses the `(status, created_at)` one.
+There is no per-test read: the attention list is one org-wide read of the
+window that keeps each test's latest run (corrected at the final review, which
+found this sentence naming a `(test_id, created_at)` read nothing makes). The
+run list itself sorts by when the test ran, so a late upload counts here on the
+day it arrived):
 
-- **Attention window:** the last 168 hours before now.
+- **Attention window:** from the first of the glance's eight boundaries (the
+  first instant of the oldest glance day in `tz`) to now. **Corrected at the
+  final review** from "the last 168 hours before now": Gatling Enterprise's 168
+  hours beside seven CALENDAR days leaves a slice — the 24 hours minus today's
+  time of day before the oldest day's midnight — that is inside the attention
+  window and in no glance day. A failing run that arrived in it was listed
+  over seven empty columns; a passing one left the page reading "No runs in
+  the last 7 days" beside "Run N · 6 days ago", under a heading whose range
+  held it. So the attention window now starts where the glance does: the heading's range, the seven
+  columns, the attention list, `attentionTotal`, `passRate` and the gap state
+  all describe the same seven calendar days. The cost: a test that failed
+  before that midnight drops off Home up to a day earlier than it would in
+  Gatling Enterprise.
 - **Glance days:** the 7 calendar days ending today in `tz`. Node computes the
   eight local-midnight boundaries with `Intl` (DST-correct) and passes them to
   SQL as UTC instants; SQL only counts runs between them. Postgres's own zone
