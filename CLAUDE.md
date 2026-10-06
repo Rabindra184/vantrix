@@ -272,6 +272,15 @@ by that figure. The tokens were revoked and the processes stopped by PID.
 no flaky case; one `signIn` stall on `/login` was absorbed by the helper's own
 retry, the navigation stall this file already records.
 
+**RE-MEASURED AFTER MERGING `main`**, where the runs-repeated-query branch had
+landed underneath it: `pnpm build`, `typecheck` and `lint` exit 0; `test:unit`
+**206 / 2867**, zero `Errors` lines (that branch added no unit case);
+`test:integration` **187 / 2503, exit 0, zero failures** (this branch's 2492
+plus its eleven); `pnpm test:e2e --workers=2` **192 passed, exit 0** — each
+predicted before the run, on the same scratch stores. Integration started at a
+1-minute load of 26 after the gate expired, which this file counts as a pass
+because it passed.
+
 The runs-repeated-query branch (`fix/runs-repeated-query`) added no unit FILE
 and no unit case — unit stays **201 / 2757** — and 11 cases to
 `apps/api/test/read.integration.test.ts`, from **182 / 2357 to 182 / 2368**.
