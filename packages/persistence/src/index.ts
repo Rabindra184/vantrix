@@ -8,6 +8,7 @@ export * from './repositories/like.js';
 export * from './repositories/run.js';
 export * from './repositories/rule.js';
 export * from './repositories/test.js';
+export * from './repositories/activity.js';
 export * from './repositories/runner.js';
 export * from './repositories/package.js';
 export * from './runner-events.js';

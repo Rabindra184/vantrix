@@ -289,15 +289,24 @@ describe('RunRepository.list — optional projectId (session vs token scope)', (
     // here while nothing checked it was indexed. Now a column added to
     // RUN_SEARCH_COLUMNS without its run_<column>_trgm index fails below,
     // naming the index.
-    const predicate = RUN_SEARCH_COLUMNS.map((c) => `r.${c} ILIKE $2 ESCAPE '\\'`).join(' OR ');
+    //
+    // THE ORGANISATION CONJUNCT IS LEFT OUT, ON PURPOSE. `list()` always
+    // carries one, and with it this case used to pass; then
+    // `run_org_id_created_at_idx` arrived for the portfolio home, and on a
+    // one-row table with seqscan disabled the planner takes that index and
+    // applies the six-way OR as a plain filter, because a tiny table has no
+    // cost worth a BitmapOr. That plan says nothing about whether the OR is
+    // SERVABLE by its trigram indexes, which is the only claim here; on a
+    // table with rows the planner weighs the two by selectivity. Without the
+    // conjunct no other index can serve the query, so naming all six is what
+    // reachability means.
+    const predicate = RUN_SEARCH_COLUMNS.map((c) => `r.${c} ILIKE $1 ESCAPE '\\'`).join(' OR ');
     const plan = await prisma.$transaction(async (tx) => {
       await tx.$executeRawUnsafe('SET LOCAL enable_seqscan = off');
       return tx.$queryRawUnsafe<{ 'QUERY PLAN': string }[]>(
         `EXPLAIN (COSTS OFF)
        SELECT r.id FROM run r
-        WHERE r.org_id = $1::uuid
-          AND (${predicate})`,
-        orgId,
+        WHERE ${predicate}`,
         '%search-plan%',
       );
     });

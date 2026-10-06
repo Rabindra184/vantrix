@@ -521,6 +521,9 @@ model Run {
   /// Serves the test's own run history, and TRENDS_SQL's cohort once it
   /// stops matching on the simulation string.
   @@index([testId, createdAt(sort: Desc)])
+  /// Serves the portfolio home's organisation-wide arrival reads
+  /// (ActivityRepository): a range over created_at for one org.
+  @@index([orgId, createdAt(sort: Desc)])
   @@index([projectId, startedAt(sort: Desc)])
   @@index([status, createdAt])
   @@index([packageId])
