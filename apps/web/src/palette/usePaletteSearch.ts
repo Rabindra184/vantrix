@@ -1,4 +1,4 @@
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { hashKey, useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import type { OrgTestSummary, RunListResponse } from '@perfportal/contracts';
@@ -97,6 +97,23 @@ const paletteRunNumberQueryKey = (text: string, n: number) =>
   ['palette-run-number', text, n] as const;
 
 /**
+ * The three server searches' keys for one query. The queries read their keys
+ * from here, and so does the record of what has been asked since the box was
+ * last cleared — so "this placeholder's query was asked since the clear" is
+ * decided against exactly the keys the queries use, not a second spelling of
+ * them. Run-by-number's key holds the text BEFORE the `#N`, which is why a
+ * record of texts alone could not answer for it: `checkout` asked after a
+ * clear says nothing about a `checkout #7` lookup made before it.
+ */
+function searchKeys({ text, runNumber }: PaletteQuery) {
+  return {
+    tests: orgTestsQueryKey(text, TEST_LIMIT),
+    runs: paletteRunsQueryKey(text),
+    runByNumber: paletteRunNumberQueryKey(runNumber?.text ?? '', runNumber?.n ?? 0),
+  } as const;
+}
+
+/**
  * `<text> #N`: run N of each of the (at most three) tests the text names.
  *
  * Every lookup is SETTLED rather than raced with `Promise.all`, because one of
@@ -169,10 +186,20 @@ function remoteGroup<T>(enabled: boolean, query: QueryLike<readonly T[]>): Group
  * TanStack's placeholder is the last query that HAD data, not the last one
  * asked. So a reader who searched `smo`, cleared the box (the groups go idle,
  * "Go to" returns) and typed `search` would see `smo`'s rows come back as
- * `search`'s placeholder — rows from a query they had abandoned, which an
- * Enter could then act on. Narrowing `che` to `chec` refines one question;
- * clearing starts another, and there is nothing to keep. So the placeholder
- * is withheld whenever the text the groups were asked before was empty.
+ * `search`'s placeholder — rows from a query they had abandoned. Narrowing
+ * `che` to `chec` refines one question; clearing starts another, and there is
+ * nothing to keep.
+ *
+ * The first version of this guard withheld the placeholder when the text
+ * asked JUST BEFORE was empty, which covers only the first query after a
+ * clear. Type `sea`, then `sear` before `sea` answers: the text before `sear`
+ * is `sea`, so the guard let the placeholder through — and the last query
+ * with data was still `smo`. So the rule is about the PLACEHOLDER'S OWN
+ * query, never about the text before this one: a group may show the last
+ * answer it had only if that answer's query was asked since the box was last
+ * cleared (`placeholderData`, below). Enter was safe either way — a
+ * placeholder row is `loading`, so a queued Enter waits — but the rows on
+ * screen were an answer to nothing the reader was asking.
  *
  * Projects and Pages are matched in the browser against `GET /v1/projects`,
  * read under the rail's own key so inside the app it is a cache hit. Tests,
@@ -186,14 +213,37 @@ export function usePaletteSearch(raw: string): PaletteGroups {
   const searching = text !== '';
   const typed = raw.trim();
 
-  /* The text the groups were asked BEFORE this one — the previous DISTINCT
-     debounced text, not the previous render's. Held as state and moved on
-     during render (React's pattern for state derived from a prop), so the
-     render that first asks `search` already knows it follows `''`. */
-  const [asked, setAsked] = useState({ current: text, previous: '' });
-  if (asked.current !== text) setAsked({ current: text, previous: asked.current });
-  const previousText = asked.current === text ? asked.previous : asked.current;
-  const placeholderData = previousText === '' ? undefined : keepPreviousData;
+  /* Every text the groups have been asked since the box was last cleared.
+     The DEBOUNCED text, so emptying the box and retyping inside the pause is
+     not a clear: the groups were never asked ''. Held as state and moved on
+     during render (React's pattern for state derived from a prop), and read
+     as `askedSinceClear` so the render that first asks `sear` already counts
+     it rather than waiting for the re-render the update schedules. */
+  const [sinceClear, setSinceClear] = useState<readonly string[]>(() =>
+    text === '' ? [] : [text],
+  );
+  let askedSinceClear = sinceClear;
+  if (text === '' && sinceClear.length > 0) askedSinceClear = [];
+  if (text !== '' && !sinceClear.includes(text)) askedSinceClear = [...sinceClear, text];
+  if (askedSinceClear !== sinceClear) setSinceClear(askedSinceClear);
+
+  /* `keepPreviousData`, refused when the answer it would keep belongs to a
+     query asked before the clear. Shared by all three server searches: each
+     key carries its own prefix, so one set of hashes answers for all of them
+     without a match across groups. */
+  const placeholderData = useMemo(() => {
+    const asked = new Set(
+      askedSinceClear.flatMap((t) =>
+        Object.values(searchKeys(parsePaletteQuery(t))).map((key) => hashKey(key)),
+      ),
+    );
+    return <T>(
+      previousData: T | undefined,
+      previousQuery: { readonly queryHash: string } | undefined,
+    ): T | undefined =>
+      previousQuery !== undefined && asked.has(previousQuery.queryHash) ? previousData : undefined;
+  }, [askedSinceClear]);
+  const keys = searchKeys(query);
   const currentSlug = currentProjectSlug(useLocation().pathname);
 
   const projectList = useQuery({ queryKey: projectsQueryKey, queryFn: fetchProjects });
@@ -212,21 +262,21 @@ export function usePaletteSearch(raw: string): PaletteGroups {
   }, [currentSlug, projectRefs]);
 
   const tests = useQuery({
-    queryKey: orgTestsQueryKey(text, TEST_LIMIT),
+    queryKey: keys.tests,
     queryFn: () => fetchOrgTests({ q: text, limit: TEST_LIMIT }),
     enabled: searching,
     placeholderData,
   });
 
   const runs = useQuery({
-    queryKey: paletteRunsQueryKey(text),
+    queryKey: keys.runs,
     queryFn: () => searchRuns(text, RUN_LIMIT),
     enabled: searching,
     placeholderData,
   });
 
   const runByNumber = useQuery({
-    queryKey: paletteRunNumberQueryKey(runNumber?.text ?? '', runNumber?.n ?? 0),
+    queryKey: keys.runByNumber,
     queryFn: () =>
       runNumber === null ? Promise.resolve([]) : lookUpRunByNumber(runNumber.text, runNumber.n),
     enabled: runNumber !== null,
