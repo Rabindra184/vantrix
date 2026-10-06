@@ -327,6 +327,106 @@ describe('AuthGate — the membership probe', () => {
   });
 });
 
+/**
+ * ═══ A 2xx THE BROWSER'S SCHEMA REFUSES IS THE GATE PASSED, TOO ═══
+ *
+ * The probe's answer came from the API's handler, which runs only after the
+ * perimeter accepted the session and its membership — exactly what a 400
+ * proves. That this bundle cannot read the body is a disagreement about one
+ * shape, and it belongs in the home page's card, not over the whole app. The
+ * pair is what makes it the TYPE that latches: a 200 that is not JSON at all
+ * (a proxy's page) proves nothing, and still shows the outage page.
+ */
+describe('AuthGate — a 2xx the schema refuses', () => {
+  it('renders the app when the probe answers 200 with a body the contract refuses', async () => {
+    renderGate({ session: signedIn, probe: () => Promise.resolve(json({ ...ACTIVITY, days: [] })) });
+    expect(await screen.findByText('page content stand-in')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'PerfPortal is not answering' })).toBeNull();
+  });
+
+  it('still shows the outage page for a 200 that is not JSON at all', async () => {
+    renderGate({
+      session: signedIn,
+      probe: () =>
+        Promise.resolve(new Response('<html>gateway</html>', { status: 200, headers: { 'Content-Type': 'text/html' } })),
+    });
+    expect(await screen.findByRole('heading', { name: 'PerfPortal is not answering' })).toBeInTheDocument();
+    expect(screen.queryByText('page content stand-in')).toBeNull();
+  });
+});
+
+/**
+ * ═══ A FAILED SESSION REFETCH IS NOT AN OUTAGE ONCE THERE IS A SESSION ═══
+ *
+ * Better Auth's session is refetched on window focus, and TanStack keeps the
+ * last good answer across a failed refetch. So once the gate has passed, a
+ * session read that fails is one missed refetch over a working app, and it
+ * keeps the app — where a FIRST session read failing is the outage page, as
+ * it always was, because there is no answer to keep.
+ */
+describe('AuthGate — the session, read again', () => {
+  const sessionOutage = () =>
+    Promise.resolve(
+      new Response(JSON.stringify({ message: 'Better Auth is not answering.' }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+  it('keeps the app on screen when a later session read fails', async () => {
+    let calls = 0;
+    const { client } = renderGate({
+      session: () => {
+        calls += 1;
+        return calls === 1 ? signedIn() : sessionOutage();
+      },
+      probe: () => Promise.resolve(json(ACTIVITY)),
+    });
+    expect(await screen.findByText('page content stand-in')).toBeInTheDocument();
+
+    await client.refetchQueries({ queryKey: sessionQueryKey });
+    // The paired fact: the refetch really did fail, and the page stayed.
+    await waitFor(() => expect(client.getQueryState(sessionQueryKey)?.status).toBe('error'));
+    expect(calls).toBe(2);
+    expect(screen.getByText('page content stand-in')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'PerfPortal is not answering' })).toBeNull();
+  });
+
+  it('shows the outage page when the FIRST session read fails', async () => {
+    renderGate({ session: sessionOutage, probe: () => Promise.resolve(json(ACTIVITY)) });
+    expect(await screen.findByRole('heading', { name: 'PerfPortal is not answering' })).toBeInTheDocument();
+    expect(screen.queryByText('page content stand-in')).toBeNull();
+    // And it is not read as "signed out": the gate stayed put.
+    expect(screen.queryByText('login stand-in')).toBeNull();
+  });
+
+  it('still lets a later 401 from the probe win after a failed session refetch', async () => {
+    let sessionCalls = 0;
+    let probeCalls = 0;
+    const { client } = renderGate({
+      session: () => {
+        sessionCalls += 1;
+        return sessionCalls === 1 ? signedIn() : sessionOutage();
+      },
+      probe: () => {
+        probeCalls += 1;
+        return probeCalls === 1
+          ? Promise.resolve(json(ACTIVITY))
+          : problem(401, {
+              code: 'UNAUTHENTICATED',
+              detail: 'The session has expired.',
+              remediation: 'Sign in again.',
+            })();
+      },
+    });
+    expect(await screen.findByText('page content stand-in')).toBeInTheDocument();
+    await client.refetchQueries({ queryKey: sessionQueryKey });
+    await waitFor(() => expect(client.getQueryState(sessionQueryKey)?.status).toBe('error'));
+    await client.refetchQueries({ queryKey: ['activity'] });
+    expect(await screen.findByText('login stand-in')).toBeInTheDocument();
+  });
+});
+
 describe('AuthGate — a 401 at any time', () => {
   /**
    * The session ended between the two questions (first load) or while the

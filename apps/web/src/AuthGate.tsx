@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
+import { ZodError } from 'zod';
 import { AlertMark } from './components/States';
 import { ActivityIcon } from './components/icons';
 import { ProblemError } from './api/fetch';
@@ -56,6 +57,17 @@ import { NO_ORG_ROUTE, loginPathFor } from './routes/paths';
  * reading the same query, shows the refusal in its own error state. Treating
  * it as an outage would lock every reader in that zone out of the whole
  * product over one card.
+ *
+ * ═══ SO DOES A 2xx THE BROWSER'S SCHEMA REFUSES ═══
+ *
+ * `apiFetch` parses every 2xx body with the contract's schema and lets the
+ * `ZodError` out when it does not fit. A body that failed the BROWSER's parse
+ * was still a 2xx from the API's handler, so it proves the session and the
+ * membership exactly as a 400 does: what disagrees is this bundle and that
+ * server about one shape (a deploy half done, say), and the home page's card
+ * says so in its error state. Branched on the error's TYPE, never on its
+ * message. A 2xx that is not JSON at all is a different error (`res.json()`'s
+ * `SyntaxError`) and proves nothing: a proxy's HTML page can answer 200.
  */
 export default function AuthGate() {
   const location = useLocation();
@@ -84,11 +96,14 @@ export default function AuthGate() {
 
   /* ═══ THE GATE LATCHES ONCE IT HAS ITS ANSWER ═══
    *
-   * Answered means the probe came back with data, or with a 400 (see the
-   * docstring: a handler's refusal is the gate passed). From then on, for the
-   * life of this component, the gate never shows the bootstrap again and never
-   * shows the outage page: only the perimeter's own two answers, a 401 and a
-   * 403, can take the reader out — and those win at ANY time, latched or not.
+   * Answered means the probe came back with data, with a 400, or with a 2xx
+   * the browser's schema refused (see the docstring: each is a handler's
+   * answer, so the gate passed). From then on, for the life of this component,
+   * the gate never shows the bootstrap again and never shows the outage page:
+   * not for a later read of the probe failing, and not for a failed REFETCH of
+   * the session either (below). Only the perimeter's own two answers, a 401
+   * and a 403, can take the reader out — and those win at ANY time, latched or
+   * not.
    *
    * Reading `isPending` afresh on every render is what looped. After a 400 the
    * entry is an error with no data; the home page mounts a second observer on
@@ -113,19 +128,27 @@ export default function AuthGate() {
    * the very render that first sees the answer already acts on it. */
   const [passed, setPassed] = useState(false);
   const problem = membership.error instanceof ProblemError ? membership.error : null;
-  const answered = membership.data !== undefined || problem?.status === 400;
+  const answered =
+    membership.data !== undefined || problem?.status === 400 || membership.error instanceof ZodError;
   if (answered && !passed) setPassed(true);
   const latched = passed || answered;
 
   if (session.isPending) return latched ? <Outlet /> : <Bootstrapping />;
 
-  if (session.isError) {
+  if (session.isError && session.data === undefined) {
     // `/auth/get-session` failing is NOT "logged out" — session.ts throws
     // only when Better Auth answers non-2xx, and it signals no session with
     // a 200 whose body is null. Redirecting to /login here would present an
     // outage as a credentials problem. The message is rendered as an opaque
     // string; reading Better Auth's error SHAPE is the login form's job
     // alone (design §5), and this component never imports AuthError.
+    //
+    // A FIRST read only. Better Auth's session is refetched on window focus,
+    // and TanStack keeps the last good answer across a failed refetch, so
+    // `isError` and `data` can both hold. A session already answered is
+    // still the answer: the code below goes on with it, so a missed refetch
+    // over a working app keeps the app (latched) rather than swapping it for
+    // the outage page, and the probe's 401 and 403 still win.
     return <Unavailable detail={session.error.message} />;
   }
 
@@ -159,8 +182,9 @@ export default function AuthGate() {
     // remediation it is required to send, and stay put.
     if (problem !== null) return <Unavailable detail={problem.detail} remediation={problem.remediation} />;
     // Not a ProblemError, so not a rejected response at all: apiFetch
-    // guarantees every non-2xx rejects as one. This is a 2xx the contract
-    // schema refused, or the network never completing.
+    // guarantees every non-2xx rejects as one. Not a 2xx the contract schema
+    // refused either — that latched above. What is left is a 2xx whose body
+    // was not JSON, or the network never completing.
     return <Unavailable detail={membership.error.message} />;
   }
 

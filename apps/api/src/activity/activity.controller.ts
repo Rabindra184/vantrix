@@ -59,8 +59,13 @@ import { glanceDays, resolveTimeZone } from './days.js';
  * A row the SQL listed as needing attention is listed BECAUSE one of four
  * clauses held, and the contract demands at least one reason for it. If the
  * SQL predicate and `attentionReasons` ever disagree the row comes back with
- * none and the parse throws: a loud 500 on one page, never a silent
- * disagreement between a count and the line it counts.
+ * none and the parse throws: a loud 500, never a silent disagreement between
+ * a count and the line it counts. LOUD MEANS THE WHOLE APP on a cold load:
+ * this endpoint is the app gate's membership probe, and `AuthGate` latches
+ * only on an answer, a 400, or a 2xx the BROWSER's schema refuses — a 500 is
+ * none of those, so a first load shows the outage page instead of the app.
+ * Once the gate has passed, the same 500 is the home page's attention card's
+ * own error state and nothing else.
  */
 @Controller('/v1/activity')
 export class ActivityController {
