@@ -36,18 +36,17 @@ function normaliseFilters(filters: RunListFilters = {}) {
  * same cursor: sharing a key would serve one as the other.
  *
  * `runsQueryKey()` with no arguments is the first unfiltered page of the
- * org-wide list, and the exact key `AuthGate`'s membership probe uses. That
- * identity is deliberate — the list's first page renders from the bootstrap's
- * cached result instead of showing a second loading state on first paint.
+ * org-wide list. It WAS the exact key `AuthGate`'s membership probe used, so
+ * the list's first page rendered from the bootstrap's cached result; the probe
+ * moved to the home page's `GET /v1/activity` when `/` became the home page
+ * (`activityQueryOptions`), and a cold load of the run list now asks for its
+ * own first page and draws its skeleton meanwhile.
  *
- * It does NOT mean the first page fires zero requests. `staleTime` is unset
- * (default `0`) and `AuthGate` stays mounted as a layout route, so the list
- * mounting a second observer on the same key renders from cache *and*
- * triggers a background refetch. That refetch is wanted, not tolerated: a
- * run's `status` and `verdict` change underneath this list as the worker
- * processes it, so data cached during the bootstrap is exactly the data most
- * likely to be out of date by the time the user is looking at it. The win is
- * the instant paint, not a saved GET.
+ * What this said about that sharing still holds of any second observer on a
+ * key: with `staleTime` unset (default `0`) an observer mounting on a cached
+ * entry renders from it *and* refetches. Here that refetch is wanted — a run's
+ * `status` and `verdict` change underneath this list as the worker processes
+ * it — which is why this key, unlike the activity one, carries no `staleTime`.
  */
 export const runsQueryKey = (
   cursor: string | null = null,

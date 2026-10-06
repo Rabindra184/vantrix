@@ -9,8 +9,9 @@ import { apiFetch } from './fetch';
  * rate, what is running, the busiest projects, the tests that need attention
  * and the last run — so the page asks once, and `AuthGate` asks the very same
  * question on a cold load to learn whether the signed-in user has an
- * organisation at all. Both read it under this key, which is what lets the
- * landing page render from the probe's own result instead of asking again.
+ * organisation at all. Both ask it through `activityQueryOptions` below, and
+ * that — the shared `staleTime` as much as the shared key — is what lets the
+ * landing page render from the probe's own answer without asking again.
  *
  * KEYED BY ZONE. The days are the viewer's local calendar days, so the same
  * org answers differently from Kolkata and from Honolulu; a key without the
@@ -42,8 +43,7 @@ export function browserTimeZone(): string {
  *
  * `encodeURIComponent`, because a zone has a slash in it (`Asia/Kolkata`) and
  * a raw one is a path separator to any proxy that normalises before it
- * forwards. No `staleTime`, for the reason `fetchProjects` gives: the counts
- * move as runs arrive and as the worker finishes them.
+ * forwards.
  */
 export function fetchActivity(tz: string): Promise<ActivityResponse> {
   return apiFetch(ActivityResponseSchema, `/v1/activity?tz=${encodeURIComponent(tz)}`);
@@ -51,6 +51,37 @@ export function fetchActivity(tz: string): Promise<ActivityResponse> {
 
 /** How often the page re-asks while something is running. */
 export const ACTIVITY_POLL_MS = 30_000;
+
+/**
+ * ═══ ONE SET OF OPTIONS, FOR THE GATE AND THE PAGE ═══
+ *
+ * A shared KEY is not enough to ask once. `AuthGate` stays mounted as a layout
+ * route, so when the home page mounts a second observer on the gate's entry, a
+ * `staleTime` of 0 (TanStack's default) calls that entry stale on sight and
+ * asks again — the trap `runsQueryKey`'s docstring records for the run list's
+ * old probe, where the second ask was wanted. Here it is not: the gate asked a
+ * moment ago, and the counts move with runs, not by the second.
+ *
+ * So the answer stays fresh for one poll interval, and both observers take it
+ * from here so the two cannot disagree about that. Polling is unaffected: the
+ * home page's `refetchInterval` fires every thirty seconds while something is
+ * running whatever the staleness, and a focus or a remount after thirty
+ * seconds asks again as before.
+ *
+ * It does NOT stop a re-ask after a FAILED first read: an entry with no data
+ * is always stale, and TanStack re-fetches an errored entry when an observer
+ * mounts. `AuthGate`'s latch is what keeps that from looping.
+ */
+export function activityQueryOptions(tz: string) {
+  return {
+    queryKey: activityQueryKey(tz),
+    // An arrow, not `queryFn: fetchActivity`: TanStack hands the query
+    // function a QueryFunctionContext, which `fetchActivity` would read as its
+    // zone.
+    queryFn: () => fetchActivity(tz),
+    staleTime: ACTIVITY_POLL_MS,
+  };
+}
 
 /**
  * TanStack's `refetchInterval` for the activity query: every thirty seconds

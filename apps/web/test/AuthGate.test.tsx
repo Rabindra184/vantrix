@@ -1,11 +1,13 @@
 import '@testing-library/jest-dom/vitest';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { useEffect, type ReactNode } from 'react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ActivityResponseSchema } from '@perfportal/contracts';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import AuthGate from '../src/AuthGate';
-import { activityQueryKey, browserTimeZone } from '../src/api/activity';
+import { activityQueryKey, activityQueryOptions, browserTimeZone } from '../src/api/activity';
+import { sessionQueryKey } from '../src/api/session';
 import { NO_ORG_ROUTE } from '../src/routes/paths';
 
 afterEach(cleanup);
@@ -28,7 +30,16 @@ afterEach(cleanup);
  */
 let requests: URL[] = [];
 
-function renderGate({ session, probe }: { session: () => unknown; probe?: () => unknown }) {
+function renderGate({
+  session,
+  probe,
+  child = <p>page content stand-in</p>,
+}: {
+  session: () => unknown;
+  probe?: () => unknown;
+  /** What the gate lets through. A stand-in by default; see the latch cases for one that asks too. */
+  child?: ReactNode;
+}) {
   requests = [];
   vi.stubGlobal('fetch', (input: RequestInfo | URL) => {
     const url = new URL(String(input), 'http://localhost');
@@ -50,7 +61,7 @@ function renderGate({ session, probe }: { session: () => unknown; probe?: () => 
       <MemoryRouter initialEntries={['/runs']}>
         <Routes>
           <Route element={<AuthGate />}>
-            <Route path="/runs" element={<p>page content stand-in</p>} />
+            <Route path="/runs" element={child} />
           </Route>
           <Route path={NO_ORG_ROUTE} element={<p>no organisation stand-in</p>} />
           <Route path="/login" element={<p>login stand-in</p>} />
@@ -316,3 +327,167 @@ describe('AuthGate — the membership probe', () => {
   });
 });
 
+describe('AuthGate — a 401 at any time', () => {
+  /**
+   * The session ended between the two questions (first load) or while the
+   * reader was on a page (a later read). Either way the answer is the sign-in
+   * page carrying where they were, and nothing the gate has latched outranks
+   * it.
+   */
+  it('sends a first-load 401 to the sign-in page', async () => {
+    renderGate({
+      session: signedIn,
+      probe: problem(401, {
+        code: 'UNAUTHENTICATED',
+        detail: 'The session has expired.',
+        remediation: 'Sign in again.',
+      }),
+    });
+    expect(await screen.findByText('login stand-in')).toBeInTheDocument();
+    expect(screen.queryByText('page content stand-in')).toBeNull();
+  });
+
+  it('sends a later 401 to the sign-in page too, after the gate has passed', async () => {
+    let calls = 0;
+    const { client } = renderGate({
+      session: signedIn,
+      probe: () => {
+        calls += 1;
+        return calls === 1
+          ? Promise.resolve(json(ACTIVITY))
+          : problem(401, {
+              code: 'UNAUTHENTICATED',
+              detail: 'The session has expired.',
+              remediation: 'Sign in again.',
+            })();
+      },
+    });
+    expect(await screen.findByText('page content stand-in')).toBeInTheDocument();
+    await client.refetchQueries({ queryKey: ['activity'] });
+    expect(await screen.findByText('login stand-in')).toBeInTheDocument();
+  });
+});
+
+/**
+ * ═══ A PAGE THAT ASKS THE SAME QUESTION, UNDER THE SAME KEY ═══
+ *
+ * The cases above let a stand-in through, and a stand-in asks nothing — which
+ * is exactly how a first-load 400 shipped looping for ever: the home page
+ * mounts a SECOND observer on the probe's key, TanStack re-fetches an errored
+ * query with no data when an observer mounts (`retryOnMount`), that fetch
+ * puts the query back to `pending`, and a gate that read `pending` as "still
+ * deciding" swapped the page for "Checking your session…" — unmounting it,
+ * until the 400 came back, the page remounted, and asked again. Measured at one
+ * request per tick, without end.
+ *
+ * So these let through a page that asks what the home page asks, and count.
+ */
+let observerMounts = 0;
+
+function AsksForActivity() {
+  const tz = browserTimeZone();
+  // The home page's own options, so this asks exactly what the home page asks.
+  const activity = useQuery(activityQueryOptions(tz));
+  useEffect(() => {
+    observerMounts += 1;
+  }, []);
+  return <p>activity observer: {activity.status}</p>;
+}
+
+/** Real time, a little at a time: the loop advanced one request per tick. */
+async function ticks(n: number) {
+  for (let i = 0; i < n; i += 1) {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+  }
+}
+
+const probeRequests = () => requests.filter((u) => u.pathname === '/v1/activity').length;
+const BOOTSTRAPPING = 'Checking your session…';
+
+describe('AuthGate — the gate latches once it has its answer', () => {
+  const invalidZone = problem(400, {
+    code: 'INVALID_TIMEZONE',
+    detail: 'The time zone "Mars/Olympus" is not one this server knows.',
+    remediation: 'Send an IANA zone such as Europe/London.',
+  });
+
+  it('lets a page that asks the same question through a 400, once, without looping', async () => {
+    observerMounts = 0;
+    renderGate({ session: signedIn, probe: invalidZone, child: <AsksForActivity /> });
+    // Ticks, not a `findBy`: a looping gate shows the page for a moment on
+    // every other tick, so polling for it would succeed by luck. The COUNT is
+    // what tells the two apart.
+    await ticks(10);
+
+    // The gate's question, and at most the page's own mount asking it again.
+    expect(probeRequests()).toBeLessThanOrEqual(2);
+    // Mounted ONCE: the gate never took the page away to show the bootstrap.
+    expect(observerMounts).toBe(1);
+    expect(screen.queryByText(BOOTSTRAPPING)).toBeNull();
+    expect(screen.getByText('activity observer: error')).toBeInTheDocument();
+  });
+
+  /**
+   * The page takes the gate's answer rather than asking again — which a shared
+   * KEY alone did not buy: with no `staleTime` the second observer found the
+   * entry stale on mount and refetched. Counted, because the screen is the same
+   * either way.
+   */
+  it('lets the page take the probe’s answer on a cold load, asking once', async () => {
+    observerMounts = 0;
+    renderGate({ session: signedIn, probe: () => Promise.resolve(json(ACTIVITY)), child: <AsksForActivity /> });
+    expect(await screen.findByText('activity observer: success')).toBeInTheDocument();
+    await ticks(5);
+    expect(probeRequests()).toBe(1);
+    expect(observerMounts).toBe(1);
+  });
+
+  /**
+   * A new zone mid-session — the reader's OS moves time zone — is a new key,
+   * and a fresh entry is `pending` with no data. A gate that read that as
+   * "still deciding" would take the page away for the length of a request
+   * (and, on a 400, for ever). Latched, the page stays and reports its own
+   * loading state.
+   */
+  it('keeps the page when the zone changes mid-session and the new key is still pending', async () => {
+    observerMounts = 0;
+    let first = true;
+    const { client } = renderGate({
+      session: signedIn,
+      probe: () => {
+        if (first) {
+          first = false;
+          return Promise.resolve(json(ACTIVITY));
+        }
+        return never();
+      },
+      child: <AsksForActivity />,
+    });
+    expect(await screen.findByText('activity observer: success')).toBeInTheDocument();
+
+    // Any zone but this machine's own, so the key really changes.
+    const zone = browserTimeZone() === 'Pacific/Kiritimati' ? 'Pacific/Pago_Pago' : 'Pacific/Kiritimati';
+    const resolved = Intl.DateTimeFormat.prototype.resolvedOptions;
+    const spy = vi
+      .spyOn(Intl.DateTimeFormat.prototype, 'resolvedOptions')
+      .mockImplementation(function (this: Intl.DateTimeFormat) {
+        return { ...resolved.call(this), timeZone: zone };
+      });
+    try {
+      // A new session object makes the gate render again, and read the zone.
+      act(() => {
+        client.setQueryData(sessionQueryKey, { session: { id: 's2' }, user: { id: 'u1', name: 'Ada' } });
+      });
+      // The precondition: the gate really is asking under the new key now.
+      await waitFor(() => expect(requests.some((u) => u.searchParams.get('tz') === zone)).toBe(true));
+      await ticks(3);
+      expect(screen.queryByText(BOOTSTRAPPING)).toBeNull();
+      expect(screen.getByText(/^activity observer:/)).toBeInTheDocument();
+      expect(observerMounts).toBe(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});

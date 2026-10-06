@@ -1,9 +1,10 @@
+import { useState } from 'react';
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { AlertMark } from './components/States';
 import { ActivityIcon } from './components/icons';
 import { ProblemError } from './api/fetch';
-import { activityQueryKey, browserTimeZone, fetchActivity } from './api/activity';
+import { activityQueryOptions, browserTimeZone } from './api/activity';
 import { getSession, sessionQueryKey } from './api/session';
 import { NO_ORG_ROUTE, loginPathFor } from './routes/paths';
 
@@ -32,9 +33,10 @@ import { NO_ORG_ROUTE, loginPathFor } from './routes/paths';
  *
  * It was the run list's first page, back when `/` redirected to the run list
  * and that list was the landing page. The landing page is the portfolio home
- * now, so the probe asks what Home asks — under Home's own query key, with
- * Home's own fetcher — and the page renders from this result on first paint
- * rather than asking again behind a second loading state. The run list, in
+ * now, so the probe asks what Home asks, through Home's own options
+ * (`activityQueryOptions`: the key, the fetcher, and a `staleTime` long enough
+ * that the page mounting a moment later takes this answer instead of asking
+ * again) — and the page renders from it on first paint. The run list, in
  * turn, now asks for its own first page, so a cold load of `/runs` draws its
  * skeleton where it used to arrive already filled.
  *
@@ -65,18 +67,52 @@ export default function AuthGate() {
   // same way, so the two name one query.
   const tz = browserTimeZone();
   const membership = useQuery({
-    queryKey: activityQueryKey(tz),
-    // Wrapped in an arrow rather than passed as `queryFn: fetchActivity`:
-    // TanStack hands the query function a QueryFunctionContext, which
-    // `fetchActivity` would read as its zone.
-    queryFn: () => fetchActivity(tz),
+    // The home page's own options — key, fetcher AND `staleTime` — so the page
+    // mounting on this entry a moment later draws from it instead of asking
+    // again (see `activityQueryOptions`).
+    ...activityQueryOptions(tz),
     // Never probe without a session: an unauthenticated probe would answer
     // 401 and land in the same place, having paid a request to learn what
     // step 1 already knew.
     enabled: session.data != null,
   });
 
-  if (session.isPending) return <Bootstrapping />;
+  /* ═══ THE GATE LATCHES ONCE IT HAS ITS ANSWER ═══
+   *
+   * Answered means the probe came back with data, or with a 400 (see the
+   * docstring: a handler's refusal is the gate passed). From then on, for the
+   * life of this component, the gate never shows the bootstrap again and never
+   * shows the outage page: only the perimeter's own two answers, a 401 and a
+   * 403, can take the reader out — and those win at ANY time, latched or not.
+   *
+   * Reading `isPending` afresh on every render is what looped. After a 400 the
+   * entry is an error with no data; the home page mounts a second observer on
+   * it; TanStack re-fetches an errored entry on mount (`retryOnMount`), which
+   * resets it to `pending`; and a gate that took `pending` for "still deciding"
+   * swapped the page for "Checking your session…", unmounting it until the 400
+   * came back, when the page remounted and asked again — one request a tick,
+   * without end. A new zone mid-session (the reader's OS moves time zone) is a
+   * new key and a fresh `pending` entry too, and the latch covers it the same
+   * way: the page reports its own loading state.
+   *
+   * STATE SET DURING RENDER, NOT A REF AND NOT AN EFFECT. An effect would latch
+   * only after the commit, by which time the page's own effects (a child's run
+   * before its parent's) have already started the re-fetch; whether the gate
+   * then saw `pending` before its latch landed would depend on TanStack's
+   * notification scheduling, which is no property to build a guard on. A ref
+   * written in render would latch in time, but a render React discards
+   * (concurrent rendering, StrictMode's double render) cannot take a ref write
+   * back; a state update made during a render is discarded with it. It is
+   * React's own pattern for state derived from what a render sees (`HomeTests`
+   * resets its paging the same way), and `answered` is folded in directly, so
+   * the very render that first sees the answer already acts on it. */
+  const [passed, setPassed] = useState(false);
+  const problem = membership.error instanceof ProblemError ? membership.error : null;
+  const answered = membership.data !== undefined || problem?.status === 400;
+  if (answered && !passed) setPassed(true);
+  const latched = passed || answered;
+
+  if (session.isPending) return latched ? <Outlet /> : <Bootstrapping />;
 
   if (session.isError) {
     // `/auth/get-session` failing is NOT "logged out" — session.ts throws
@@ -90,44 +126,37 @@ export default function AuthGate() {
 
   if (session.data === null) return <Navigate to={loginPathFor(intended)} replace />;
 
+  // The perimeter's two answers, which win whatever the gate has latched.
+  // The session expired between the two calls, or since the gate passed.
+  if (problem?.status === 401) return <Navigate to={loginPathFor(intended)} replace />;
+  // Authenticated, but a member of no organisation (or no longer one). NOT a
+  // redirect to /login: that is the infinite loop this whole branch exists to
+  // prevent (design §5.1).
+  if (problem?.status === 403) return <Navigate to={NO_ORG_ROUTE} replace />;
+
+  // ═══ ONCE PASSED, ONLY THE PERIMETER CAN TAKE IT BACK ═══
+  //
+  // A LATER read failing — the home page polls this query every thirty
+  // seconds while something is running, and any page refetches it on window
+  // focus — is not an outage of the session or the membership: the read that
+  // answered already settled both, and only the 401 and 403 above answer
+  // either question again. Swapping the reader's page for "PerfPortal is not
+  // answering" over one missed poll would be the outage page lying in the
+  // other direction. And a re-fetch that puts the entry back to `pending` is
+  // not "still deciding" — see the latch above.
+  if (latched) return <Outlet />;
+
   if (membership.isPending) return <Bootstrapping />;
 
   if (membership.isError) {
-    const error = membership.error;
-    if (error instanceof ProblemError) {
-      // The session expired between the two calls — rare, but the only way
-      // to reach a 401 here.
-      if (error.status === 401) return <Navigate to={loginPathFor(intended)} replace />;
-      // Authenticated, but a member of no organisation. NOT a redirect to
-      // /login: that is the infinite loop this whole branch exists to
-      // prevent (design §5.1).
-      if (error.status === 403) return <Navigate to={NO_ORG_ROUTE} replace />;
-      // The gate PASSED: a handler refused the question, which only happens
-      // once the session and the membership are both accepted. See this
-      // component's docstring; the home page reports the refusal itself.
-      if (error.status === 400) return <Outlet />;
-    }
-    // ═══ ONCE PASSED, ONLY THE PERIMETER CAN TAKE IT BACK ═══
-    //
-    // A LATER read failing — the home page polls this query every thirty
-    // seconds while something is running, and any page refetches it on window
-    // focus — is not an outage of the session or the membership: the read
-    // that succeeded already settled both, and only a 401 or a 403 above
-    // answers either question again. TanStack keeps that successful answer
-    // across the failed refetch, so `data` is how the gate knows it passed.
-    // Swapping the reader's page for "PerfPortal is not answering" over one
-    // missed poll would be the outage page lying in the other direction.
-    if (membership.data !== undefined) return <Outlet />;
-    if (error instanceof ProblemError) {
-      // Anything else is the API failing, and a failing API must never
-      // present itself as "please sign in". Surface what the server said,
-      // including the remediation it is required to send, and stay put.
-      return <Unavailable detail={error.detail} remediation={error.remediation} />;
-    }
+    // Anything else is the API failing, and a failing API must never present
+    // itself as "please sign in". Surface what the server said, including the
+    // remediation it is required to send, and stay put.
+    if (problem !== null) return <Unavailable detail={problem.detail} remediation={problem.remediation} />;
     // Not a ProblemError, so not a rejected response at all: apiFetch
     // guarantees every non-2xx rejects as one. This is a 2xx the contract
     // schema refused, or the network never completing.
-    return <Unavailable detail={error.message} />;
+    return <Unavailable detail={membership.error.message} />;
   }
 
   return <Outlet />;

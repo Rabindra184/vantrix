@@ -2,12 +2,7 @@ import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import type { ActivityResponse } from '@perfportal/contracts';
-import {
-  activityQueryKey,
-  activityRefetchInterval,
-  browserTimeZone,
-  fetchActivity,
-} from '../api/activity';
+import { activityQueryOptions, activityRefetchInterval, browserTimeZone } from '../api/activity';
 import { ProblemError } from '../api/fetch';
 import { fetchProjects, projectsQueryKey } from '../api/projects';
 import { getSession, sessionQueryKey } from '../api/session';
@@ -38,8 +33,11 @@ import { ALL_RUNS_ROUTE, projectPath } from './paths';
  * of either stays in its own cards: the activity error lands where the
  * attention card was, and the table goes on drawing from its own answer —
  * and the reverse. The activity query is the one `AuthGate` asked on the way
- * in, under the same key, so on a cold load this page draws from the gate's
- * answer rather than asking again.
+ * in, through the same `activityQueryOptions` — the same key AND the same
+ * `staleTime` — so on a cold load this page draws from the gate's answer
+ * rather than asking again. (The shared key alone did not do that: with no
+ * `staleTime` this page's observer found the gate's answer stale on mount and
+ * asked twice, which `Home.test.tsx` now counts.)
  *
  * ONE FAILED REQUEST IS ANNOUNCED ONCE. The attention card's slot carries the
  * `ErrorState` (an alert, in the server's own words); the two side cards say
@@ -61,13 +59,14 @@ export default function Home() {
   const compact = useIsCompact();
   const session = useQuery({ queryKey: sessionQueryKey, queryFn: getSession });
   const projects = useQuery({ queryKey: projectsQueryKey, queryFn: fetchProjects });
-  // The same zone, key and fetcher `AuthGate` uses, so the two name one query.
+  // The same zone and options `AuthGate` uses, so the two name one query and
+  // agree about how long its answer stays fresh.
   const tz = browserTimeZone();
   const activity = useQuery({
-    queryKey: activityQueryKey(tz),
-    queryFn: () => fetchActivity(tz),
+    ...activityQueryOptions(tz),
     // TanStack 5 hands `refetchInterval` the Query, not its data: every thirty
-    // seconds while something is running, and not at all otherwise.
+    // seconds while something is running, and not at all otherwise — whatever
+    // the `staleTime`, which governs mounts and focus, not the interval.
     refetchInterval: (query) => activityRefetchInterval(query.state.data),
   });
 
@@ -143,10 +142,11 @@ export default function Home() {
  * (CLAUDE.md, the time-window entry), and a test that pins a zone would then
  * be comparing two clocks.
  */
-function activityLine(window: ActivityResponse['window']): string {
+function activityLine(range: ActivityResponse['window']): string {
+  // `range`, not `window`: a parameter of that name would shadow the global.
   const day = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
-  return `Activity in the last 7 days (${day.format(new Date(window.from))} – ${day.format(
-    new Date(window.to),
+  return `Activity in the last 7 days (${day.format(new Date(range.from))} – ${day.format(
+    new Date(range.to),
   )})`;
 }
 
@@ -248,14 +248,16 @@ function RunningNow({ activity }: { readonly activity: Activity }) {
  * The count is text — the number, with "runs" for a screen reader, since the
  * card's heading already says it to a sighted one. The bar is `aria-hidden`:
  * a picture of the number beside it, and the number is what is read. Its
- * width is the project's share of the BUSIEST project's runs, so the first
- * row (the list is busiest first) is always full.
+ * width is the project's share of the BUSIEST project's runs — the maximum,
+ * not the first row: the server sends them busiest first today, and a bar
+ * that read `rows[0]` would quietly draw past 100% the day it did not. An org
+ * whose counts are all zero gets empty bars, never `NaN%` from 0 ÷ 0.
  */
 function RunsByProject({ activity }: { readonly activity: Activity }) {
   let body: ReactNode;
   if (activity.data !== undefined) {
     const rows = activity.data.byProject;
-    const top = rows[0]?.runs ?? 0;
+    const top = Math.max(0, ...rows.map((row) => row.runs));
     body =
       rows.length === 0 ? (
         <p className="text-[0.8125rem] text-muted">No runs in the last 7 days.</p>

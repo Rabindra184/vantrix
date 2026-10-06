@@ -1,7 +1,7 @@
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, render, screen, within } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ActivityResponseSchema,
@@ -9,7 +9,8 @@ import {
   ProjectListResponseSchema,
   type ActivityResponse,
 } from '@perfportal/contracts';
-import { ACTIVITY_POLL_MS } from '../src/api/activity';
+import AuthGate from '../src/AuthGate';
+import { ACTIVITY_POLL_MS, activityQueryKey, browserTimeZone } from '../src/api/activity';
 import Home from '../src/routes/Home';
 import { ALL_RUNS_ROUTE, projectPath } from '../src/routes/paths';
 import useIsCompact from '../src/useIsCompact';
@@ -164,7 +165,14 @@ interface Answers {
 let requests: URL[] = [];
 const asked = (pathname: string) => requests.filter((u) => u.pathname === pathname).length;
 
-function renderHome(answers: Answers = {}) {
+interface Setup {
+  /** An answer already in the cache, as `AuthGate`'s probe leaves one on a cold load. */
+  readonly seed?: ActivityResponse;
+  /** Render the real `AuthGate` above the page, as `App.tsx` does. */
+  readonly gated?: boolean;
+}
+
+function renderHome(answers: Answers = {}, { seed, gated = false }: Setup = {}) {
   requests = [];
   vi.stubGlobal('fetch', (input: RequestInfo | URL) => {
     const url = new URL(String(input), 'http://localhost');
@@ -182,10 +190,19 @@ function renderHome(answers: Answers = {}) {
     return Promise.resolve(answer === undefined ? json({}, 404) : answer());
   });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  if (seed !== undefined) client.setQueryData(activityQueryKey(browserTimeZone()), seed);
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={['/']}>
-        <Home />
+        {gated ? (
+          <Routes>
+            <Route element={<AuthGate />}>
+              <Route path="/" element={<Home />} />
+            </Route>
+          </Routes>
+        ) : (
+          <Home />
+        )}
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -344,8 +361,12 @@ describe('Home — the rail’s words', () => {
     await testsRow();
     await screen.findByRole('link', { name: 'Checkout soak' });
     await screen.findByRole('link', { name: `${activity().running} running` });
+    // Playwright's name match is a case-insensitive SUBSTRING, so a page link
+    // named "Homepage" or "See all runs" would answer the rail's own queries:
+    // the check is the substring too, not an exact or a whole-word match. The
+    // fixtures' names are chosen to contain neither.
     const names = screen.getAllByRole('link').map((link) => link.textContent?.trim() ?? '');
-    expect(names.filter((name) => /^(home|all runs)$/i.test(name))).toEqual([]);
+    expect(names.filter((name) => /home|all runs/i.test(name))).toEqual([]);
     expect(screen.queryByRole('link', { name: 'Home' })).toBeNull();
     expect(screen.queryByRole('link', { name: 'All runs' })).toBeNull();
   });
@@ -405,5 +426,94 @@ describe('Home — polling', () => {
       await vi.advanceTimersByTimeAsync(ACTIVITY_POLL_MS);
     });
     expect(asked('/v1/activity')).toBe(expected);
+  });
+});
+
+describe('Home — the bars of Runs by project', () => {
+  const card = async () =>
+    (await screen.findByRole('heading', { level: 2, name: 'Runs by project' })).closest('section')!;
+  const widths = async () =>
+    (await within(await card()).findAllByTestId('by-project-bar')).map((bar) => bar.style.width);
+
+  /** The busiest is the MAXIMUM, not whichever row the server sent first. */
+  it('measures every bar against the busiest project, whatever order the rows arrive in', async () => {
+    renderHome({
+      activity: () =>
+        json(
+          activity({
+            byProject: [
+              { project: SEARCH, runs: 3 },
+              { project: CHECKOUT, runs: 9 },
+            ],
+          }),
+        ),
+    });
+    expect(await widths()).toEqual([`${(3 / 9) * 100}%`, '100%']);
+  });
+
+  /** Every count zero: an empty bar each, never `NaN%` from 0 ÷ 0. */
+  it('draws empty bars, not NaN, when every count is zero', async () => {
+    renderHome({
+      activity: () =>
+        json(
+          activity({
+            byProject: [
+              { project: CHECKOUT, runs: 0 },
+              { project: SEARCH, runs: 0 },
+            ],
+          }),
+        ),
+    });
+    expect(await widths()).toEqual(['0%', '0%']);
+  });
+});
+
+/**
+ * ═══ ONE QUESTION, ASKED ONCE ═══
+ *
+ * `AuthGate` asks `GET /v1/activity` on the way in, under this page's key and
+ * with this page's options, so the page draws from that answer instead of
+ * asking again. That is a claim about REQUESTS, so it is counted — a page that
+ * mounted a second observer on a stale entry would draw the same screen and
+ * ask twice.
+ */
+describe('Home — the probe’s answer', () => {
+  it('draws from an answer already in the cache, with no placeholder and no second request', async () => {
+    renderHome({}, { seed: activity() });
+    // Synchronously on the first render: no skeleton was ever drawn.
+    expect(within(attention()).queryByTestId('skeleton-table')).toBeNull();
+    expect(within(attention()).getByRole('link', { name: 'Checkout soak' })).toBeInTheDocument();
+    await testsRow();
+    expect(asked('/v1/activity')).toBe(0);
+  });
+
+  it('asks once on a cold load through the real gate', async () => {
+    renderHome({}, { gated: true });
+    expect(await screen.findByRole('heading', { level: 1, name: 'Hello, Ada' })).toBeInTheDocument();
+    await testsRow();
+    expect(asked('/v1/activity')).toBe(1);
+  });
+
+  /**
+   * A 400 from the probe (a zone this server's ICU refuses) is the gate PASSED,
+   * and the page reports it in its own card. Through the real gate: this page
+   * observes the gate's own key, and a gate that read the page's re-fetch as
+   * "still deciding" took the page away, got the 400 again, and looped.
+   */
+  it('renders through the real gate on a 400, reports it in the card, and does not loop', async () => {
+    const refusal = {
+      code: 'INVALID_TIMEZONE',
+      detail: 'The time zone "Mars/Olympus" is not one this server knows.',
+      remediation: 'Send an IANA zone such as Europe/London.',
+    };
+    renderHome({ activity: () => json(refusal, 400) }, { gated: true });
+    for (let i = 0; i < 10; i += 1) {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
+    }
+    expect(asked('/v1/activity')).toBeLessThanOrEqual(2);
+    expect(screen.queryByText('Checking your session…')).toBeNull();
+    expect(within(attention()).getByRole('alert')).toHaveTextContent(refusal.detail);
   });
 });

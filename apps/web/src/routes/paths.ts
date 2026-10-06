@@ -22,10 +22,12 @@ export const DEFAULT_ROUTE = HOME_ROUTE;
  *
  * It was the same string as `DEFAULT_ROUTE` until the home page took `/`, and
  * that is exactly why the two were always two names: the default route moved
- * and the run list did not. Every link that means "all runs" — the rail's row,
- * "Back to all runs", "Back to the run list", "Running now" — reads this and
- * never `DEFAULT_ROUTE` — four links read the default, and each was right the
- * day before the home page and wrong the day after.
+ * and the run list did not. Every link that means "all runs" reads this and
+ * never `DEFAULT_ROUTE`. Four of them read the default until the home page took
+ * `/` — the rail's All runs row, `RunDetail`'s "Back to all runs",
+ * `ProjectShell`'s "Back to the run list" and `NewProject`'s "Runs" — and each
+ * was right the day before and wrong the day after. Home's "Running now" was
+ * born reading this one.
  */
 export const ALL_RUNS_ROUTE = '/runs';
 /**
