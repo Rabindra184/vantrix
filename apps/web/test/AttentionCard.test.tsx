@@ -7,6 +7,7 @@ import useIsCompact from '../src/useIsCompact';
 import AttentionCard from '../src/home/AttentionCard';
 import LastRunCell from '../src/home/LastRunCell';
 import { formatListInstant } from '../src/routes/format';
+import { STATUS, VERDICT } from '../src/routes/marks';
 import { NEW_PROJECT_ROUTE, projectSetupPath, projectTestPath, runPath } from '../src/routes/paths';
 
 /**
@@ -411,16 +412,37 @@ describe('LastRunCell', () => {
     expect(within(rule).getByRole('link', { name: `Run ${RUN.id.slice(0, 8)}` })).toBeInTheDocument();
   });
 
-  it('draws a badge only for a reason, one each, and none for a run that is fine', () => {
-    const fine = cell({});
-    expect(within(fine).queryByText('SLA failed')).toBeNull();
-    expect(fine.querySelectorAll('.tint')).toHaveLength(0);
-
-    cleanup();
+  it('draws one badge per reason, and no verdict badge beside them', () => {
     const two = cell({ verdict: 'failed', checks: { failed: 1, total: 4 } }, ['gate_failed', 'assertion_failed']);
     expect(two.querySelectorAll('.tint')).toHaveLength(2);
     expect(within(two).getByText('SLA failed')).toBeInTheDocument();
     expect(within(two).getByText('1 assertion failed')).toBeInTheDocument();
+    // The reasons already say what went wrong: a bare "failed" beside "SLA
+    // failed" would say it twice.
+    expect(within(two).queryByText(VERDICT.failed.label)).toBeNull();
+  });
+
+  /**
+   * ═══ A RUN WITH NO REASON IS A WORD, NOT ONLY A COLOUR (WCAG 1.4.1) ═══
+   *
+   * Without a badge, passed, in flight and judged-by-nothing differ by the
+   * rule's colour alone. So a run with no reason wears exactly one badge: its
+   * STATUS while it is in flight, its VERDICT once it has finished — the marks
+   * the run list draws, read off `marks.tsx` rather than written down.
+   */
+  it.each([
+    ['a passed run', { status: 'complete' as const, verdict: 'passed' as const }, VERDICT.passed],
+    ['a running run', { status: 'running' as const, verdict: null }, STATUS.running],
+    ['a pending run', { status: 'pending' as const, verdict: null }, STATUS.pending],
+    ['a parsing run', { status: 'parsing' as const, verdict: null }, STATUS.parsing],
+    ['a finished run no rule judged', { status: 'complete' as const, verdict: 'not_evaluated' as const }, VERDICT.not_evaluated],
+    ['a finished run with no verdict', { status: 'complete' as const, verdict: null }, VERDICT.none],
+  ])('gives %s one badge naming its outcome', (_name, over, mark) => {
+    const rule = cell(over);
+    const badges = rule.querySelectorAll<HTMLElement>('.tint');
+    expect(badges).toHaveLength(1);
+    expect(within(rule).getByText(mark.label)).toBe(badges[0]);
+    expect(badges[0]!.style.color).toBe(mark.colour);
   });
 
   it('says a failed check without a count when the run carries no checks', () => {

@@ -3,6 +3,7 @@ import type { AttentionReason, RunStatus, RunVerdict } from '@perfportal/contrac
 import Badge from '../components/Badge';
 import { runName } from '../runNumber';
 import { formatListInstant } from '../routes/format';
+import { STATUS, VERDICT, type Mark } from '../routes/marks';
 import { runPath } from '../routes/paths';
 import { reasonMark } from './homeFormat';
 
@@ -10,10 +11,11 @@ import { reasonMark } from './homeFormat';
  * ═══ A TEST'S LAST RUN, TINTED BY HOW IT WENT (home page) ═══
  *
  * The cell both of the home page's tables share: the run's name as a link to
- * it, when it started, and — only when something is wrong — one badge per
- * reason the run needs attention. A reader scanning down a column should be
- * able to tell the failed ones from the rest without reading a word, so the
- * cell carries a 3 px rule down its left edge in the outcome's colour:
+ * it, when it started, and badges that say in words how it went — one per
+ * reason when the run needs attention, otherwise one for its outcome. A reader
+ * scanning down a column should be able to tell the failed ones from the rest
+ * without reading a word, so the cell also carries a 3 px rule down its left
+ * edge in the outcome's colour:
  *
  *   needs attention   the failed colour        any reason at all
  *   in flight         the pending colour       pending, parsing, running
@@ -23,8 +25,18 @@ import { reasonMark } from './homeFormat';
  * A RULE, NEVER COLOURED TEXT. The run's name is a link and stays the link
  * colour; the tint is a non-text mark that needs 3:1 where coloured text needs
  * 4.5:1, and `FormField`'s notices make the same choice for the same reason.
- * Colour is also never the only signal: a reason's badge names it in words,
- * and a run that is fine says nothing.
+ *
+ * ═══ COLOUR IS NEVER THE ONLY SIGNAL (WCAG 1.4.1) ═══
+ *
+ * A reason's badge names it in words. A run with NO reason wears exactly one
+ * badge of its own, or passed, in flight and judged-by-nothing would differ by
+ * the rule's colour alone: its STATUS while it is pending, parsing or running —
+ * a run in flight has no verdict yet, and "no verdict yet" would hide that it
+ * is moving — and its VERDICT once it has finished (`none` for a finished run
+ * with no verdict at all). Both are `routes/marks.tsx`'s own marks, so a passed
+ * run reads the same here as on the run list. A run WITH reasons gets no
+ * verdict badge beside them: the reasons already say what went wrong, in the
+ * page's own words, and a "failed" beside "SLA failed" would say it twice.
  *
  * The order matters. A run can be in flight AND already have a reason (a
  * stream that has failed an assertion so far), and that is the fact a reader
@@ -59,6 +71,11 @@ function ruleColour(
   return 'var(--color-border)';
 }
 
+/** The one badge a run with no reasons wears (see the docstring). */
+function outcomeMark(run: { readonly status: RunStatus; readonly verdict: RunVerdict | null }): Mark {
+  return IN_FLIGHT.includes(run.status) ? STATUS[run.status] : VERDICT[run.verdict ?? 'none'];
+}
+
 export default function LastRunCell({
   run,
   reasons,
@@ -87,13 +104,13 @@ export default function LastRunCell({
         {name}
       </Link>
       <span className="text-[0.75rem] text-muted">{formatListInstant(run.startedAt)}</span>
-      {reasons.length > 0 && (
-        <div className="flex flex-wrap gap-1">
-          {reasons.map((reason) => (
-            <Badge key={reason} mark={reasonMark(reason, run.checks)} size="compact" />
-          ))}
-        </div>
-      )}
+      <div className="flex flex-wrap gap-1">
+        {reasons.length > 0 ? (
+          reasons.map((reason) => <Badge key={reason} mark={reasonMark(reason, run.checks)} size="compact" />)
+        ) : (
+          <Badge mark={outcomeMark(run)} size="compact" />
+        )}
+      </div>
     </div>
   );
 }

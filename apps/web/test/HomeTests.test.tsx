@@ -12,6 +12,7 @@ import {
 import { orgTestsPageQueryKey, orgTestsQueryKey } from '../src/api/tests';
 import HomeTests, { HOME_FILTER_DEBOUNCE_MS, HOME_TESTS_LIMIT } from '../src/home/HomeTests';
 import { runName } from '../src/runNumber';
+import { VERDICT } from '../src/routes/marks';
 import { projectTestPath, runPath } from '../src/routes/paths';
 import useIsCompact from '../src/useIsCompact';
 
@@ -337,7 +338,7 @@ describe('HomeTests, the table', () => {
     expect(screen.queryByRole('link', { name: 'All runs' })).toBeNull();
   });
 
-  it('says what the last run was: its name as a link, and a badge per reason it needs attention', async () => {
+  it('says what the last run was: its name as a link, a badge per reason, or one for its outcome', async () => {
     renderTests();
     await screen.findAllByTestId('home-test-row');
     for (const test of PAGE_1.items) {
@@ -350,12 +351,19 @@ describe('HomeTests, the table', () => {
         'href',
         runPath(test.latestRun.id),
       );
-      // One badge per reason the shared rule finds, derived from the run itself.
-      expect(row.querySelectorAll('.tint')).toHaveLength(attentionReasons(test.latestRun).length);
+      // One badge per reason the shared rule finds, derived from the run itself
+      // — or, for a run with none, ONE badge for its outcome, so a run that is
+      // fine is a word and not only the rule's colour (LastRunCell).
+      const reasons = attentionReasons(test.latestRun);
+      expect(row.querySelectorAll('.tint')).toHaveLength(reasons.length > 0 ? reasons.length : 1);
     }
     expect(within(rowOf(SOAK.name)).getByText('SLA failed')).toBeInTheDocument();
     expect(within(rowOf(SOAK.name)).getByText('2 assertions failed')).toBeInTheDocument();
+    // Its reasons say what went wrong; no verdict badge repeats it beside them.
+    expect(within(rowOf(SOAK.name)).queryByText(VERDICT.failed.label)).toBeNull();
     expect(within(rowOf(SMOKE.name)).queryByText('SLA failed')).toBeNull();
+    // SMOKE's latest run passed, and its one badge says so.
+    expect(within(rowOf(SMOKE.name)).getByText(VERDICT.passed.label)).toBeInTheDocument();
   });
 
   it('says a test that has never run has never run, and draws no line for it', async () => {
