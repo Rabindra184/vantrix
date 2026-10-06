@@ -355,6 +355,7 @@ describe('LastRunCell', () => {
     status: 'complete',
     verdict: 'passed',
     startedAt: '2026-10-05T09:00:00.000Z',
+    checks: null,
   };
 
   const cell = (over: Partial<CellRun>, reasons: Parameters<typeof LastRunCell>[0]['reasons'] = []) => {

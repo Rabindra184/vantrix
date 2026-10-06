@@ -37,9 +37,13 @@ import { reasonMark } from './homeFormat';
  * for the rule and the badge both, and would disagree with the endpoint on the
  * day the two rules drifted — which `attention.ts` is written to prevent.
  *
- * `checks` is optional and exists for ONE reason: the label of an
- * `assertion_failed` badge is a count, and the count is in the checks. A caller
- * with no checks to give still gets a truthful badge, just without a number.
+ * `checks` is REQUIRED, and `null` is the honest way to say a run recorded
+ * none. It exists for ONE reason: the label of an `assertion_failed` badge is
+ * a count, and the count is in the checks. CLAUDE.md's rule is that a
+ * parameter whose wrong value is silent gets no default, and this is one — an
+ * omitted `checks` compiled, rendered, and quietly dropped the number from
+ * the badge ("Assertion failed" where "2 assertions failed" was true), with
+ * nothing failing anywhere. A caller that has no checks to give has to say so.
  */
 
 /** The statuses of a run nobody has finished yet. */
@@ -65,7 +69,7 @@ export default function LastRunCell({
     readonly status: RunStatus;
     readonly verdict: RunVerdict | null;
     readonly startedAt: string;
-    readonly checks?: { readonly failed: number; readonly total: number } | null;
+    readonly checks: { readonly failed: number; readonly total: number } | null;
   };
   readonly reasons: readonly AttentionReason[];
 }) {
@@ -86,7 +90,7 @@ export default function LastRunCell({
       {reasons.length > 0 && (
         <div className="flex flex-wrap gap-1">
           {reasons.map((reason) => (
-            <Badge key={reason} mark={reasonMark(reason, run.checks ?? null)} size="compact" />
+            <Badge key={reason} mark={reasonMark(reason, run.checks)} size="compact" />
           ))}
         </div>
       )}
