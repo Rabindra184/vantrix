@@ -193,24 +193,43 @@ describe('reasonMark', () => {
   });
 });
 
+/**
+ * CALENDAR days in the response's zone, not elapsed 24-hour days: the gap
+ * state's run is from before a window that starts at local midnight, and must
+ * never read "6 days ago" beside "No runs in the last 7 days". The two
+ * boundary cases are in zones far from UTC (UTC+14 and UTC-11), where a
+ * UTC-only count gets the opposite answer, so a zone that never reached the
+ * count fails here.
+ */
 describe('daysAgo', () => {
   const now = new Date('2026-10-06T12:00:00.000Z');
   const ago = (ms: number) => new Date(now.getTime() - ms).toISOString();
   const DAY = 24 * 60 * 60 * 1000;
 
   it('says today, one day and n days', () => {
-    expect(daysAgo(now.toISOString(), now)).toBe('today');
-    expect(daysAgo(ago(DAY), now)).toBe('1 day ago');
-    expect(daysAgo(ago(51 * DAY), now)).toBe('51 days ago');
+    expect(daysAgo(now.toISOString(), now, 'UTC')).toBe('today');
+    expect(daysAgo(ago(DAY), now, 'UTC')).toBe('1 day ago');
+    expect(daysAgo(ago(51 * DAY), now, 'UTC')).toBe('51 days ago');
   });
 
-  it('counts whole days, floored', () => {
-    expect(daysAgo(ago(DAY - 1), now)).toBe('today');
-    expect(daysAgo(ago(2 * DAY - 1), now)).toBe('1 day ago');
+  it('counts a run late yesterday as a day ago, forty minutes later, in the zone', () => {
+    // Kiritimati is UTC+14: 23:30 on the 5th there is 09:30Z, and 00:10 on
+    // the 6th is 10:10Z — both the 5th in UTC, which would say "today".
+    expect(daysAgo('2026-10-05T09:30:00.000Z', new Date('2026-10-05T10:10:00.000Z'), 'Pacific/Kiritimati')).toBe(
+      '1 day ago',
+    );
+  });
+
+  it('counts a run early today as today, nearly a day later, in the zone', () => {
+    // Pago Pago is UTC-11: 00:10 on the 6th there is 11:10Z on the 6th, and
+    // 23:50 is 10:50Z on the 7th — a day apart in UTC, which would say "1 day ago".
+    expect(daysAgo('2026-10-06T11:10:00.000Z', new Date('2026-10-07T10:50:00.000Z'), 'Pacific/Pago_Pago')).toBe(
+      'today',
+    );
   });
 
   it('never reads a clock that is slightly ahead as a negative number of days', () => {
-    expect(daysAgo(ago(-60_000), now)).toBe('today');
+    expect(daysAgo(ago(-60_000), now, 'UTC')).toBe('today');
   });
 });
 

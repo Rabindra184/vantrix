@@ -116,7 +116,9 @@ export default function AttentionCard({
           </div>
         </WithGlance>
       )}
-      {state === 'gap' && activity.lastRun !== null && <Gap lastRun={activity.lastRun} now={now} />}
+      {state === 'gap' && activity.lastRun !== null && (
+        <Gap lastRun={activity.lastRun} now={now} tz={activity.window.tz} />
+      )}
       {state === 'empty' && <Empty firstProject={projects[0]} />}
     </Card>
   );
@@ -244,18 +246,25 @@ function AttentionCards({ rows }: { readonly rows: readonly AttentionRow[] }) {
  * run with none, its project), its number (or the start of its id), and how long
  * ago it was. "Add results" goes to THAT run's project: it is the project whose
  * results stopped arriving, which is not necessarily the first in the rail.
+ *
+ * "How long ago" is in CALENDAR days in the window's own zone (`daysAgo`), so a
+ * run from before the window reads seven days or more — never "6 days ago"
+ * beside "No runs in the last 7 days".
  */
 function Gap({
   lastRun,
   now,
+  tz,
 }: {
   readonly lastRun: NonNullable<ActivityResponse['lastRun']>;
   readonly now: Date;
+  /** The zone the window's days were counted in, `window.tz`. */
+  readonly tz: string;
 }) {
   const parts = [
     lastRun.test?.name ?? lastRun.project.name,
     lastRun.runNumber === null ? `Run ${lastRun.id.slice(0, 8)}` : runName(lastRun.runNumber),
-    daysAgo(lastRun.startedAt, now),
+    daysAgo(lastRun.startedAt, now, tz),
   ];
   return (
     <div className="flex flex-col items-start gap-3">

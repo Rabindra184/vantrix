@@ -295,8 +295,9 @@ describe('AttentionCard, coverage gap', () => {
     expect(screen.getByText('Coverage gap')).toBeInTheDocument();
     expect(screen.getByText('No runs in the last 7 days')).toBeInTheDocument();
 
-    // 51 days between the run and `now`, read off the two instants.
-    const days = Math.floor((NOW.getTime() - new Date(LAST_RUN.startedAt).getTime()) / 86_400_000);
+    // 51 CALENDAR days between the run's date and today's, in the window's
+    // zone (UTC here), read off the two dates rather than off `daysAgo`.
+    const days = (Date.parse(NOW.toISOString().slice(0, 10)) - Date.parse(LAST_RUN.startedAt.slice(0, 10))) / 86_400_000;
     expect(days).toBe(51);
     expect(screen.getByTestId('attention-last-run')).toHaveTextContent(
       `${LAST_RUN.test.name} · Run ${LAST_RUN.runNumber} · ${days} days ago`,
@@ -322,6 +323,43 @@ describe('AttentionCard, coverage gap', () => {
   it('draws no glance of seven empty columns', () => {
     mount(GAP);
     expect(screen.queryByRole('figure')).toBeNull();
+  });
+
+  /**
+   * ═══ NEVER "6 DAYS AGO" BESIDE "NO RUNS IN THE LAST 7 DAYS" ═══
+   *
+   * The window starts at the oldest glance day's local midnight, and a gap's
+   * last run arrived before it. By the clock it can be 6 days 23 hours old —
+   * here it started at 13:00 on the 29th, the day BEFORE the window's first
+   * day — and elapsed time floored to whole days called that "6 days ago".
+   * Counted by calendar day in the window's zone it is seven.
+   */
+  it('counts a run from the day before the window as seven days ago, not six', () => {
+    const startedAt = new Date(NOW.getTime() - (6 * 24 + 23) * 3_600_000).toISOString();
+    mount(activity({ runCount: 0, passRate: null, lastRun: { ...LAST_RUN, startedAt } }));
+    // The fixture's facts, checked rather than assumed: the day before the
+    // window's first day, and under seven days by the clock.
+    expect(startedAt.slice(0, 10)).toBe('2026-09-29');
+    expect(Date.parse(startedAt)).toBeLessThan(Date.parse(activity().window.from));
+    expect(screen.getByText('No runs in the last 7 days')).toBeInTheDocument();
+    expect(screen.getByTestId('attention-last-run')).toHaveTextContent(/· 7 days ago$/);
+  });
+
+  /**
+   * The same claim in a zone far from UTC, where the run's UTC date is INSIDE
+   * the window's first day and only its local date is the day before: Pago
+   * Pago (UTC-11) at 05:00Z on the 30th is 18:00 on the 29th. Elapsed time says
+   * six days and so does a count in UTC; the window's own zone says seven.
+   */
+  it('counts the days in the window’s own zone, not in UTC', () => {
+    const inPagoPago = activity({
+      window: { from: '2026-09-30T11:00:00.000Z', to: NOW.toISOString(), tz: 'Pacific/Pago_Pago' },
+      runCount: 0,
+      passRate: null,
+      lastRun: { ...LAST_RUN, startedAt: '2026-09-30T05:00:00.000Z' },
+    });
+    mount(inPagoPago);
+    expect(screen.getByTestId('attention-last-run')).toHaveTextContent(/· 7 days ago$/);
   });
 });
 

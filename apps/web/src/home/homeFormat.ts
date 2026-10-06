@@ -126,15 +126,47 @@ export function reasonMark(
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
- * How long ago, in whole days, floored: `today`, `1 day ago`, `51 days ago`.
+ * How long ago, in CALENDAR days in `tz`: `today`, `1 day ago`, `51 days ago`
+ * — the count of local midnights between the run's date and today's date.
  *
- * Elapsed time, not calendar days — a run at 23:00 yesterday is "today" at 22:00
- * if fewer than 24 hours have passed. For a sentence whose job is "how stale is
- * this", a day is 24 hours. A clock that is a minute ahead of the server reads
- * as `today`, never as a negative count.
+ * ═══ CALENDAR DAYS, IN THE ZONE THE WINDOW WAS COUNTED IN ═══
+ *
+ * It used to be elapsed time, floored: a day was 24 hours. Beside the gap
+ * state that contradicted the sentence above it. The attention window starts
+ * at local midnight six days ago (the glance's first boundary), and a run in
+ * the gap state arrived before it — so it can be 6 days 23 hours old by the
+ * clock and still be a run from the day BEFORE the window, and the page read
+ * "No runs in the last 7 days" beside "6 days ago". Counted by calendar day in
+ * the response's own `window.tz`, the same zone its days were counted in, such
+ * a run is on a date at least seven days back and always reads "7 days ago" or
+ * more. The glance above it speaks in calendar days already; this is the same
+ * word for the same thing.
+ *
+ * So a run at 23:30 yesterday is "1 day ago" at 00:10 today, forty minutes
+ * later, and a run at 00:10 today is still "today" at 23:50. A clock that is a
+ * minute ahead of the server reads as `today`, never as a negative count.
+ *
+ * Each date is read with an `Intl.DateTimeFormat` built PER CALL — one built
+ * at import freezes its zone (CLAUDE.md, the time-window entry) — and the two
+ * are differenced as UTC calendar days, so a daylight-saving change between
+ * them cannot add or lose a day. A zone this browser's `Intl` does not know
+ * (the server can echo one it accepted) is read as UTC rather than taking the
+ * card down.
  */
-export function daysAgo(iso: string, now: Date): string {
-  const days = Math.max(0, Math.floor((now.getTime() - new Date(iso).getTime()) / DAY_MS));
+export function daysAgo(iso: string, now: Date, tz: string): string {
+  let format: Intl.DateTimeFormat;
+  try {
+    format = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' });
+  } catch {
+    format = new Intl.DateTimeFormat('en-CA', { timeZone: 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' });
+  }
+  /** The instant's local date in `tz`, as that date's UTC midnight. */
+  const localDay = (at: Date): number => {
+    const parts = format.formatToParts(at);
+    const part = (type: string) => Number(parts.find((p) => p.type === type)?.value);
+    return Date.UTC(part('year'), part('month') - 1, part('day'));
+  };
+  const days = Math.max(0, Math.round((localDay(now) - localDay(new Date(iso))) / DAY_MS));
   if (days === 0) return 'today';
   return days === 1 ? '1 day ago' : `${days} days ago`;
 }
