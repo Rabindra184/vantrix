@@ -1,5 +1,5 @@
 import { ActivityResponseSchema, type ActivityResponse } from '@perfportal/contracts';
-import { apiFetch } from './fetch';
+import { apiFetch, ProblemError } from './fetch';
 
 /**
  * ═══ THE HOME PAGE'S ONE QUESTION (docs/superpowers/specs/2026-10-05-portfolio-home-and-command-palette-design.md) ═══
@@ -22,31 +22,58 @@ export const activityQueryKey = (tz: string) => ['activity', tz] as const;
 /**
  * The zone this browser says it is in, or `UTC`.
  *
- * Both fallbacks are real. `resolvedOptions().timeZone` is `undefined` in an
+ * The fallbacks are real. `resolvedOptions().timeZone` is `undefined` in an
  * engine built without ICU's zone data and some privacy modes answer an empty
- * string; and `Intl.DateTimeFormat` itself can be absent or replaced. A zone
- * the API refuses is a 400 on the page every signed-in reader lands on, so the
- * answer here is always one it will accept — and `UTC` is the API's own
- * default, so the fallback asks exactly the question an absent `tz` would.
+ * string; `Intl.DateTimeFormat` itself can be absent or replaced; and ICU
+ * answers `Etc/Unknown` when it could not detect a zone at all — a name no
+ * zone database holds, which the API (Node 22's ICU) refuses with a 400.
+ * `UTC` is the API's own default, so each fallback asks exactly the question
+ * an absent `tz` would.
+ *
+ * This is the BROWSER's claim, and the server may still refuse it: a zone
+ * newer than the server's ICU looks like any other name from here. That case
+ * cannot be detected in the browser, so `fetchActivity` answers it instead.
  */
 export function browserTimeZone(): string {
   try {
     const zone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
-    return zone ? zone : 'UTC';
+    return zone && zone !== 'Etc/Unknown' ? zone : 'UTC';
   } catch {
     return 'UTC';
   }
 }
 
+const activityPath = (tz: string) => `/v1/activity?tz=${encodeURIComponent(tz)}`;
+
 /**
- * `GET /v1/activity?tz=<zone>`.
+ * `GET /v1/activity?tz=<zone>`, asked again ONCE in UTC if the zone is refused.
  *
  * `encodeURIComponent`, because a zone has a slash in it (`Asia/Kolkata`) and
  * a raw one is a path separator to any proxy that normalises before it
  * forwards.
+ *
+ * ═══ A 400 HERE IS THE ZONE, AND THE ZONE IS NOT THE READER'S FAULT ═══
+ *
+ * This endpoint's only query parameter is `tz`, and this client sends it once,
+ * so the one 400 it can earn is `INVALID_TIMEZONE`: the browser named a zone
+ * the server's ICU does not know. Its remediation ("send an IANA zone") is
+ * advice no browser user can act on, and every load would earn it again, so
+ * the card would stay broken for as long as that browser stayed in that zone.
+ * Asking in UTC instead draws the page — on UTC day boundaries, which the
+ * answer says itself: `window.tz` echoes the zone the server counted in.
+ *
+ * Once, and only for a 400: a second failure is propagated as it is, and a 5xx
+ * or a 401/403 is not about the zone, so retrying it would only double a
+ * failure the gate has to see. A request already in UTC is not asked again —
+ * the same question twice has the same answer.
  */
-export function fetchActivity(tz: string): Promise<ActivityResponse> {
-  return apiFetch(ActivityResponseSchema, `/v1/activity?tz=${encodeURIComponent(tz)}`);
+export async function fetchActivity(tz: string): Promise<ActivityResponse> {
+  try {
+    return await apiFetch(ActivityResponseSchema, activityPath(tz));
+  } catch (err) {
+    if (tz === 'UTC' || !(err instanceof ProblemError) || err.status !== 400) throw err;
+    return apiFetch(ActivityResponseSchema, activityPath('UTC'));
+  }
 }
 
 /** How often the page re-asks while something is running. */

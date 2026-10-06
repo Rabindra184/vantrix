@@ -47,10 +47,15 @@ import { NO_ORG_ROUTE, loginPathFor } from './routes/paths';
  * HANDLER's answer (`apps/api/src/activity/days.ts`), and a handler runs only
  * after the perimeter has accepted the session AND its membership — a 401 or
  * 403 is the perimeter's own, sent before any handler — so a 400 settles
- * exactly the two questions this gate asks. The app renders, and the home
- * page's attention card, reading the same query, shows the refusal in its own
- * error state. Treating it as an outage would lock every reader in that zone
- * out of the whole product over one card.
+ * exactly the two questions this gate asks.
+ *
+ * Today the probe rarely sees one: `fetchActivity` asks again in UTC when the
+ * zone is refused, and the page draws on UTC days. A 400 that reaches this
+ * gate means the UTC ask was refused as well, and the latch below is the
+ * backstop for it: the app renders, and the home page's attention card,
+ * reading the same query, shows the refusal in its own error state. Treating
+ * it as an outage would lock every reader in that zone out of the whole
+ * product over one card.
  */
 export default function AuthGate() {
   const location = useLocation();

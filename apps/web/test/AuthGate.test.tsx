@@ -421,8 +421,10 @@ describe('AuthGate — the gate latches once it has its answer', () => {
     // what tells the two apart.
     await ticks(10);
 
-    // The gate's question, and at most the page's own mount asking it again.
-    expect(probeRequests()).toBeLessThanOrEqual(2);
+    // The gate's question, and at most the page's own mount asking it again —
+    // each ask being the zone and then, refused, UTC (`fetchActivity`), so at
+    // most four requests. A loop is one a tick, far past that.
+    expect(probeRequests()).toBeLessThanOrEqual(4);
     // Mounted ONCE: the gate never took the page away to show the bootstrap.
     expect(observerMounts).toBe(1);
     expect(screen.queryByText(BOOTSTRAPPING)).toBeNull();

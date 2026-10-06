@@ -512,7 +512,9 @@ describe('Home — the probe’s answer', () => {
         await new Promise((resolve) => setTimeout(resolve, 20));
       });
     }
-    expect(asked('/v1/activity')).toBeLessThanOrEqual(2);
+    // Two asks at most (the gate's, and the page's own mount), each the zone
+    // and then, refused, UTC (`fetchActivity`). A loop is one a tick.
+    expect(asked('/v1/activity')).toBeLessThanOrEqual(4);
     expect(screen.queryByText('Checking your session…')).toBeNull();
     expect(within(attention()).getByRole('alert')).toHaveTextContent(refusal.detail);
   });

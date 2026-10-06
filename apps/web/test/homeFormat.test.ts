@@ -7,6 +7,7 @@ import {
   browserTimeZone,
   fetchActivity,
 } from '../src/api/activity';
+import { ProblemError } from '../src/api/fetch';
 import {
   attentionRowLabel,
   attentionState,
@@ -263,6 +264,19 @@ describe('the activity client', () => {
       });
       expect(browserTimeZone()).toBe('UTC');
     });
+
+    /**
+     * ICU's "could not detect a zone" is a NAME, `Etc/Unknown`, and no zone
+     * database holds it: Node 22 refuses it, so sending it would earn a 400
+     * on every load. The precondition is checked here rather than assumed.
+     */
+    it('is UTC when ICU answers its own “could not detect”, which no server accepts', () => {
+      expect(() => new Intl.DateTimeFormat('en', { timeZone: 'Etc/Unknown' })).toThrow(RangeError);
+      vi.spyOn(Intl, 'DateTimeFormat').mockImplementation(function () {
+        return { resolvedOptions: () => ({ timeZone: 'Etc/Unknown' }) } as unknown as Intl.DateTimeFormat;
+      });
+      expect(browserTimeZone()).toBe('UTC');
+    });
   });
 
   describe('fetchActivity', () => {
@@ -290,6 +304,62 @@ describe('the activity client', () => {
       // normalises before it forwards.
       expect(raw).toBe('/v1/activity?tz=Asia%2FKolkata');
       expect(answer.runCount).toBe(2);
+    });
+
+    /**
+     * ═══ A ZONE THE SERVER REFUSES ASKS AGAIN IN UTC, ONCE ═══
+     *
+     * The one 400 this client can earn from this endpoint is the zone, and a
+     * browser reader cannot act on "send an IANA zone". So a 400 is asked
+     * again with `tz=UTC`, exactly once; anything else is not about the zone
+     * and is not retried.
+     */
+    const answers = (...responses: Response[]) => {
+      fetchMock.mockReset();
+      for (const response of responses) fetchMock.mockImplementationOnce(() => Promise.resolve(response));
+    };
+    const refusal = (status: number) =>
+      new Response(
+        JSON.stringify({
+          code: status === 400 ? 'INVALID_TIMEZONE' : 'INTERNAL',
+          detail: 'Refused.',
+          remediation: 'Send an IANA time zone name such as Europe/London.',
+        }),
+        { status, headers: { 'Content-Type': 'application/problem+json' } },
+      );
+    const asked = () =>
+      fetchMock.mock.calls.map(([raw]) => new URL(raw as string, 'http://localhost').searchParams.get('tz'));
+
+    it('asks again in UTC after a 400, and answers with the UTC payload', async () => {
+      const inUtc = activity({ runCount: 5, window: { ...activity().window, tz: 'UTC' } });
+      answers(
+        refusal(400),
+        new Response(JSON.stringify(inUtc), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+      );
+      const answer = await fetchActivity('America/Ciudad_Juarez');
+      expect(asked()).toEqual(['America/Ciudad_Juarez', 'UTC']);
+      expect(answer.runCount).toBe(5);
+      expect(answer.window.tz).toBe('UTC');
+    });
+
+    it('rejects when the UTC ask is refused too, having asked exactly twice', async () => {
+      answers(refusal(400), refusal(400));
+      const failure = fetchActivity('America/Ciudad_Juarez');
+      await expect(failure).rejects.toBeInstanceOf(ProblemError);
+      await expect(failure).rejects.toMatchObject({ status: 400 });
+      expect(asked()).toEqual(['America/Ciudad_Juarez', 'UTC']);
+    });
+
+    it('does not retry a failure that is not about the zone', async () => {
+      answers(refusal(500));
+      await expect(fetchActivity('America/Ciudad_Juarez')).rejects.toMatchObject({ status: 500 });
+      expect(asked()).toEqual(['America/Ciudad_Juarez']);
+    });
+
+    it('does not ask UTC twice', async () => {
+      answers(refusal(400), refusal(400));
+      await expect(fetchActivity('UTC')).rejects.toMatchObject({ status: 400 });
+      expect(asked()).toEqual(['UTC']);
     });
   });
 });
