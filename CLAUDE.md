@@ -281,6 +281,18 @@ predicted before the run, on the same scratch stores. Integration started at a
 1-minute load of 26 after the gate expired, which this file counts as a pass
 because it passed.
 
+**AND AGAIN AFTER THE AUDIT OVERRIDES LANDED UNDERNEATH IT.** This branch's
+first CI run after that merge failed `pnpm audit --prod` on two advisories
+published in between; the audit-proxy-addr-source-map-js entry below records
+them. The overrides were merged into this branch before they reached `main`,
+and the CLAUDE.md conflict was resolved by keeping both entries. On that tree
+(`c3746ec`): `pnpm install --frozen-lockfile` and `pnpm audit --prod` clean;
+`pnpm build`, `typecheck` and `lint` exit 0; `test:unit` **206 / 2867**, zero
+`Errors` lines; `test:integration` **187 / 2503, exit 0, zero failures**,
+started at a 1-minute load of 7.58; `pnpm test:e2e --workers=2` **192 passed,
+exit 0**. Each total was predicted before the run and is unchanged, as an
+override-only merge requires, on the same scratch stores.
+
 The audit-proxy-addr-source-map-js branch (`fix/audit-proxy-addr-source-map-js`)
 added no test and moves no floor: unit stays **201 / 2757**, integration
 **182 / 2368** and **e2e 188**. Its diff is two `pnpm.overrides` lines and the
