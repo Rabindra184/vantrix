@@ -64,13 +64,15 @@ const CHECKS_CONTRIBUTES: Record<ChecksCase, readonly AttentionReason[]> = {
 };
 
 /** Build the input the way a caller would: an absent field is OMITTED, not
- *  set to undefined, so the "absent" cases exercise the optional property. */
+ *  set to undefined, so the "absent" cases exercise the optional property.
+ *  Each half is a TYPED partial rather than a conditional spread of a bare
+ *  literal, so a mistyped key is still a compile error (eslint.config.js). */
 function input(status: RunStatus, verdict: VerdictCase, checks: ChecksCase): AttentionInput {
-  return {
-    status,
-    ...(verdict === 'absent' ? {} : { verdict: verdict === 'null' ? null : verdict }),
-    ...(checks === 'absent' ? {} : { checks: CHECKS_VALUE[checks] }),
-  };
+  const verdictPart: Pick<AttentionInput, 'verdict'> =
+    verdict === 'absent' ? {} : { verdict: verdict === 'null' ? null : verdict };
+  const checksPart: Pick<AttentionInput, 'checks'> =
+    checks === 'absent' ? {} : { checks: CHECKS_VALUE[checks] };
+  return { status, ...verdictPart, ...checksPart };
 }
 
 const MATRIX = RunStatusSchema.options.flatMap((status) =>
