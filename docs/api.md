@@ -33,13 +33,22 @@ Two credential types are accepted on `/v1`, for two kinds of caller:
 | **API token** (`Authorization: Bearer pp_…`) | CI, load generators, scripts | one org **and** one project | the project's **API tokens** page, or `POST /v1/projects/{slug}/tokens` |
 | **Session cookie** | people, in a browser | one org (no project) | signing in at `/login` (Better Auth, mounted at `/auth/*`) |
 
-A session sees every project in its org. A token sees exactly one project,
-and only what its scopes allow.
+An admin's session sees every project in its org. Any other session sees
+only the projects it holds a role in — Viewer, Member or Manager — and may do
+in each what that role allows; a project it holds no role in answers `404`,
+exactly as one that does not exist. A token sees exactly one project, and only
+what its scopes allow.
+
+There is no public sign-up: `POST /auth/sign-up/email` is refused, and so are
+Better Auth's own `/auth/admin/*` routes. In this release every account is
+made by the bootstrap script and is an admin — see
+[Adding a teammate](../DEPLOYMENT.md#adding-a-teammate).
 
 ### Managing API tokens
 
-Tokens are managed by a signed-in person. **A bearer token can never mint,
-list or revoke tokens**, whatever scopes it carries.
+Tokens are managed by a signed-in person with the Manager role in the
+project, or an admin. **A bearer token can never mint, list or revoke
+tokens**, whatever scopes it carries.
 
 ```text
 POST   /v1/projects/{slug}/tokens           mint   { name, scopes, expiresAt? } → { token, prefix, … }
@@ -74,15 +83,17 @@ be able to do exactly one thing.
 |---|---|---|
 | `POST /v1/runs` | token with `ingest` | CI's path. |
 | `POST /v1/runs/live` (+ `stream`, `close`) | token with `stream` | The Gradle plugin's path. |
-| `POST /v1/projects/{slug}/runs` | session only | The browser upload on **Add results**. |
+| `POST /v1/projects/{slug}/runs` | session only, Member role or above | The browser upload on **Add results**. |
 
-A session names no project, so `POST /v1/runs` and the live routes refuse it
-with `400 PROJECT_REQUIRED`. The project-scoped route exists so the browser
-can upload without a token; a token already names its project and does not
-need it.
+A session names no project, so `POST /v1/runs` refuses it with
+`400 PROJECT_REQUIRED`; the live routes need the `stream` scope, which no
+session holds, and refuse it with `403 FORBIDDEN`. The project-scoped route
+exists so the browser can upload without a token; a token already names its
+project and does not need it.
 
 `GET /v1/runs` is scoped by *credential*, not by URL. A project token sees
-that project's runs; a session sees every run in its org. Both support
+that project's runs; an admin's session sees every run in its org, and any
+other session the runs of the projects it holds a role in. Both support
 `limit` and `cursor` pagination.
 
 ### Sessions and cookies
@@ -228,11 +239,11 @@ response shapes.
 | `/v1/runs/{id}` | A run's status, verdict and identity; `PUT …/note` for its note. |
 | `/v1/runs/{id}/stats`, `series`, `errors`, `errors/series`, `distribution`, `users`, `scatter` | The statistics and chart data behind the run page. Most accept a `from`/`to` time window in ms. |
 | `/v1/runs/{id}/telemetry`, `trends`, `events` | Load-generator samples, run-over-run trends for the run's test, and the runner's lifecycle log. |
-| `/v1/projects` | List and create projects. |
+| `/v1/projects` | List projects; create one (admins only). |
 | `/v1/projects/{slug}/runs` | A project's runs (`GET`, token); browser upload (`POST`, session). |
 | `/v1/projects/{slug}/tests` | Tests in a project; rename or delete one. |
 | `/v1/projects/{slug}/rules` | SLA rules: project-wide or for one test. |
-| `/v1/projects/{slug}/tokens` | API tokens (session only). |
+| `/v1/projects/{slug}/tokens` | API tokens (session only, Manager role or admin). |
 | `/v1/projects/{slug}/runner`, `/v1/projects/{slug}/packages` | On-prem runner jobs and reusable packages. |
 | `/v1/tests`, `/v1/activity` | The org-wide test catalogue (used by ⌘K search) and the Home page summary. |
 | `/v1/telemetry` | Load-generator agent samples (`POST`). |
@@ -260,6 +271,18 @@ Every `/v1` error is [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457)
 Branch on `status` and `code`. `detail` and `remediation` are written for
 people and may be reworded. A `500` carries a `traceId` to quote when you
 report it.
+
+### The 403 codes
+
+| Code | Credential | Meaning |
+|---|---|---|
+| `FORBIDDEN` | token or session | The credential lacks the scope the operation needs: a token minted without it, or a session on an operation no session holds the scope for (opening, streaming to and closing a live run; posting telemetry). Also a bearer token on an operation only a signed-in person may perform, such as managing tokens. |
+| `ROLE_REQUIRED` | session | The session's role in the project is below the one the operation needs. The `detail` names that role, e.g. *Uploading runs needs the Member role in this project.* |
+| `ADMIN_REQUIRED` | session | The operation is an admin's, such as creating a project, and the account is not an admin. |
+
+A session that holds **no** role in a project is never told so with a `403`:
+it gets the same `404` a project or run that does not exist gets, so a
+refusal cannot reveal which projects exist.
 
 `/auth/*` is Better Auth's own surface and keeps Better Auth's native error
 shapes, so an `/auth/*` error has no `remediation` field.
