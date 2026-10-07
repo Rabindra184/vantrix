@@ -3,7 +3,8 @@ import type { RunEventsResponse } from '@perfportal/contracts';
 import { RunnerRepository, RunRepository } from '@perfportal/persistence';
 import type { Request } from 'express';
 import { Scopes } from '../auth/scopes.decorator.js';
-import { notFound, uuidParam } from '../common/validation.js';
+import { runNotFound, uuidParam } from '../common/validation.js';
+import { Requires } from '../auth/access.decorator.js';
 
 /**
  * ═══ A RUN'S LIFECYCLE EVENTS — WHAT THE LOGS TAB READS ═══
@@ -28,6 +29,7 @@ export class RunEventsController {
   ) {}
 
   @Get('events')
+  @Requires('project:read')
   @Scopes('read')
   async events(
     @Param('id', uuidParam('id')) id: string,
@@ -35,13 +37,7 @@ export class RunEventsController {
   ): Promise<RunEventsResponse> {
     const tenant = req.tenant!;
     const run = await this.runs.findById({ orgId: tenant.orgId, projectId: tenant.projectId }, id);
-    if (!run) {
-      throw notFound(
-        `No run ${id} in this project.`,
-        'Check the run id. GET /v1/runs lists the runs a signed-in user can reach; '
-          + 'GET /v1/projects/{slug}/runs lists those a project token can.',
-      );
-    }
+    if (!run) throw runNotFound(id);
     const found = await this.runner.listEventsForRun(run.orgId, run.projectId, run.id);
     return {
       runId: run.id,

@@ -129,30 +129,37 @@ left alone, never silently invalidated.
 ## Getting a human account
 
 Pass `--admin-email` to also create a session-authenticated admin account, a
-member of the same org, via Better Auth's own sign-up (never raw SQL, so the
-password hash is one Better Auth's own login path can verify):
+member of the same org, via Better Auth's admin plugin (never raw SQL, so the
+password hash is one Better Auth's own login path can verify). Sign-up is
+closed, and in this release bootstrap is the only way an account is made —
+always an admin; per-project roles and an admin screen for accounts come in a
+later release:
 
     pnpm bootstrap --admin-email you@example.test
 
-This is **not** safe to re-run with the same address — Better Auth rejects a
-second sign-up for an email already in use, so re-running fails loudly rather
-than silently minting a second password. The plaintext password is printed
+With `--admin-email`, bootstrap **refuses** an address that already has an
+account: it fails loudly, before minting a token, rather than handing you a
+password that is not the account's. (The container's `bootstrap` service
+names its admin through `PERFPORTAL_ADMIN_EMAIL` instead, and on that path an
+existing account is REUSED — never re-passworded, never re-promoted — so that
+every `docker compose up` can re-run it.) The plaintext password is printed
 to stdout exactly once, the same way the API token is; copy it immediately.
 
 Log in with it against `/auth/*` (Better Auth's own error/response shapes,
-not this API's RFC 9457 `problem+json` — see the root `README.md`'s
-Authentication section), and use the returned session cookie on `/v1`.
-A session names no project, so it can't ingest, but it can list every run
-across the whole org via `GET /v1/runs` (see the root `README.md`'s
-Authentication section) — no run id needed up front:
+not this API's RFC 9457 `problem+json` — see the Authentication section of
+[`docs/api.md`](../docs/api.md#authentication)), and use the returned session
+cookie on `/v1`. A session names no project, so `POST /v1/runs` refuses it,
+but an admin's session can list every run across the whole org via
+`GET /v1/runs` (same section), no run id needed up front — any other session
+sees only the projects it holds a role in:
 
     curl -sS -c /tmp/cookies.txt -X POST http://localhost:3000/auth/sign-in/email \
       -H 'Content-Type: application/json' \
       -d '{"email":"you@example.test","password":"<printed password>"}'
     curl -sS -b /tmp/cookies.txt http://localhost:3000/v1/runs
 
-On `http://localhost` the cookie is minted WITHOUT `Secure` — see the root
-`README.md`'s Authentication section for why that exemption is loopback-only
+On `http://localhost` the cookie is minted WITHOUT `Secure` — see the
+Authentication section of `docs/api.md` for why that exemption is loopback-only
 and why Safari is the reason it exists. A real, non-TLS deployment reachable
 by hostname still gets `Secure`, and therefore no session at all from a
 browser: sign-in appears to succeed, no cookie is ever stored, and every
@@ -261,9 +268,9 @@ afterwards — the token is stored as an Argon2id hash and the password as
 Better Auth's own hash. Copy both before the terminal scrolls.
 
 Re-running is safe for the org and the project, which are reused by slug. It
-is NOT safe to re-run with the same `--admin-email`: Better Auth refuses a
-second sign-up for an address already in use, and the command fails loudly
-rather than minting a second password.
+is NOT safe to re-run with the same `--admin-email`: bootstrap refuses an
+address that already has an account, and the command fails loudly rather
+than minting a second password.
 
 **The runner needs the two ids this step just printed.** Its first lines are
 

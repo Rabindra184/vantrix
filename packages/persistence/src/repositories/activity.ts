@@ -1,15 +1,16 @@
 import type { PrismaClient } from '@prisma/client';
 import type { RunRecord } from './run.js';
-import type { TenantScope } from './tenant.js';
+import { visibilityClause, type TenantScope } from './tenant.js';
 
 /**
  * ═══ WHAT THE PORTFOLIO HOME READS ═══
  * (docs/superpowers/specs/2026-10-05-portfolio-home-and-command-palette-design.md)
  *
- * `GET /v1/activity` answers five questions about one organisation, or about
- * one token's project, and every one of them is on `run.created_at` — the
- * moment a run ARRIVED — never on `started_at`, which is when the load test
- * ran and can be earlier than a run that arrived before it:
+ * `GET /v1/activity` answers five questions about one organisation (or the
+ * part of it a session can see), or about one token's project, and every one
+ * of them is on `run.created_at` — the moment a run ARRIVED — never on
+ * `started_at`, which is when the load test ran and can be earlier than a run
+ * that arrived before it:
  *
  *   days        how many runs arrived in each of seven calendar days, and how
  *               many of those were successful or need attention
@@ -69,10 +70,13 @@ export function needsAttentionSql(alias: string): string {
        WHERE e->>'outcome' = 'failed'))`;
 }
 
-/** The tenant predicate every read here starts with: the org, and the project
- *  as well when the caller is a token. The org id is always `$1` and the
- *  project's, when there is one, `$2`; a caller appends its own parameters
- *  after `params` and numbers them from `params.length`. */
+/** The tenant predicate every read here starts with: the org, the project as
+ *  well when the caller is a token, and a non-admin session's own projects
+ *  (`visibilityClause`, on the RUN's project_id — every read here is over the
+ *  run table, and the project and test it joins are reached through that run).
+ *  The org id is always `$1`; a caller appends its own parameters after
+ *  `params` and numbers them from `params.length`. `alias` is spliced into the
+ *  SQL, so it is always a literal from the calling code. */
 function tenantFilter(
   scope: TenantScope,
   alias: string,
@@ -83,6 +87,8 @@ function tenantFilter(
     params.push(scope.projectId);
     filters.push(`${alias}.project_id = $${params.length}::uuid`);
   }
+  const visible = visibilityClause(scope, `${alias}.project_id`, params);
+  if (visible !== null) filters.push(visible);
   return { where: filters.join(' AND '), params };
 }
 
@@ -241,8 +247,9 @@ interface LastRunSqlRow {
 
 /**
  * What `GET /v1/activity` reads. Every read takes the tenant in its `WHERE`,
- * the org always and the project as well for a token, so a run of another
- * organisation is not counted rather than counted and then hidden.
+ * the org always, the project as well for a token, and a non-admin session's
+ * own projects, so a run of another organisation — or of a project the
+ * session cannot see — is not counted rather than counted and then hidden.
  *
  * The five reads are independent and run in parallel.
  */

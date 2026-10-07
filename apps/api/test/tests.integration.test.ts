@@ -1,7 +1,7 @@
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTestApp, type TestContext } from './support/app.js';
-import { signUpAsOrgMember } from './support/session.js';
+import { signInAsAdmin } from './support/session.js';
 
 let ctx: TestContext;
 let cookie: string;
@@ -11,7 +11,7 @@ beforeEach(async () => {
   // A REAL MEMBER of ctx's own org. A no-membership session 403s the same way
   // SessionOnlyGuard refuses a bearer token, so the wrong helper would make
   // "accepts a session" pass for entirely the wrong reason.
-  cookie = await signUpAsOrgMember(ctx, 'test-reader@example.test');
+  ({ cookie } = await signInAsAdmin(ctx, 'test-reader@example.test'));
 });
 
 afterEach(async () => {

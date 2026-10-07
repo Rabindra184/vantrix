@@ -6,9 +6,10 @@ import {
   UnauthorizedException,
   type NestMiddleware,
 } from '@nestjs/common';
-import { OrgMemberRepository, TokenRepository } from '@perfportal/persistence';
+import { OrgMemberRepository, ProjectMemberRepository, TokenRepository } from '@perfportal/persistence';
 import { fromNodeHeaders } from 'better-auth/node';
 import type { NextFunction, Request, Response } from 'express';
+import { loadSessionAccess } from './access.js';
 import { authenticateRequest, type Tenant } from './auth.guard.js';
 import { auth } from './better-auth.instance.js';
 import { SESSION_TOKEN_ID_PREFIX } from './session-only.guard.js';
@@ -26,15 +27,23 @@ import { internalProblem, logInternalError, problem } from '../common/problem.js
  * does. A valid session with no org membership is a DIFFERENT failure —
  * authentication succeeded, so that one is a 403 (spec §7), not a 401.
  */
-async function authenticateSession(req: Request, members: OrgMemberRepository): Promise<Tenant> {
+async function authenticateSession(
+  req: Request,
+  members: OrgMemberRepository,
+  projectMembers: ProjectMemberRepository,
+): Promise<Tenant> {
   const session = await auth.api.getSession({ headers: fromNodeHeaders(req.headers) });
   if (!session) throw new UnauthorizedException('No valid session cookie.');
 
   const membership = await members.findOrgForUser(session.user.id);
   if (!membership) throw new ForbiddenException('This user belongs to no organization.');
 
-  // No projectId: a session is org-scoped (spec §4.1) — a human may read any
-  // run in their org. Scopes are full within the org; RBAC is M6.
+  // Who this person is beyond their org — admin, or which projects they hold
+  // a role in — read on EVERY request and never cached on the session, so a
+  // membership removed mid-session is gone on the next request. A session
+  // still names no single project: no projectId.
+  const access = await loadSessionAccess(session.user, projectMembers);
+
   return {
     orgId: membership.orgId,
     tokenId: `${SESSION_TOKEN_ID_PREFIX}${session.session.id}`,
@@ -43,6 +52,7 @@ async function authenticateSession(req: Request, members: OrgMemberRepository): 
     // executable runner job, but has no reason to post host counters or feed
     // live bytes from a generator.
     scopes: ['read', 'ingest', 'runner'],
+    ...access,
   };
 }
 
@@ -68,6 +78,7 @@ export class AuthMiddleware implements NestMiddleware {
   constructor(
     private readonly tokens: TokenRepository,
     private readonly members: OrgMemberRepository,
+    private readonly projectMembers: ProjectMemberRepository,
   ) {}
 
   async use(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -82,7 +93,7 @@ export class AuthMiddleware implements NestMiddleware {
       const hasBearer = typeof authHeader === 'string' && authHeader.startsWith('Bearer ');
       req.tenant = hasBearer
         ? await authenticateRequest(req, this.tokens)
-        : await authenticateSession(req, this.members);
+        : await authenticateSession(req, this.members, this.projectMembers);
       next();
     } catch (err) {
       // A deliberate rejection from the authentication path itself (bad,

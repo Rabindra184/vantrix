@@ -19,9 +19,15 @@
  * Safe to re-run: the org and project are upserted by their unique slugs, so
  * re-running never duplicates either. A fresh API token IS minted on every
  * run — that's deliberate (see the task write-up); existing tokens are never
- * touched, let alone revoked. `--admin-email` is NOT idempotent: Better Auth
- * rejects a second sign-up for the same email, so re-running with the same
- * address fails loudly rather than minting a second password silently.
+ * touched, let alone revoked. `--admin-email` is NOT idempotent: this script
+ * refuses an address that already has an account, so re-running with the
+ * same address fails loudly rather than minting a second password silently.
+ *
+ * Sign-up is closed (`createAuth`'s `disableSignUp`), so the admin is created
+ * the way an administrator creates any account: the admin plugin's
+ * server-side `auth.api.createUser`, with `role: 'admin'`. Called with no
+ * headers it needs no session, which is what lets the first admin exist
+ * before anybody can sign in.
  *
  * The plaintext token (and, when `--admin-email` is given, the plaintext
  * password) is printed to stdout exactly once and nowhere else: not logged,
@@ -105,7 +111,7 @@ function generatePassword(): string {
  *
  *   - it is only ever used when `PERFPORTAL_ADMIN_PASSWORD` is unset, so an
  *     operator who sets one never has a published secret on their instance;
- *   - it is only ever SEEDED into an empty deployment — `signUpEmail` runs
+ *   - it is only ever SEEDED into an empty deployment — `createUser` runs
  *     once, and a re-run finds the account and leaves it alone, so it can
  *     never reset a password somebody has changed;
  *   - and using it prints the warning below on every bootstrap, naming the
@@ -203,19 +209,19 @@ async function main(): Promise<void> {
     // shared definition apps/api's instance also builds on, so there is no
     // second hashing scheme to desync. See createAuth's docstring.
     //
-    // Deliberately BEFORE the token mint below (M4): signUpEmail throws on a
-    // duplicate email, and used to run AFTER the token had already been
+    // Deliberately BEFORE the token mint below (M4): account creation throws
+    // on a duplicate email, and used to run AFTER the token had already been
     // `prisma.apiToken.create`d — so that throw left a token row committed
     // with its plaintext already gone (stdout, the only place it's ever
     // printed, is reached further down, after both of these succeed) and no
     // way to recover it. Every retry against the same taken email minted
-    // another orphaned token. Sign-up first means a duplicate-email failure
-    // here happens before any token exists to orphan.
+    // another orphaned token. Account creation first means a duplicate-email
+    // failure here happens before any token exists to orphan.
     const wanted = resolveAdmin(adminEmail);
 
     /* ═══ IDEMPOTENT NOW, BECAUSE `docker compose up` RUNS IT EVERY TIME ═══
      *
-     * This used to let `signUpEmail`'s duplicate-email error escape, on the
+     * This used to let sign-up's duplicate-email error escape, on the
      * reasoning quoted at the top of this file: re-running with the same
      * address "fails loudly rather than minting a second password silently".
      * That is right for a human retyping a command and wrong for the compose
@@ -230,11 +236,26 @@ async function main(): Promise<void> {
      *
      * The loud-failure property survives where it belongs — a CLI caller who
      * passes `--admin-email` for an address that exists is told so, rather
-     * than being handed a password that is not the account's. */
+     * than being handed a password that is not the account's.
+     *
+     * ═══ AND NEVER RE-PROMOTED: THE REUSE PATH WRITES NOTHING TO `role` ═══
+     *
+     * The admin flag is `user.role`, and an admin can take it away from
+     * anybody — the bootstrap account included. If this path "made sure" the
+     * account it found was an admin, every `compose up` would quietly undo
+     * that demotion, and the one account an operator most wants to be able to
+     * retire would be the one that keeps coming back. So an existing account
+     * keeps whatever role it has. `ci.yml`'s bootstrap step demotes the
+     * account, runs this a third time, and fails if it is an admin again.
+     *
+     * The lookup is by the LOWERCASED address because that is what Better
+     * Auth stores: an operator who wrote `Admin@Corp.example` would otherwise
+     * find nothing on the second run, try to create the account again, and
+     * have every later `up` fail on "user already exists". */
     let admin: { email: string; password: string; usingDefaultPassword: boolean } | undefined;
     let adminExisted = false;
     if (wanted) {
-      const existing = await prisma.user.findFirst({ where: { email: wanted.email } });
+      const existing = await prisma.user.findFirst({ where: { email: wanted.email.toLowerCase() } });
       if (existing) {
         adminExisted = true;
         if (adminEmail) {
@@ -258,7 +279,7 @@ async function main(): Promise<void> {
           where: { userId: existing.id, orgId: org.id },
         });
         if (!membership) {
-          await new OrgMemberRepository(prisma).add(existing.id, org.id, 'admin');
+          await new OrgMemberRepository(prisma).add(existing.id, org.id);
         }
       }
     }
@@ -269,14 +290,28 @@ async function main(): Promise<void> {
         baseUrl: process.env.BETTER_AUTH_URL ?? `http://localhost:${Number(process.env.PORT ?? 3000)}`,
       });
       const password = wanted.password;
-      const signUp = await auth.api.signUpEmail({
+      /* The admin plugin's create does NOT apply Better Auth's password
+       * bounds (8 to 128 by default); sign-up did, and refused a too-short
+       * PERFPORTAL_ADMIN_PASSWORD loudly. Without this check the same value
+       * would be seeded silently, as the one credential guarding a fresh
+       * install. The bounds are read from Better Auth's own context, so there
+       * is no second definition of them here. */
+      const { minPasswordLength, maxPasswordLength } = (await auth.$context).password.config;
+      if (password.length < minPasswordLength || password.length > maxPasswordLength) {
+        throw new Error(
+          `The admin password must be ${minPasswordLength} to ${maxPasswordLength} characters ` +
+            `(got ${password.length}). Choose another PERFPORTAL_ADMIN_PASSWORD.`,
+        );
+      }
+      const created = await auth.api.createUser({
         body: {
           email: wanted.email,
           password,
           name: titleCase(wanted.email.split('@')[0] ?? 'admin'),
+          role: 'admin',
         },
       });
-      await new OrgMemberRepository(prisma).add(signUp.user.id, org.id, 'admin');
+      await new OrgMemberRepository(prisma).add(created.user.id, org.id);
       admin = { email: wanted.email, password, usingDefaultPassword: wanted.usingDefaultPassword };
     }
 

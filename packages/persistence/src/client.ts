@@ -162,4 +162,5 @@ export const SCHEMA_TABLES = [
   'account',
   'verification',
   'org_member',
+  'project_member',
 ] as const;

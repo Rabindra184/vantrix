@@ -13,7 +13,8 @@ import { ProjectRepository, TokenRepository, type TokenSummaryRow } from '@perfp
 import type { Request } from 'express';
 import { SessionOnlyGuard } from '../auth/session-only.guard.js';
 import { badRequest } from '../common/validation.js';
-import { notFound } from '../common/validation.js';
+import { notFound, projectNotFound } from '../common/validation.js';
+import { Requires } from '../auth/access.decorator.js';
 
 /**
  * Mints a project API token — the one credential-issuing route on this API.
@@ -35,6 +36,7 @@ export class TokensController {
   ) {}
 
   @Post()
+  @Requires('tokens:manage')
   @HttpCode(201)
   async mint(@Param('slug') slug: string, @Req() req: Request, @Body() body: unknown): Promise<MintedToken> {
     const tenant = req.tenant!;
@@ -93,6 +95,7 @@ export class TokensController {
    * shape, converting `Date` to the ISO string `TokenSummarySchema` expects.
    */
   @Get()
+  @Requires('tokens:manage')
   async list(@Param('slug') slug: string, @Req() req: Request): Promise<TokenListResponse> {
     const tenant = req.tenant!;
     const project = await this.resolveProject(tenant.orgId, slug);
@@ -112,6 +115,7 @@ export class TokensController {
    * itself, since it just forwards whatever the repository returns.
    */
   @Delete(':prefix')
+  @Requires('tokens:manage')
   async revoke(
     @Param('slug') slug: string,
     @Param('prefix') prefix: string,
@@ -132,7 +136,7 @@ export class TokensController {
    */
   private async resolveProject(orgId: string, slug: string) {
     const project = await this.projects.findBySlugInOrg(orgId, slug);
-    if (!project) throw notFound(`No project "${slug}" in this organisation.`, 'Check the slug, or list the projects this credential can reach with GET /v1/projects.');
+    if (!project) throw projectNotFound(slug);
     return project;
   }
 

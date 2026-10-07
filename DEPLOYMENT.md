@@ -141,6 +141,34 @@ compose file**, not at the repository root.
 `bootstrap` runs on every `up` and is idempotent: the org and project are
 upserted by slug, and an admin that exists is reused untouched.
 
+### Adding a teammate
+
+Sign-up is closed: nobody can make themselves an account. In this release an
+account is made by running bootstrap again with `--admin-email`:
+
+```bash
+docker compose -f infra/docker-compose.yml --profile onprem run --rm bootstrap \
+  pnpm --filter @perfportal/persistence run bootstrap --admin-email teammate@example.com
+```
+
+What that does, today:
+
+- It creates an **admin** — every account this release can make is one. It
+  joins the same org (`PERFPORTAL_ORG_SLUG`) and sees every project in it.
+- Its password is `PERFPORTAL_ADMIN_PASSWORD` if your `infra/.env` sets one,
+  which makes it the same password your own account started with; otherwise
+  bootstrap generates a random one. Either way it is printed once, in the
+  output of that command. Hand it over privately and have your teammate change
+  it at first sign-in.
+- It also mints and prints a new API token for the project. Nothing else uses
+  it; revoke it on the project's **API tokens** page if you do not want it.
+- An address that already has an account is refused, loudly, and nothing about
+  that account changes.
+
+Per-project roles (Viewer, Member, Manager) are enforced by the API already,
+but granting them, and an admin screen for accounts, arrive in a later
+release.
+
 ### Serving it somewhere other than localhost
 
 | Variable | Default | Notes |
@@ -253,6 +281,14 @@ docker compose -f infra/docker-compose.yml --profile onprem up -d --build
 
 Migrations run automatically; `bootstrap` re-runs and changes nothing that
 exists. Your data lives in named volumes and is not touched by a rebuild.
+
+**The project-access release cannot be rolled back by image alone.** Its
+migration promotes every existing org member to admin and drops
+`org_member.role`, which older images read. Under Compose an older image will
+not start at all: its `bootstrap` reads that column, fails, and `api` waits on
+it. Run directly, it answers every signed-in request with a 500. To go back
+past it, restore the backup you took before upgrading
+([below](#backup-and-restore)).
 
 ### Keep upgrading at least once a year — the metrics tables are partitioned
 

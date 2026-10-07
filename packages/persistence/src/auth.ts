@@ -1,5 +1,6 @@
 import { betterAuth } from 'better-auth';
 import { prismaAdapter } from 'better-auth/adapters/prisma';
+import { admin, type AdminOptions } from 'better-auth/plugins/admin';
 import { createPrisma } from './client.js';
 
 /**
@@ -81,6 +82,98 @@ export function cookiesAreSecure(baseUrl: string, allowInsecure = false): boolea
   return !(host === 'localhost' || host === '127.0.0.1' || host === '[::1]');
 }
 
+/** The admin plugin's options, written once: the call and the type below both read them. */
+const ADMIN_OPTIONS = { defaultRole: 'user', adminRoles: ['admin'] } satisfies AdminOptions;
+
+/**
+ * The admin plugin exactly as `createAuth` configures it, as an INTERFACE so
+ * the emitted `.d.ts` names it rather than spelling it out. Spelled out, its
+ * endpoint types reference better-auth's own copy of zod (4.x), which this
+ * package cannot name — `tsc -b` refuses with TS2742 — and depending on zod 4
+ * here just to let the compiler print a type is not a trade worth making.
+ * An interface is always emitted by name; a type alias of `ReturnType` is not.
+ */
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type -- the empty body is the point: a NAMED copy of the supertype, for declaration emit (above)
+export interface AdminPlugin extends ReturnType<typeof admin<typeof ADMIN_OPTIONS>> {}
+
+function adminPlugin(): AdminPlugin {
+  return admin(ADMIN_OPTIONS);
+}
+
+/**
+ * Refuses the admin plugin's own HTTP routes, inside Better Auth's pipeline.
+ * Only `onRequest`'s use of its context is declared, so the type is nameable
+ * without reaching into `@better-auth/core`.
+ */
+export interface RefuseAdminHttpPlugin {
+  id: 'refuse-admin-http';
+  onRequest(request: Request, ctx: { baseURL: string }): Promise<{ response: Response } | undefined>;
+}
+
+/**
+ * ═══ THE ADMIN PLUGIN'S HTTP ROUTES ARE A SECOND ADMIN API, SO THEY 404 ═══
+ *
+ * The admin plugin is registered for its SERVER-SIDE calls (bootstrap, and the
+ * `/v1/admin` routes to come). Its HTTP surface — list-users, create-user,
+ * set-role, ban-user, impersonate-user and the rest — would otherwise answer
+ * any admin's cookie: an undocumented admin API in Better Auth's shapes rather
+ * than problem+json, beside the one place admin operations are meant to go
+ * and be recorded.
+ *
+ * ═══ WHY HERE, AND NOT IN FRONT OF THE HANDLER ═══
+ *
+ * Two guards in Express were tried first, and both were bypassable, because
+ * Better Auth does not route on the path Express sees:
+ *
+ *   - keyed on the path AS SENT, `/auth/./admin/list-users`,
+ *     `/auth/foo/../admin/list-users` and `/auth/%2e/admin/list-users`
+ *     answered 200 with every account: `new URL()` collapses dot segments;
+ *   - keyed on the path RESOLVED the way Better Auth resolves it, a request
+ *     for `/auth/get-session` with `Host: <host>/auth/admin/list-users?` (or
+ *     `#`, or the same smuggled into `X-Forwarded-Proto`) still answered 200,
+ *     and a `POST /auth/sign-in/email` so addressed created an admin. better-
+ *     call's Node adapter builds the URL by CONCATENATING those headers with
+ *     the path (`adapters/node/index.ts`), then routes on that URL's pathname.
+ *
+ * So the refusal sits where the routing decision is made: a plugin
+ * `onRequest`, which receives the very Request the router then routes —
+ * better-auth's `api/index.ts` hands the router whatever `currentRequest` the
+ * last plugin left, and better-call's router passes that object, unchanged,
+ * to `processRequest`, which reads `new URL(request.url).pathname`. It runs
+ * LAST among the plugins because a plugin may replace the request, and it
+ * checks the one the router will see. Server-side `auth.api.*` calls never
+ * reach it: those invoke an endpoint directly and skip the router entirely,
+ * which is why bootstrap and the test fixtures can still create accounts.
+ *
+ * The base path is read from the context exactly as the router derives its
+ * own (`new URL(ctx.baseURL).pathname`), so there is no second copy of
+ * '/auth' to drift. The path is decoded first and matched in any case — a
+ * superset of what the case-sensitive router could match — and a path that
+ * will not decode is refused too. The answer is a bare 404, what Better Auth
+ * gives a path it does not serve, so these routes read as absent rather than
+ * present-and-forbidden.
+ */
+function refuseAdminHttp(): RefuseAdminHttpPlugin {
+  return {
+    id: 'refuse-admin-http',
+    async onRequest(request, ctx) {
+      const basePath = new URL(ctx.baseURL).pathname.replace(/\/+$/, '');
+      let path: string;
+      try {
+        path = decodeURIComponent(new URL(request.url).pathname);
+      } catch {
+        return { response: new Response(null, { status: 404 }) };
+      }
+      const admin = `${basePath}/admin`.toLowerCase();
+      const lower = path.toLowerCase();
+      if (lower === admin || lower.startsWith(`${admin}/`)) {
+        return { response: new Response(null, { status: 404 }) };
+      }
+      return undefined;
+    },
+  };
+}
+
 /**
  * Shared Better Auth config for both `apps/api` (a module-scope `const`
  * mounted on the raw Express instance, see better-auth.instance.ts) and
@@ -98,6 +191,24 @@ export function cookiesAreSecure(baseUrl: string, allowInsecure = false): boolea
  * The organization plugin is deliberately absent: `org` and `project` are the
  * tenancy source of truth (spec §3). Two org models would give two answers to
  * "what may this caller see?", and that disagreement is a tenancy leak.
+ *
+ * ═══ SIGN-UP IS CLOSED, AND THE ADMIN PLUGIN IS HOW ACCOUNTS ARE MADE ═══
+ *
+ * `disableSignUp` refuses `POST /auth/sign-up/email` outright: who may see a
+ * project is decided by an administrator, so nobody can mint themselves an
+ * account. Every account is created with the admin plugin's server-side
+ * `auth.api.createUser` instead — by bootstrap for the first admin, and by
+ * the integration helpers and the e2e fixtures for theirs. Called with no
+ * headers, that handler needs no session, which is what lets bootstrap make
+ * the first admin with nobody signed in.
+ *
+ * The plugin's own HTTP routes (`/auth/admin/*`) are a second admin API this
+ * product does not offer; `refuseAdminHttp`, registered after it, answers
+ * them 404 inside Better Auth's own pipeline, on the very request the router
+ * routes. The plugin is here for its server-side calls and for the
+ * columns it owns: `user.role` (the admin flag is exactly `'admin'`, every
+ * other account `'user'`), `banned`/`banReason`/`banExpires`, and
+ * `session.impersonatedBy`.
  */
 export function createAuth(opts: {
   databaseUrl: string;
@@ -114,7 +225,16 @@ export function createAuth(opts: {
     baseURL: opts.baseUrl,
     trustedOrigins: [opts.baseUrl],
     database: prismaAdapter(createPrisma(opts.databaseUrl), { provider: 'postgresql' }),
-    emailAndPassword: { enabled: true },
+    emailAndPassword: { enabled: true, disableSignUp: true },
+    // refuseAdminHttp LAST: a plugin's onRequest may replace the request, and
+    // the refusal has to judge the one the router will actually route.
+    plugins: [adminPlugin(), refuseAdminHttp()],
+    // NO `cookieCache`, and that is load-bearing: with it off, every
+    // `getSession` reads the user row, so `user.role` — the admin flag — is
+    // current on every request, and a demoted admin is an ordinary account on
+    // the next one. Turned on, the session and its user ride in a signed
+    // cookie for the cache's maxAge, and a demotion waits that long.
+    // `auth-cookies.test.ts` pins it off.
     session: { expiresIn: 60 * 60 * 24 * 14, updateAge: 60 * 60 * 24 },
     advanced: {
       defaultCookieAttributes: {

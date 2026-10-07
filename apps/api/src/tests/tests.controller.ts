@@ -23,7 +23,8 @@ import type { Request } from 'express';
 import { Scopes } from '../auth/scopes.decorator.js';
 import { SessionOnlyGuard } from '../auth/session-only.guard.js';
 import { badRequest } from '../common/validation.js';
-import { notFound } from '../common/validation.js';
+import { notFound, projectNotFound } from '../common/validation.js';
+import { Requires } from '../auth/access.decorator.js';
 
 /**
  * The tests a project runs, and the layer between a project and its runs.
@@ -69,6 +70,7 @@ export class TestsController {
   ) {}
 
   @Get()
+  @Requires('project:read')
   @Scopes('read')
   async list(@Param('slug') slug: string, @Req() req: Request): Promise<TestListResponse> {
     const tenant = req.tenant!;
@@ -78,6 +80,7 @@ export class TestsController {
   }
 
   @Get(':testSlug')
+  @Requires('project:read')
   @Scopes('read')
   async get(
     @Param('slug') slug: string,
@@ -98,6 +101,7 @@ export class TestsController {
    * history in two, with nothing erroring.
    */
   @Patch(':testSlug')
+  @Requires('tests:manage')
   @UseGuards(SessionOnlyGuard)
   async update(
     @Param('slug') slug: string,
@@ -140,6 +144,7 @@ export class TestsController {
    * one that decides whether there was anything to delete.
    */
   @Delete(':testSlug')
+  @Requires('tests:manage')
   @UseGuards(SessionOnlyGuard)
   async remove(
     @Param('slug') slug: string,
@@ -206,7 +211,7 @@ export class TestsController {
   ): Promise<{ id: string }> {
     const project = await this.projects.findBySlugInOrg(orgId, slug);
     if (project === null || (credentialProjectId !== undefined && credentialProjectId !== project.id)) {
-      throw notFound(`No project "${slug}" in this organisation.`, 'Check the slug, or list the projects this credential can reach with GET /v1/projects.');
+      throw projectNotFound(slug);
     }
     return project;
   }

@@ -6,6 +6,7 @@ import {
   createPool,
   createPrisma,
   OrgMemberRepository,
+  ProjectMemberRepository,
   ProjectRepository,
   RunnerRepository,
   RunRepository,
@@ -15,6 +16,7 @@ import {
 } from '@perfportal/persistence';
 import pg from 'pg';
 import { loadConfig } from '../config.js';
+import { AccessGuard } from './access.guard.js';
 import { AuthGuard } from './auth.guard.js';
 import { AuthMiddleware } from './auth.middleware.js';
 
@@ -28,6 +30,7 @@ export const CONFIG = Symbol('CONFIG');
     { provide: pg.Pool, useFactory: () => createPool(loadConfig().databaseUrl) },
     { provide: TokenRepository, useFactory: (p: PrismaClient) => new TokenRepository(p), inject: [PrismaClient] },
     { provide: OrgMemberRepository, useFactory: (p: PrismaClient) => new OrgMemberRepository(p), inject: [PrismaClient] },
+    { provide: ProjectMemberRepository, useFactory: (p: PrismaClient) => new ProjectMemberRepository(p), inject: [PrismaClient] },
     { provide: ProjectRepository, useFactory: (p: PrismaClient) => new ProjectRepository(p), inject: [PrismaClient] },
     { provide: RunnerRepository, useFactory: (p: PrismaClient) => new RunnerRepository(p), inject: [PrismaClient] },
     { provide: RunRepository, useFactory: (p: PrismaClient) => new RunRepository(p), inject: [PrismaClient] },
@@ -41,7 +44,22 @@ export const CONFIG = Symbol('CONFIG');
     // useExisting (not useClass) so this is the same instance as the
     // AuthGuard provider above, not a second one.
     { provide: APP_GUARD, useExisting: AuthGuard },
+    // AFTER AuthGuard, and the position is the order: Nest collects APP_GUARD
+    // providers in the order they are listed here and runs global guards in
+    // that order (DependenciesScanner.insertProvider ->
+    // ApplicationConfig.addGlobalGuard, then GuardsConsumer awaits each in
+    // turn). AccessGuard never judges a bearer token, so what the order
+    // decides is a SESSION's answer on a @Requires route whose @Scopes it
+    // lacks (a session holds read, ingest and runner): AuthGuard's scope 403,
+    // the same whichever project or run is named, before AccessGuard looks
+    // anything up — rather than a 404 or ROLE_REQUIRED that depends on the
+    // target. Outside /v1, where no middleware runs, it is also AuthGuard
+    // that sets req.tenant for AccessGuard to read.
+    // access-guard.integration.test.ts reads the order back from the running
+    // app.
+    AccessGuard,
+    { provide: APP_GUARD, useExisting: AccessGuard },
   ],
-  exports: [CONFIG, PrismaClient, pg.Pool, TokenRepository, OrgMemberRepository, ProjectRepository, RunnerRepository, RunRepository, RuleRepository, TestRepository, ActivityRepository, AuthGuard, AuthMiddleware],
+  exports: [CONFIG, PrismaClient, pg.Pool, TokenRepository, OrgMemberRepository, ProjectMemberRepository, ProjectRepository, RunnerRepository, RunRepository, RuleRepository, TestRepository, ActivityRepository, AuthGuard, AuthMiddleware],
 })
 export class AuthModule {}

@@ -78,6 +78,57 @@ export function forbidden(message: string, remediation: string): ForbiddenExcept
   return Object.assign(new ForbiddenException(message), { remediation });
 }
 
+/*
+ * ═══ ONE 404 FOR "NOT THERE" AND "NOT YOURS" ═══
+ *
+ * A project or run the caller cannot see must answer exactly as one that does
+ * not exist, or comparing the two answers reveals which projects and runs
+ * exist (docs/superpowers/specs/2026-10-07-project-access-design.md, section
+ * 2). For a non-admin session on a `@Requires` route, `AccessGuard` answers
+ * BOTH itself, with one of these — a missing target and an invisible one go
+ * through the same call, so their bodies differ only in traceId. (A malformed
+ * run id is the exception it leaves to the controller's 400.)
+ *
+ * The controllers' own "not there" answers, which admins and bearer tokens
+ * still reach, call these too, so the wording is one thing everywhere — and
+ * is what those controllers already sent, unchanged. The run note's 404 was
+ * the exception ("…in this organisation."), so an admin and a non-member got
+ * two wordings from one route; it calls `runNotFound` now. One 404 in
+ * runs.controller.ts still spells its own: the bearer-only project run
+ * list's, which only a token reaches and no guard answers for.
+ */
+
+/** A project slug the caller's org does not hold, or holds out of their reach. */
+export function projectNotFound(slug: string): NotFoundException {
+  return notFound(
+    `No project "${slug}" in this organisation.`,
+    'Check the slug, or list the projects this credential can reach with GET /v1/projects.',
+  );
+}
+
+/** A run id that is not in the caller's reach: no such run, or one in a project they cannot see. */
+export function runNotFound(id: string): NotFoundException {
+  return notFound(
+    `No run ${id} in this project.`,
+    'Check the run id. GET /v1/runs lists the runs a signed-in user can reach; '
+      + 'GET /v1/projects/{slug}/runs lists those a project token can.',
+  );
+}
+
+/**
+ * A refusal the caller CAN see the reason for: the project is visible to
+ * them, and their standing is not enough. Unlike `forbidden`, it carries its
+ * own `code`, because a client tells "ask for a role" from "ask an admin"
+ * by it.
+ */
+export function accessDenied(
+  code: 'ROLE_REQUIRED' | 'ADMIN_REQUIRED',
+  message: string,
+  remediation: string,
+): ForbiddenException {
+  return Object.assign(new ForbiddenException(message), { code, remediation });
+}
+
 /**
  * `?from=&to=` as elapsed ms from run start.
  *

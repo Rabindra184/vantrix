@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { PROJECT_ROLES } from './access.js';
 import { RunStatusSchema, RunVerdictSchema } from './run.js';
 
 export const ProjectSummarySchema = z.object({
@@ -21,6 +22,21 @@ export const ProjectSummarySchema = z.object({
       verdict: RunVerdictSchema.nullable(),
     })
     .nullable(),
+  /**
+   * The caller's role in this project, so the UI can show and hide controls.
+   * `null` is either an admin who holds no membership row here — the admin
+   * flag is what lets them see the project, so read that flag before this
+   * field — or a bearer token, which is a machine credential and holds no
+   * role in any project. `POST /v1/projects` answers `null` for the first
+   * reason: only an admin may create a project, and creating one writes no
+   * membership row for its creator.
+   *
+   * `.nullable().optional()`, and the OPTIONAL half is the load-bearing one,
+   * for the reason `TokenSummarySchema.expiresAt` records: the browser drops
+   * a body that fails this schema, so a response from a pod that predates the
+   * field must still parse during a rolling deploy.
+   */
+  role: z.enum(PROJECT_ROLES).nullable().optional(),
 });
 export type ProjectSummary = z.infer<typeof ProjectSummarySchema>;
 
@@ -52,9 +68,10 @@ export const CreateProjectRequestSchema = z
 export type CreateProjectRequest = z.infer<typeof CreateProjectRequestSchema>;
 
 /**
- * Every project a credential can see. A session sees its whole org's; a
- * bearer token sees the one project it was minted against. One rule, not
- * two — "the projects this credential can see".
+ * Every project a credential can see. An admin's session sees its whole
+ * org's; anyone else's sees the projects they hold a role in, and none when
+ * they hold none; a bearer token sees the one project it was minted against.
+ * One rule, not three — "the projects this credential can see".
  *
  * No `nextCursor`: an org has a handful of projects, not a page of them. If
  * one ever has enough to need paging, this schema needs a cursor and the

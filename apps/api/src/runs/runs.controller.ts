@@ -16,8 +16,10 @@ import { ProjectRepository, TestRepository, type RunListItem, type RunRecord, ty
 import { Scopes } from '../auth/scopes.decorator.js';
 import { checkTally } from './check-tally.js';
 import { noteOf, RunsService, warmupMsOf } from './runs.service.js';
-import { notFound } from '../common/validation.js';
+import { notFound, projectNotFound, runNotFound } from '../common/validation.js';
 import { SessionOnlyGuard } from '../auth/session-only.guard.js';
+import { BearerOnly, NotProjectScoped, Requires } from '../auth/access.decorator.js';
+import { canSeeProject, listScope } from '../auth/access.js';
 
 // AuthGuard is registered globally via APP_GUARD (see auth.module.ts), so
 // every route authenticates by default — @UseGuards(AuthGuard) here would be
@@ -39,12 +41,13 @@ export class RunsController {
 
   /**
    * Org-scoped by credential, not by URL. A bearer token carries a projectId
-   * and stays restricted to it, exactly as before. A session carries none and
-   * sees every run in its org unless "project" narrows it by slug — the
-   * spread below takes the org-only branch of RunRepository.list whenever a
-   * session names no project.
+   * and stays restricted to it, exactly as before. A session carries none: an
+   * admin's sees every run in its org and anyone else's the runs of the
+   * projects they hold a role in (`listScope`), unless "project" narrows it
+   * by slug to one of those.
    */
   @Get()
+  @NotProjectScoped()
   @Scopes('read')
   async list(
     @Req() req: Request,
@@ -76,7 +79,7 @@ export class RunsController {
       // exists, and an empty 200 describes a project that exists and happens
       // to be idle. The status code must not distinguish "no such project"
       // from "not yours".
-      if (!named) throw notFound(`No project "${project}" in this organisation.`, 'Check the slug, or list the projects this credential can reach with GET /v1/projects.');
+      if (!named) throw projectNotFound(project);
       // A bearer token is minted against exactly one project. Naming another
       // is a caller mistake, not a permission question — and answering with
       // that token's own runs under someone else's slug would be a silent
@@ -85,9 +88,15 @@ export class RunsController {
         throw badRequest(
           'PROJECT_MISMATCH',
           `This token belongs to a different project than "${project}".`,
-          'Omit "project", or use a session, which can read every project in the org.',
+          `Omit "project" to list this token's own project, or use a signed-in session that can see "${project}".`,
         );
       }
+      // A session naming a project it cannot see gets the missing project's
+      // 404, for the reason above: once the list is narrowed to its own
+      // projects, an empty 200 here would say the slug exists. A bearer token
+      // has already matched its own project on the line above, so this
+      // refuses sessions only.
+      if (!canSeeProject(tenant, named.id)) throw projectNotFound(project);
       projectId = named.id;
     }
 
@@ -155,8 +164,15 @@ export class RunsController {
 
     const parsedCursor = parseCursor(cursor);
     const filters = parseRunListFilters({ q, status, verdict });
+    // The session's own projects ride along even when "project" names one:
+    // that one was checked above, so the extra clause narrows nothing, and the
+    // list stays defined by the same scope whichever filters arrive.
     const page = await this.runs.runs().list(
-      { orgId: tenant.orgId, projectId: projectId ? projectId : undefined },
+      {
+        orgId: tenant.orgId,
+        projectId: projectId ? projectId : undefined,
+        projectIds: listScope(tenant).projectIds,
+      },
       {
         limit: parseLimit(limit),
         cursor: parsedCursor ? parsedCursor : undefined,
@@ -169,6 +185,7 @@ export class RunsController {
   }
 
   @Get(':id')
+  @Requires('project:read')
   @Scopes('read')
   async get(
     @Param('id', uuidParam('id')) id: string,
@@ -179,8 +196,7 @@ export class RunsController {
     const run = await this.runs
       .runs()
       .findById({ orgId: tenant.orgId, projectId: tenant.projectId }, id);
-    if (!run) throw notFound(`No run ${id} in this project.`, 'Check the run id. GET /v1/runs lists the runs a signed-in user can reach; '
-        + 'GET /v1/projects/{slug}/runs lists those a project token can.');
+    if (!run) throw runNotFound(id);
 
     await respondWithRun(this.runs, run, res);
   }
@@ -197,6 +213,7 @@ export class RunsController {
    * processing, and "this one is flaky" is often written while it streams.
    */
   @Put(':id/note')
+  @Requires('run:note')
   @UseGuards(SessionOnlyGuard)
   async putNote(
     @Param('id', uuidParam('id')) id: string,
@@ -227,12 +244,10 @@ export class RunsController {
         text: parsed.data.note,
         userId: tenant.userId,
       });
-    if (run === null) {
-      throw notFound(
-        `No run ${id} in this organisation.`,
-        'Check the run id. GET /v1/runs lists the runs a signed-in user can reach.',
-      );
-    }
+    // The run surface's ONE 404, the same `runNotFound` AccessGuard answers a
+    // non-member with: an admin, or a member whose run was deleted between
+    // the guard's lookup and this write, gets exactly that body too.
+    if (run === null) throw runNotFound(id);
     return { note: noteOf(run) };
   }
 }
@@ -379,6 +394,7 @@ export class ProjectRunsController {
   ) {}
 
   @Get()
+  @BearerOnly()
   @Scopes('read')
   async list(
     @Param('slug') slug: string,
@@ -401,7 +417,8 @@ export class ProjectRunsController {
     // guard would list every run in the org under a single-project URL.
     // Resolving the project by slug within the org instead was considered
     // and rejected (human-ruled) — a session-holder uses GET /v1/runs,
-    // which already lists across the whole org.
+    // which already lists every project the session can see (all of the
+    // org's for an admin) and takes ?project= to narrow to one.
     const projectId = tenant.projectId;
     if (!projectId) {
       throw badRequest(

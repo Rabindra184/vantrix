@@ -9,7 +9,7 @@
 import 'reflect-metadata';
 import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
-import { INestApplication } from '@nestjs/common';
+import { INestApplication, type Type } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { PrismaClient } from '@prisma/client';
 import pg from 'pg';
@@ -66,8 +66,15 @@ const TABLES = SCHEMA_TABLES;
 
 export async function createTestApp(
   settings: Record<string, unknown> = {},
+  /** Test-only controllers mounted beside the app's own — for a case that has
+   *  to drive a route shape no real route carries yet. Global guards, the auth
+   *  middleware and the problem filter apply to them exactly as to the rest. */
+  extraControllers: Type[] = [],
 ): Promise<TestContext> {
-  const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+  const moduleRef = await Test.createTestingModule({
+    imports: [AppModule],
+    controllers: extraControllers,
+  }).compile();
   const app = moduleRef.createNestApplication();
 
   // Same order as main.ts, and shared with it for the same reason

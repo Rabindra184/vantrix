@@ -1,18 +1,22 @@
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, mkdirSync, readFileSync, copyFileSync, readdirSync } from 'node:fs';
+import { connect as tcpConnect, type AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ActivityResponseSchema } from '@perfportal/contracts';
 import { hashToken, mintToken } from '@perfportal/core';
-import { OrgMemberRepository } from '@perfportal/persistence';
+import { ProjectMemberRepository } from '@perfportal/persistence';
 import { Queue } from 'bullmq';
+import type { Request, Response } from 'express';
 import request from 'supertest';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import type { Tenant } from '../src/auth/auth.guard.js';
+import { AuthMiddleware } from '../src/auth/auth.middleware.js';
 import { createTestApp, type TestContext } from './support/app.js';
 import { runPipelineFor } from './support/pipeline.js';
-import { signUp, signUpAndLogin, signUpAsOrgMember } from './support/session.js';
+import { signInAsAdmin, signInAsProjectMember, signInWithoutOrg } from './support/session.js';
 
 let ctx: TestContext;
 
@@ -38,23 +42,213 @@ beforeAll(() => {
   bundle = readFileSync(out);
 });
 
+/**
+ * One HTTP/1.1 request over a raw socket, its request line and headers on the
+ * wire exactly as given — no client library normalising a path or rewriting
+ * `Host` on the way out — and the status code that comes back.
+ */
+function rawStatus(
+  port: number,
+  req: { method: string; path: string; headers: Record<string, string>; body?: string },
+): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const lines = [`${req.method} ${req.path} HTTP/1.1`, ...Object.entries(req.headers).map(([k, v]) => `${k}: ${v}`)];
+    if (req.body !== undefined) lines.push(`Content-Length: ${Buffer.byteLength(req.body)}`);
+    lines.push('Connection: close');
+    let received = '';
+    const socket = tcpConnect(port, '127.0.0.1', () => {
+      socket.write(`${lines.join('\r\n')}\r\n\r\n${req.body ?? ''}`);
+    });
+    socket.setEncoding('latin1');
+    socket.on('data', (chunk: string) => {
+      received += chunk;
+    });
+    socket.on('error', reject);
+    socket.on('close', () => {
+      const status = /^HTTP\/1\.1 (\d{3})/.exec(received)?.[1];
+      if (status === undefined) reject(new Error(`no status line in ${JSON.stringify(received.slice(0, 200))}`));
+      else resolve(Number(status));
+    });
+  });
+}
+
 describe('/auth/*', () => {
-  it('serves /auth/* without a session', async () => {
+  /**
+   * Sign-up is CLOSED: an account is created by an admin, or by bootstrap,
+   * through the admin plugin's server-side create. This case is also what
+   * proves `/auth/*` is still served at all, so it asserts Better Auth's own
+   * refusal code and not merely a non-2xx: with nothing mounted, Nest 404s
+   * with a problem+json body, which a bare status check would read as a
+   * refusal. (An EMPTY-bodied 404 here would instead mean basePath is
+   * misconfigured — Better Auth 404s that way when it does not match.)
+   */
+  it("refuses a self-service sign-up in Better Auth's own words, and creates no account", async () => {
     ctx = await createTestApp();
     const res = await request(ctx.app.getHttpServer())
       .post('/auth/sign-up/email')
       .send({ email: 'a@example.test', password: 'correct-horse-battery', name: 'A' });
 
-    // A real sign-up, not just "not a 500": with nothing mounted, Nest 404s
-    // and ProblemFilter renders a non-empty problem+json body, which would
-    // make the brief's original `status < 500 && body !== {}` assertion pass
-    // even though /auth/* is not served at all.
-    expect(res.status).toBe(200);
-    expect(res.body.user.email).toBe('a@example.test');
-    // An empty body on a 404 here would mean basePath is misconfigured
-    // (Better Auth 404s with an empty body when basePath doesn't match) —
-    // a different failure from Nest's 404, useful to know when debugging.
-    expect(res.headers['set-cookie']).toBeTruthy();
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(res.body.code).toBe('EMAIL_PASSWORD_SIGN_UP_DISABLED');
+    expect(res.headers['set-cookie']).toBeUndefined();
+    expect(await ctx.prisma.user.count({ where: { email: 'a@example.test' } })).toBe(0);
+  });
+
+  it('signs in an admin, and the session reports the admin flag', async () => {
+    ctx = await createTestApp();
+    const { cookie } = await signInAsAdmin(ctx, 'admin-flag@example.test');
+    const res = await request(ctx.app.getHttpServer())
+      .get('/auth/get-session')
+      .set('Cookie', cookie)
+      .expect(200);
+    expect(res.body.user.email).toBe('admin-flag@example.test');
+    expect(res.body.user.role).toBe('admin');
+  });
+
+  it('signs in a project member who belongs to nothing, and that account is not an admin', async () => {
+    ctx = await createTestApp();
+    const { cookie } = await signInAsProjectMember(ctx, 'member-of-nothing@example.test', []);
+    const res = await request(ctx.app.getHttpServer())
+      .get('/auth/get-session')
+      .set('Cookie', cookie)
+      .expect(200);
+    expect(res.body.user.email).toBe('member-of-nothing@example.test');
+    expect(res.body.user.role).toBe('user');
+  });
+
+  /**
+   * `POST /auth/update-user` is Better Auth's own self-service route, open to
+   * every session, and it writes whatever user fields its input schema allows.
+   * The admin flag IS a user field — `user.role`, owned by the admin plugin —
+   * so the plugin declaring it `input: false` is all that stands between any
+   * account and making itself an admin. Pinned, because a later
+   * `user.additionalFields` or plugin schema that re-declared `role` as input
+   * would hand every account the install. `banned` is the same plugin's
+   * field and is refused the same way (for a truthy value: Better Auth skips
+   * a falsy one for an `input: false` field rather than refusing it).
+   */
+  it('refuses a session that tries to make itself an admin through update-user', async () => {
+    ctx = await createTestApp();
+    const { cookie, userId } = await signInAsProjectMember(ctx, 'self-promoter@example.test', [
+      { projectId: ctx.projectId, role: 'viewer' },
+    ]);
+    const server = ctx.app.getHttpServer();
+
+    const promote = await request(server).post('/auth/update-user').set('Cookie', cookie).send({ role: 'admin' });
+    const ban = await request(server).post('/auth/update-user').set('Cookie', cookie).send({ banned: true });
+
+    expect([promote.status, promote.body.code]).toEqual([400, 'FIELD_NOT_ALLOWED']);
+    expect([ban.status, ban.body.code]).toEqual([400, 'FIELD_NOT_ALLOWED']);
+    const row = await ctx.prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { role: true, banned: true } });
+    expect(row).toEqual({ role: 'user', banned: false });
+    // ...while the same route, the same way, still updates a field a person
+    // may set: a refusal of every update would pass the lines above.
+    await request(server).post('/auth/update-user').set('Cookie', cookie).send({ name: 'Renamed' }).expect(200);
+    expect((await ctx.prisma.user.findUniqueOrThrow({ where: { id: userId } })).name).toBe('Renamed');
+  });
+
+  /**
+   * The admin plugin's own HTTP routes are refused, EVEN TO AN ADMIN: every
+   * admin operation goes through `/v1/admin`, where errors are problem+json,
+   * the operations are documented, and one place can record them. Left
+   * reachable, `/auth/admin/*` is a second, undocumented admin API beside it.
+   *
+   * `list-users` is a GET, so a POST to it is refused by Better Auth's own
+   * router whatever the guard does — that half cannot fail against an
+   * unguarded app, and the GET beside it is what can. `create-user` is the
+   * route that matters most, so the case also proves it created nothing.
+   */
+  it("refuses the admin plugin's own routes, even to an admin", async () => {
+    ctx = await createTestApp();
+    const { cookie } = await signInAsAdmin(ctx, 'admin-routes@example.test');
+    const server = ctx.app.getHttpServer();
+
+    await request(server).post('/auth/admin/list-users').set('Cookie', cookie).expect(404);
+    await request(server).get('/auth/admin/list-users').set('Cookie', cookie).expect(404);
+    await request(server)
+      .post('/auth/admin/create-user')
+      .set('Cookie', cookie)
+      .send({ email: 'smuggled@example.test', password: 'correct-horse-battery', name: 'S', role: 'admin' })
+      .expect(404);
+    expect(await ctx.prisma.user.count({ where: { email: 'smuggled@example.test' } })).toBe(0);
+  });
+
+  /**
+   * A guard keyed on the path AS SENT is not a guard: Better Auth resolves
+   * the path through `new URL()` first, so dot segments collapse and
+   * `/auth/./admin/list-users` reaches the plugin — measured at 200 with
+   * every account in the install against a guard registered on
+   * `/auth/admin/*splat`. A browser normalises these before sending, and so
+   * may an HTTP client library, which is why this goes through a raw socket:
+   * it puts the path on the wire byte for byte.
+   *
+   * `/auth/ADMIN/list-users` cannot fail against an unguarded app — Better
+   * Auth's router (rou3) is case-sensitive and 404s it anyway — and is kept
+   * only so the refusal's case-insensitivity has a witness.
+   */
+  it('refuses the admin routes however the path is spelled', async () => {
+    ctx = await createTestApp();
+    const { cookie } = await signInAsAdmin(ctx, 'admin-spellings@example.test');
+    const { port } = ctx.app.getHttpServer().address() as AddressInfo;
+    const host = `127.0.0.1:${port}`;
+
+    const spellings = [
+      '/auth/./admin/list-users',
+      '/auth/foo/../admin/list-users',
+      '/auth/%2e/admin/list-users',
+      '/auth/ADMIN/list-users',
+      '/auth/admin/list-users?limit=5',
+    ];
+    const answered = await Promise.all(
+      spellings.map(async (path) => `${path} ${await rawStatus(port, { method: 'GET', path, headers: { Host: host, Cookie: cookie } })}`),
+    );
+    expect(answered).toEqual(spellings.map((p) => `${p} 404`));
+    // ...while the same socket, the same way, still reaches an ordinary route:
+    // a refusal that 404s everything would pass every line above.
+    expect(await rawStatus(port, { method: 'GET', path: '/auth/get-session', headers: { Host: host, Cookie: cookie } })).toBe(200);
+  });
+
+  /**
+   * Better Auth's Node adapter does not route on the path Express saw. It
+   * builds the URL by CONCATENATION — `${x-forwarded-proto || proto}://${host}`
+   * + the request path — and routes on `new URL(that).pathname`. So a path
+   * smuggled into `Host` or `X-Forwarded-Proto` is the path it routes, while
+   * Express, and anything keyed on Express's path, sees `/auth/get-session`.
+   * Measured against an Express guard that resolved the path exactly as
+   * Better Auth does: every case here answered 200, the create-user one
+   * creating an admin. Sent over a raw socket so the headers leave unmodified.
+   */
+  it('refuses the admin routes when a header names them', async () => {
+    ctx = await createTestApp();
+    const { cookie } = await signInAsAdmin(ctx, 'admin-headers@example.test');
+    const { port } = ctx.app.getHttpServer().address() as AddressInfo;
+    const host = `127.0.0.1:${port}`;
+    const getSession = (headers: Record<string, string>) =>
+      rawStatus(port, { method: 'GET', path: '/auth/get-session', headers: { Cookie: cookie, ...headers } });
+
+    const smuggled = {
+      'Host with ?': await getSession({ Host: `${host}/auth/admin/list-users?` }),
+      'Host with #': await getSession({ Host: `${host}/auth/admin/list-users#` }),
+      'X-Forwarded-Proto': await getSession({
+        Host: host,
+        'X-Forwarded-Proto': `http://${host}/auth/admin/list-users?x=`,
+      }),
+      'create-user through Host': await rawStatus(port, {
+        method: 'POST',
+        path: '/auth/sign-in/email',
+        headers: { Host: `${host}/auth/admin/create-user?`, Cookie: cookie, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'smuggled-header@example.test', password: 'correct-horse-battery', name: 'S', role: 'admin' }),
+      }),
+    };
+    expect(smuggled).toEqual({
+      'Host with ?': 404,
+      'Host with #': 404,
+      'X-Forwarded-Proto': 404,
+      'create-user through Host': 404,
+    });
+    expect(await ctx.prisma.user.count({ where: { email: 'smuggled-header@example.test' } })).toBe(0);
+    // The control, through the same helper: an ordinary route still answers.
+    expect(await getSession({ Host: host })).toBe(200);
   });
 });
 
@@ -131,7 +325,7 @@ describe('AuthMiddleware — session cookie branch on /v1', () => {
   it('accepts a session cookie on /v1', async () => {
     ctx = await createTestApp();
     const runId = await seedCompleteRun(ctx);
-    const cookie = await signUpAsOrgMember(ctx, 'b@example.test');
+    const { cookie } = await signInAsAdmin(ctx, 'b@example.test');
     await request(ctx.app.getHttpServer()).get(`/v1/runs/${runId}`).set('Cookie', cookie).expect(200);
   });
 
@@ -158,7 +352,7 @@ describe('AuthMiddleware — session cookie branch on /v1', () => {
   it('401s a stale cookie after logout', async () => {
     ctx = await createTestApp();
     const runId = await seedCompleteRun(ctx);
-    const cookie = await signUpAsOrgMember(ctx, 'd@example.test');
+    const { cookie } = await signInAsAdmin(ctx, 'd@example.test');
     await request(ctx.app.getHttpServer()).get(`/v1/runs/${runId}`).set('Cookie', cookie).expect(200);
     await request(ctx.app.getHttpServer()).post('/auth/sign-out').set('Cookie', cookie).expect(200);
     // The same cookie string, now revoked server-side. A session store that only
@@ -188,13 +382,102 @@ describe('AuthMiddleware — session cookie branch on /v1', () => {
   it('403s a user with no org membership', async () => {
     ctx = await createTestApp();
     const runId = await seedCompleteRun(ctx);
-    const cookie = await signUpAndLogin(ctx.app, 'orphan@example.test'); // no org_member row
+    const cookie = await signInWithoutOrg(ctx.app, 'orphan@example.test'); // no org_member row
     const res = await request(ctx.app.getHttpServer())
       .get(`/v1/runs/${runId}`)
       .set('Cookie', cookie)
       .expect(403);
     expect(res.headers['content-type']).toContain('application/problem+json');
     expect(res.body.detail).toContain('no organization');
+  });
+});
+
+/**
+ * ═══ WHAT A SESSION TENANT KNOWS ABOUT ITS PROJECTS ═══
+ *
+ * Through the REAL AuthMiddleware, with a real session cookie, against the
+ * real Better Auth instance and database — because what these cases pin is
+ * the JOIN: that `authenticateSession` actually puts `loadSessionAccess`'s
+ * answer on the tenant. `access.test.ts` proves the helpers given a tenant;
+ * nothing there can see a tenant built without them, which `listScope` would
+ * otherwise read as "every project in the org".
+ *
+ * `use()` is called directly rather than through a route because no route
+ * reports these fields yet; the request carries only the headers the
+ * middleware reads.
+ */
+describe('AuthMiddleware — what a session tenant knows about its projects', () => {
+  async function tenantFor(headers: Record<string, string>): Promise<Tenant> {
+    const req = { headers } as unknown as Request;
+    let refused: unknown;
+    const res = {
+      status: (status: number) => ({ type: () => ({ send: (body: unknown) => void (refused = { status, body }) }) }),
+    } as unknown as Response;
+    await ctx.app.get(AuthMiddleware).use(req, res, () => undefined);
+    if (!req.tenant) throw new Error(`AuthMiddleware refused the request: ${JSON.stringify(refused)}`);
+    return req.tenant;
+  }
+
+  it('marks an admin, with an empty roles map and no project list', async () => {
+    ctx = await createTestApp();
+    const { cookie } = await signInAsAdmin(ctx, `admin-${randomUUID()}@example.test`);
+
+    const tenant = await tenantFor({ cookie });
+
+    expect(tenant.isAdmin).toBe(true);
+    expect(tenant.projectRoles).toStrictEqual(new Map());
+    expect(tenant.projectIds).toBeUndefined();
+  });
+
+  it("carries a project member's roles and the list they make", async () => {
+    ctx = await createTestApp();
+    const { cookie } = await signInAsProjectMember(ctx, `member-${randomUUID()}@example.test`, [
+      { projectId: ctx.projectId, role: 'member' },
+    ]);
+
+    const tenant = await tenantFor({ cookie });
+
+    expect(tenant.isAdmin).toBe(false);
+    expect(tenant.projectRoles).toStrictEqual(new Map([[ctx.projectId, 'member']]));
+    expect(tenant.projectIds).toStrictEqual([ctx.projectId]);
+  });
+
+  // `[]`, never absent: absent is what an admin carries, and means everything.
+  it('gives a member of no project an empty list', async () => {
+    ctx = await createTestApp();
+    const { cookie } = await signInAsProjectMember(ctx, `nobody-${randomUUID()}@example.test`, []);
+
+    const tenant = await tenantFor({ cookie });
+
+    expect(tenant.isAdmin).toBe(false);
+    expect(tenant.projectIds).toStrictEqual([]);
+  });
+
+  // The same cookie, one membership fewer: the roles are read per request, so
+  // nothing about the session itself remembers the project it lost.
+  it('drops a membership removed mid-session on the very next request', async () => {
+    ctx = await createTestApp();
+    const { cookie, userId } = await signInAsProjectMember(ctx, `removed-${randomUUID()}@example.test`, [
+      { projectId: ctx.projectId, role: 'viewer' },
+    ]);
+    expect((await tenantFor({ cookie })).projectIds).toStrictEqual([ctx.projectId]);
+
+    await new ProjectMemberRepository(ctx.prisma).remove(ctx.projectId, userId);
+
+    expect((await tenantFor({ cookie })).projectIds).toStrictEqual([]);
+  });
+
+  // The bearer path does not move: a token's reach is its projectId and its
+  // scopes, and it carries none of the three session fields.
+  it('leaves a bearer tenant without any of the three', async () => {
+    ctx = await createTestApp();
+
+    const tenant = await tenantFor({ authorization: `Bearer ${ctx.readToken}` });
+
+    expect(tenant.projectId).toBe(ctx.projectId);
+    expect(tenant).not.toHaveProperty('isAdmin');
+    expect(tenant).not.toHaveProperty('projectRoles');
+    expect(tenant).not.toHaveProperty('projectIds');
   });
 });
 
@@ -205,7 +488,7 @@ describe('AuthMiddleware — session cookie branch on /v1', () => {
 describe('project-scoped routes require a project, which a session does not have', () => {
   it('refuses to ingest with a session, naming the fix', async () => {
     ctx = await createTestApp();
-    const cookie = await signUpAsOrgMember(ctx, 'ingest-session@example.test');
+    const { cookie } = await signInAsAdmin(ctx, 'ingest-session@example.test');
     const res = await request(ctx.app.getHttpServer())
       .post('/v1/runs')
       .set('Cookie', cookie)
@@ -219,7 +502,7 @@ describe('project-scoped routes require a project, which a session does not have
 
   it('refuses GET /v1/projects/:slug/runs with a session', async () => {
     ctx = await createTestApp();
-    const cookie = await signUpAsOrgMember(ctx, 'list-session@example.test');
+    const { cookie } = await signInAsAdmin(ctx, 'list-session@example.test');
     const res = await request(ctx.app.getHttpServer())
       .get('/v1/projects/checkout/runs')
       .set('Cookie', cookie)
@@ -427,7 +710,7 @@ describe('cross-org isolation on every session-reachable endpoint', () => {
 
   it('404s every endpoint for a run in another org, and 200s the identical URL shape for a run in its own org', async () => {
     ctx = await createTestApp();
-    const cookie = await signUpAsOrgMember(ctx, 'cross-org@example.test');
+    const { cookie } = await signInAsAdmin(ctx, 'cross-org@example.test');
 
     // Own-org run: really ingested, not seedCompleteRun's bare row.
     // GET .../distribution 404s with no histogram, and the scatter/series
@@ -508,7 +791,7 @@ describe('cross-org isolation on every session-reachable endpoint', () => {
   it('a session and a project token see identical data for the same run', async () => {
     ctx = await createTestApp();
     const runId = await ingestFullRun(ctx);
-    const cookie = await signUpAsOrgMember(ctx, 'session-token-parity@example.test');
+    const { cookie } = await signInAsAdmin(ctx, 'session-token-parity@example.test');
 
     const viaToken = await request(ctx.app.getHttpServer())
       .get(`/v1/runs/${runId}/stats`)
@@ -546,10 +829,8 @@ describe('cross-org isolation on every session-reachable endpoint', () => {
     await testIn(ctx.orgId, ctx.projectId, 'ours-smoke');
     await testIn(otherOrg.id, otherProject.id, 'theirs-smoke');
 
-    const ours = await signUpAsOrgMember(ctx, 'tests-ours@example.test');
-    const member = await signUp(ctx.app, 'tests-theirs@example.test');
-    await ctx.app.get(OrgMemberRepository).add(member.userId, otherOrg.id, 'member');
-    const theirs = member.cookie;
+    const { cookie: ours } = await signInAsAdmin(ctx, 'tests-ours@example.test');
+    const { cookie: theirs } = await signInAsAdmin({ ...ctx, orgId: otherOrg.id }, 'tests-theirs@example.test');
 
     const slugs = async (cookie: string, query = ''): Promise<string[]> => {
       const res = await request(ctx.app.getHttpServer())
@@ -616,10 +897,8 @@ describe('cross-org isolation on every session-reachable endpoint', () => {
     await seedActivity(ctx.orgId, ctx.projectId, 'ours-smoke');
     await seedActivity(otherOrg.id, otherProject.id, 'theirs-smoke');
 
-    const ours = await signUpAsOrgMember(ctx, 'activity-ours@example.test');
-    const member = await signUp(ctx.app, 'activity-theirs@example.test');
-    await ctx.app.get(OrgMemberRepository).add(member.userId, otherOrg.id, 'member');
-    const theirs = member.cookie;
+    const { cookie: ours } = await signInAsAdmin(ctx, 'activity-ours@example.test');
+    const { cookie: theirs } = await signInAsAdmin({ ...ctx, orgId: otherOrg.id }, 'activity-theirs@example.test');
 
     const seen = async (cookie: string) => {
       const res = await request(ctx.app.getHttpServer())
@@ -671,7 +950,7 @@ describe('GET /v1/runs — org-scoped by credential', () => {
     const secondToken = await mintIngestTokenFor(ctx, ctx.orgId, second.id);
     const secondRunId = await ingestFullRun(ctx, secondToken);
 
-    const cookie = await signUpAsOrgMember(ctx, 'lister@example.test');
+    const { cookie } = await signInAsAdmin(ctx, 'lister@example.test');
     const res = await request(ctx.app.getHttpServer())
       .get('/v1/runs')
       .set('Cookie', cookie)
@@ -703,7 +982,7 @@ describe('GET /v1/runs — org-scoped by credential', () => {
     const searchToken = await mintIngestTokenFor(ctx, ctx.orgId, search.id);
     const searchRunId = await ingestFullRun(ctx, searchToken);
 
-    const cookie = await signUpAsOrgMember(ctx, 'project-filter-session@example.test');
+    const { cookie } = await signInAsAdmin(ctx, 'project-filter-session@example.test');
 
     // Unfiltered: both projects' runs — the baseline that makes the two
     // filtered assertions below discriminating rather than vacuous.
@@ -755,7 +1034,7 @@ describe('GET /v1/runs — org-scoped by credential', () => {
     const otherToken = await mintIngestTokenFor(ctx, otherOrg.id, otherProject.id);
     await ingestFullRun(ctx, otherToken);
 
-    const cookie = await signUpAsOrgMember(ctx, 'lister2@example.test');
+    const { cookie } = await signInAsAdmin(ctx, 'lister2@example.test');
     const res = await request(ctx.app.getHttpServer())
       .get('/v1/runs')
       .set('Cookie', cookie)
@@ -837,7 +1116,7 @@ describe('GET /v1/runs — org-scoped by credential', () => {
       },
     });
 
-    const cookie = await signUpAsOrgMember(ctx, 'pager@example.test');
+    const { cookie } = await signInAsAdmin(ctx, 'pager@example.test');
 
     const firstPage = await request(ctx.app.getHttpServer())
       .get('/v1/runs?limit=1')
@@ -865,10 +1144,10 @@ describe('GET /v1/runs — org-scoped by credential', () => {
 // GET /v1/projects under a session. Every existing test against this route
 // (projects.integration.test.ts) authenticates with ctx.readToken, a
 // project-scoped bearer token — so all of them go down
-// ProjectRepository.listForOrg's `AND p.id = $2` branch and none of them
+// ProjectRepository.listForOrg's `p.id = $2` branch and none of them
 // exercise the org-wide branch a session takes. Placed here, beside the
 // GET /v1/runs session tests above, rather than duplicating
-// signUpAsOrgMember into projects.integration.test.ts — this file is where
+// signInAsAdmin into projects.integration.test.ts — this file is where
 // the session-credential story for this API lives, which is also why Task
 // 4's own `?project=` session test sits in the describe block just above.
 describe('GET /v1/projects — org-scoped by credential', () => {
@@ -891,7 +1170,7 @@ describe('GET /v1/projects — org-scoped by credential', () => {
       data: { orgId: otherOrg.id, slug: 'other-project', name: 'Other Project' },
     });
 
-    const cookie = await signUpAsOrgMember(ctx, 'projects-session@example.test');
+    const { cookie } = await signInAsAdmin(ctx, 'projects-session@example.test');
     const res = await request(ctx.app.getHttpServer())
       .get('/v1/projects')
       .set('Cookie', cookie)

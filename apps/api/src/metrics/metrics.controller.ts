@@ -28,7 +28,8 @@ import type { Request } from 'express';
 import { Scopes } from '../auth/scopes.decorator.js';
 import { badRequest, parseLimit, uuidParam } from '../common/validation.js';
 import { inRange, resolveRange, snapWindow } from '../common/window.js';
-import { notFound } from '../common/validation.js';
+import { runNotFound } from '../common/validation.js';
+import { Requires } from '../auth/access.decorator.js';
 
 // AuthGuard is registered globally via APP_GUARD (see auth.module.ts), so
 // every route authenticates by default — @UseGuards(AuthGuard) here would be
@@ -58,8 +59,7 @@ export class MetricsController {
       { orgId: tenant.orgId, projectId: tenant.projectId },
       id,
     );
-    if (!run) throw notFound(`No run ${id} in this project.`, 'Check the run id. GET /v1/runs lists the runs a signed-in user can reach; '
-        + 'GET /v1/projects/{slug}/runs lists those a project token can.');
+    if (!run) throw runNotFound(id);
     return run;
   }
 
@@ -82,6 +82,7 @@ export class MetricsController {
    * a name.
    */
   @Get('trends')
+  @Requires('project:read')
   @Scopes('read')
   async trends(
     @Param('id', uuidParam('id')) id: string,
@@ -192,6 +193,7 @@ export class MetricsController {
   }
 
   @Get('stats')
+  @Requires('project:read')
   @Scopes('read')
   async stats(
     @Param('id', uuidParam('id')) id: string,
@@ -292,6 +294,7 @@ export class MetricsController {
   }
 
   @Get('series')
+  @Requires('project:read')
   @Scopes('read')
   async series(
     @Param('id', uuidParam('id')) id: string,
@@ -475,6 +478,7 @@ export class MetricsController {
   }
 
   @Get('errors')
+  @Requires('project:read')
   @Scopes('read')
   async errors(
     @Param('id', uuidParam('id')) id: string,
@@ -506,6 +510,7 @@ export class MetricsController {
    * parameters: this table holds one scope, and the signature says so.
    */
   @Get('errors/series')
+  @Requires('project:read')
   @Scopes('read')
   async errorSeries(
     @Param('id', uuidParam('id')) id: string,
@@ -582,6 +587,7 @@ export class MetricsController {
    * saturated generator this whole feature exists to find.
    */
   @Get('telemetry')
+  @Requires('project:read')
   @Scopes('read')
   async telemetry(
     @Param('id', uuidParam('id')) id: string,

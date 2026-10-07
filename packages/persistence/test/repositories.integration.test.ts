@@ -106,6 +106,30 @@ describe('RunRepository tenancy — optional projectId (session vs token scope)'
   });
 });
 
+/**
+ * The project `AccessGuard` judges a `/v1/runs/:id` request against. Scoped
+ * by org: `canSeeProject`'s admin branch answers true for any project id, so
+ * an id this returned for ANOTHER org's run would be one an admin could read.
+ */
+describe('RunRepository.projectIdOf', () => {
+  it("names each run's own project, and nothing for another org or an unknown id", async () => {
+    const { orgId, projectA, projectB, runInA, runInB, otherOrgId } = await seedTwoProjectsPlusOtherOrg();
+    const repo = new RunRepository(prisma);
+
+    expect(await repo.projectIdOf(orgId, runInA)).toBe(projectA);
+    expect(await repo.projectIdOf(orgId, runInB)).toBe(projectB);
+    expect(await repo.projectIdOf(otherOrgId, runInA)).toBeNull();
+    expect(await repo.projectIdOf(orgId, randomUUID())).toBeNull();
+  });
+
+  /** Against a real `uuid` column, where a malformed id sent to Postgres would throw. */
+  it('answers null for a malformed id rather than failing the query', async () => {
+    const { orgId } = await seedTwoProjectsPlusOtherOrg();
+
+    await expect(new RunRepository(prisma).projectIdOf(orgId, 'not-a-uuid')).resolves.toBeNull();
+  });
+});
+
 describe('RunRepository.list — optional projectId (session vs token scope)', () => {
   it('scoped to a project, lists only that project\'s runs', async () => {
     const { orgId, projectA, runInA, runInB } = await seedTwoProjectsPlusOtherOrg();

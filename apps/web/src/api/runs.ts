@@ -66,7 +66,9 @@ export const runsQueryKey = (
  * — only follow `nextCursor` forward.
  *
  * `projectSlug`, when given, narrows the list to one project via `?project=`
- * (RunsController.list) — `null` asks for the whole org.
+ * (RunsController.list) — `null` asks for every project the session can see:
+ * the whole org for an admin, and only the projects a non-admin holds a role
+ * in (none, for one who holds none).
  *
  * `testSlug` narrows further, to one test's runs, via `?test=`. IT IS ONLY
  * EVER SENT ALONGSIDE `?project=`, and that is the API's rule rather than a

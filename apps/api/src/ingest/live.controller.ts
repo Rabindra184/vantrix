@@ -11,7 +11,8 @@ import { respondWithRun } from '../runs/runs.controller.js';
 import { RunsService } from '../runs/runs.service.js';
 import { IDEMPOTENCY_HEADER, resolveIdempotencyKey } from './idempotency.js';
 import { LiveService } from './live.service.js';
-import { notFound } from '../common/validation.js';
+import { runNotFound } from '../common/validation.js';
+import { BearerOnly } from '../auth/access.decorator.js';
 
 /**
  * Reads the whole request body as a Buffer, the way multipart.ts reads the
@@ -158,6 +159,7 @@ export class LiveController {
   ) {}
 
   @Post('live')
+  @BearerOnly()
   @Scopes('stream')
   async open(@Req() req: Request, @Res() res: Response): Promise<void> {
     // Mirrors IngestController.post's PROJECT_REQUIRED check exactly. In
@@ -203,6 +205,7 @@ export class LiveController {
   }
 
   @Post(':id/stream')
+  @BearerOnly()
   @Scopes('stream')
   async stream(
     @Param('id', uuidParam('id')) id: string,
@@ -229,8 +232,7 @@ export class LiveController {
     );
 
     if (outcome.kind === 'not_found') {
-      throw notFound(`No run ${id} in this project.`, 'Check the run id. GET /v1/runs lists the runs a signed-in user can reach; '
-        + 'GET /v1/projects/{slug}/runs lists those a project token can.');
+      throw runNotFound(id);
     }
     if (outcome.kind === 'rejected') {
       res
@@ -253,6 +255,7 @@ export class LiveController {
   }
 
   @Post(':id/close')
+  @BearerOnly()
   @Scopes('stream')
   async close(
     @Param('id', uuidParam('id')) id: string,
@@ -266,8 +269,7 @@ export class LiveController {
     );
 
     if (outcome.kind === 'not_found') {
-      throw notFound(`No run ${id} in this project.`, 'Check the run id. GET /v1/runs lists the runs a signed-in user can reach; '
-        + 'GET /v1/projects/{slug}/runs lists those a project token can.');
+      throw runNotFound(id);
     }
     if (outcome.kind === 'not_running') {
       res

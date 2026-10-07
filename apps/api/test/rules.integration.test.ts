@@ -2,19 +2,19 @@ import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { RuleRepository } from '@perfportal/persistence';
 import { createTestApp, type TestContext } from './support/app.js';
-import { signUpAsOrgMember } from './support/session.js';
+import { signInAsAdmin } from './support/session.js';
 
 let ctx: TestContext;
 let cookie: string;
 
 beforeEach(async () => {
   ctx = await createTestApp();
-  // A REAL MEMBER of ctx's own org, not `signUpAndLogin`'s org-less user. A
+  // A REAL ADMIN of ctx's own org, not `signInWithoutOrg`'s org-less user. A
   // no-membership session 403s the same way `SessionOnlyGuard` refuses a
   // bearer token, so the wrong helper would make "accepts a session" pass for
   // entirely the wrong reason — the same trap tokens.integration.test.ts
   // records.
-  cookie = await signUpAsOrgMember(ctx, 'rule-author@example.test');
+  ({ cookie } = await signInAsAdmin(ctx, 'rule-author@example.test'));
 });
 
 afterEach(async () => {

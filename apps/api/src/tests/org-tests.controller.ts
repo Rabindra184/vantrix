@@ -11,6 +11,8 @@ import type { Request } from 'express';
 import { Scopes } from '../auth/scopes.decorator.js';
 import { parseLimit, singleValue } from '../common/validation.js';
 import { checkTally } from '../runs/check-tally.js';
+import { NotProjectScoped } from '../auth/access.decorator.js';
+import { listScope } from '../auth/access.js';
 
 /**
  * Every test the caller may see, in one list: the portfolio home page's table
@@ -19,13 +21,17 @@ import { checkTally } from '../runs/check-tally.js';
  *
  * ═══ SCOPED BY CREDENTIAL, NOT BY URL — `GET /v1/runs`'s RULE ═══
  *
- * A session is org-scoped on purpose (`Tenant.projectId` is absent for one) and
- * sees every test in its organisation. A bearer token is minted against ONE
- * project and sees that project's tests alone, exactly as it sees only that
- * project's runs. The scope below is that one rule, and nothing here names a
- * project by slug — which is why this route needs none of
- * `TestsController.resolveProject`'s cross-project refusal: there is no slug to
- * point at another project with.
+ * A session is org-scoped on purpose (`Tenant.projectId` is absent for one): an
+ * admin's sees every test in its organisation, and anyone else's the tests of
+ * the projects they hold a role in, none when they hold none (`listScope`). A
+ * bearer token is minted against ONE project and sees that project's tests
+ * alone, exactly as it sees only that project's runs. The scope below is that
+ * one rule, and nothing here names a project by slug — which is why this route
+ * needs none of `TestsController.resolveProject`'s cross-project refusal, nor
+ * the run list's 404 for an invisible project: there is no slug to point at
+ * another project with. `q` matches a project's name too, but only among the
+ * tests the scope already kept, and the cursor is a sort position that is
+ * never looked up — so neither can ask whether something unseen exists.
  *
  * ═══ ITS OWN CONTROLLER, NOT ANOTHER GET ON `TestsController` ═══
  *
@@ -49,6 +55,7 @@ export class OrgTestsController {
   constructor(private readonly tests: TestRepository) {}
 
   @Get()
+  @NotProjectScoped()
   @Scopes('read')
   async list(
     @Req() req: Request,
@@ -58,7 +65,7 @@ export class OrgTestsController {
   ): Promise<OrgTestListResponse> {
     const tenant = req.tenant!;
     const page = await this.tests.listOrg(
-      { orgId: tenant.orgId, projectId: tenant.projectId },
+      listScope(tenant),
       {
         limit: parseLimit(limit),
         // An empty cursor is how a form says "the first page" and is not one.

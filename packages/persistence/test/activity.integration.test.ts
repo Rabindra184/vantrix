@@ -540,4 +540,82 @@ describe('the day counts', () => {
     // organisation's whole history.
     expect(text).toMatch(/Index Cond:[^\n]*created_at/);
   });
+
+  /**
+   * A NON-ADMIN SESSION ASKS THE SAME QUESTION WITH ONE MORE PREDICATE — its
+   * projects, as `project_id = ANY(...)` — and that predicate is a second way
+   * in for the planner: `run_project_id_started_at_idx` leads on project_id.
+   * A plan that took it would hold the project in its index condition and
+   * apply each day's range as a filter over every run those projects have
+   * had, the shape the case above refuses for the org. So the member-scoped
+   * statement is held to the same requirement: the day's range in an index
+   * condition, whichever index carries it.
+   *
+   * ON A HISTORY, WITH FRESH STATISTICS — NOT ONE RUN AFTER A TRUNCATE. With
+   * a single row both indexes cost the same, and the planner's pick follows
+   * whatever `pg_statistic` an earlier ANALYZE left behind (TRUNCATE does not
+   * clear it): measured, the same one-run case passed on one run of this file
+   * and planned `run_project_id_started_at_idx` with the range as a Filter on
+   * the next, with an autoanalyze between the two. Two projects' worth of
+   * runs over sixty days, ANALYZEd, is the question this guard is about — a
+   * member of a project with a past — and on it the planner reads the day
+   * from `run_org_id_created_at_idx`. The rows and the column statistics are
+   * rolled back; the row estimate ANALYZE writes into `pg_class` in place is
+   * not, and the next TRUNCATE resets it.
+   */
+  it('keeps the day range in an index condition for a member-scoped session', async () => {
+    const other = await newProject('other', 'Other');
+    const rolledBack = new Error('roll back the seeded history and its statistics');
+    let text = '';
+    await prisma
+      .$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(
+          `INSERT INTO run (id, org_id, project_id, status, verdict, tool, bundle_key,
+                            bundle_sha256, bundle_bytes, created_at, started_at, started_on,
+                            engine_options)
+           SELECT gen_random_uuid(), $1::uuid, ($2::uuid[])[1 + g % 2], 'complete', 'passed',
+                  'gatling', 'runs/history/' || g, repeat('a', 64), 1,
+                  now() - (g % 60) * interval '1 day' - (g % 24) * interval '1 hour',
+                  now() - (g % 60) * interval '1 day' - (g % 24) * interval '1 hour',
+                  (now() - (g % 60) * interval '1 day')::date, '{}'::jsonb
+             FROM generate_series(1, 400) AS g`,
+          orgId,
+          [projectId, other.id],
+        );
+        await tx.$executeRawUnsafe('ANALYZE run');
+        await tx.$executeRawUnsafe('SET LOCAL enable_seqscan = off');
+        const { sql, params } = activityDaysQuery({ orgId, projectIds: [projectId] }, boundaries);
+        const plan = await tx.$queryRawUnsafe<{ 'QUERY PLAN': string }[]>(
+          `EXPLAIN (COSTS OFF) ${sql}`,
+          ...params,
+        );
+        text = plan.map((row) => row['QUERY PLAN']).join('\n');
+        throw rolledBack;
+      })
+      .catch((err: unknown) => {
+        if (err !== rolledBack) throw err;
+      });
+
+    // Guard first: EXPLAIN really did return a plan, and the member predicate
+    // is in it — otherwise this is the case above again.
+    expect(text.length).toBeGreaterThan(0);
+    expect(text).toMatch(/project_id = ANY/);
+    expect(text).not.toContain('Seq Scan on run');
+    // The range in THIS index's own condition, the line straight after it.
+    // "created_at in some Index Cond" is not enough, measured: with this index
+    // dropped the planner took run_status_created_at_idx, then (that dropped
+    // too) run_test_id_created_at_idx, each with the range as a condition on
+    // its SECOND column — checked against every entry of the index rather
+    // than seeking to one day — and the loose pattern accepts both plans.
+    //
+    // AND THE ORG FIRST, measured too: with the org predicate dropped from a
+    // member-scoped statement the planner still names this index and still
+    // puts the range in its condition — `((created_at >= …) AND …)`, the
+    // index's second column alone, a walk over every org's entries — and a
+    // pattern that only asks for created_at passed. The seek is org_id and
+    // then the day, in that order, or it is not this index doing its job.
+    expect(text).toMatch(
+      /run_org_id_created_at_idx[^\n]*\n\s*Index Cond: \(\(org_id = [^\n]*created_at >=/,
+    );
+  });
 });

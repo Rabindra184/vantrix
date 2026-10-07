@@ -291,7 +291,9 @@ const parameters: Record<string, ParameterObject> = {
     description:
       'Restrict to one project, by slug. Validated: a slug not in the caller\'s org is a 404, ' +
       'never an empty result, so a caller can tell "no such project" from "that project is ' +
-      'idle". A bearer token naming a project other than its own gets a 400 PROJECT_MISMATCH.',
+      'idle". A session naming a project it holds no role in gets the very same 404, so it ' +
+      'cannot tell such a project from one that does not exist. A bearer token naming a ' +
+      'project other than its own gets a 400 PROJECT_MISMATCH.',
     schema: { type: 'string' },
   },
   RunSearch: {
@@ -718,11 +720,22 @@ const responses: Record<string, ResponseObject> = {
     content: problem(),
   },
   Forbidden: {
-    description: 'The token is valid but lacks the scope this operation requires.',
+    description:
+      'The credential is valid but may not perform this operation. Code FORBIDDEN: the ' +
+      'credential lacks the scope the operation requires — a bearer token minted without it, or ' +
+      'a signed-in session on an operation whose scope no session holds ("stream" and ' +
+      '"telemetry": opening, streaming to and closing a live run, posting telemetry). For a ' +
+      'signed-in session on a project operation, also: code ROLE_REQUIRED when its role in the ' +
+      'project is below the one the operation needs (the detail naming that role), or ' +
+      'ADMIN_REQUIRED when the operation is an admin\'s and the account is not one. A session ' +
+      'that holds no role in the project is never told so with a 403: it gets the 404 a project ' +
+      'or run that does not exist gets. application/problem+json with a required "remediation".',
     content: problem(),
   },
   NotFound: {
-    description: 'No such resource in a project this token can access.',
+    description:
+      'No such resource in a project this credential can reach. A project or run that exists ' +
+      'but the caller cannot see answers exactly as one that does not exist.',
     content: problem(),
   },
   SessionRequired: {
@@ -732,7 +745,10 @@ const responses: Record<string, ResponseObject> = {
       'refused unconditionally, whatever scopes it carries. The check is SessionOnlyGuard ' +
       'rather than @Scopes() because a scope check passes for ANY credential holding the ' +
       'scope: on token minting, for example, it would let a read-only CI token mint itself a ' +
-      'broader one. Sign in at POST /auth/sign-in/email and retry with the session cookie.',
+      'broader one. Sign in at POST /auth/sign-in/email and retry with the session cookie. ' +
+      'A signed-in session can be refused here too, by role rather than by credential type: ' +
+      'code ROLE_REQUIRED when its role in the project is below the one the operation needs, or ' +
+      'ADMIN_REQUIRED when the operation is an admin\'s.',
     content: problem(),
   },
   InvalidTokenRequest: {
@@ -873,8 +889,11 @@ const paths: Record<string, PathItemObject> = {
       description:
         'Requires the "read" scope. Scoped by the credential, not by the URL: a project-scoped ' +
         'token sees only that project\'s runs, exactly like GET /v1/projects/{slug}/runs; a ' +
-        'session names no project and sees every run across its whole org instead, unless ' +
-        '"project" below narrows it to one. This is the session-reachable list route named by ' +
+        'session names no project and sees the runs of the projects it can see instead — every ' +
+        'project in its org for an admin, the projects it holds a role in for anyone else, and ' +
+        'none for someone who holds none — unless "project" below narrows it to one of them. ' +
+        'A "cursor" naming a run outside what the caller can see answers the empty page an ' +
+        'unknown run id does. This is the session-reachable list route named by ' +
         'GET /v1/projects/{slug}/runs\'s PROJECT_REQUIRED remediation.',
       parameters: [
         parameters['Limit']!,
@@ -1370,11 +1389,13 @@ const paths: Record<string, PathItemObject> = {
       summary: 'Projects this credential can see',
       tags: ['projects'],
       description:
-        'Requires the "read" scope. A session names no project and sees every project in its ' +
-        'org; a bearer token is minted against exactly one and sees that one, as a ' +
-        'one-element list. Each project carries its most recent run by the same ordering ' +
-        'GET /v1/runs uses, or null for a project nothing has been ingested into. Not ' +
-        'paginated: an org has a handful of projects, not a page of them.',
+        'Requires the "read" scope. A session names no project: an admin sees every project in ' +
+        'its org, and anyone else the projects they hold a role in, none when they hold none. ' +
+        'A bearer token is minted against exactly one and sees that one, as a one-element ' +
+        'list. Each project carries its most recent run by the same ordering GET /v1/runs ' +
+        'uses, or null for a project nothing has been ingested into, and "role": the ' +
+        'caller\'s role in it, or null for an admin who holds no membership there and for a ' +
+        'bearer token. Not paginated: an org has a handful of projects, not a page of them.',
       responses: {
         '200': {
           description: 'Every project this credential can see, ordered by name.',
@@ -1389,9 +1410,11 @@ const paths: Record<string, PathItemObject> = {
       tags: ['projects'],
       security: [{ cookieAuth: [] }],
       description:
-        'Requires a signed-in session. A project is the application or service boundary that ' +
-        'tokens, on-prem runner jobs, and performance runs are attached to. Bearer tokens are ' +
-        'refused here because they are already project-scoped and must not create siblings.',
+        'Requires a signed-in session whose account is an admin: any other session is refused ' +
+        '403 ADMIN_REQUIRED, whatever role it holds in any project. A project is the application ' +
+        'or service boundary that tokens, on-prem runner jobs, and performance runs are attached ' +
+        'to. Bearer tokens are refused here because they are already project-scoped and must not ' +
+        'create siblings.',
       requestBody: {
         required: true,
         description: 'A display name and URL slug for the new project.',
@@ -1627,7 +1650,8 @@ const paths: Record<string, PathItemObject> = {
       description:
         'Requires the "read" scope. Scoped by the credential, not by the URL, exactly like ' +
         'GET /v1/runs: a project-scoped token sees only that project\'s tests; a session names ' +
-        'no project and sees every test across its whole organisation. Another organisation\'s ' +
+        'no project and sees the tests of the projects it can see, as GET /v1/runs does. ' +
+        'Another organisation\'s ' +
         'tests are never returned, searched or paged to. Each entry names its own project and ' +
         'carries "latestRun" and "p95History", so a table or a search box needs no request per ' +
         'test. "latestRun" is the test\'s newest ARRIVAL — the run that was created last, ' +
@@ -1663,8 +1687,9 @@ const paths: Record<string, PathItemObject> = {
       description:
         'Requires the "read" scope. Scoped by the credential, not by the URL, exactly like ' +
         'GET /v1/tests: a project-scoped token sees only that project\'s activity; a session ' +
-        'names no project and sees its whole organisation. Another organisation\'s runs are ' +
-        'never counted. Every count is by ARRIVAL — "created_at", when a run reached the ' +
+        'names no project and sees the projects it can see, as GET /v1/runs does. Another ' +
+        'organisation\'s runs, and a session\'s unseen projects\' runs, are never counted. ' +
+        'Every count is by ARRIVAL — "created_at", when a run reached the ' +
         'platform — never by when its load test started, so a bundle uploaded today for a test ' +
         'that ran last month counts for today. "days" is the seven local calendar days in "tz" ' +
         'ending today, oldest first: each day\'s "total" is every run that arrived in it, ' +
@@ -2401,8 +2426,9 @@ export function buildOpenApiDocument(): OpenApiDocument {
           in: 'cookie',
           name: 'better-auth.session_token',
           description:
-            'A Better Auth session cookie, obtained via POST /auth/sign-up/email or ' +
-            '/auth/sign-in/email (see the root README\'s Authentication section — /auth/* is ' +
+            'A Better Auth session cookie, obtained via POST /auth/sign-in/email for an ' +
+            'account an administrator created — sign-up is closed (see the Authentication ' +
+            'section of docs/api.md — /auth/* is ' +
             'Better Auth\'s own surface, not this document). Scoped to an org only, no ' +
             'project, so it cannot satisfy POST /v1/runs, POST /v1/telemetry, POST ' +
             '/v1/runs/live, POST /v1/runs/{id}/stream, POST /v1/runs/{id}/close, or ' +

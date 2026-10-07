@@ -10,7 +10,8 @@ import { TerminalWaiter } from '../runs/terminal-waiter.js';
 import { IngestService } from './ingest.service.js';
 import { IDEMPOTENCY_HEADER, resolveIdempotencyKey } from './idempotency.js';
 import { readMultipart } from './multipart.js';
-import { notFound } from '../common/validation.js';
+import { projectNotFound } from '../common/validation.js';
+import { Requires } from '../auth/access.decorator.js';
 
 /**
  * Uploading a bundle from a BROWSER (review 09-13 M05).
@@ -38,8 +39,9 @@ import { notFound } from '../common/validation.js';
  *
  * NOT TO BE CONFUSED WITH THE RULING ON `ProjectRunsController.list`. That
  * route considered slug resolution for a session and rejected it, because a
- * session-holder already has `GET /v1/runs` across the whole org — resolution
- * there would have been new surface for no new capability. Here there is no
+ * session-holder already has `GET /v1/runs` across every project the session
+ * can see (`?project=` narrows it to one) — resolution there would have been
+ * new surface for no new capability. Here there is no
  * alternative at all: without this, a browser cannot deliver a bundle by any
  * means, which is the entire finding.
  *
@@ -67,11 +69,12 @@ export class ProjectIngestController {
   ) {}
 
   @Post()
+  @Requires('run:upload')
   async post(@Param('slug') slug: string, @Req() req: Request, @Res() res: Response): Promise<void> {
     const tenant = req.tenant!;
     const project = await this.projects.findBySlugInOrg(tenant.orgId, slug);
     // 404, never 403 — see the class docstring.
-    if (!project) throw notFound(`No project "${slug}" in this organisation.`, 'Check the slug, or list the projects this credential can reach with GET /v1/projects.');
+    if (!project) throw projectNotFound(slug);
 
     /* Everything below is `IngestController.post` verbatim, with the project
        resolved from the URL instead of read off the credential. Shared through

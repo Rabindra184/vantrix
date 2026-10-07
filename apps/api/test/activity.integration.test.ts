@@ -3,7 +3,7 @@ import { ActivityResponseSchema, type ActivityResponse } from '@perfportal/contr
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTestApp, type TestContext } from './support/app.js';
-import { signUpAsOrgMember } from './support/session.js';
+import { signInAsAdmin } from './support/session.js';
 
 /**
  * `GET /v1/activity` — what the portfolio home page draws, in one response.
@@ -23,7 +23,7 @@ beforeEach(async () => {
   // A REAL MEMBER of ctx's own org, for the reason org-tests.integration.test.ts
   // records: a no-membership session answers 403, so the wrong helper would
   // make every "a session sees the org" case pass or fail for the wrong cause.
-  cookie = await signUpAsOrgMember(ctx, 'activity-reader@example.test');
+  ({ cookie } = await signInAsAdmin(ctx, 'activity-reader@example.test'));
 });
 
 afterEach(async () => {

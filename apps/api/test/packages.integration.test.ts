@@ -11,7 +11,7 @@ import { PackageSchema, type Package } from '@perfportal/contracts';
 import { hashToken, mintToken } from '@perfportal/core';
 import { PackageRepository, ProjectRepository, RunnerRepository } from '@perfportal/persistence';
 import { createTestApp, type TestContext } from './support/app.js';
-import { signUpAsOrgMember } from './support/session.js';
+import { signInAsAdmin } from './support/session.js';
 import { gatlingManifest, writeJar } from '../../../packages/storage/test/support/jar.js';
 
 /**
@@ -50,7 +50,7 @@ beforeEach(async () => {
   // A REAL MEMBER of ctx's own org: a session with no membership 403s the way a
   // bearer does on a session-only route, which would make "a session may
   // delete" pass for the wrong reason (tokens.integration.test.ts records it).
-  cookie = await signUpAsOrgMember(ctx, 'package-author@example.test');
+  ({ cookie } = await signInAsAdmin(ctx, 'package-author@example.test'));
 });
 
 afterEach(async () => {
@@ -149,7 +149,7 @@ async function restartWithCap(cap: number): Promise<void> {
   process.env.MAX_RUNNER_ARTIFACT_BYTES = String(cap);
   ctx = await createTestApp();
   runnerToken = await mintBearer(['runner', 'read']);
-  cookie = await signUpAsOrgMember(ctx, 'package-author-capped@example.test');
+  ({ cookie } = await signInAsAdmin(ctx, 'package-author-capped@example.test'));
 }
 
 /**

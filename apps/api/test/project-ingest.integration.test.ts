@@ -7,7 +7,7 @@ import request from 'supertest';
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createTestApp, type TestContext } from './support/app.js';
 import { runPipelineFor } from './support/pipeline.js';
-import { signUpAsOrgMember } from './support/session.js';
+import { signInAsAdmin } from './support/session.js';
 
 /**
  * `POST /v1/projects/:slug/runs` — the route review 09-13 M05's file picker
@@ -56,11 +56,11 @@ function upload(slug: string, metadata: object = { tool: 'gatling', waitMs: 0 })
 describe('POST /v1/projects/:slug/runs', () => {
   beforeEach(async () => {
     ctx = await createTestApp();
-    // A real org MEMBER, not signUpAndLogin's org-less user: an org-less
+    // A real org ADMIN, not signInWithoutOrg's org-less user: an org-less
     // session 403s for a reason that has nothing to do with this route, which
     // would make "accepts a session" pass for the wrong reason if it ever
     // stopped working. Same argument tokens.integration.test.ts records.
-    cookie = await signUpAsOrgMember(ctx, 'uploader@example.test');
+    ({ cookie } = await signInAsAdmin(ctx, 'uploader@example.test'));
   });
 
   // ═══ THE BLOCKER, PINNED ═══

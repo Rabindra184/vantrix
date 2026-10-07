@@ -3,19 +3,19 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { TOKEN_SCOPES } from '@perfportal/contracts';
 import type { TokenScope } from '../src/auth/scopes.decorator.js';
 import { createTestApp, type TestContext } from './support/app.js';
-import { signUpAsOrgMember } from './support/session.js';
+import { signInAsAdmin } from './support/session.js';
 
 let ctx: TestContext;
 let cookie: string;
 
 beforeEach(async () => {
   ctx = await createTestApp();
-  // Every test in this file mints against ctx's own org — a real member,
-  // not signUpAndLogin's org-less user (see support/session.ts's docstring
-  // for why that distinction matters: a no-membership session 403s the same
-  // way SessionOnlyGuard refuses a bearer token, so the wrong helper here
-  // would make "accepts a session" pass for the wrong reason).
-  cookie = await signUpAsOrgMember(ctx, 'minter@example.test');
+  // Every test in this file mints against ctx's own org — a real admin of
+  // it, not signInWithoutOrg's org-less user. That distinction matters
+  // because a no-membership session 403s the same way SessionOnlyGuard
+  // refuses a bearer token, so the wrong helper here would make "accepts a
+  // session" pass for the wrong reason.
+  ({ cookie } = await signInAsAdmin(ctx, 'minter@example.test'));
 });
 
 afterEach(async () => {

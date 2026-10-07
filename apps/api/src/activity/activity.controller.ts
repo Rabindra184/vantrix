@@ -12,6 +12,8 @@ import { Scopes } from '../auth/scopes.decorator.js';
 import { singleValue } from '../common/validation.js';
 import { checkTally } from '../runs/check-tally.js';
 import { glanceDays, resolveTimeZone } from './days.js';
+import { NotProjectScoped } from '../auth/access.decorator.js';
+import { listScope } from '../auth/access.js';
 
 /**
  * What the portfolio home page draws, in one response: a seven-day glance, a
@@ -22,10 +24,12 @@ import { glanceDays, resolveTimeZone } from './days.js';
  *
  * ═══ SCOPED BY CREDENTIAL, NOT BY URL — `GET /v1/tests`'s RULE ═══
  *
- * A session is org-scoped on purpose (`Tenant.projectId` is absent for one) and
- * sees its whole organisation. A bearer token is minted against ONE project and
- * sees that project alone. The scope below is that one rule, and nothing here
- * names a project by slug, so there is no slug to point at another project with.
+ * A session is org-scoped on purpose (`Tenant.projectId` is absent for one): an
+ * admin's sees its whole organisation, and anyone else's the projects they hold
+ * a role in, nothing when they hold none (`listScope`). A bearer token is
+ * minted against ONE project and sees that project alone. The scope below is
+ * that one rule, and nothing here names a project by slug (`tz` is the only
+ * parameter), so there is no slug to point at another project with.
  *
  * ═══ ONE WINDOW, ON ARRIVAL, STARTING AT THE GLANCE'S FIRST MIDNIGHT ═══
  *
@@ -72,6 +76,7 @@ export class ActivityController {
   constructor(private readonly activity: ActivityRepository) {}
 
   @Get()
+  @NotProjectScoped()
   @Scopes('read')
   async get(@Req() req: Request, @Query('tz') tz?: unknown): Promise<ActivityResponse> {
     const tenant = req.tenant!;
@@ -85,7 +90,7 @@ export class ActivityController {
     const attentionFrom = boundaries[0]!;
 
     const rows = await this.activity.read(
-      { orgId: tenant.orgId, projectId: tenant.projectId },
+      listScope(tenant),
       { attentionFrom, attentionTo: now, dayBoundaries: boundaries },
     );
 

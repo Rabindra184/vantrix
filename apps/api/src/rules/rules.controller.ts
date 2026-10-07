@@ -29,7 +29,8 @@ import {
 import type { Request } from 'express';
 import { SessionOnlyGuard } from '../auth/session-only.guard.js';
 import { badRequest, uuidParam } from '../common/validation.js';
-import { notFound } from '../common/validation.js';
+import { notFound, projectNotFound } from '../common/validation.js';
+import { Requires } from '../auth/access.decorator.js';
 
 /**
  * Authoring the SLA rules a project's runs are judged against.
@@ -67,6 +68,7 @@ export class RulesController {
    * to parse something later.
    */
   @Post()
+  @Requires('rules:edit')
   @HttpCode(201)
   async create(
     @Param('slug') slug: string,
@@ -122,6 +124,7 @@ export class RulesController {
    * only resolves the slug.
    */
   @Get()
+  @Requires('rules:read')
   async list(
     @Param('slug') slug: string,
     @Req() req: Request,
@@ -149,6 +152,7 @@ export class RulesController {
    * describing a measurement it never took.
    */
   @Patch(':ruleId')
+  @Requires('rules:edit')
   async update(
     @Param('slug') slug: string,
     @Param('ruleId', uuidParam('ruleId')) ruleId: string,
@@ -183,6 +187,7 @@ export class RulesController {
    * is the same one that decides whether there was anything to delete.
    */
   @Delete(':ruleId')
+  @Requires('rules:edit')
   async remove(
     @Param('slug') slug: string,
     @Param('ruleId', uuidParam('ruleId')) ruleId: string,
@@ -203,8 +208,7 @@ export class RulesController {
    */
   private async resolveProject(orgId: string, slug: string): Promise<{ id: string }> {
     const project = await this.projects.findBySlugInOrg(orgId, slug);
-    if (project === null)
-      throw notFound(`No project "${slug}" in this organisation.`, 'Check the slug, or list the projects this credential can reach with GET /v1/projects.');
+    if (project === null) throw projectNotFound(slug);
     return project;
   }
 

@@ -9,7 +9,7 @@ import request from 'supertest';
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createTestApp, type TestContext } from './support/app.js';
 import { runPipelineFor } from './support/pipeline.js';
-import { signUpAsOrgMember } from './support/session.js';
+import { signInAsAdmin } from './support/session.js';
 
 /**
  * ═══ A RUN'S NUMBER, ON EVERY READ THAT CARRIES A RUN ═══
@@ -174,7 +174,7 @@ describe('number= on GET /v1/runs', () => {
   it('narrows a session’s read the same way, naming the project beside the test', async () => {
     const ids = [await ingested(), await ingested()];
     const slug = await theTestSlug();
-    const cookie = await signUpAsOrgMember(ctx, `member-${randomUUID()}@example.com`);
+    const { cookie } = await signInAsAdmin(ctx, `member-${randomUUID()}@example.com`);
 
     const res = await request(ctx.app.getHttpServer())
       .get(`/v1/runs?project=checkout&test=${slug}&number=1`)
@@ -202,7 +202,7 @@ describe('number= on GET /v1/runs', () => {
     expect(token.body.remediation).toContain('test=<slug>');
 
     // A session that names its project and still no test is the same mistake.
-    const cookie = await signUpAsOrgMember(ctx, `member-${randomUUID()}@example.com`);
+    const { cookie } = await signInAsAdmin(ctx, `member-${randomUUID()}@example.com`);
     const session = await request(ctx.app.getHttpServer()).get('/v1/runs?project=checkout&number=1').set('Cookie', cookie);
     expect(session.status).toBe(400);
     expect(session.body.code).toBe('NUMBER_NEEDS_TEST');

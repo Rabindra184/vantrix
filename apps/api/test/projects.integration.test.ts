@@ -2,7 +2,7 @@ import request from 'supertest';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ProjectListResponseSchema, ProjectSummarySchema } from '@perfportal/contracts';
 import { createTestApp, type TestContext } from './support/app.js';
-import { signUpAsOrgMember } from './support/session.js';
+import { signInAsAdmin } from './support/session.js';
 
 let ctx: TestContext;
 
@@ -25,6 +25,8 @@ describe('GET /v1/projects', () => {
       slug: 'checkout',
       name: 'Checkout',
       latestRun: null,
+      // A machine credential holds no role in any project.
+      role: null,
     });
   });
 
@@ -94,7 +96,7 @@ describe('GET /v1/projects', () => {
 describe('POST /v1/projects', () => {
   it('creates a project for a signed-in org member and lists it afterwards', async () => {
     ctx = await createTestApp();
-    const cookie = await signUpAsOrgMember(ctx, 'project-create@example.test');
+    const { cookie } = await signInAsAdmin(ctx, 'project-create@example.test');
     const res = await request(ctx.app.getHttpServer())
       .post('/v1/projects')
       .set('Cookie', cookie)
@@ -102,10 +104,20 @@ describe('POST /v1/projects', () => {
 
     expect(res.status).toBe(201);
     expect(() => ProjectSummarySchema.parse(res.body)).not.toThrow();
-    expect(res.body).toMatchObject({ name: 'Search API', slug: 'search-api', latestRun: null });
+    // `role: null` stated, not omitted: the creator is an admin, and creating
+    // a project writes no membership row for them — the same answer the
+    // list gives the same admin for it, below.
+    expect(res.body).toMatchObject({
+      name: 'Search API',
+      slug: 'search-api',
+      latestRun: null,
+      role: null,
+    });
 
     const list = await request(ctx.app.getHttpServer()).get('/v1/projects').set('Cookie', cookie);
     expect(list.body.items.map((p: { slug: string }) => p.slug)).toEqual(['checkout', 'search-api']);
+    const listed = list.body.items.find((p: { slug: string }) => p.slug === 'search-api');
+    expect(listed).toMatchObject({ role: null });
   });
 
   it('refuses bearer credentials', async () => {
@@ -119,7 +131,7 @@ describe('POST /v1/projects', () => {
 
   it('rejects duplicate slugs inside the organisation, and says what to do about it', async () => {
     ctx = await createTestApp();
-    const cookie = await signUpAsOrgMember(ctx, 'project-duplicate@example.test');
+    const { cookie } = await signInAsAdmin(ctx, 'project-duplicate@example.test');
     const res = await request(ctx.app.getHttpServer())
       .post('/v1/projects')
       .set('Cookie', cookie)
@@ -140,7 +152,7 @@ describe('POST /v1/projects', () => {
 
   it('rejects invalid project details', async () => {
     ctx = await createTestApp();
-    const cookie = await signUpAsOrgMember(ctx, 'project-invalid@example.test');
+    const { cookie } = await signInAsAdmin(ctx, 'project-invalid@example.test');
     for (const body of [
       { name: '  ', slug: 'search-api' },
       { name: 'Search', slug: 'Search API' },

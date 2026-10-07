@@ -10,6 +10,7 @@ import { TerminalWaiter } from '../runs/terminal-waiter.js';
 import { IngestService } from './ingest.service.js';
 import { IDEMPOTENCY_HEADER, resolveIdempotencyKey } from './idempotency.js';
 import { readMultipart } from './multipart.js';
+import { BearerOnly } from '../auth/access.decorator.js';
 
 // AuthGuard is registered globally via APP_GUARD (see auth.module.ts), so
 // every route authenticates by default — @UseGuards(AuthGuard) here would be
@@ -25,6 +26,7 @@ export class IngestController {
   ) {}
 
   @Post()
+  @BearerOnly()
   @Scopes('ingest')
   async post(@Req() req: Request, @Res() res: Response): Promise<void> {
     // A session is org-scoped and names no project, but a run must belong to

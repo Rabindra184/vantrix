@@ -1,14 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { connect as tcpConnect, type AddressInfo } from 'node:net';
 import type { LiveDelta } from '@perfportal/contracts';
-import { OrgMemberRepository } from '@perfportal/persistence';
 import { Redis } from 'ioredis';
 import request from 'supertest';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
 import { LiveHub } from '../src/live/live-hub.js';
+import { CLOSE_UNAUTHORIZED } from '../src/live/live.gateway.js';
 import { createTestApp, type TestContext } from './support/app.js';
-import { signUp, signUpAsOrgMember } from './support/session.js';
+import { signInAsAdmin, signInAsProjectMember } from './support/session.js';
 
 // Same fallback every other integration suite in this directory uses for a
 // raw ioredis client (live-hub.integration.test.ts, live.integration.test.ts).
@@ -26,6 +26,8 @@ interface Conn {
   socket: WebSocket;
   frames: Frame[];
   closed: Promise<number>;
+  /** The close frame's reason text, once the socket has closed. */
+  reason?: string;
 }
 
 let ctx: TestContext;
@@ -166,11 +168,27 @@ function connect(port: number, path: string, cookie?: string): Conn {
     // event and kills the worker. Resolving 0 keeps the two shapes
     // distinguishable in an assertion.
     socket.on('error', () => resolve(0));
-    socket.on('close', (code) => resolve(code));
+    socket.on('close', (code, reason) => {
+      conn.reason = String(reason);
+      resolve(code);
+    });
   });
-  const conn = { socket, frames, closed };
+  const conn: Conn = { socket, frames, closed };
   conns.push(conn);
   return conn;
+}
+
+/**
+ * Whichever comes first: the close code, or 'accepted' on the first frame.
+ * Awaiting `closed` alone would turn an accepted socket -- the defect -- into
+ * a hang that reports as a timeout rather than as the wrong answer.
+ */
+function outcome(conn: Conn): Promise<number | 'accepted'> {
+  if (conn.frames.length > 0) return Promise.resolve('accepted');
+  return Promise.race([
+    conn.closed,
+    new Promise<'accepted'>((resolve) => conn.socket.once('message', () => resolve('accepted'))),
+  ]);
 }
 
 function collect(conn: Conn, count: number): Promise<Frame[]> {
@@ -201,8 +219,7 @@ describe('the live gateway rejects what it should', () => {
     const other = await ctx.prisma.org.create({
       data: { slug: `org-${randomUUID().slice(0, 8)}`, name: 'Other' },
     });
-    const { cookie, userId } = await signUp(ctx.app, `outsider-${randomUUID()}@example.com`);
-    await ctx.app.get(OrgMemberRepository).add(userId, other.id, 'member');
+    const { cookie } = await signInAsAdmin({ ...ctx, orgId: other.id }, `outsider-${randomUUID()}@example.com`);
 
     const conn = connect(port, `/v1/runs/${runId}/live`, cookie);
 
@@ -341,7 +358,7 @@ describe('the live gateway rejects what it should', () => {
   it("survives socket.close() itself throwing inside serve's own catch", async () => {
     const port = await start();
     const runId = await openLiveRun();
-    const cookie = await signUpAsOrgMember(ctx, `member-${randomUUID()}@example.com`);
+    const { cookie } = await signInAsAdmin(ctx, `member-${randomUUID()}@example.com`);
 
     const hub = ctx.app.get(LiveHub);
     const joinSpy = vi.spyOn(hub, 'join').mockRejectedValueOnce(new Error('join boom'));
@@ -380,9 +397,8 @@ describe('the live gateway rejects what it should', () => {
     const other = await ctx.prisma.org.create({
       data: { slug: `org-${randomUUID().slice(0, 8)}`, name: 'Other' },
     });
-    const { cookie: outsider, userId } = await signUp(ctx.app, `outsider-${randomUUID()}@example.com`);
-    await ctx.app.get(OrgMemberRepository).add(userId, other.id, 'member');
-    const member = await signUpAsOrgMember(ctx, `member-${randomUUID()}@example.com`);
+    const { cookie: outsider } = await signInAsAdmin({ ...ctx, orgId: other.id }, `outsider-${randomUUID()}@example.com`);
+    const { cookie: member } = await signInAsAdmin(ctx, `member-${randomUUID()}@example.com`);
 
     const foreign = connect(port, `/v1/runs/${runId}/live`, outsider);
     const missing = connect(port, `/v1/runs/${randomUUID()}/live`, member);
@@ -391,13 +407,81 @@ describe('the live gateway rejects what it should', () => {
     expect(foreign.frames).toHaveLength(0);
     expect(missing.frames).toHaveLength(0);
   });
+
+  /**
+   * PROJECT MEMBERSHIP, NOT JUST THE ORG. The upgrade never reaches Nest's
+   * guards, so whatever decides which project a session may see on the HTTP
+   * path decides nothing here unless the gateway asks too -- and an org
+   * check alone lets any member of the install watch any project's run.
+   *
+   * Refused EXACTLY as an unknown run id is, code and reason both: a
+   * distinguishable refusal would tell a member of one project which run ids
+   * exist in the others. The role held elsewhere is the highest there is, so
+   * this cannot pass by a role being too low rather than in the wrong project.
+   */
+  it("closes a member of another project as it closes an unknown run id", async () => {
+    const port = await start();
+    const runId = await openLiveRun();
+    const elsewhere = await ctx.prisma.project.create({
+      data: { orgId: ctx.orgId, slug: 'payments', name: 'Payments' },
+    });
+    const { cookie } = await signInAsProjectMember(ctx, `elsewhere-${randomUUID()}@example.com`, [
+      { projectId: elsewhere.id, role: 'manager' },
+    ]);
+
+    const foreign = connect(port, `/v1/runs/${runId}/live`, cookie);
+    const missing = connect(port, `/v1/runs/${randomUUID()}/live`, cookie);
+
+    expect(await outcome(foreign)).toBe(CLOSE_UNAUTHORIZED);
+    expect(await outcome(missing)).toBe(CLOSE_UNAUTHORIZED);
+    expect(foreign.reason).toBe(missing.reason);
+    expect(foreign.frames).toHaveLength(0);
+    expect(missing.frames).toHaveLength(0);
+  });
+
+  // The pair to the case above: without it, a gateway that refused every
+  // non-admin would pass that one. The lowest role is enough to watch.
+  it("accepts a member of the run's own project", async () => {
+    const port = await start();
+    const runId = await openLiveRun();
+    const { cookie } = await signInAsProjectMember(ctx, `viewer-${randomUUID()}@example.com`, [
+      { projectId: ctx.projectId, role: 'viewer' },
+    ]);
+
+    const conn = connect(port, `/v1/runs/${runId}/live`, cookie);
+
+    expect(await outcome(conn)).toBe('accepted');
+    expect(conn.frames[0]!.type).toBe('snapshot');
+    expect(conn.frames[0]!.delta.runId).toBe(runId);
+  });
+
+  /**
+   * A run id that is not a UUID is refused like a run that does not exist —
+   * 4401, same reason, no frame — and not by the outage path. `run.id` is a
+   * uuid column, so an id that reached `findById` would be a cast error, the
+   * catch would answer the upgrade 503 and the client would see a transport
+   * error (outcome 0 here): a refusal loudly DIFFERENT from every other. The
+   * caller is an admin, so nothing but the shape of the id can refuse it.
+   */
+  it('closes a malformed run id as it closes an unknown one, not as an outage', async () => {
+    const port = await start();
+    const { cookie } = await signInAsAdmin(ctx, `malformed-${randomUUID()}@example.com`);
+
+    const malformed = connect(port, '/v1/runs/not-a-uuid/live', cookie);
+    const missing = connect(port, `/v1/runs/${randomUUID()}/live`, cookie);
+
+    expect(await outcome(malformed)).toBe(CLOSE_UNAUTHORIZED);
+    expect(await outcome(missing)).toBe(CLOSE_UNAUTHORIZED);
+    expect(malformed.reason).toBe(missing.reason);
+    expect(malformed.frames).toHaveLength(0);
+  });
 });
 
 describe('the live gateway seeds, replays, then follows', () => {
   it('replays from the stream entry AT the snapshot seq, which the snapshot does not contain', async () => {
     const port = await start();
     const runId = await openLiveRun();
-    const cookie = await signUpAsOrgMember(ctx, `member-${randomUUID()}@example.com`);
+    const { cookie } = await signInAsAdmin(ctx, `member-${randomUUID()}@example.com`);
     // C is the last delta the snapshot's CONTENT covers; the key is stamped
     // C+1. See snapshotFixture -- the whole point of this case is that the two
     // numbers differ, so the fixture must not be built from the gateway's own
@@ -431,7 +515,7 @@ describe('the live gateway seeds, replays, then follows', () => {
   it('tells a client seeded from a snapshot alone to resume one behind its label', async () => {
     const port = await start();
     const runId = await openLiveRun();
-    const cookie = await signUpAsOrgMember(ctx, `member-${randomUUID()}@example.com`);
+    const { cookie } = await signInAsAdmin(ctx, `member-${randomUUID()}@example.com`);
     const C = 5;
     await seedSnapshot(runId, snapshotFixture(runId, C, [0, 1000, 2000]));
 
@@ -448,7 +532,7 @@ describe('the live gateway seeds, replays, then follows', () => {
   it('marks the seed partial when the stream no longer reaches the snapshot seq', async () => {
     const port = await start();
     const runId = await openLiveRun();
-    const cookie = await signUpAsOrgMember(ctx, `member-${randomUUID()}@example.com`);
+    const { cookie } = await signInAsAdmin(ctx, `member-${randomUUID()}@example.com`);
     const C = 5;
     await seedSnapshot(runId, snapshotFixture(runId, C, [0, 1000, 2000, 3000, 4000]));
     // C+1 is missing: the snapshot stops at C, the stream starts at C+2.
@@ -466,7 +550,7 @@ describe('the live gateway seeds, replays, then follows', () => {
   it('sends a partial snapshot rather than refusing when the key has expired', async () => {
     const port = await start();
     const runId = await openLiveRun();
-    const cookie = await signUpAsOrgMember(ctx, `member-${randomUUID()}@example.com`);
+    const { cookie } = await signInAsAdmin(ctx, `member-${randomUUID()}@example.com`);
     await redis!.del(`live:${runId}:snapshot`);
     await appendDeltas(runId, [deltaFixture(runId, 9, [8000])]);
 
@@ -482,7 +566,7 @@ describe('the live gateway seeds, replays, then follows', () => {
   it('sends an empty partial snapshot when neither key exists yet', async () => {
     const port = await start();
     const runId = await openLiveRun();
-    const cookie = await signUpAsOrgMember(ctx, `member-${randomUUID()}@example.com`);
+    const { cookie } = await signInAsAdmin(ctx, `member-${randomUUID()}@example.com`);
 
     const [first] = await collect(connect(port, `/v1/runs/${runId}/live`, cookie), 1);
 
@@ -502,7 +586,7 @@ describe('the live gateway seeds, replays, then follows', () => {
   it('ignores a malformed resume cursor and seeds in full', async () => {
     const port = await start();
     const runId = await openLiveRun();
-    const cookie = await signUpAsOrgMember(ctx, `member-${randomUUID()}@example.com`);
+    const { cookie } = await signInAsAdmin(ctx, `member-${randomUUID()}@example.com`);
     const snapshot = snapshotFixture(runId, 5, [0, 1000, 2000, 3000, 4000]);
     await seedSnapshot(runId, snapshot);
 
@@ -520,7 +604,7 @@ describe('the live gateway seeds, replays, then follows', () => {
   it('reconstructs a run whose stream no longer reaches its start', async () => {
     const port = await start();
     const runId = await openLiveRun();
-    const cookie = await signUpAsOrgMember(ctx, `member-${randomUUID()}@example.com`);
+    const { cookie } = await signInAsAdmin(ctx, `member-${randomUUID()}@example.com`);
     const C = 5;
     const snapshot = snapshotFixture(runId, C, [0, 1000, 2000, 3000, 4000]);
     await seedSnapshot(runId, snapshot);
@@ -549,7 +633,7 @@ describe('the live gateway seeds, replays, then follows', () => {
   it('follows the run live once the seed is delivered', async () => {
     const port = await start();
     const runId = await openLiveRun();
-    const cookie = await signUpAsOrgMember(ctx, `member-${randomUUID()}@example.com`);
+    const { cookie } = await signInAsAdmin(ctx, `member-${randomUUID()}@example.com`);
     await seedSnapshot(runId, snapshotFixture(runId, 0, [0]));
     const conn = connect(port, `/v1/runs/${runId}/live`, cookie);
     await collect(conn, 1);
@@ -566,7 +650,7 @@ describe('the live gateway seeds, replays, then follows', () => {
   it('replays forward from the client-supplied lastSeq instead of re-seeding', async () => {
     const port = await start();
     const runId = await openLiveRun();
-    const cookie = await signUpAsOrgMember(ctx, `member-${randomUUID()}@example.com`);
+    const { cookie } = await signInAsAdmin(ctx, `member-${randomUUID()}@example.com`);
     await seedSnapshot(runId, snapshotFixture(runId, 5, [0, 1000, 2000, 3000, 4000]));
     await appendDeltas(runId, [6, 7, 8].map((seq) => deltaFixture(runId, seq, [(seq - 1) * 1000])));
 
@@ -590,7 +674,7 @@ describe('the live gateway seeds, replays, then follows', () => {
   it('leaves the hub room when the socket closes, so the subscription tears down', async () => {
     const port = await start();
     const runId = await openLiveRun();
-    const cookie = await signUpAsOrgMember(ctx, `member-${randomUUID()}@example.com`);
+    const { cookie } = await signInAsAdmin(ctx, `member-${randomUUID()}@example.com`);
     const hub = ctx.app.get(LiveHub);
     const conn = connect(port, `/v1/runs/${runId}/live`, cookie);
     await collect(conn, 1);

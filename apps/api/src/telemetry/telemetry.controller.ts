@@ -4,6 +4,7 @@ import { TelemetryStore } from '@perfportal/persistence';
 import type { Request } from 'express';
 import { Scopes } from '../auth/scopes.decorator.js';
 import { badRequest } from '../common/validation.js';
+import { BearerOnly } from '../auth/access.decorator.js';
 
 /**
  * The agent's one endpoint.
@@ -18,6 +19,7 @@ export class TelemetryController {
   constructor(private readonly store: TelemetryStore) {}
 
   @Post()
+  @BearerOnly()
   @Scopes('telemetry')
   @HttpCode(202)
   async post(@Req() req: Request, @Body() body: unknown): Promise<{ accepted: number }> {
@@ -27,7 +29,7 @@ export class TelemetryController {
       // UNREACHABLE IN PRACTICE, unlike IngestController's identical-looking
       // branch. @Scopes('telemetry') above already refused any caller
       // without the "telemetry" scope before this handler runs, and a
-      // session's scopes are always exactly ['read', 'ingest']
+      // session's scopes are always exactly ['read', 'ingest', 'runner']
       // (auth.middleware.ts) — no session has ever been minted with
       // "telemetry", so one can never reach here. Every credential that DOES
       // reach here is therefore a bearer token, and ApiToken.projectId is

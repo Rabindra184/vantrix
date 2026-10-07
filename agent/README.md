@@ -70,8 +70,8 @@ else. That scope grants exactly one route — `POST /v1/telemetry` — so a toke
 sitting on a shared generator cannot upload a result bundle, read a run, or
 open a live stream.
 
-From a signed-in session (see the root [`README.md`](../README.md)'s
-Authentication section):
+From a signed-in session (see the Authentication section of
+[`docs/api.md`](../docs/api.md#authentication)):
 
 ```bash
 curl -sS -b /tmp/cookies.txt -X POST \

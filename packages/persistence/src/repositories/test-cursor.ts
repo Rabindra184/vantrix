@@ -1,3 +1,5 @@
+import { isUuid } from './uuid.js';
+
 /**
  * The opaque cursor `TestRepository.listOrg` pages by.
  *
@@ -46,7 +48,6 @@ export interface OrgTestCursorKey {
 }
 
 const BASE64URL = /^[A-Za-z0-9_-]+$/;
-const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** An instant `encode` can have written for a real run: a plain four-digit year. */
 const FOUR_DIGIT_YEAR = /^\d{4}-/;
 /**
@@ -78,7 +79,7 @@ export function decodeOrgTestCursor(cursor: string): OrgTestCursorKey | null {
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
   const { at, name, id } = parsed as Record<string, unknown>;
 
-  if (typeof id !== 'string' || !UUID_SHAPE.test(id)) return null;
+  if (typeof id !== 'string' || !isUuid(id)) return null;
   if (typeof name !== 'string' || name.includes('\u0000') || LONE_SURROGATE.test(name)) return null;
 
   if (at === null) return { latestAt: null, name, id };
