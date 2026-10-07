@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { act, cleanup, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AdminProject } from '@perfportal/contracts';
 import AdminProjects from '../src/routes/AdminProjects';
+import { adminProjectsQueryKey } from '../src/api/admin';
 import { ADMIN_PROJECTS_ROUTE, ADMIN_USERS_ROUTE, NEW_PROJECT_ROUTE } from '../src/routes/paths';
 
 // No vitest globals here, so Testing Library's automatic cleanup never
@@ -33,14 +34,18 @@ function stubProjects(answer: () => Response): void {
 
 function renderPage() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
+  const view = render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[ADMIN_PROJECTS_ROUTE]}>
         <AdminProjects />
       </MemoryRouter>
     </QueryClientProvider>,
   );
+  return { ...view, client };
 }
+
+const problem = (status: number, code: string, detail: string, remediation: string): Response =>
+  json(status, { type: 'about:blank', title: 'Error', status, code, detail, remediation });
 
 describe('AdminProjects', () => {
   it('is the Projects section of Administration, with Users one tab over', async () => {
@@ -119,5 +124,51 @@ describe('AdminProjects', () => {
     expect(screen.getByRole('navigation', { name: 'Administration sections' })).toBeInTheDocument();
     expect(screen.queryByRole('table')).toBeNull();
     expect(screen.queryByRole('link', { name: 'New project' })).toBeNull();
+  });
+});
+
+/* W14 and W17 on this page too: a refetch that fails keeps the list it has,
+   unless the failure is the API refusing the session — then the refusal is
+   shown, as on a first load. */
+describe('AdminProjects — a failed refresh', () => {
+  it('keeps the table it has, and says quietly that it could not be refreshed', async () => {
+    let failing = false;
+    stubProjects(() =>
+      failing
+        ? problem(500, 'INTERNAL', 'The request could not be completed.', 'Retry the request.')
+        : json(200, { projects: PROJECTS }),
+    );
+    const { client } = renderPage();
+    await screen.findByRole('table', { name: 'Projects' });
+
+    failing = true;
+    await act(() => client.invalidateQueries({ queryKey: adminProjectsQueryKey }));
+
+    expect(await screen.findByText('This list could not be refreshed, so it may be out of date.')).toBeInTheDocument();
+    expect(screen.getByRole('table', { name: 'Projects' })).toBeInTheDocument();
+    expect(screen.queryByText('Projects could not be loaded')).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('shows a 403 refusing the refetch instead of the table it had', async () => {
+    let refusing = false;
+    stubProjects(() =>
+      refusing
+        ? problem(403, 'ADMIN_REQUIRED', 'Administration needs an admin account.', 'Ask an admin to make you one.')
+        : json(200, { projects: PROJECTS }),
+    );
+    const { client } = renderPage();
+    await screen.findByRole('table', { name: 'Projects' });
+
+    refusing = true;
+    await act(() => client.invalidateQueries({ queryKey: adminProjectsQueryKey }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Administration needs an admin account.');
+    expect(alert).toHaveTextContent('Ask an admin to make you one.');
+    expect(screen.getByText('Projects could not be loaded')).toBeInTheDocument();
+    expect(screen.queryByRole('table')).toBeNull();
+    expect(screen.queryByRole('link', { name: 'New project' })).toBeNull();
+    expect(screen.queryByText('This list could not be refreshed, so it may be out of date.')).toBeNull();
   });
 });

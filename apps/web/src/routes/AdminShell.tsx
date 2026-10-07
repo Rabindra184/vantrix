@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
+import { ProblemError } from '../api/fetch';
 import useDocumentTitle from '../useDocumentTitle';
 import { ADMIN_PROJECTS_ROUTE, ADMIN_USERS_ROUTE } from './paths';
 
@@ -77,4 +78,28 @@ export default function AdminShell({
       {children}
     </div>
   );
+}
+
+/**
+ * ═══ A REFUSAL IS NOT A STALE LIST (ruling W17) ═══
+ *
+ * Both pages keep a list that has loaded when a later refetch of it fails
+ * (ruling W14) — except when the failure is the API refusing the session: a
+ * `401` or a `403` says this session may not read the list at all now. An
+ * admin who removes their own admin flag meets exactly that: the refetch the
+ * change sets off answers `403 ADMIN_REQUIRED`. The page then shows the
+ * refusal in the API's words, as it does on a first load, rather than a table
+ * that goes on offering what would be refused.
+ */
+export function isRefusal(error: Error | null): boolean {
+  return error instanceof ProblemError && (error.status === 401 || error.status === 403);
+}
+
+/**
+ * The line over a list that loaded once and could not be refreshed since —
+ * the network, a 5xx, a body that did not parse; never a refusal. Not an
+ * alert: nothing the reader did failed, and nothing on screen is wrong yet.
+ */
+export function RefreshFailed() {
+  return <p className="text-[0.8125rem] text-muted">This list could not be refreshed, so it may be out of date.</p>;
 }

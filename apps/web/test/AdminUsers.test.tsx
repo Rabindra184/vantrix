@@ -1021,6 +1021,111 @@ describe('AdminUsers — the row menu', () => {
     await waitFor(() => expect(confirm).toHaveFocus());
   });
 
+  /* W7, for a refusal with nowhere left to land: the menus of other rows stay
+     live while one row's request is in flight, so the reader can arm another
+     row's block — which closes the one the request came from — before the
+     answer arrives. The refusal still belongs to its own row. */
+  it('shows a refusal on its own row’s line when its block was closed while the request was in flight', async () => {
+    let answer: (response: Response) => void = () => {};
+    stubApi({
+      users: () => Promise.resolve(json(200, { users: ROWS })),
+      write: (s) =>
+        s.method === 'DELETE'
+          ? new Promise<Response>((resolve) => {
+              answer = resolve;
+            })
+          : undefined,
+    });
+    renderPage();
+    await table();
+    const clicker = userEvent.setup();
+
+    await choose(clicker, 'Bea Admin', 'Remove');
+    await menuSettled();
+    const confirm = within(await mustDetails('bea@example.test')).getByRole('button', { name: 'Remove' });
+    await clicker.click(confirm);
+    await waitFor(() => expect(confirm).toBeDisabled());
+
+    // Cy's Remove, armed while Bea's request is held: Bea's confirm closes.
+    await choose(clicker, 'Cy Disabled', 'Remove');
+    await menuSettled();
+    expect(await detailsOf('bea@example.test')).toBeNull();
+    const cy = await mustDetails('cy@example.test');
+    const cyCancel = within(cy).getByRole('button', { name: 'Cancel' });
+    expect(cyCancel).toHaveFocus();
+
+    await act(async () => {
+      answer(problem(409, 'LAST_ADMIN', 'Bea Admin is the last admin.', 'Make someone else an admin first.'));
+    });
+
+    await waitFor(async () => expect(await detailsOf('bea@example.test')).not.toBeNull());
+    const bea = await mustDetails('bea@example.test');
+    const alert = within(bea).getByRole('alert');
+    expect(alert).toHaveTextContent('Bea Admin is the last admin.');
+    expect(alert).toHaveTextContent('Make someone else an admin first.');
+    // The refusal alone: Bea's confirm does not come back with it.
+    expect(within(bea).queryByRole('group')).toBeNull();
+    // Cy's block is untouched — no refusal in it, and the caret still where the reader put it.
+    expect(within(cy).queryByRole('alert')).toBeNull();
+    expect(within(cy).getByRole('group', { name: 'Remove Cy Disabled? Their run notes keep their text.' })).toBeInTheDocument();
+    expect(screen.getAllByRole('alert')).toHaveLength(1);
+    expect(cyCancel).toHaveFocus();
+  });
+
+  /* W17: your own admin flag is also your session's — the account menu offers
+     Administration from it — so changing it re-reads the session. And the
+     list's own refetch is then refused, which is shown as a refusal rather
+     than as a table that may be out of date. */
+  it('re-reads the session after the signed-in admin removes their own admin, and shows the list’s refusal', async () => {
+    let demoted = false;
+    const sent = stubApi({
+      users: () =>
+        Promise.resolve(
+          demoted
+            ? problem(403, 'ADMIN_REQUIRED', 'Administration needs an admin account.', 'Ask an admin to make you one.')
+            : json(200, { users: ROWS }),
+        ),
+      write: (s) => {
+        if (s.url === '/v1/admin/users/user-admin' && s.method === 'PATCH') demoted = true;
+        return undefined;
+      },
+    });
+    renderPage();
+    await table();
+    const clicker = userEvent.setup();
+    const sessionReads = readsOf(sent, '/auth/get-session');
+
+    await choose(clicker, 'Ada Admin', 'Remove admin');
+
+    await waitFor(() => expect(readsOf(sent, '/auth/get-session')).toBe(sessionReads + 1));
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Administration needs an admin account.');
+    expect(alert).toHaveTextContent('Ask an admin to make you one.');
+    expect(screen.queryByRole('table')).toBeNull();
+    expect(screen.queryByText('This list could not be refreshed, so it may be out of date.')).toBeNull();
+  });
+
+  it('leaves the session alone when the admin flag changed is someone else’s', async () => {
+    const sent = stubApi({ users: () => Promise.resolve(json(200, { users: ROWS })) });
+    renderPage();
+    await table();
+    await waitFor(() => expect(readsOf(sent, '/v1/admin/projects')).toBe(1));
+    const clicker = userEvent.setup();
+    const sessionReads = readsOf(sent, '/auth/get-session');
+    const usersBefore = readsOf(sent, '/v1/admin/users');
+
+    await choose(clicker, 'Bea Admin', 'Remove admin');
+
+    await waitFor(() => expect(readsOf(sent, '/v1/admin/users')).toBe(usersBefore + 1));
+    await waitFor(() => expect(readsOf(sent, '/v1/admin/projects')).toBe(2));
+    // Both lists are re-read, so the change has been answered; give a third
+    // refetch, issued beside them, the same moment to have been sent.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(readsOf(sent, '/auth/get-session')).toBe(sessionReads);
+  });
+
   /* W15: one inline block at a time across the whole table. */
   it('opens one block at a time: arming another row closes the first', async () => {
     stubApi({ users: () => Promise.resolve(json(200, { users: ROWS })) });
@@ -1342,5 +1447,31 @@ describe('AdminUsers — a failed refresh', () => {
     expect(screen.getByRole('table', { name: 'Users' })).toBeInTheDocument();
     expect(screen.queryByText('Users could not be loaded')).toBeNull();
     expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  /* W17: a 401 or a 403 is the API refusing this session the list, not a list
+     gone stale. A table left on screen would go on offering what is refused. */
+  it.each([
+    [403, 'ADMIN_REQUIRED', 'Administration needs an admin account.', 'Ask an admin to make you one.'],
+    [401, 'UNAUTHENTICATED', 'Session expired.', 'Sign in again.'],
+  ])('shows a %i refusing the refetch instead of the table it had', async (status, code, detail, remediation) => {
+    let refusing = false;
+    stubApi({
+      users: () =>
+        Promise.resolve(refusing ? problem(status, code, detail, remediation) : json(200, { users: USERS })),
+    });
+    const { client } = renderPage();
+    await table();
+
+    refusing = true;
+    await act(() => client.invalidateQueries({ queryKey: adminUsersQueryKey }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(detail);
+    expect(alert).toHaveTextContent(remediation);
+    expect(screen.getByText('Users could not be loaded')).toBeInTheDocument();
+    expect(screen.queryByRole('table')).toBeNull();
+    expect(screen.queryByText('Add user', { selector: 'summary' })).toBeNull();
+    expect(screen.queryByText('This list could not be refreshed, so it may be out of date.')).toBeNull();
   });
 });

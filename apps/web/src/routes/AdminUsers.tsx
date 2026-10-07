@@ -27,7 +27,7 @@ import {
 } from '../api/admin';
 import { getSession, sessionQueryKey } from '../api/session';
 import { fieldMessages } from '../formIssues';
-import AdminShell from './AdminShell';
+import AdminShell, { RefreshFailed, isRefusal } from './AdminShell';
 import { ROLE_LABEL, RowField } from './AdminFields';
 import { UserActions, type Armed } from './AdminUserActions';
 
@@ -45,6 +45,12 @@ import { UserActions, type Armed } from './AdminUserActions';
  * ordinary failure on a flaky network — and the change it follows had worked.
  * The error page is for a list that never loaded; a list that has loaded stays
  * on screen with one quiet line saying it may be out of date.
+ *
+ * ═══ UNLESS THE REFETCH WAS REFUSED (ruling W17) ═══
+ * A `401` or `403` is the API refusing this session the list (`isRefusal`),
+ * and is shown as on a first load: the admin who has just removed their own
+ * admin flag is told so, not handed a table whose every action would be
+ * refused.
  */
 export default function AdminUsers() {
   const users = useQuery({ queryKey: adminUsersQueryKey, queryFn: fetchAdminUsers });
@@ -60,7 +66,7 @@ export default function AdminUsers() {
         <LoadingState label="Loading users…">
           <SkeletonTable columns={5} />
         </LoadingState>
-      ) : users.data === undefined ? (
+      ) : users.data === undefined || isRefusal(users.error) ? (
         <ErrorState
           title="Users could not be loaded"
           detail={users.error instanceof ProblemError ? users.error.detail : users.error?.message}
@@ -69,10 +75,7 @@ export default function AdminUsers() {
       ) : (
         <div className="flex flex-col gap-4">
           <AddUserForm projects={projects} />
-          {/* Not an alert: nothing the reader did failed, and nothing on screen is wrong yet. */}
-          {users.isError && (
-            <p className="text-[0.8125rem] text-muted">This list could not be refreshed, so it may be out of date.</p>
-          )}
+          {users.isError && <RefreshFailed />}
           <UsersTable
             users={users.data.users}
             currentUserId={currentUserId}

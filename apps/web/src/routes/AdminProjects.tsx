@@ -8,7 +8,7 @@ import { PlusIcon } from '../components/icons';
 import { ROW, TABLE, TD, TD_NUM, TH, TH_NUM, THEAD } from '../components/tableStyles';
 import { ProblemError } from '../api/fetch';
 import { adminProjectsQueryKey, fetchAdminProjects } from '../api/admin';
-import AdminShell from './AdminShell';
+import AdminShell, { RefreshFailed, isRefusal } from './AdminShell';
 import { NEW_PROJECT_ROUTE } from './paths';
 
 /**
@@ -21,6 +21,9 @@ import { NEW_PROJECT_ROUTE } from './paths';
  *
  * Shown only once the list has loaded: a session refused the list
  * (`403 ADMIN_REQUIRED`) is not an admin, and creating a project needs one.
+ * The same holds for a refetch the API refuses after the list has loaded
+ * (ruling W17); a refetch that fails in any other way keeps the list on
+ * screen, under one quiet line (ruling W14, as on Users).
  */
 export default function AdminProjects() {
   const projects = useQuery({ queryKey: adminProjectsQueryKey, queryFn: fetchAdminProjects });
@@ -31,10 +34,10 @@ export default function AdminProjects() {
         <LoadingState label="Loading projects…">
           <SkeletonTable columns={2} />
         </LoadingState>
-      ) : projects.isError ? (
+      ) : projects.data === undefined || isRefusal(projects.error) ? (
         <ErrorState
           title="Projects could not be loaded"
-          detail={projects.error instanceof ProblemError ? projects.error.detail : projects.error.message}
+          detail={projects.error instanceof ProblemError ? projects.error.detail : projects.error?.message}
           remediation={projects.error instanceof ProblemError ? projects.error.remediation : undefined}
         />
       ) : (
@@ -45,6 +48,7 @@ export default function AdminProjects() {
               New project
             </Link>
           </div>
+          {projects.isError && <RefreshFailed />}
           {projects.data.projects.length === 0 ? (
             <EmptyState title="No projects yet" />
           ) : (

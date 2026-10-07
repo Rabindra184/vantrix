@@ -22,6 +22,7 @@ import {
 import { ProblemError } from '../api/fetch';
 import { adminProjectsQueryKey, adminUsersQueryKey, removeUser, resetUserPassword, updateUser } from '../api/admin';
 import { addMember, removeMember, updateMember } from '../api/members';
+import { sessionQueryKey } from '../api/session';
 import { fieldMessages } from '../formIssues';
 import { ROLE_LABEL, RowField } from './AdminFields';
 
@@ -44,6 +45,13 @@ import { ROLE_LABEL, RowField } from './AdminFields';
  * and a confirm or the Reset password block closes only once they have been
  * re-read — the row the reader returns to already says what they did. The
  * edit panel stays open for the next change.
+ *
+ * ═══ A REFUSAL ALWAYS REACHES ITS ROW (ruling W7) ═══
+ *
+ * Only the row with a request in flight locks; every other row's menu stays
+ * live, so a reader can arm another row's block — closing the one the request
+ * came from — before the answer arrives. A refusal shows in its block while
+ * that block is open, and otherwise on the row's own line under it.
  */
 
 export type ArmedMode = 'disable' | 'remove' | 'reset' | 'edit';
@@ -64,8 +72,9 @@ type RowAction =
 
 interface RowRequest {
   readonly action: RowAction;
-  /** The block it was sent from — `null` for the menu itself. Its refusal is
-   *  shown there, and only while that block is still the open one. */
+  /** The block it was sent from — `null` for the menu itself. A refusal is
+   *  shown in that block while it is open, and on the row's own line when the
+   *  block had already closed by the time the refusal arrived. */
   readonly from: ArmedMode | null;
   /** The control that sent it, which a refusal hands the caret back to. */
   readonly resume: HTMLElement | null;
@@ -128,7 +137,8 @@ export function UserActions({
    *  another row shares the name (ruling W6). */
   readonly who: string;
   /** The signed-in admin's own row, where the API refuses Disable, Reset
-   *  password and Remove — so they are not offered. */
+   *  password and Remove — so they are not offered — and where a change to
+   *  the admin flag is also a change to the session (ruling W17). */
   readonly own: boolean;
   readonly armed: Armed | null;
   readonly onArm: (next: Armed | null) => void;
@@ -165,12 +175,23 @@ export function UserActions({
      the refetch, not with the answer). */
   const [nextFocus, setNextFocus] = useState<NextFocus | null>(null);
 
+  /* The request whose refusal arrived after the block it came from had closed
+     (another row's block was armed meanwhile). Its refusal is drawn on the
+     row's own line rather than nowhere. Held as the request itself: TanStack
+     hands `onError` the same object `mutation.variables` then holds, so a
+     later request on this row, or a reset, stops it matching on its own. */
+  const [strayed, setStrayed] = useState<RowRequest | null>(null);
+
   const mutation = useMutation({
     mutationFn: ({ action }: RowRequest) => send(user.id, action),
     onSuccess: async (_data, { action, from, resume }) => {
+      /* Your own admin flag is also your session's: the account menu offers
+         Administration from it, so it is re-read too (ruling W17). */
+      const ownAdminFlag = own && action.kind === 'update' && action.body.isAdmin !== undefined;
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: adminUsersQueryKey }),
         queryClient.invalidateQueries({ queryKey: adminProjectsQueryKey }),
+        ownAdminFlag ? queryClient.invalidateQueries({ queryKey: sessionQueryKey }) : undefined,
       ]);
       // Only if the block it came from is still the open one. A reader who has
       // opened another since must not have it closed, or their caret taken, by
@@ -204,8 +225,14 @@ export function UserActions({
           return;
       }
     },
-    onError: (_error, { from, resume }) => {
-      if (latestMode.current !== from) return;
+    onError: (_error, request) => {
+      const { from, resume } = request;
+      // The block it came from has closed: the refusal goes on the row's line,
+      // and the caret stays wherever the reader has taken it since.
+      if (latestMode.current !== from) {
+        setStrayed(request);
+        return;
+      }
       setNextFocus({ targets: resume === null ? [triggerId] : [resume, triggerId], from: resume });
     },
   });
@@ -316,10 +343,13 @@ export function UserActions({
   );
 
   /* A refusal is shown where its request was made: in the block, while that
-     block is open, or on the row's own line for an action taken straight from
-     the menu. A block closed by arming another row takes its refusal with it. */
-  const blockError = mode !== null && mutation.isError && mutation.variables?.from === mode ? mutation.error : null;
-  const menuError = mutation.isError && mutation.variables?.from === null ? mutation.error : null;
+     block is open; on the row's own line for an action taken straight from the
+     menu, or one whose block had closed before the refusal arrived. A block
+     that closes after its refusal has been shown in it takes the refusal with
+     it. */
+  const failed = mutation.isError ? mutation.variables : undefined;
+  const blockError = mode !== null && failed?.from === mode ? mutation.error : null;
+  const lineError = failed !== undefined && (failed.from === null || failed === strayed) ? mutation.error : null;
   const loading = pending !== undefined && pending.from === mode;
 
   let block: ReactNode = null;
@@ -376,10 +406,10 @@ export function UserActions({
   }
 
   const details =
-    block === null && menuError === null ? null : (
+    block === null && lineError === null ? null : (
       <div className="flex flex-col gap-3">
         {block}
-        {menuError !== null && <Problem error={menuError} />}
+        {lineError !== null && <Problem error={lineError} />}
       </div>
     );
 
