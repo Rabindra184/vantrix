@@ -39,8 +39,9 @@ import { Requires } from '../auth/access.decorator.js';
  *
  * NOT TO BE CONFUSED WITH THE RULING ON `ProjectRunsController.list`. That
  * route considered slug resolution for a session and rejected it, because a
- * session-holder already has `GET /v1/runs` across the whole org — resolution
- * there would have been new surface for no new capability. Here there is no
+ * session-holder already has `GET /v1/runs` across every project the session
+ * can see (`?project=` narrows it to one) — resolution there would have been
+ * new surface for no new capability. Here there is no
  * alternative at all: without this, a browser cannot deliver a bundle by any
  * means, which is the entire finding.
  *

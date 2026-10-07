@@ -88,7 +88,7 @@ export class RunsController {
         throw badRequest(
           'PROJECT_MISMATCH',
           `This token belongs to a different project than "${project}".`,
-          'Omit "project", or use a session, which can read every project in the org.',
+          `Omit "project" to list this token's own project, or use a signed-in session that can see "${project}".`,
         );
       }
       // A session naming a project it cannot see gets the missing project's
@@ -417,7 +417,8 @@ export class ProjectRunsController {
     // guard would list every run in the org under a single-project URL.
     // Resolving the project by slug within the org instead was considered
     // and rejected (human-ruled) — a session-holder uses GET /v1/runs,
-    // which already lists across the whole org.
+    // which already lists every project the session can see (all of the
+    // org's for an admin) and takes ?project= to narrow to one.
     const projectId = tenant.projectId;
     if (!projectId) {
       throw badRequest(
