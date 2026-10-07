@@ -141,19 +141,19 @@ silently minting a second password. The plaintext password is printed
 to stdout exactly once, the same way the API token is; copy it immediately.
 
 Log in with it against `/auth/*` (Better Auth's own error/response shapes,
-not this API's RFC 9457 `problem+json` — see the root `README.md`'s
-Authentication section), and use the returned session cookie on `/v1`.
-A session names no project, so it can't ingest, but it can list every run
-across the whole org via `GET /v1/runs` (see the root `README.md`'s
-Authentication section) — no run id needed up front:
+not this API's RFC 9457 `problem+json` — see the Authentication section of
+[`docs/api.md`](../docs/api.md#authentication)), and use the returned session
+cookie on `/v1`. A session names no project, so it can't ingest, but it can
+list every run across the whole org via `GET /v1/runs` (same section) — no
+run id needed up front:
 
     curl -sS -c /tmp/cookies.txt -X POST http://localhost:3000/auth/sign-in/email \
       -H 'Content-Type: application/json' \
       -d '{"email":"you@example.test","password":"<printed password>"}'
     curl -sS -b /tmp/cookies.txt http://localhost:3000/v1/runs
 
-On `http://localhost` the cookie is minted WITHOUT `Secure` — see the root
-`README.md`'s Authentication section for why that exemption is loopback-only
+On `http://localhost` the cookie is minted WITHOUT `Secure` — see the
+Authentication section of `docs/api.md` for why that exemption is loopback-only
 and why Safari is the reason it exists. A real, non-TLS deployment reachable
 by hostname still gets `Secure`, and therefore no session at all from a
 browser: sign-in appears to succeed, no cookie is ever stored, and every

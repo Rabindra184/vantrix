@@ -2402,8 +2402,8 @@ export function buildOpenApiDocument(): OpenApiDocument {
           name: 'better-auth.session_token',
           description:
             'A Better Auth session cookie, obtained via POST /auth/sign-in/email for an ' +
-            'account an administrator created — sign-up is closed (see the root README\'s ' +
-            'Authentication section — /auth/* is ' +
+            'account an administrator created — sign-up is closed (see the Authentication ' +
+            'section of docs/api.md — /auth/* is ' +
             'Better Auth\'s own surface, not this document). Scoped to an org only, no ' +
             'project, so it cannot satisfy POST /v1/runs, POST /v1/telemetry, POST ' +
             '/v1/runs/live, POST /v1/runs/{id}/stream, POST /v1/runs/{id}/close, or ' +
