@@ -134,9 +134,11 @@ describe('every route declares how it is reached', () => {
 
   /**
    * A pair the rule above already refuses, named on its own because what it
-   * would MEAN is worse than a missing marker: `AccessGuard` returns true when
-   * there is no tenant, and `@Public` is what leaves a route with none — so a
-   * route carrying both would be public, silently, while reading as guarded.
+   * would MEAN is worse than a missing marker. `@Public` makes `AuthGuard`
+   * pass without authenticating, so outside `/v1` — where `AuthMiddleware`
+   * does not run — the request reaches `AccessGuard` with no tenant, and the
+   * guard returns true for no tenant: the route would be public, silently,
+   * while reading as guarded.
    */
   it('lets no route carry both @Public and @Requires', () => {
     const both = ROUTES.filter((r) => r.isPublic && r.requires !== undefined).map((r) => r.label).sort();
