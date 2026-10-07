@@ -46,6 +46,20 @@ describe('listScope', () => {
     });
   });
 
+  /**
+   * The same decision tree `canSeeProject` follows, and for the same reason.
+   * A tenant that is neither a bearer token (no `projectId`) nor marked admin
+   * is what a session built WITHOUT `loadSessionAccess` looks like — a spread
+   * dropped in a refactor, or a new path that never called it. `{ orgId }`
+   * alone would be every project in the org; it has to be nothing.
+   */
+  it('narrows a tenant that is neither a bearer token nor an admin to nothing', () => {
+    expect(listScope({ orgId: ORG, tokenId: 'session:s1', scopes: ['read'] })).toStrictEqual({
+      orgId: ORG,
+      projectIds: [],
+    });
+  });
+
   it('omits the list for an admin, who sees every project in the org', () => {
     expect(listScope(admin)).toStrictEqual({ orgId: ORG });
   });

@@ -22,8 +22,9 @@ const LIVE_PATH = /^\/v1\/runs\/([^/]+)\/live$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * Not authenticated, not a member of the org, not this org's run, or a run in
- * a project the caller cannot see — one code, and one reason, for all four.
+ * One code, and one reason, for every refusal `authorize` makes: a malformed
+ * run id, no session, no org membership, a run that is not this org's or does
+ * not exist, and a run in a project the caller cannot see.
  */
 export const CLOSE_UNAUTHORIZED = 4401;
 

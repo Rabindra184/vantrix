@@ -37,28 +37,34 @@ export async function loadSessionAccess(
  * The repository scope an org-wide read takes: the org, a bearer token's one
  * project, and a non-admin session's project list for `visibilityClause`.
  *
- * `projectIds` is present for a non-admin session ONLY. Absent means "every
- * project in the org" to that clause, which is right for an admin and
- * meaningless for a bearer token (whose `projectId` already narrows it), and
- * `[]` means "none". So a non-admin session that somehow arrives without its
- * list is given `[]`: it sees nothing rather than the whole org.
+ * Absent `projectIds` means "every project in the org" to that clause, which
+ * is right for an admin and meaningless for a bearer token (whose `projectId`
+ * already narrows it); `[]` means "none". So the list is left off for exactly
+ * those two — a tenant carrying a `projectId`, or one marked `isAdmin: true` —
+ * and EVERY OTHER tenant is narrowed, to its list or to `[]` without one. That
+ * is `canSeeProject`'s decision tree, and it fails closed the same way: a
+ * session built without `loadSessionAccess` (a dropped spread, a new path
+ * that forgot it) has neither field, and sees nothing rather than the org.
  */
 export function listScope(tenant: Tenant): TenantScope {
-  const scope: { orgId: string; projectId?: string; projectIds?: readonly string[] } = { orgId: tenant.orgId };
+  const scope: { -readonly [K in keyof TenantScope]: TenantScope[K] } = { orgId: tenant.orgId };
   if (tenant.projectId !== undefined) scope.projectId = tenant.projectId;
-  if (tenant.isAdmin === false) scope.projectIds = tenant.projectIds ?? [];
+  if (tenant.projectId === undefined && tenant.isAdmin !== true) scope.projectIds = tenant.projectIds ?? [];
   return scope;
 }
 
 /**
- * Whether the caller may see a project at all: a bearer token sees the one
- * project it was minted for, an admin sees every project, and anyone else
- * sees the projects they hold a role in — any role, since viewer is the
- * lowest and seeing is what it grants.
+ * DOES NOT CHECK THE ORG. The admin branch answers true for ANY project id,
+ * another org's project included, so a caller must reach `projectId` through
+ * an org-scoped lookup first (the run or project row it read, scoped by
+ * `orgId`) — that lookup, not this function, is what keeps another org's
+ * project out.
  *
- * Says nothing about the ORG: callers reach `projectId` through an org-scoped
- * lookup, which is what keeps another install's project out. Every branch
- * fails closed — a tenant missing the field its branch reads sees nothing.
+ * Within the org: a bearer token sees the one project it was minted for, an
+ * admin sees every project, and anyone else sees the projects they hold a
+ * role in — any role, since viewer is the lowest and seeing is what it
+ * grants. Every branch fails closed — a tenant missing the field its branch
+ * reads sees nothing.
  *
  * Takes only the three fields it reads, so `LiveGateway` can ask with the
  * {@link SessionAccess} it loaded rather than a Tenant it would have to fake.

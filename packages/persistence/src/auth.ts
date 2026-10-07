@@ -229,6 +229,12 @@ export function createAuth(opts: {
     // refuseAdminHttp LAST: a plugin's onRequest may replace the request, and
     // the refusal has to judge the one the router will actually route.
     plugins: [adminPlugin(), refuseAdminHttp()],
+    // NO `cookieCache`, and that is load-bearing: with it off, every
+    // `getSession` reads the user row, so `user.role` — the admin flag — is
+    // current on every request, and a demoted admin is an ordinary account on
+    // the next one. Turned on, the session and its user ride in a signed
+    // cookie for the cache's maxAge, and a demotion waits that long.
+    // `auth-cookies.test.ts` pins it off.
     session: { expiresIn: 60 * 60 * 24 * 14, updateAge: 60 * 60 * 24 },
     advanced: {
       defaultCookieAttributes: {

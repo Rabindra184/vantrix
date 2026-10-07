@@ -1,5 +1,6 @@
+import type { BetterAuthOptions } from 'better-auth';
 import { describe, expect, it } from 'vitest';
-import { cookiesAreSecure } from '../src/auth.js';
+import { cookiesAreSecure, createAuth } from '../src/auth.js';
 
 /**
  * ═══ THE ASYMMETRY IS THE WHOLE POINT ═══
@@ -109,5 +110,32 @@ describe('cookiesAreSecure', () => {
       expect(cookiesAreSecure('not a url', true)).toBe(true);
       expect(cookiesAreSecure('', true)).toBe(true);
     });
+  });
+});
+
+/**
+ * ═══ THE SESSION COOKIE CACHE STAYS OFF ═══
+ *
+ * The admin flag is `user.role`, read from the session `getSession` returns.
+ * With Better Auth's `cookieCache` off, that read goes to the database on
+ * every request, so an admin who is demoted is an ordinary account on their
+ * next request. Turned on — the obvious "performance" change — the session
+ * and its user ride in a signed cookie, and a demoted admin keeps the flag
+ * for the cache's maxAge. This fails that change instead of letting it ship.
+ *
+ * Built against a database that is never contacted: constructing the
+ * instance opens no connection, and nothing here queries.
+ */
+describe('createAuth', () => {
+  it('keeps the session cookie cache off, so a demotion lands on the next request', () => {
+    const auth = createAuth({
+      databaseUrl: 'postgresql://unused:unused@127.0.0.1:1/unused',
+      baseUrl: 'http://localhost:3000',
+    });
+
+    // Read through Better Auth's own option type: `auth.options` is typed as
+    // exactly what createAuth passed, which has no `cookieCache` to name.
+    const session: BetterAuthOptions['session'] = auth.options.session;
+    expect(session?.cookieCache?.enabled).toBeFalsy();
   });
 });

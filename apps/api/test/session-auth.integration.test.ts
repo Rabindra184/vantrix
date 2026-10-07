@@ -7,9 +7,13 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ActivityResponseSchema } from '@perfportal/contracts';
 import { hashToken, mintToken } from '@perfportal/core';
+import { ProjectMemberRepository } from '@perfportal/persistence';
 import { Queue } from 'bullmq';
+import type { Request, Response } from 'express';
 import request from 'supertest';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import type { Tenant } from '../src/auth/auth.guard.js';
+import { AuthMiddleware } from '../src/auth/auth.middleware.js';
 import { createTestApp, type TestContext } from './support/app.js';
 import { runPipelineFor } from './support/pipeline.js';
 import { signInAsAdmin, signInAsProjectMember, signInWithoutOrg } from './support/session.js';
@@ -354,6 +358,95 @@ describe('AuthMiddleware — session cookie branch on /v1', () => {
       .expect(403);
     expect(res.headers['content-type']).toContain('application/problem+json');
     expect(res.body.detail).toContain('no organization');
+  });
+});
+
+/**
+ * ═══ WHAT A SESSION TENANT KNOWS ABOUT ITS PROJECTS ═══
+ *
+ * Through the REAL AuthMiddleware, with a real session cookie, against the
+ * real Better Auth instance and database — because what these cases pin is
+ * the JOIN: that `authenticateSession` actually puts `loadSessionAccess`'s
+ * answer on the tenant. `access.test.ts` proves the helpers given a tenant;
+ * nothing there can see a tenant built without them, which `listScope` would
+ * otherwise read as "every project in the org".
+ *
+ * `use()` is called directly rather than through a route because no route
+ * reports these fields yet; the request carries only the headers the
+ * middleware reads.
+ */
+describe('AuthMiddleware — what a session tenant knows about its projects', () => {
+  async function tenantFor(headers: Record<string, string>): Promise<Tenant> {
+    const req = { headers } as unknown as Request;
+    let refused: unknown;
+    const res = {
+      status: (status: number) => ({ type: () => ({ send: (body: unknown) => void (refused = { status, body }) }) }),
+    } as unknown as Response;
+    await ctx.app.get(AuthMiddleware).use(req, res, () => undefined);
+    if (!req.tenant) throw new Error(`AuthMiddleware refused the request: ${JSON.stringify(refused)}`);
+    return req.tenant;
+  }
+
+  it('marks an admin, with no project list and no roles query to show for it', async () => {
+    ctx = await createTestApp();
+    const { cookie } = await signInAsAdmin(ctx, `admin-${randomUUID()}@example.test`);
+
+    const tenant = await tenantFor({ cookie });
+
+    expect(tenant.isAdmin).toBe(true);
+    expect(tenant.projectRoles).toStrictEqual(new Map());
+    expect(tenant.projectIds).toBeUndefined();
+  });
+
+  it("carries a project member's roles and the list they make", async () => {
+    ctx = await createTestApp();
+    const { cookie } = await signInAsProjectMember(ctx, `member-${randomUUID()}@example.test`, [
+      { projectId: ctx.projectId, role: 'member' },
+    ]);
+
+    const tenant = await tenantFor({ cookie });
+
+    expect(tenant.isAdmin).toBe(false);
+    expect(tenant.projectRoles).toStrictEqual(new Map([[ctx.projectId, 'member']]));
+    expect(tenant.projectIds).toStrictEqual([ctx.projectId]);
+  });
+
+  // `[]`, never absent: absent is what an admin carries, and means everything.
+  it('gives a member of no project an empty list', async () => {
+    ctx = await createTestApp();
+    const { cookie } = await signInAsProjectMember(ctx, `nobody-${randomUUID()}@example.test`, []);
+
+    const tenant = await tenantFor({ cookie });
+
+    expect(tenant.isAdmin).toBe(false);
+    expect(tenant.projectIds).toStrictEqual([]);
+  });
+
+  // The same cookie, one membership fewer: the roles are read per request, so
+  // nothing about the session itself remembers the project it lost.
+  it('drops a membership removed mid-session on the very next request', async () => {
+    ctx = await createTestApp();
+    const { cookie, userId } = await signInAsProjectMember(ctx, `removed-${randomUUID()}@example.test`, [
+      { projectId: ctx.projectId, role: 'viewer' },
+    ]);
+    expect((await tenantFor({ cookie })).projectIds).toStrictEqual([ctx.projectId]);
+
+    await new ProjectMemberRepository(ctx.prisma).remove(ctx.projectId, userId);
+
+    expect((await tenantFor({ cookie })).projectIds).toStrictEqual([]);
+  });
+
+  // The bearer path does not move: a token's reach is its projectId and its
+  // scopes, and it carries none of the three session fields.
+  it('leaves a bearer tenant without any of the three', async () => {
+    ctx = await createTestApp();
+
+    const tenant = await tenantFor({ authorization: `Bearer ${ctx.readToken}` });
+
+    expect(tenant.projectId).toBe(ctx.projectId);
+    expect(tenant).not.toHaveProperty('isAdmin');
+    expect(tenant).not.toHaveProperty('projectRoles');
+    expect(tenant).not.toHaveProperty('projectIds');
   });
 });
 
