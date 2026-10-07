@@ -38,14 +38,23 @@ cd perfportal
 cp infra/.env.example infra/.env
 ```
 
-Open `infra/.env` and set the three values that have no safe default:
+Set the four values that have no safe default. Run this in your shell, which
+generates them and appends them to `infra/.env`; when a key appears twice,
+Compose uses the last one:
 
 ```bash
-PERFPORTAL_DB_PASSWORD=$(openssl rand -base64 24)
-PERFPORTAL_S3_ACCESS_KEY=perfportal
-PERFPORTAL_S3_SECRET_KEY=$(openssl rand -base64 24)
-PERFPORTAL_AUTH_SECRET=$(openssl rand -base64 32)
+cat >> infra/.env <<EOF
+PERFPORTAL_DB_PASSWORD=$(openssl rand -hex 24)
+PERFPORTAL_S3_SECRET_KEY=$(openssl rand -hex 24)
+PERFPORTAL_AUTH_SECRET=$(openssl rand -hex 32)
+EOF
 ```
+
+**Do not type `$(openssl …)` into `infra/.env` itself.** Compose does not run
+commands in an env file, so the variable would hold that literal text, and the
+API refuses a 26-character auth secret. Use hex rather than base64 for the
+database password: it is placed inside `DATABASE_URL`, where a `/` or `+`
+would break the URL.
 
 Then bring it up:
 
@@ -94,8 +103,8 @@ account that already exists, so your change survives every later `up`.
 the published default never touches your disk:
 
 ```bash
-# in infra/.env, BEFORE the first `up`
-PERFPORTAL_ADMIN_PASSWORD=$(openssl rand -base64 24)
+# BEFORE the first `up`; read it back with: grep ADMIN_PASSWORD infra/.env
+echo "PERFPORTAL_ADMIN_PASSWORD=$(openssl rand -hex 12)" >> infra/.env
 ```
 
 This exists because the alternative was worse. Without it, a correct,
