@@ -130,11 +130,14 @@ read exactly as they always did.
 
 `nvm use` first, and if a run reports fewer than **220 files / 3420 tests**, it
 did not run everything — nor did an integration run reporting fewer than
-**203 files / 3056 tests**, or an e2e run fewer than **197**. (Update those
-numbers when a sub-project adds suites, or the next reader calibrates against
-a stale floor and a silently-skipped run looks like a pass. The
-release-readiness branch added
-FOUR unit files — `apps/api/test/config.test.ts` (6),
+**203 files / 3058 tests**, an e2e run fewer than **197**, or a
+`pnpm test:e2e:cross` run fewer than **591** (197 on each of three engines).
+(Update those numbers when a sub-project adds suites, or the next reader
+calibrates against a stale floor and a silently-skipped run looks like a
+pass.)
+
+The release-readiness branch added FOUR unit files —
+`apps/api/test/config.test.ts` (6),
 `apps/api/test/security-headers.test.ts` (18),
 `apps/web/test/ThemeToggle.test.tsx` (9) and
 `packages/persistence/test/auth-cookies.test.ts` (17) — from a floor of
@@ -142,8 +145,8 @@ FOUR unit files — `apps/api/test/config.test.ts` (6),
 new `.ts` files run there too) and its **e2e rises to 102**
 (`smoke.spec.ts` gained the CSP case).
 
-**AND ITS e2e IS THE FIRST THAT RUNS ON THREE ENGINES.** `pnpm test:e2e` is
-still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
+**AND ITS e2e IS THE FIRST THAT RUNS ON THREE ENGINES.** `pnpm test:e2e` was
+still Chromium and still 102; `pnpm test:e2e:cross` was 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
@@ -159,13 +162,14 @@ FOUR unit files — `apps/api/test/access.test.ts` (51),
 those four `.ts` files and FIVE integration files —
 `apps/api/test/access-routes.integration.test.ts` (82: sixteen fixed cases, a
 52-case role matrix generated from eleven probes, eight malformed
-sub-parameter rows and six bearer-only refusals, the last two sets read off
-the route walk), `visibility.integration.test.ts` (12),
+sub-parameter rows and six bearer-only refusals, the malformed rows read off
+the route walk, the refusals a literal map that must equal the walk's
+`@BearerOnly` set), `visibility.integration.test.ts` (12),
 `access-guard.integration.test.ts` (4), and in `packages/persistence/test`
 `project-member.integration.test.ts` (7) and
-`access-backfill.integration.test.ts` (1) — plus `session-auth` 10,
-`live-gateway` 2, `repositories` 2 and the persistence `activity` 1:
-**194 / 2865 to 203 / 3056**. **e2e stays 197**: no spec changed, and
+`access-backfill.integration.test.ts` (1) — plus `session-auth` 11,
+`live-gateway` 3, `repositories` 2 and the persistence `activity` 1:
+**194 / 2865 to 203 / 3058**. **e2e stays 197**: no spec changed, and
 `apps/web/e2e/fixtures.ts` creates its accounts the way an administrator does
 now.
 
@@ -177,15 +181,20 @@ and one global `AccessGuard`, registered after `AuthGuard`, applies it to
 SESSIONS ONLY, refusing with `ROLE_REQUIRED` or `ADMIN_REQUIRED` (403). Every
 handler declares exactly one of `@Requires(action)`, `@BearerOnly`,
 `@NotProjectScoped` or `@Public`. The four org-wide reads (`GET /v1/projects`,
-`/v1/runs`, `/v1/tests`, `/v1/activity`) show a session only the projects it
-holds a role in; the live WebSocket feed checks membership too. Accounts come
-only from an admin: open sign-up is closed, Better Auth's admin plugin
-supplies the server-side `createUser`, and the plugin's own `/auth/admin/*`
-HTTP routes are refused. Migration `20261007120000_project_access` promotes
-every existing org member to admin, so nobody loses access on upgrade. The
-bearer-token path does not move: `AuthGuard`, `@Scopes` and
-`SessionOnlyGuard` are as they were, and `AccessGuard` returns `true` for any
-tenant that is not a session.
+`/v1/runs`, `/v1/tests`, `/v1/activity`) show a non-admin session only the
+projects it holds a role in; the live WebSocket feed checks membership too.
+Accounts are made only server-side: open sign-up is closed, bootstrap and the
+fixtures call the admin plugin's `createUser`, and the plugin's own
+`/auth/admin/*` HTTP routes are refused. Migration
+`20261007120000_project_access` promotes every existing org member to admin,
+so nobody loses access on upgrade. The bearer-token path does not move:
+`AuthGuard`, `@Scopes` and `SessionOnlyGuard` are as they were, and
+`AccessGuard` returns `true` for any tenant that is not a session. What a
+token's caller sees changes in two places, both on purpose: the
+`PROJECT_MISMATCH` remediation on `GET /v1/runs?project=` was reworded (it
+said a session "can read every project in the org", false now), and
+`GET /v1/projects` items carry a new `role` field, `null` for a token
+(additive: nothing that was there changed).
 
 **THE ADMIN PLUGIN'S ROUTES WERE "REFUSED" TWICE BEFORE THEY WERE, AND
 NEITHER BYPASS WAS IN THE PATH EXPRESS SAW.** An Express route on
@@ -203,11 +212,18 @@ plugin `onRequest`, registered last, inside Better Auth's own pipeline, and
 the Express guard was REMOVED rather than kept beside it — two guards that
 agree on every reachable state mask each other. Server-side `auth.api.*`
 calls never pass through `onRequest`, so bootstrap and the fixtures still
-create accounts. `session-auth.integration.test.ts` pins twelve of them over
-a raw socket (three plain requests, five path spellings, four header
-smugglings, the create-user one checked for the account it would have made),
-each beside `get-session` answering 200 — a refusal that 404s everything
-would pass the rest. The re-review measured 23 spellings, all 404.
+create accounts. `session-auth.integration.test.ts` pins twelve refusals:
+three plain requests through supertest, then five path spellings and four
+header smugglings over a raw socket (the create-user ones checked for the
+account they would have made). Each raw-socket group sits beside
+`get-session` answering 200, sent through the same helper — a refusal that
+404s everything would pass the rest. The re-review measured 23 spellings, all
+404. **The self-service route is the other door**: `POST /auth/update-user`
+is open to every session and writes any user field the input schema allows,
+and the admin flag is one. The admin plugin's `input: false` on `role` is all
+that refuses it (400 `FIELD_NOT_ALLOWED`); a case pins that and the row, beside
+a name change that still succeeds, and fails at 200 when `role` is made an
+input field.
 
 **A GUARD RUNS BEFORE PIPES AND BODY VALIDATION, SO "NOT FOUND: PASS IT
 THROUGH" WAS A MEMBERSHIP ORACLE.** The plan had the guard hand a project or
@@ -314,7 +330,9 @@ moment. That file passed 14 of 14 alone, and a third full run passed clean.
 The ledger records one earlier P1001 on this branch, at a load of 9. The
 machine had 83 to 87% of its swap in use and 3,871 to 4,681 free pages at
 each start; a connect timeout is not an assertion about a value, and
-**recorded is all it is** — nothing here explains it.
+**recorded is all it is**: nothing here explains it beyond the
+memory-pressure shape the group-assertions entry records (swap was 83-87%
+used), and CI's `build` job is the arbiter.
 
 **WHAT WAS RUN**, on Node v22.19.0 at `cd86726` (the last commit before this
 entry, which changes `CLAUDE.md` alone), every total counted from the source
@@ -327,6 +345,16 @@ a 1-minute load of 5.14 with 20,048 free pages); `test:integration` COLLECTED
 the runner reading back `Running 197 tests using 2 workers`. Against the
 scratch database `perfportal_access` and Redis db 12, flushed before each
 integration run.
+
+**AND AGAIN AFTER THE FINAL FIX ROUND** (`06e2910`, which added two
+integration cases — the update-user refusal and a gateway malformed-id case —
+and changed documents): `pnpm build`, `typecheck` and `lint` exit 0;
+`test:unit` **220 / 3420**, exit 0, zero `Errors` lines (load 3.89, swap 87%
+used); `test:integration` **203 / 3058, exit 0, zero failures** on its first
+run, though it started at a 1-minute load of 11.18 with 87% of swap used and
+19,196 free pages. e2e was not re-run — no file under `apps/web` changed —
+and `--list` collects 197 on Chromium and 591 with
+`PERFPORTAL_E2E_BROWSERS=all`.
 
 **RED-VERIFIED, TASK BY TASK** (the ledger at
 `.superpowers/sdd/2026-10-07-project-access-pr1-enforcement/progress.md`
@@ -357,12 +385,17 @@ holds the rest):
       bootstrap refusing before its upserts                  CI's short-password step, at the org check
                                                              (and at the project check without it)
       POST /v1/projects without role: null                   the creation case
+  F   the admin plugin's `role` made an input field          the update-user case ALONE, at 200
+      the gateway's isUuid check removed                     the malformed-id case ALONE: 0 (the
+                                                             outage path's 503), not 4401
 ```
 
 The T7* rows were run by the batch that took Task 7's review minors, and the
 T8 rows by the task that wrote this entry — its persistence mutation with
 `dist` rebuilt on the way in and on the way out, and its bootstrap mutation
-made in the compiled `dist/scripts/bootstrap.js` that CI's step runs.
+made in the compiled `dist/scripts/bootstrap.js` that CI's step runs. The F
+rows were run by the final fix round, its `role` mutation with persistence's
+`dist` rebuilt on the way in and on the way out.
 
 **RULINGS, EACH A DECISION RATHER THAN AN OVERSIGHT:**
 
@@ -372,6 +405,16 @@ made in the compiled `dist/scripts/bootstrap.js` that CI's step runs.
   - `roleSatisfies` fails closed for a role outside `PROJECT_ROLES` (an
     unknown required role was satisfied by anyone, `indexOf` answering -1);
     `ACCESS_ACTIONS`' rows are readonly as well as the table.
+  - The spec's `run:upload` row was corrected from scope `ingest` to
+    session-only: the route is `SessionOnlyGuard` with no `@Scopes`, and the
+    plan's `null` was the only value consistent with it.
+  - Bootstrap enforces Better Auth's 8-128 password bounds itself and looks an
+    existing account up by its LOWERCASED email: the admin plugin's
+    `createUser` skips the bounds sign-up applied, and Better Auth stores
+    emails lowercased. Both are pinned in CI's bootstrap steps.
+  - The route walk refuses a handler carrying `@Public` together with
+    `@Requires`: the guard returns `true` with no tenant, so the pair would
+    silently mean public.
   - The admin routes are refused inside Better Auth (a plugin `onRequest` on
     the Request it routes), replacing the normalising Express guard rather
     than sitting beside it; any path that normalises under `/auth/admin`
@@ -404,12 +447,23 @@ made in the compiled `dist/scripts/bootstrap.js` that CI's step runs.
   - The web app is unchanged: it shows edit controls to every role and a
     viewer meets the 403 on submit, and the API tokens page GETs a
     manager-only route. Harmless today — the backfill made every existing
-    account an admin — and PR 3's role-aware UI.
+    account an admin — and PR 3's role-aware UI is where it is fixed.
   - An absolute-form request target makes better-call's `toNodeHandler`
-    throw, answering 500 with an HTML stack trace unless
-    `NODE_ENV=production` (compose sets it). Pre-existing on `main`.
+    throw and answer 500. That 500, and Express's 400 for a malformed
+    %-escape, render an HTML stack trace unless `NODE_ENV=production`
+    (compose sets it). Pre-existing on `main`.
   - The guard and the controller each look the project or run up, so a
     non-admin session's request on a `@Requires` route makes two lookups.
+  - Until PR 2's `/v1/admin` and members routes, nothing in the product
+    creates a non-admin account or grants a project role. Bootstrap makes
+    only admins, so after upgrade every account is an admin and
+    `project_member` is empty unless a script writes it.
+  - Deferred minors still open: `ProjectMemberRepository.add` passes
+    `data: input` straight through rather than naming its four fields;
+    `asProjectRole`'s throw path is untested; one persistence integration
+    case bundles the SET NULL and CASCADE claims; and an org-tests paging
+    ZodError seen once in a reviewer's integration run (16/16 alone twice, on
+    a `@NotProjectScoped` route the guard skips) is not attributed.
 
 **THE REAL RUN, ON A COPY OF THE DEVELOPER DATABASE**, which was only ever
 read: `pg_dump perfportal` into `perfportal_access_real` held 28 runs, 4
