@@ -718,11 +718,20 @@ const responses: Record<string, ResponseObject> = {
     content: problem(),
   },
   Forbidden: {
-    description: 'The token is valid but lacks the scope this operation requires.',
+    description:
+      'The credential is valid but may not perform this operation. For a bearer token, it lacks ' +
+      'the scope the operation requires (code FORBIDDEN). For a signed-in session, either its ' +
+      'role in the project is below the one the operation needs (code ROLE_REQUIRED, the detail ' +
+      'naming that role), or the operation is an admin\'s and the account is not one (code ' +
+      'ADMIN_REQUIRED). A session that holds no role in the project is never told so with a 403: ' +
+      'it gets the 404 a project or run that does not exist gets. application/problem+json with ' +
+      'a required "remediation".',
     content: problem(),
   },
   NotFound: {
-    description: 'No such resource in a project this token can access.',
+    description:
+      'No such resource in a project this credential can reach. A project or run that exists ' +
+      'but the caller cannot see answers exactly as one that does not exist.',
     content: problem(),
   },
   SessionRequired: {
@@ -732,7 +741,10 @@ const responses: Record<string, ResponseObject> = {
       'refused unconditionally, whatever scopes it carries. The check is SessionOnlyGuard ' +
       'rather than @Scopes() because a scope check passes for ANY credential holding the ' +
       'scope: on token minting, for example, it would let a read-only CI token mint itself a ' +
-      'broader one. Sign in at POST /auth/sign-in/email and retry with the session cookie.',
+      'broader one. Sign in at POST /auth/sign-in/email and retry with the session cookie. ' +
+      'A signed-in session can be refused here too, by role rather than by credential type: ' +
+      'code ROLE_REQUIRED when its role in the project is below the one the operation needs, or ' +
+      'ADMIN_REQUIRED when the operation is an admin\'s.',
     content: problem(),
   },
   InvalidTokenRequest: {

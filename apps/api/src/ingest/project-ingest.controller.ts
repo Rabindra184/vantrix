@@ -11,6 +11,7 @@ import { IngestService } from './ingest.service.js';
 import { IDEMPOTENCY_HEADER, resolveIdempotencyKey } from './idempotency.js';
 import { readMultipart } from './multipart.js';
 import { projectNotFound } from '../common/validation.js';
+import { Requires } from '../auth/access.decorator.js';
 
 /**
  * Uploading a bundle from a BROWSER (review 09-13 M05).
@@ -67,6 +68,7 @@ export class ProjectIngestController {
   ) {}
 
   @Post()
+  @Requires('run:upload')
   async post(@Param('slug') slug: string, @Req() req: Request, @Res() res: Response): Promise<void> {
     const tenant = req.tenant!;
     const project = await this.projects.findBySlugInOrg(tenant.orgId, slug);

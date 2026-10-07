@@ -43,6 +43,7 @@ import {
   sanitizeFilename,
 } from './package-files.js';
 import { readRunnerMultipart } from './runner.multipart.js';
+import { Requires } from '../auth/access.decorator.js';
 
 @Controller('/v1/projects/:slug/runner')
 export class RunnerController {
@@ -54,6 +55,7 @@ export class RunnerController {
   ) {}
 
   @Post('runs')
+  @Requires('runner:run')
   @Scopes('runner')
   async start(@Param('slug') slug: string, @Req() req: Request): Promise<RunnerStartResponse> {
     const tenant = req.tenant!;
@@ -255,6 +257,7 @@ export class RunnerController {
   }
 
   @Get('runs')
+  @Requires('project:read')
   @Scopes('read')
   async list(
     @Param('slug') slug: string,
@@ -274,6 +277,7 @@ export class RunnerController {
   // one. openapi.integration.test.ts derives every handler's status from this
   // metadata and holds the document to it.
   @Post('runs/:jobId/cancel')
+  @Requires('runner:run')
   @HttpCode(200)
   @Scopes('runner')
   async cancel(
@@ -291,6 +295,7 @@ export class RunnerController {
   }
 
   @Get('runs/:jobId/logs')
+  @Requires('project:read')
   @Scopes('read')
   async logs(
     @Param('slug') slug: string,
@@ -317,6 +322,7 @@ export class RunnerController {
   // is sent — the standard openapi.integration.test.ts's 201 list holds every
   // create to.
   @Post('runs/:jobId/retry')
+  @Requires('runner:run')
   @Scopes('runner')
   async retry(
     @Param('slug') slug: string,

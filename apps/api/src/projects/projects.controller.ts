@@ -13,6 +13,7 @@ import { ProjectRepository } from '@perfportal/persistence';
 import { SessionOnlyGuard } from '../auth/session-only.guard.js';
 import { Scopes } from '../auth/scopes.decorator.js';
 import { badRequest, conflict } from '../common/validation.js';
+import { NotProjectScoped, Requires } from '../auth/access.decorator.js';
 
 // AuthGuard is registered globally via APP_GUARD (see auth.module.ts), so
 // every route authenticates by default. @Scopes('read') is still required
@@ -29,6 +30,7 @@ export class ProjectsController {
    * correct answer, and a CI job resolving its own slug is the caller.
    */
   @Get()
+  @NotProjectScoped()
   @Scopes('read')
   async list(@Req() req: Request): Promise<ProjectListResponse> {
     const tenant = req.tenant!;
@@ -61,6 +63,7 @@ export class ProjectsController {
   }
 
   @Post()
+  @Requires('projects:create')
   @HttpCode(201)
   @UseGuards(SessionOnlyGuard)
   async create(@Req() req: Request, @Body() body: unknown): Promise<ProjectSummary> {

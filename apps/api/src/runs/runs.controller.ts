@@ -18,6 +18,7 @@ import { checkTally } from './check-tally.js';
 import { noteOf, RunsService, warmupMsOf } from './runs.service.js';
 import { notFound, projectNotFound, runNotFound } from '../common/validation.js';
 import { SessionOnlyGuard } from '../auth/session-only.guard.js';
+import { BearerOnly, NotProjectScoped, Requires } from '../auth/access.decorator.js';
 
 // AuthGuard is registered globally via APP_GUARD (see auth.module.ts), so
 // every route authenticates by default — @UseGuards(AuthGuard) here would be
@@ -45,6 +46,7 @@ export class RunsController {
    * session names no project.
    */
   @Get()
+  @NotProjectScoped()
   @Scopes('read')
   async list(
     @Req() req: Request,
@@ -169,6 +171,7 @@ export class RunsController {
   }
 
   @Get(':id')
+  @Requires('project:read')
   @Scopes('read')
   async get(
     @Param('id', uuidParam('id')) id: string,
@@ -196,6 +199,7 @@ export class RunsController {
    * processing, and "this one is flaky" is often written while it streams.
    */
   @Put(':id/note')
+  @Requires('run:note')
   @UseGuards(SessionOnlyGuard)
   async putNote(
     @Param('id', uuidParam('id')) id: string,
@@ -226,12 +230,10 @@ export class RunsController {
         text: parsed.data.note,
         userId: tenant.userId,
       });
-    if (run === null) {
-      throw notFound(
-        `No run ${id} in this organisation.`,
-        'Check the run id. GET /v1/runs lists the runs a signed-in user can reach.',
-      );
-    }
+    // The run surface's ONE 404, the same `runNotFound` AccessGuard answers a
+    // non-member with: an admin, or a member whose run was deleted between
+    // the guard's lookup and this write, gets exactly that body too.
+    if (run === null) throw runNotFound(id);
     return { note: noteOf(run) };
   }
 }
@@ -378,6 +380,7 @@ export class ProjectRunsController {
   ) {}
 
   @Get()
+  @BearerOnly()
   @Scopes('read')
   async list(
     @Param('slug') slug: string,

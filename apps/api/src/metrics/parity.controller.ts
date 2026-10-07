@@ -7,6 +7,7 @@ import { Scopes } from '../auth/scopes.decorator.js';
 import { uuidParam } from '../common/validation.js';
 import { inRange, resolveRange, snapWindow } from '../common/window.js';
 import { notFound, runNotFound } from '../common/validation.js';
+import { Requires } from '../auth/access.decorator.js';
 
 @Controller('/v1/runs/:id')
 export class ParityController {
@@ -23,6 +24,7 @@ export class ParityController {
   }
 
   @Get('distribution')
+  @Requires('project:read')
   @Scopes('read')
   async distribution(
     @Param('id', uuidParam('id')) id: string,
@@ -86,6 +88,7 @@ export class ParityController {
   }
 
   @Get('users')
+  @Requires('project:read')
   @Scopes('read')
   async users(
     @Param('id', uuidParam('id')) id: string,
@@ -134,6 +137,7 @@ export class ParityController {
   }
 
   @Get('scatter')
+  @Requires('project:read')
   @Scopes('read')
   async scatter(
     @Param('id', uuidParam('id')) id: string,

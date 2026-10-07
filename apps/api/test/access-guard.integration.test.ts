@@ -48,8 +48,8 @@ describe('the global guards', () => {
  * invisible one got the guard's 404. Comparing the two would list which
  * project slugs and run ids exist.
  *
- * No real route carries `@Requires` yet (Task 6 annotates them), so these two
- * test-only routes reproduce the two shapes that leaked: a project route with
+ * These two test-only routes reproduce the two shapes that leaked, with
+ * nothing else of a real handler around them: a project route with
  * a uuid-piped sub-parameter (a rule's DELETE, a package, a runner job), and a
  * run route whose handler checks its body before looking the run up (the
  * run note's PUT). Each mirrors its real counterpart's pipe and refusal.

@@ -33,8 +33,8 @@ import { SESSION_TOKEN_ID_PREFIX } from './session-only.guard.js';
  *      ADMIN_REQUIRED. No project is involved.
  *   2. The project comes from `:slug`, or for a `/v1/runs/:id` route from
  *      the run. A route with neither is DECLARED WRONGLY and throws a plain
- *      `Error` naming it — a 500, and Task 6's route walk keeps it
- *      unreachable. That is checked before anything else about the caller,
+ *      `Error` naming it — a 500, and the route walk in
+ *      `access-routes.integration.test.ts` keeps it unreachable. That is checked before anything else about the caller,
  *      so an admin hits it too.
  *   3. An admin passes without the lookup: nothing it could find changes the
  *      answer.

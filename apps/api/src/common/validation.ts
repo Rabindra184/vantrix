@@ -89,12 +89,13 @@ export function forbidden(message: string, remediation: string): ForbiddenExcept
  * through the same call, so their bodies differ only in traceId. (A malformed
  * run id is the exception it leaves to the controller's 400.)
  *
- * The controllers' own "not there" answers, which admins, bearer tokens and
- * unannotated routes still reach, call these too, so the wording is one
- * thing everywhere — and is what those controllers already sent, unchanged.
- * Two 404s in runs.controller.ts word it differently and still spell their
- * own (the run note's, and the bearer-only project run list's): moving them
- * here changes their response, so that is its own decision.
+ * The controllers' own "not there" answers, which admins and bearer tokens
+ * still reach, call these too, so the wording is one thing everywhere — and
+ * is what those controllers already sent, unchanged. The run note's 404 was
+ * the exception ("…in this organisation."), so an admin and a non-member got
+ * two wordings from one route; it calls `runNotFound` now. One 404 in
+ * runs.controller.ts still spells its own: the bearer-only project run
+ * list's, which only a token reaches and no guard answers for.
  */
 
 /** A project slug the caller's org does not hold, or holds out of their reach. */

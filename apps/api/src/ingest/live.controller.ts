@@ -12,6 +12,7 @@ import { RunsService } from '../runs/runs.service.js';
 import { IDEMPOTENCY_HEADER, resolveIdempotencyKey } from './idempotency.js';
 import { LiveService } from './live.service.js';
 import { runNotFound } from '../common/validation.js';
+import { BearerOnly } from '../auth/access.decorator.js';
 
 /**
  * Reads the whole request body as a Buffer, the way multipart.ts reads the
@@ -158,6 +159,7 @@ export class LiveController {
   ) {}
 
   @Post('live')
+  @BearerOnly()
   @Scopes('stream')
   async open(@Req() req: Request, @Res() res: Response): Promise<void> {
     // Mirrors IngestController.post's PROJECT_REQUIRED check exactly. In
@@ -203,6 +205,7 @@ export class LiveController {
   }
 
   @Post(':id/stream')
+  @BearerOnly()
   @Scopes('stream')
   async stream(
     @Param('id', uuidParam('id')) id: string,
@@ -252,6 +255,7 @@ export class LiveController {
   }
 
   @Post(':id/close')
+  @BearerOnly()
   @Scopes('stream')
   async close(
     @Param('id', uuidParam('id')) id: string,

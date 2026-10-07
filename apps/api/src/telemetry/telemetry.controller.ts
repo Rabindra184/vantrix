@@ -4,6 +4,7 @@ import { TelemetryStore } from '@perfportal/persistence';
 import type { Request } from 'express';
 import { Scopes } from '../auth/scopes.decorator.js';
 import { badRequest } from '../common/validation.js';
+import { BearerOnly } from '../auth/access.decorator.js';
 
 /**
  * The agent's one endpoint.
@@ -18,6 +19,7 @@ export class TelemetryController {
   constructor(private readonly store: TelemetryStore) {}
 
   @Post()
+  @BearerOnly()
   @Scopes('telemetry')
   @HttpCode(202)
   async post(@Req() req: Request, @Body() body: unknown): Promise<{ accepted: number }> {

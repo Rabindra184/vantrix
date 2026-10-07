@@ -29,6 +29,7 @@ import { Scopes } from '../auth/scopes.decorator.js';
 import { badRequest, parseLimit, uuidParam } from '../common/validation.js';
 import { inRange, resolveRange, snapWindow } from '../common/window.js';
 import { runNotFound } from '../common/validation.js';
+import { Requires } from '../auth/access.decorator.js';
 
 // AuthGuard is registered globally via APP_GUARD (see auth.module.ts), so
 // every route authenticates by default — @UseGuards(AuthGuard) here would be
@@ -81,6 +82,7 @@ export class MetricsController {
    * a name.
    */
   @Get('trends')
+  @Requires('project:read')
   @Scopes('read')
   async trends(
     @Param('id', uuidParam('id')) id: string,
@@ -191,6 +193,7 @@ export class MetricsController {
   }
 
   @Get('stats')
+  @Requires('project:read')
   @Scopes('read')
   async stats(
     @Param('id', uuidParam('id')) id: string,
@@ -291,6 +294,7 @@ export class MetricsController {
   }
 
   @Get('series')
+  @Requires('project:read')
   @Scopes('read')
   async series(
     @Param('id', uuidParam('id')) id: string,
@@ -474,6 +478,7 @@ export class MetricsController {
   }
 
   @Get('errors')
+  @Requires('project:read')
   @Scopes('read')
   async errors(
     @Param('id', uuidParam('id')) id: string,
@@ -505,6 +510,7 @@ export class MetricsController {
    * parameters: this table holds one scope, and the signature says so.
    */
   @Get('errors/series')
+  @Requires('project:read')
   @Scopes('read')
   async errorSeries(
     @Param('id', uuidParam('id')) id: string,
@@ -581,6 +587,7 @@ export class MetricsController {
    * saturated generator this whole feature exists to find.
    */
   @Get('telemetry')
+  @Requires('project:read')
   @Scopes('read')
   async telemetry(
     @Param('id', uuidParam('id')) id: string,

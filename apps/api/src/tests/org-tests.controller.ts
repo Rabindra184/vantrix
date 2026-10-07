@@ -11,6 +11,7 @@ import type { Request } from 'express';
 import { Scopes } from '../auth/scopes.decorator.js';
 import { parseLimit, singleValue } from '../common/validation.js';
 import { checkTally } from '../runs/check-tally.js';
+import { NotProjectScoped } from '../auth/access.decorator.js';
 
 /**
  * Every test the caller may see, in one list: the portfolio home page's table
@@ -49,6 +50,7 @@ export class OrgTestsController {
   constructor(private readonly tests: TestRepository) {}
 
   @Get()
+  @NotProjectScoped()
   @Scopes('read')
   async list(
     @Req() req: Request,

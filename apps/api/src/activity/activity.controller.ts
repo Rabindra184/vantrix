@@ -12,6 +12,7 @@ import { Scopes } from '../auth/scopes.decorator.js';
 import { singleValue } from '../common/validation.js';
 import { checkTally } from '../runs/check-tally.js';
 import { glanceDays, resolveTimeZone } from './days.js';
+import { NotProjectScoped } from '../auth/access.decorator.js';
 
 /**
  * What the portfolio home page draws, in one response: a seven-day glance, a
@@ -72,6 +73,7 @@ export class ActivityController {
   constructor(private readonly activity: ActivityRepository) {}
 
   @Get()
+  @NotProjectScoped()
   @Scopes('read')
   async get(@Req() req: Request, @Query('tz') tz?: unknown): Promise<ActivityResponse> {
     const tenant = req.tenant!;

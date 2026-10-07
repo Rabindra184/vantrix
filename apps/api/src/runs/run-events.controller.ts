@@ -4,6 +4,7 @@ import { RunnerRepository, RunRepository } from '@perfportal/persistence';
 import type { Request } from 'express';
 import { Scopes } from '../auth/scopes.decorator.js';
 import { runNotFound, uuidParam } from '../common/validation.js';
+import { Requires } from '../auth/access.decorator.js';
 
 /**
  * ═══ A RUN'S LIFECYCLE EVENTS — WHAT THE LOGS TAB READS ═══
@@ -28,6 +29,7 @@ export class RunEventsController {
   ) {}
 
   @Get('events')
+  @Requires('project:read')
   @Scopes('read')
   async events(
     @Param('id', uuidParam('id')) id: string,

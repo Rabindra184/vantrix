@@ -5,11 +5,11 @@ import type { AccessAction } from '@perfportal/contracts';
  * ═══ THREE WAYS A ROUTE STATES WHO MAY CALL IT ═══
  * (docs/superpowers/specs/2026-10-07-project-access-design.md, section 2)
  *
- * Every session-reachable route will carry exactly one of the three below,
- * or `@Public` (the health probes). Task 6's route walk reads these keys off
- * Nest's metadata, the way `openapi.integration.test.ts` reads
- * `PATH_METADATA`, and fails any route carrying none of the four — so a route
- * cannot ship without saying who it is for. Only `@Requires` changes what a
+ * Every route carries exactly one of the three below, or `@Public` (the
+ * health probes). The route walk in `access-routes.integration.test.ts` reads
+ * these keys off Nest's metadata, the way `openapi.integration.test.ts` reads
+ * `PATH_METADATA`, and fails any route carrying none of the four, or more
+ * than one — so a route cannot ship without saying who it is for. Only `@Requires` changes what a
  * request gets back; the other two are statements for that walk, and
  * `AccessGuard` does not read them.
  */
