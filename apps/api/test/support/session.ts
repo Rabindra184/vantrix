@@ -21,20 +21,26 @@ import type { TestContext } from './app.js';
  * the real `/auth/sign-in/email` issued: a session forged into the database
  * would prove nothing about sign-in itself.
  */
-const PASSWORD = 'correct-horse-battery';
+export const TEST_PASSWORD = 'correct-horse-battery';
 
 /** The admin flag is exactly `user.role === 'admin'`; every other account is `'user'`. */
 type AccountRole = 'admin' | 'user';
 
 async function createAccount(email: string, role: AccountRole): Promise<string> {
-  const { user } = await auth.api.createUser({ body: { email, password: PASSWORD, name: email, role } });
+  const { user } = await auth.api.createUser({ body: { email, password: TEST_PASSWORD, name: email, role } });
   return user.id;
 }
 
-async function signIn(app: INestApplication, email: string): Promise<string> {
+/**
+ * Signs `email` in over HTTP and returns the session cookie the real
+ * `/auth/sign-in/email` issued. Exported for a case that needs a SECOND
+ * session for one account, or to sign in with a password it changed;
+ * `password` defaults to the one every account here is created with.
+ */
+export async function signIn(app: INestApplication, email: string, password = TEST_PASSWORD): Promise<string> {
   const res = await request(app.getHttpServer())
     .post('/auth/sign-in/email')
-    .send({ email, password: PASSWORD });
+    .send({ email, password });
 
   const setCookie = res.headers['set-cookie'] as unknown;
   const raw = Array.isArray(setCookie) ? setCookie[0] : setCookie;

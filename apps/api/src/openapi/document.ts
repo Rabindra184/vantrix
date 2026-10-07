@@ -716,7 +716,9 @@ const responses: Record<string, ResponseObject> = {
     content: problem(),
   },
   Unauthorized: {
-    description: 'The bearer token is missing, malformed, unknown, or revoked.',
+    description:
+      'The bearer token is missing, malformed, unknown, or revoked; or, for a browser, the session ' +
+      'cookie is missing or expired, or its account is disabled ("This account is disabled.").',
     content: problem(),
   },
   Forbidden: {
@@ -729,7 +731,9 @@ const responses: Record<string, ResponseObject> = {
       'project is below the one the operation needs (the detail naming that role), or ' +
       'ADMIN_REQUIRED when the operation is an admin\'s and the account is not one. A session ' +
       'that holds no role in the project is never told so with a 403: it gets the 404 a project ' +
-      'or run that does not exist gets. application/problem+json with a required "remediation".',
+      'or run that does not exist gets. A session whose account must choose a new password gets ' +
+      'code PASSWORD_CHANGE_REQUIRED on every operation but PUT /v1/me/password, before any of ' +
+      'the above is checked. application/problem+json with a required "remediation".',
     content: problem(),
   },
   NotFound: {
@@ -748,7 +752,9 @@ const responses: Record<string, ResponseObject> = {
       'broader one. Sign in at POST /auth/sign-in/email and retry with the session cookie. ' +
       'A signed-in session can be refused here too, by role rather than by credential type: ' +
       'code ROLE_REQUIRED when its role in the project is below the one the operation needs, or ' +
-      'ADMIN_REQUIRED when the operation is an admin\'s.',
+      'ADMIN_REQUIRED when the operation is an admin\'s. And a session whose account must choose ' +
+      'a new password is refused code PASSWORD_CHANGE_REQUIRED on every operation but ' +
+      'PUT /v1/me/password, before its role is checked.',
     content: problem(),
   },
   InvalidTokenRequest: {
@@ -2297,6 +2303,42 @@ const paths: Record<string, PathItemObject> = {
         '401': ref('Unauthorized'),
         '403': ref('SessionRequired'),
         '404': ref('NotFound'),
+      },
+    },
+  },
+
+  '/v1/me/password': {
+    put: {
+      operationId: 'setOwnPassword',
+      summary: 'Change your own password',
+      tags: ['me'],
+      // SESSION-ONLY: a bearer token names nobody, so it has no own password.
+      security: [{ cookieAuth: [] }],
+      description:
+        'Requires a signed-in session — refused for ANY bearer token regardless of scopes. Changes ' +
+        'the signed-in person\'s password after checking the current one, ends every OTHER session ' +
+        'they hold (this one stays signed in), and clears the requirement to choose a new password. ' +
+        'The one operation a session whose account must choose a new password may call: every ' +
+        'other answers it 403 PASSWORD_CHANGE_REQUIRED.',
+      requestBody: {
+        required: true,
+        description: 'The current password, and a new one of 8 to 128 characters that differs from it.',
+        content: json(schemaRef('ChangePasswordRequest')),
+      },
+      responses: {
+        '204': { description: 'Changed. Every other session of this account has ended. No body.' },
+        '400': {
+          description:
+            'Refused before anything changed. Code INVALID_PASSWORD_REQUEST when the body failed ' +
+            'ChangePasswordRequestSchema — a field missing, "newPassword" outside 8 to 128 ' +
+            'characters, or a field the schema does not know (it is `.strict()`); code ' +
+            'PASSWORD_UNCHANGED when the new password is the same as the current one; code ' +
+            'INVALID_CURRENT_PASSWORD when the current password is not correct. ' +
+            'application/problem+json with a required "remediation".',
+          content: problem(),
+        },
+        '401': ref('Unauthorized'),
+        '403': ref('SessionRequired'),
       },
     },
   },

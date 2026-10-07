@@ -130,6 +130,18 @@ export function accessDenied(
 }
 
 /**
+ * The password gate's refusal (`PasswordChangeGuard`): this session's account
+ * must choose a new password before anything else. One body for every route
+ * it guards, so the refusal says nothing about the route it was asked of.
+ */
+export function passwordChangeRequired(): ForbiddenException {
+  return Object.assign(new ForbiddenException('Choose a new password before doing anything else.'), {
+    code: 'PASSWORD_CHANGE_REQUIRED',
+    remediation: 'Change it with PUT /v1/me/password.',
+  });
+}
+
+/**
  * `?from=&to=` as elapsed ms from run start.
  *
  * ═══ EACH BOUND IS INDEPENDENTLY OPTIONAL AND MEANINGFUL ALONE ═══

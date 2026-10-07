@@ -13,12 +13,14 @@ import {
   RuleRepository,
   TestRepository,
   TokenRepository,
+  UserRepository,
 } from '@perfportal/persistence';
 import pg from 'pg';
 import { loadConfig } from '../config.js';
 import { AccessGuard } from './access.guard.js';
 import { AuthGuard } from './auth.guard.js';
 import { AuthMiddleware } from './auth.middleware.js';
+import { PasswordChangeGuard } from './password-change.guard.js';
 
 export const CONFIG = Symbol('CONFIG');
 
@@ -37,6 +39,7 @@ export const CONFIG = Symbol('CONFIG');
     { provide: RuleRepository, useFactory: (p: PrismaClient) => new RuleRepository(p), inject: [PrismaClient] },
     { provide: TestRepository, useFactory: (p: PrismaClient) => new TestRepository(p), inject: [PrismaClient] },
     { provide: ActivityRepository, useFactory: (p: PrismaClient) => new ActivityRepository(p), inject: [PrismaClient] },
+    { provide: UserRepository, useFactory: (p: PrismaClient) => new UserRepository(p), inject: [PrismaClient] },
     AuthGuard,
     AuthMiddleware,
     // Global so @Scopes() is enforced everywhere by default — a handler
@@ -57,9 +60,17 @@ export const CONFIG = Symbol('CONFIG');
     // that sets req.tenant for AccessGuard to read.
     // access-guard.integration.test.ts reads the order back from the running
     // app.
+    //
+    // The password gate sits BETWEEN the two: after AuthGuard, which sets
+    // req.tenant outside /v1, and before AccessGuard, so a session that must
+    // still choose its password is refused before AccessGuard can answer it
+    // with a 404 or ADMIN_REQUIRED that says which projects exist and what
+    // it may do. See password-change.guard.ts.
+    PasswordChangeGuard,
+    { provide: APP_GUARD, useExisting: PasswordChangeGuard },
     AccessGuard,
     { provide: APP_GUARD, useExisting: AccessGuard },
   ],
-  exports: [CONFIG, PrismaClient, pg.Pool, TokenRepository, OrgMemberRepository, ProjectMemberRepository, ProjectRepository, RunnerRepository, RunRepository, RuleRepository, TestRepository, ActivityRepository, AuthGuard, AuthMiddleware],
+  exports: [CONFIG, PrismaClient, pg.Pool, TokenRepository, OrgMemberRepository, ProjectMemberRepository, ProjectRepository, RunnerRepository, RunRepository, RuleRepository, TestRepository, ActivityRepository, UserRepository, AuthGuard, AuthMiddleware],
 })
 export class AuthModule {}

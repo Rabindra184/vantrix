@@ -226,6 +226,12 @@ export class LiveGateway implements OnApplicationBootstrap, OnModuleDestroy {
 
     const session = await auth.api.getSession({ headers: fromNodeHeaders(req.headers) });
     if (!session) return null;
+    // The two refusals `authenticateSession` and `PasswordChangeGuard` make on
+    // the HTTP path, neither of which runs here: a disabled account (Better
+    // Auth's `getSession` does not read `banned`), and a session that must
+    // still choose its password. Refused as an unknown run is, and before any
+    // query about the org or the run, so it learns nothing about either.
+    if (session.user.banned === true || session.user.mustChangePassword === true) return null;
 
     const membership = await this.members.findOrgForUser(session.user.id);
     if (!membership) return null;
