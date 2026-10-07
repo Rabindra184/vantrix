@@ -126,11 +126,16 @@ export class ProjectsController {
       );
     }
 
+    // `role: null`, stated rather than left out: only an admin reaches this
+    // handler (`projects:create`), and creating a project writes no
+    // membership row for its creator, so the creator holds no role in it —
+    // the same answer `GET /v1/projects` gives the same admin for it.
     return ProjectSummarySchema.parse({
       id: project.id,
       slug: project.slug,
       name: project.name,
       latestRun: null,
+      role: null,
     });
   }
 }

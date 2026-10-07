@@ -27,7 +27,9 @@ export const ProjectSummarySchema = z.object({
    * `null` is either an admin who holds no membership row here — the admin
    * flag is what lets them see the project, so read that flag before this
    * field — or a bearer token, which is a machine credential and holds no
-   * role in any project.
+   * role in any project. `POST /v1/projects` answers `null` for the first
+   * reason: only an admin may create a project, and creating one writes no
+   * membership row for its creator.
    *
    * `.nullable().optional()`, and the OPTIONAL half is the load-bearing one,
    * for the reason `TokenSummarySchema.expiresAt` records: the browser drops

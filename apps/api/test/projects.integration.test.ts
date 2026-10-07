@@ -104,10 +104,20 @@ describe('POST /v1/projects', () => {
 
     expect(res.status).toBe(201);
     expect(() => ProjectSummarySchema.parse(res.body)).not.toThrow();
-    expect(res.body).toMatchObject({ name: 'Search API', slug: 'search-api', latestRun: null });
+    // `role: null` stated, not omitted: the creator is an admin, and creating
+    // a project writes no membership row for them — the same answer the
+    // list gives the same admin for it, below.
+    expect(res.body).toMatchObject({
+      name: 'Search API',
+      slug: 'search-api',
+      latestRun: null,
+      role: null,
+    });
 
     const list = await request(ctx.app.getHttpServer()).get('/v1/projects').set('Cookie', cookie);
     expect(list.body.items.map((p: { slug: string }) => p.slug)).toEqual(['checkout', 'search-api']);
+    const listed = list.body.items.find((p: { slug: string }) => p.slug === 'search-api');
+    expect(listed).toMatchObject({ role: null });
   });
 
   it('refuses bearer credentials', async () => {
