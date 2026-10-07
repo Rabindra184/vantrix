@@ -49,8 +49,13 @@ export default function ChoosePassword({ onDone }: { readonly onDone: () => void
           </h1>
         </div>
         <PasswordChangeForm onDone={onDone} />
-        <div className="flex justify-center border-t border-default pt-4">
-          <SignOutButton />
+        {/* A COLUMN, because `SignOutButton` hands back its button and a failed
+            sign-out's alert as siblings: in a row the alert squeezes in beside
+            the button, in a column it sits beneath it, as on the
+            no-organisation page. The word stays drawn at every width — this
+            is the screen's only way out, and an icon alone is not one. */}
+        <div className="flex flex-col items-center gap-2 border-t border-default pt-4">
+          <SignOutButton alwaysShowLabel />
         </div>
       </div>
     </main>

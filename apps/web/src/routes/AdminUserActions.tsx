@@ -352,11 +352,14 @@ export function UserActions({
   const lineError = failed !== undefined && (failed.from === null || failed === strayed) ? mutation.error : null;
   const loading = pending !== undefined && pending.from === mode;
 
+  /* The questions name the person as every other per-row name does, by `who`
+     (ruling W6): the question names the confirm's group, so two people sharing
+     a display name would otherwise be asked about in identical words. */
   let block: ReactNode = null;
   if (mode === 'disable') {
     block = (
       <Confirm
-        question={`Disable ${user.name}? They are signed out everywhere.`}
+        question={`Disable ${who}? They are signed out everywhere.`}
         confirm="Disable"
         busy={busy}
         loading={loading}
@@ -368,7 +371,7 @@ export function UserActions({
   } else if (mode === 'remove') {
     block = (
       <Confirm
-        question={`Remove ${user.name}? Their run notes keep their text.`}
+        question={`Remove ${who}? Their run notes keep their text.`}
         confirm="Remove"
         busy={busy}
         loading={loading}

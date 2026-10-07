@@ -305,8 +305,11 @@ function AddUserForm({ projects }: { readonly projects: UseQueryResult<AdminProj
      An empty select would be refused in zod's default English, so a row never
      starts empty: it takes the first project not already on the form, as a
      Viewer (ruling W5). With none left — or no list yet — there is nothing to
-     add, and the button says so by being disabled. */
-  const nextProject = projects.isSuccess ? projectList.find((p) => !chosen.has(p.slug)) : undefined;
+     add, and the button says so by being disabled.
+     "No list yet" is `data === undefined`, never `!isSuccess` (ruling W14): a
+     background refetch that fails sets `status: 'error'` and keeps the list it
+     had, and that list is still real projects to add someone to. */
+  const nextProject = projects.data !== undefined ? projectList.find((p) => !chosen.has(p.slug)) : undefined;
 
   const mutation = useMutation({
     mutationFn: createUser,

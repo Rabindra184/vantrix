@@ -7,7 +7,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AdminProject, AdminUser } from '@perfportal/contracts';
 import AdminUsers from '../src/routes/AdminUsers';
-import { adminUsersQueryKey } from '../src/api/admin';
+import { adminProjectsQueryKey, adminUsersQueryKey } from '../src/api/admin';
 import { ADMIN_PROJECTS_ROUTE, ADMIN_USERS_ROUTE } from '../src/routes/paths';
 import { PASSWORD_LENGTH_MESSAGE } from '../src/formIssues';
 
@@ -268,7 +268,9 @@ describe('AdminUsers — the table', () => {
     await table();
 
     const tip = within(await rowOf('admin@example.test')).getByRole('button', { name: 'Ada Admin: projects' });
-    // Each membership its own item, so they are read apart rather than run together.
+    // Each membership is its own list item in the popover the ⓘ opens. The
+    // trigger's accessible description is computed from InfoTip's hidden copy,
+    // and that flattens the list into one string, so it reads as one run.
     expect(tip).toHaveAccessibleDescription('Checkout · Manager Search · Viewer');
   });
 
@@ -460,6 +462,47 @@ describe('AdminUsers — Add user', () => {
     await table();
 
     expect(within(form()).getByRole('button', { name: 'Add project' })).toBeDisabled();
+  });
+
+  /* W14's rule for the projects list as well as the users list: a refetch that
+     fails keeps the projects it had (TanStack v5 sets `status: 'error'` and
+     keeps `data`), so a blip on a background refetch must not take Add project
+     away. The gate is "is there a list", never "did the last fetch succeed". */
+  it('still adds the next project after a background refetch of the projects list fails', async () => {
+    let refuse = false;
+    stubApi({
+      projects: () =>
+        Promise.resolve(
+          refuse
+            ? problem(500, 'INTERNAL', 'The request could not be completed.', 'Retry the request.')
+            : json(200, { projects: PROJECTS }),
+        ),
+    });
+    const { client } = renderPage();
+    await table();
+    const user1 = await openForm();
+    const add = within(form()).getByRole('button', { name: 'Add project' });
+    await waitFor(() => expect(add).toBeEnabled());
+    await user1.click(add);
+    expect(within(form()).getByRole('combobox', { name: 'Project 1' })).toHaveValue('checkout');
+
+    refuse = true;
+    await act(() => client.invalidateQueries({ queryKey: adminProjectsQueryKey }));
+    // The precondition, or the case proves nothing: the refetch really failed,
+    // and the list it had is still there.
+    expect(client.getQueryState(adminProjectsQueryKey)?.status).toBe('error');
+    expect(client.getQueryData(adminProjectsQueryKey)).toEqual({ projects: PROJECTS });
+    // TanStack tells its observers on a `setTimeout(0)` of its own, after the
+    // refetch has settled; one more macrotask lets the page draw the error state
+    // before the button is read, or the read would see the render before it.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(add).toBeEnabled();
+    await user1.click(add);
+    // Checkout is taken by row 1, so row 2 starts on the first one left.
+    expect(within(form()).getByRole('combobox', { name: 'Project 2' })).toHaveValue('search');
   });
 
   /* Two rows mean two Project selects, two Role selects and two Removes; one
@@ -874,6 +917,51 @@ describe('AdminUsers — the row menu', () => {
     expect(await detailsOf('bea@example.test')).toBeNull();
     expect(writes(sent)).toEqual([]);
     expect(await triggerOf('Bea Admin')).toHaveFocus();
+  });
+
+  /* W6 for the confirms too: the question names its group, so two people
+     called Sam Lee would otherwise be asked about in identical words, and a
+     screen reader arriving on Cancel could not tell whose account it was about
+     to disable or remove. The email joins the name on those rows only — Bo's
+     questions above stay as they were. */
+  it('asks about each of two same-named people in words of their own', async () => {
+    const twins = [
+      user({ id: 'u1', name: 'Sam Lee', email: 'sam.one@example.test' }),
+      user({ id: 'u2', name: 'Sam Lee', email: 'sam.two@example.test' }),
+      FLAGGED,
+    ];
+    stubApi({ users: () => Promise.resolve(json(200, { users: twins })) });
+    renderPage();
+    await table();
+    const clicker = userEvent.setup();
+
+    const questionOf = async (who: string, email: string, item: 'Disable' | 'Remove') => {
+      await choose(clicker, who, item);
+      await menuSettled();
+      return within(within(await mustDetails(email)).getByRole('group')).getByText(/\?/).textContent;
+    };
+
+    const one = 'Sam Lee (sam.one@example.test)';
+    const two = 'Sam Lee (sam.two@example.test)';
+    // Arming the second row closes the first (W15), so each is read on its own.
+    expect(await questionOf(one, 'sam.one@example.test', 'Disable')).toBe(
+      'Disable Sam Lee (sam.one@example.test)? They are signed out everywhere.',
+    );
+    expect(await questionOf(two, 'sam.two@example.test', 'Disable')).toBe(
+      'Disable Sam Lee (sam.two@example.test)? They are signed out everywhere.',
+    );
+    expect(await questionOf(one, 'sam.one@example.test', 'Remove')).toBe(
+      'Remove Sam Lee (sam.one@example.test)? Their run notes keep their text.',
+    );
+    expect(await questionOf(two, 'sam.two@example.test', 'Remove')).toBe(
+      'Remove Sam Lee (sam.two@example.test)? Their run notes keep their text.',
+    );
+    // And the group is named by that question, so the two differ to a screen reader too.
+    expect(
+      within(await mustDetails('sam.two@example.test')).getByRole('group', {
+        name: 'Remove Sam Lee (sam.two@example.test)? Their run notes keep their text.',
+      }),
+    ).toBeInTheDocument();
   });
 
   /* W11 and W3: a field that shows what is typed, and a short password refused

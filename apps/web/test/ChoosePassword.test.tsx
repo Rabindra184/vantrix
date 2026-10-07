@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -19,7 +19,7 @@ afterEach(() => {
  */
 let requested: { path: string; method: string }[] = [];
 
-function renderStep() {
+function renderStep({ signOutFails = false }: { signOutFails?: boolean } = {}) {
   requested = [];
   vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input), 'http://localhost').pathname;
@@ -27,7 +27,9 @@ function renderStep() {
     if (path === '/v1/me/password') return Promise.resolve(new Response(null, { status: 204 }));
     if (path === '/auth/sign-out') {
       return Promise.resolve(
-        new Response('{"success":true}', { status: 200, headers: { 'Content-Type': 'application/json' } }),
+        signOutFails
+          ? new Response('{"message":"unavailable"}', { status: 503, headers: { 'Content-Type': 'application/json' } })
+          : new Response('{"success":true}', { status: 200, headers: { 'Content-Type': 'application/json' } }),
       );
     }
     return Promise.reject(new Error(`unexpected request to ${path}`));
@@ -84,5 +86,33 @@ describe('ChoosePassword', () => {
 
     expect(await screen.findByText('login stand-in')).toBeInTheDocument();
     expect(requested).toEqual([{ path: '/auth/sign-out', method: 'POST' }]);
+  });
+
+  /** Sign out is this screen's only way out, so it keeps its word at every
+   *  width. `SignOutButton` hides the word below `sm` by default, for the
+   *  cramped header slot; this step has room, and an icon alone is not enough
+   *  to leave by. jsdom applies no stylesheet, so the case reads the class
+   *  that would hide it — `SignOutButton.test.tsx` pins the default. */
+  it('labels Sign out in words at every width', () => {
+    renderStep();
+    const label = within(screen.getByRole('button', { name: 'Sign out' })).getByText('Sign out');
+    expect(label).not.toHaveClass('sr-only');
+  });
+
+  /** `SignOutButton` hands back the button and, on a failure, its alert as
+   *  siblings; laid out in a row they squeeze side by side. A column puts the
+   *  alert beneath the button it is about, as the no-organisation page does. */
+  it('shows a failed sign-out beneath the button, in a column', async () => {
+    renderStep({ signOutFails: true });
+    const user = userEvent.setup();
+    const button = screen.getByRole('button', { name: 'Sign out' });
+    await user.click(button);
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/you may still be signed in/i);
+    expect(button.compareDocumentPosition(alert) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(alert.parentElement).toBe(button.parentElement);
+    expect(alert.parentElement).toHaveClass('flex-col');
+    expect(screen.queryByText('login stand-in')).toBeNull();
   });
 });
