@@ -607,6 +607,15 @@ describe('the day counts', () => {
     // too) run_test_id_created_at_idx, each with the range as a condition on
     // its SECOND column — checked against every entry of the index rather
     // than seeking to one day — and the loose pattern accepts both plans.
-    expect(text).toMatch(/run_org_id_created_at_idx[^\n]*\n\s*Index Cond:[^\n]*created_at/);
+    //
+    // AND THE ORG FIRST, measured too: with the org predicate dropped from a
+    // member-scoped statement the planner still names this index and still
+    // puts the range in its condition — `((created_at >= …) AND …)`, the
+    // index's second column alone, a walk over every org's entries — and a
+    // pattern that only asks for created_at passed. The seek is org_id and
+    // then the day, in that order, or it is not this index doing its job.
+    expect(text).toMatch(
+      /run_org_id_created_at_idx[^\n]*\n\s*Index Cond: \(\(org_id = [^\n]*created_at >=/,
+    );
   });
 });
