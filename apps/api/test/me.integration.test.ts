@@ -2,6 +2,12 @@ import { randomUUID } from 'node:crypto';
 import { UserRepository } from '@perfportal/persistence';
 import request from 'supertest';
 import { afterEach, describe, expect, it } from 'vitest';
+import { RedisCommands } from '../src/common/redis-commands.js';
+import {
+  PASSWORD_ATTEMPT_LIMIT,
+  PASSWORD_ATTEMPT_WINDOW_SECONDS,
+  passwordAttemptKey,
+} from '../src/me/password-attempts.js';
 import { createTestApp, type TestContext } from './support/app.js';
 import { signIn, signInAsProjectMember, TEST_PASSWORD } from './support/session.js';
 
@@ -13,7 +19,8 @@ import { signIn, signInAsProjectMember, TEST_PASSWORD } from './support/session.
  * Used by the account menu and by the first-sign-in step. It changes the
  * password through Better Auth's own `changePassword`, which checks the
  * current one; ends every OTHER session the person holds, keeping the one
- * that asked; and clears `mustChangePassword`.
+ * that asked; and clears `mustChangePassword`. It is throttled per account,
+ * and it is the only way in: Better Auth's own `/auth/change-password` 404s.
  */
 
 let ctx: TestContext;
@@ -37,6 +44,14 @@ function change(cookie: string, body: object) {
 async function flagOf(userId: string): Promise<boolean> {
   const row = await ctx.prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { mustChangePassword: true } });
   return row.mustChangePassword;
+}
+
+/**
+ * Ends `userId`'s throttle window now, as its TTL would: for a case that sends
+ * more attempts than one window allows for a reason that is not the throttle.
+ */
+async function endWindow(userId: string): Promise<void> {
+  await ctx.app.get(RedisCommands).client.del(passwordAttemptKey(userId));
 }
 
 /** Whether `password` signs `email` in, read off the real sign-in route. */
@@ -127,7 +142,7 @@ describe('PUT /v1/me/password', () => {
 
   it('refuses a body outside the bounds 400 INVALID_PASSWORD_REQUEST', async () => {
     ctx = await createTestApp();
-    const { cookie, email } = await member();
+    const { cookie, userId, email } = await member();
 
     for (const body of [
       {},
@@ -137,6 +152,8 @@ describe('PUT /v1/me/password', () => {
       { currentPassword: TEST_PASSWORD, newPassword: 'x'.repeat(129) },
       { currentPassword: TEST_PASSWORD, newPassword: NEW_PASSWORD, revokeOtherSessions: true },
     ]) {
+      // Six bodies is more than one window allows; this case is about the bodies.
+      await endWindow(userId);
       const res = await change(cookie, body);
       expect([res.status, res.body.code], JSON.stringify(body)).toEqual([400, 'INVALID_PASSWORD_REQUEST']);
     }
@@ -151,5 +168,103 @@ describe('PUT /v1/me/password', () => {
       .send({ currentPassword: TEST_PASSWORD, newPassword: NEW_PASSWORD });
     expect([res.status, res.body.code]).toEqual([403, 'FORBIDDEN']);
     expect(res.body.detail).toMatch(/signed-in person/);
+  });
+});
+
+/*
+ * ═══ THROTTLED PER ACCOUNT ═══
+ *
+ * A wrong current password answers 400 and a right one 204, so the route is
+ * an oracle for the plaintext password to anyone holding the cookie. Better
+ * Auth's own limiter does not cover it — `auth.api.*` skips the router it
+ * runs in — so the route counts every call per account, and the 4th within a
+ * window answers 429 before any password is hashed.
+ */
+describe('PUT /v1/me/password, throttled', () => {
+  it('refuses the 4th attempt within the window 429 RATE_LIMITED with a Retry-After, even with the right password', async () => {
+    ctx = await createTestApp();
+    const { cookie, userId, email } = await member();
+
+    for (let i = 0; i < PASSWORD_ATTEMPT_LIMIT; i += 1) {
+      const res = await change(cookie, { currentPassword: `wrong-guess-${i}`, newPassword: NEW_PASSWORD });
+      expect([res.status, res.body.code], `attempt ${i + 1}`).toEqual([400, 'INVALID_CURRENT_PASSWORD']);
+    }
+    const refused = await change(cookie, { currentPassword: TEST_PASSWORD, newPassword: NEW_PASSWORD });
+    expect([refused.status, refused.body]).toEqual([
+      429,
+      expect.objectContaining({
+        code: 'RATE_LIMITED',
+        detail: 'Too many password attempts.',
+        remediation: 'Wait a few seconds and try again.',
+      }),
+    ]);
+    const retryAfter = Number(refused.headers['retry-after']);
+    expect(retryAfter).toBeGreaterThanOrEqual(1);
+    expect(retryAfter).toBeLessThanOrEqual(PASSWORD_ATTEMPT_WINDOW_SECONDS);
+    // Refused before the password was checked: it is still the old one.
+    expect(await signsIn(email, TEST_PASSWORD)).toBe(true);
+    // And the window does end: the counter carries an expiry within it.
+    const ttl = await ctx.app.get(RedisCommands).client.ttl(passwordAttemptKey(userId));
+    expect(ttl).toBeGreaterThan(0);
+    expect(ttl).toBeLessThanOrEqual(PASSWORD_ATTEMPT_WINDOW_SECONDS);
+  });
+
+  /**
+   * The window's end is the key's expiry, asserted above; it is brought
+   * forward here by deleting the key rather than by sleeping ten seconds.
+   */
+  it('counts afresh once the window ends, and the right password then succeeds', async () => {
+    ctx = await createTestApp();
+    const { cookie, userId, email } = await member();
+    for (let i = 0; i < PASSWORD_ATTEMPT_LIMIT; i += 1) {
+      await change(cookie, { currentPassword: `wrong-guess-${i}`, newPassword: NEW_PASSWORD }).expect(400);
+    }
+    await change(cookie, { currentPassword: TEST_PASSWORD, newPassword: NEW_PASSWORD }).expect(429);
+
+    await endWindow(userId);
+
+    await change(cookie, { currentPassword: TEST_PASSWORD, newPassword: NEW_PASSWORD }).expect(204);
+    expect(await signsIn(email, NEW_PASSWORD)).toBe(true);
+  });
+
+  it('throttles one account without touching another', async () => {
+    ctx = await createTestApp();
+    const one = await member();
+    const other = await member();
+    for (let i = 0; i < PASSWORD_ATTEMPT_LIMIT; i += 1) {
+      await change(one.cookie, { currentPassword: `wrong-guess-${i}`, newPassword: NEW_PASSWORD }).expect(400);
+    }
+    await change(one.cookie, { currentPassword: TEST_PASSWORD, newPassword: NEW_PASSWORD }).expect(429);
+
+    await change(other.cookie, { currentPassword: TEST_PASSWORD, newPassword: NEW_PASSWORD }).expect(204);
+  });
+});
+
+/*
+ * ═══ THE ONLY WAY TO CHANGE ONE'S OWN PASSWORD ═══
+ *
+ * Better Auth's own `POST /auth/change-password` skips the unchanged-password
+ * rule, the throttle and the flag, so it answers 404 over HTTP
+ * (`refuseServerOnlyRoutes` in createAuth). The route above calls the same
+ * endpoint server-side, which skips the router where that refusal runs, and
+ * still works. session-auth.integration.test.ts drives the path spellings.
+ */
+describe('Better Auth’s own /auth/change-password', () => {
+  it('answers 404 to a valid session and changes nothing, while PUT /v1/me/password still changes it', async () => {
+    ctx = await createTestApp();
+    const { cookie, userId, email } = await member();
+    await new UserRepository(ctx.prisma).setMustChangePassword(userId, true);
+
+    await request(ctx.app.getHttpServer())
+      .post('/auth/change-password')
+      .set('Cookie', cookie)
+      .send({ currentPassword: TEST_PASSWORD, newPassword: NEW_PASSWORD })
+      .expect(404);
+    expect(await signsIn(email, TEST_PASSWORD)).toBe(true);
+    expect(await flagOf(userId)).toBe(true);
+
+    await change(cookie, { currentPassword: TEST_PASSWORD, newPassword: NEW_PASSWORD }).expect(204);
+    expect(await signsIn(email, NEW_PASSWORD)).toBe(true);
+    expect(await flagOf(userId)).toBe(false);
   });
 });

@@ -2,6 +2,8 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpException,
+  HttpStatus,
   NotFoundException,
   ParseUUIDPipe,
 } from '@nestjs/common';
@@ -138,6 +140,18 @@ export function passwordChangeRequired(): ForbiddenException {
   return Object.assign(new ForbiddenException('Choose a new password before doing anything else.'), {
     code: 'PASSWORD_CHANGE_REQUIRED',
     remediation: 'Change it with PUT /v1/me/password.',
+  });
+}
+
+/**
+ * A 429 with its own code, RATE_LIMITED: `ProblemFilter` derives no code for
+ * this status, and a client tells "wait" from "fix the request" by it. The
+ * caller sets `Retry-After` on the response itself.
+ */
+export function rateLimited(message: string, remediation: string): HttpException {
+  return Object.assign(new HttpException(message, HttpStatus.TOO_MANY_REQUESTS), {
+    code: 'RATE_LIMITED',
+    remediation,
   });
 }
 

@@ -101,24 +101,39 @@ function adminPlugin(): AdminPlugin {
 }
 
 /**
- * Refuses the admin plugin's own HTTP routes, inside Better Auth's pipeline.
- * Only `onRequest`'s use of its context is declared, so the type is nameable
- * without reaching into `@better-auth/core`.
+ * Refuses, over HTTP, the Better Auth routes this product reaches only
+ * server-side, inside Better Auth's pipeline. Only `onRequest`'s use of its
+ * context is declared, so the type is nameable without reaching into
+ * `@better-auth/core`.
  */
-export interface RefuseAdminHttpPlugin {
-  id: 'refuse-admin-http';
+export interface RefuseServerOnlyRoutesPlugin {
+  id: 'refuse-server-only-routes';
   onRequest(request: Request, ctx: { baseURL: string }): Promise<{ response: Response } | undefined>;
 }
 
 /**
- * ═══ THE ADMIN PLUGIN'S HTTP ROUTES ARE A SECOND ADMIN API, SO THEY 404 ═══
+ * The Better Auth routes under the base path that answer 404 over HTTP, each
+ * with everything beneath it. Server-side `auth.api.*` calls still reach them.
+ */
+const SERVER_ONLY_ROUTES = ['/admin', '/change-password'] as const;
+
+/**
+ * ═══ ROUTES THIS PRODUCT CALLS SERVER-SIDE ONLY, SO OVER HTTP THEY 404 ═══
  *
- * The admin plugin is registered for its SERVER-SIDE calls (bootstrap, and the
- * `/v1/admin` routes to come). Its HTTP surface — list-users, create-user,
- * set-role, ban-user, impersonate-user and the rest — would otherwise answer
- * any admin's cookie: an undocumented admin API in Better Auth's shapes rather
- * than problem+json, beside the one place admin operations are meant to go
- * and be recorded.
+ * `/auth/admin/*`. The admin plugin is registered for its SERVER-SIDE calls
+ * (bootstrap, and the `/v1/admin` routes to come). Its HTTP surface —
+ * list-users, create-user, set-role, ban-user, impersonate-user and the rest —
+ * would otherwise answer any admin's cookie: an undocumented admin API in
+ * Better Auth's shapes rather than problem+json, beside the one place admin
+ * operations are meant to go and be recorded.
+ *
+ * `/auth/change-password`. `PUT /v1/me/password` is the one way to change
+ * one's own password: it calls this same endpoint server-side, refuses a new
+ * password equal to the current one, throttles attempts per account, and
+ * clears `mustChangePassword`. The HTTP route does none of the last three, so
+ * left open a person told to replace an admin's temporary password could go
+ * temporary → X here and X → temporary through `/v1`, and end unflagged on the
+ * password the admin chose.
  *
  * ═══ WHY HERE, AND NOT IN FRONT OF THE HANDLER ═══
  *
@@ -143,7 +158,8 @@ export interface RefuseAdminHttpPlugin {
  * LAST among the plugins because a plugin may replace the request, and it
  * checks the one the router will see. Server-side `auth.api.*` calls never
  * reach it: those invoke an endpoint directly and skip the router entirely,
- * which is why bootstrap and the test fixtures can still create accounts.
+ * which is why bootstrap and the test fixtures can still create accounts, and
+ * `PUT /v1/me/password` can still change a password.
  *
  * The base path is read from the context exactly as the router derives its
  * own (`new URL(ctx.baseURL).pathname`), so there is no second copy of
@@ -153,9 +169,9 @@ export interface RefuseAdminHttpPlugin {
  * gives a path it does not serve, so these routes read as absent rather than
  * present-and-forbidden.
  */
-function refuseAdminHttp(): RefuseAdminHttpPlugin {
+function refuseServerOnlyRoutes(): RefuseServerOnlyRoutesPlugin {
   return {
-    id: 'refuse-admin-http',
+    id: 'refuse-server-only-routes',
     async onRequest(request, ctx) {
       const basePath = new URL(ctx.baseURL).pathname.replace(/\/+$/, '');
       let path: string;
@@ -164,10 +180,12 @@ function refuseAdminHttp(): RefuseAdminHttpPlugin {
       } catch {
         return { response: new Response(null, { status: 404 }) };
       }
-      const admin = `${basePath}/admin`.toLowerCase();
       const lower = path.toLowerCase();
-      if (lower === admin || lower.startsWith(`${admin}/`)) {
-        return { response: new Response(null, { status: 404 }) };
+      for (const route of SERVER_ONLY_ROUTES) {
+        const refused = `${basePath}${route}`.toLowerCase();
+        if (lower === refused || lower.startsWith(`${refused}/`)) {
+          return { response: new Response(null, { status: 404 }) };
+        }
       }
       return undefined;
     },
@@ -203,9 +221,9 @@ function refuseAdminHttp(): RefuseAdminHttpPlugin {
  * the first admin with nobody signed in.
  *
  * The plugin's own HTTP routes (`/auth/admin/*`) are a second admin API this
- * product does not offer; `refuseAdminHttp`, registered after it, answers
- * them 404 inside Better Auth's own pipeline, on the very request the router
- * routes. The plugin is here for its server-side calls and for the
+ * product does not offer; `refuseServerOnlyRoutes`, registered after it,
+ * answers them 404 inside Better Auth's own pipeline, on the very request the
+ * router routes — and `/auth/change-password` too, for `PUT /v1/me/password`. The plugin is here for its server-side calls and for the
  * columns it owns: `user.role` (the admin flag is exactly `'admin'`, every
  * other account `'user'`), `banned`/`banReason`/`banExpires`, and
  * `session.impersonatedBy`.
@@ -238,9 +256,10 @@ export function createAuth(opts: {
         mustChangePassword: { type: 'boolean', defaultValue: false, input: false },
       },
     },
-    // refuseAdminHttp LAST: a plugin's onRequest may replace the request, and
-    // the refusal has to judge the one the router will actually route.
-    plugins: [adminPlugin(), refuseAdminHttp()],
+    // refuseServerOnlyRoutes LAST: a plugin's onRequest may replace the
+    // request, and the refusal has to judge the one the router will actually
+    // route.
+    plugins: [adminPlugin(), refuseServerOnlyRoutes()],
     // NO `cookieCache`, and that is load-bearing: with it off, every
     // `getSession` reads the user row, so `user.role` — the admin flag — is
     // current on every request, and a demoted admin is an ordinary account on

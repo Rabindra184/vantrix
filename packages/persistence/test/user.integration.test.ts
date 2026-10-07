@@ -195,6 +195,61 @@ describe('UserRepository.setMustChangePassword', () => {
   });
 });
 
+describe('UserRepository.finishPasswordChange', () => {
+  const session = (id: string, userId: string) =>
+    prisma.session.create({ data: { id, token: `token-${id}`, userId, expiresAt: new Date(Date.now() + 60_000) } });
+  const sessionIds = async (userId: string) =>
+    (await prisma.session.findMany({ where: { userId }, orderBy: { id: 'asc' }, select: { id: true } })).map((r) => r.id);
+
+  it("ends the person's other sessions, keeps the named one, and clears the flag", async () => {
+    await user('u-change');
+    await user('u-else');
+    await users.setMustChangePassword('u-change', true);
+    await users.setMustChangePassword('u-else', true);
+    await session('s-keep', 'u-change');
+    await session('s-other', 'u-change');
+    await session('s-third', 'u-change');
+    await session('s-else', 'u-else');
+
+    await users.finishPasswordChange('u-change', 's-keep');
+
+    expect(await sessionIds('u-change')).toEqual(['s-keep']);
+    expect((await prisma.user.findUniqueOrThrow({ where: { id: 'u-change' } })).mustChangePassword).toBe(false);
+    // Somebody else's sessions and flag are not touched.
+    expect(await sessionIds('u-else')).toEqual(['s-else']);
+    expect((await prisma.user.findUniqueOrThrow({ where: { id: 'u-else' } })).mustChangePassword).toBe(true);
+  });
+
+  /**
+   * ONE TRANSACTION, measured rather than assumed: a trigger makes the flag's
+   * UPDATE fail for this one account, after the sessions' DELETE has run in
+   * the same call. Run as two writes, the sessions would be gone with the
+   * flag still set; in one transaction the DELETE rolls back with it.
+   */
+  it('ends no session when clearing the flag fails', async () => {
+    await user('u-atomic');
+    await users.setMustChangePassword('u-atomic', true);
+    await session('s-keep', 'u-atomic');
+    await session('s-other', 'u-atomic');
+    await pool.query(`
+      CREATE OR REPLACE FUNCTION finish_password_change_test_refuse() RETURNS trigger AS $body$
+      BEGIN RAISE EXCEPTION 'refused by finish_password_change_test_refuse'; END;
+      $body$ LANGUAGE plpgsql`);
+    await pool.query(`
+      CREATE TRIGGER finish_password_change_test_refuse BEFORE UPDATE ON "user"
+      FOR EACH ROW WHEN (OLD.id = 'u-atomic') EXECUTE FUNCTION finish_password_change_test_refuse()`);
+    try {
+      await expect(users.finishPasswordChange('u-atomic', 's-keep')).rejects.toThrow(/finish_password_change_test_refuse/);
+    } finally {
+      await pool.query('DROP TRIGGER IF EXISTS finish_password_change_test_refuse ON "user"');
+      await pool.query('DROP FUNCTION IF EXISTS finish_password_change_test_refuse()');
+    }
+
+    expect(await sessionIds('u-atomic')).toEqual(['s-keep', 's-other']);
+    expect((await prisma.user.findUniqueOrThrow({ where: { id: 'u-atomic' } })).mustChangePassword).toBe(true);
+  });
+});
+
 describe('UserRepository.deleteUser', () => {
   it('removes the account with its sessions, accounts and memberships', async () => {
     await user('u-gone');

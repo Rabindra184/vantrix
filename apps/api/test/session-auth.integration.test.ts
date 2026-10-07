@@ -295,6 +295,62 @@ describe('/auth/*', () => {
     // The control, through the same helper: an ordinary route still answers.
     expect(await getSession({ Host: host })).toBe(200);
   });
+
+  /**
+   * `/auth/change-password` is refused by the same plugin, the same way:
+   * `PUT /v1/me/password` is the one way to change one's own password, and
+   * this route skips its unchanged-password rule, its throttle and the
+   * `mustChangePassword` flag. Every spelling and every smuggling header the
+   * admin cases above drive, against this path.
+   *
+   * The body carries a WRONG current password, so an unrefused request
+   * answers Better Auth's own 400 — distinct from the refusal's 404 — and
+   * changes nothing either way. The stored password is then checked to be
+   * the one the account started with.
+   */
+  it('refuses /auth/change-password however the path is spelled, and when a header names it', async () => {
+    ctx = await createTestApp();
+    const email = 'change-password-spellings@example.test';
+    const { cookie } = await signInAsAdmin(ctx, email);
+    const { port } = ctx.app.getHttpServer().address() as AddressInfo;
+    const host = `127.0.0.1:${port}`;
+    const body = JSON.stringify({ currentPassword: 'not-the-password', newPassword: 'another-password-1' });
+    const post = (path: string, headers: Record<string, string> = {}) =>
+      rawStatus(port, {
+        method: 'POST',
+        path,
+        headers: { Host: host, Cookie: cookie, 'Content-Type': 'application/json', ...headers },
+        body,
+      });
+
+    const spellings = [
+      '/auth/change-password',
+      '/auth/./change-password',
+      '/auth/foo/../change-password',
+      '/auth/%2e/change-password',
+      '/auth/CHANGE-PASSWORD',
+      '/auth/change-password?x=1',
+    ];
+    const answered = await Promise.all(spellings.map(async (path) => `${path} ${await post(path)}`));
+    expect(answered).toEqual(spellings.map((p) => `${p} 404`));
+
+    const smuggled = {
+      'Host with ?': await post('/auth/sign-in/email', { Host: `${host}/auth/change-password?` }),
+      'Host with #': await post('/auth/sign-in/email', { Host: `${host}/auth/change-password#` }),
+      'X-Forwarded-Proto': await post('/auth/sign-in/email', {
+        'X-Forwarded-Proto': `http://${host}/auth/change-password?x=`,
+      }),
+    };
+    expect(smuggled).toEqual({ 'Host with ?': 404, 'Host with #': 404, 'X-Forwarded-Proto': 404 });
+
+    // Nothing changed, and the same socket, the same way, still reaches an
+    // ordinary route: a refusal that 404s everything would pass every line above.
+    const signIn = await request(ctx.app.getHttpServer())
+      .post('/auth/sign-in/email')
+      .send({ email, password: 'correct-horse-battery' });
+    expect(signIn.status).toBe(200);
+    expect(await rawStatus(port, { method: 'GET', path: '/auth/get-session', headers: { Host: host, Cookie: cookie } })).toBe(200);
+  });
 });
 
 /** A 'complete', passing run in ctx's org — statusFor() only returns 200 for this. */

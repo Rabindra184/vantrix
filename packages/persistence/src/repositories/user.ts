@@ -179,6 +179,30 @@ export class UserRepository {
   }
 
   /**
+   * What follows a person changing their own password, once the new one is
+   * written: every OTHER session of theirs ends, the one that asked
+   * (`keepSessionId`) stays, and `mustChangePassword` clears. ONE transaction,
+   * so a failure after the password write leaves one partial state — the new
+   * password with everything else as it was — and never the sessions ended
+   * with the flag still set, or the flag cleared with the old sessions still
+   * live.
+   *
+   * Deletes the `session` rows directly. That is how Better Auth ends a
+   * session too (its `revokeOtherSessions` deletes them through its adapter),
+   * and with no cookie cache configured every `getSession` reads the row, so
+   * a deleted session's cookie answers 401 on its next request.
+   *
+   * Throws (P2025) for an account that does not exist, and then deletes
+   * nothing.
+   */
+  async finishPasswordChange(userId: string, keepSessionId: string): Promise<void> {
+    await this.prisma.$transaction([
+      this.prisma.session.deleteMany({ where: { userId, id: { not: keepSessionId } } }),
+      this.prisma.user.update({ where: { id: userId }, data: { mustChangePassword: false } }),
+    ]);
+  }
+
+  /**
    * Removes an account outright; its sessions, credential accounts and
    * memberships cascade with it. Only for undoing a create that failed after
    * the account existed, so it is a no-op for an account already gone: a

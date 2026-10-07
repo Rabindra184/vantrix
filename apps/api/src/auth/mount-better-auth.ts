@@ -20,8 +20,9 @@ import { auth } from './better-auth.instance.js';
  * well as the path, so a request Express sees as `/auth/get-session` can be
  * routed by Better Auth as `/auth/admin/list-users`. The admin plugin's HTTP
  * routes are therefore refused inside Better Auth's own pipeline — the
- * `refuseAdminHttp` plugin in `createAuth` — and not by a guard in front of
- * this handler, which is where two bypassable versions of it used to live.
+ * `refuseServerOnlyRoutes` plugin in `createAuth`, which also refuses
+ * `/auth/change-password` — and not by a guard in front of this handler,
+ * which is where two bypassable versions of it used to live.
  */
 export function mountBetterAuth(app: INestApplication): void {
   app.getHttpAdapter().getInstance().all('/auth/*splat', toNodeHandler(auth));

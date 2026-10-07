@@ -16,6 +16,7 @@ import {
   UserRepository,
 } from '@perfportal/persistence';
 import pg from 'pg';
+import { RedisCommands } from '../common/redis-commands.js';
 import { loadConfig } from '../config.js';
 import { AccessGuard } from './access.guard.js';
 import { AuthGuard } from './auth.guard.js';
@@ -30,6 +31,8 @@ export const CONFIG = Symbol('CONFIG');
     { provide: CONFIG, useFactory: () => loadConfig() },
     { provide: PrismaClient, useFactory: () => createPrisma(loadConfig().databaseUrl) },
     { provide: pg.Pool, useFactory: () => createPool(loadConfig().databaseUrl) },
+    // The one connection for ordinary Redis commands; see redis-commands.ts.
+    { provide: RedisCommands, useFactory: () => new RedisCommands(loadConfig().redisUrl) },
     { provide: TokenRepository, useFactory: (p: PrismaClient) => new TokenRepository(p), inject: [PrismaClient] },
     { provide: OrgMemberRepository, useFactory: (p: PrismaClient) => new OrgMemberRepository(p), inject: [PrismaClient] },
     { provide: ProjectMemberRepository, useFactory: (p: PrismaClient) => new ProjectMemberRepository(p), inject: [PrismaClient] },
@@ -71,6 +74,6 @@ export const CONFIG = Symbol('CONFIG');
     AccessGuard,
     { provide: APP_GUARD, useExisting: AccessGuard },
   ],
-  exports: [CONFIG, PrismaClient, pg.Pool, TokenRepository, OrgMemberRepository, ProjectMemberRepository, ProjectRepository, RunnerRepository, RunRepository, RuleRepository, TestRepository, ActivityRepository, UserRepository, AuthGuard, AuthMiddleware],
+  exports: [CONFIG, PrismaClient, pg.Pool, RedisCommands, TokenRepository, OrgMemberRepository, ProjectMemberRepository, ProjectRepository, RunnerRepository, RunRepository, RuleRepository, TestRepository, ActivityRepository, UserRepository, AuthGuard, AuthMiddleware],
 })
 export class AuthModule {}

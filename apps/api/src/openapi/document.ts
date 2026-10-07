@@ -732,8 +732,9 @@ const responses: Record<string, ResponseObject> = {
       'ADMIN_REQUIRED when the operation is an admin\'s and the account is not one. A session ' +
       'that holds no role in the project is never told so with a 403: it gets the 404 a project ' +
       'or run that does not exist gets. A session whose account must choose a new password gets ' +
-      'code PASSWORD_CHANGE_REQUIRED on every operation but PUT /v1/me/password, before any of ' +
-      'the above is checked. application/problem+json with a required "remediation".',
+      'code PASSWORD_CHANGE_REQUIRED on every operation a session can otherwise reach, except ' +
+      'PUT /v1/me/password — after the scope check, before the role check. ' +
+      'application/problem+json with a required "remediation".',
     content: problem(),
   },
   NotFound: {
@@ -2318,6 +2319,8 @@ const paths: Record<string, PathItemObject> = {
         'Requires a signed-in session — refused for ANY bearer token regardless of scopes. Changes ' +
         'the signed-in person\'s password after checking the current one, ends every OTHER session ' +
         'they hold (this one stays signed in), and clears the requirement to choose a new password. ' +
+        'Throttled per account: 3 calls per 10 seconds. The only way to change one\'s own ' +
+        'password — Better Auth\'s own /auth/change-password answers 404. ' +
         'The one operation a session whose account must choose a new password may call: every ' +
         'other answers it 403 PASSWORD_CHANGE_REQUIRED.',
       requestBody: {
@@ -2339,6 +2342,19 @@ const paths: Record<string, PathItemObject> = {
         },
         '401': ref('Unauthorized'),
         '403': ref('SessionRequired'),
+        '429': {
+          description:
+            'Too many attempts by this account (code RATE_LIMITED): every call counts, right or ' +
+            'wrong, and the 4th within 10 seconds is refused before any password is checked. ' +
+            'application/problem+json with a required "remediation".',
+          headers: {
+            'Retry-After': {
+              description: 'Seconds until the window ends and an attempt is counted again.',
+              schema: { type: 'integer', minimum: 1 },
+            },
+          },
+          content: problem(),
+        },
       },
     },
   },

@@ -62,8 +62,10 @@ interface WalkedRoute {
   readonly notProjectScoped: boolean;
   readonly ownAccount: boolean;
   readonly isPublic: boolean;
-  /** `@AllowedBeforePasswordChange`: reachable by a session that must still choose its password. */
+  /** `@AllowedBeforePasswordChange` on the HANDLER: reachable by a session that must still choose its password. */
   readonly allowedBeforePasswordChange: boolean;
+  /** `@AllowedBeforePasswordChange` on the route's CONTROLLER CLASS, which the guard does not read. */
+  readonly allowedBeforePasswordChangeOnClass: boolean;
   /** `@Scopes` as `AuthGuard` reads it: the handler's, else the class's. */
   readonly scopes: readonly string[] | undefined;
   /** `SessionOnlyGuard` on the handler or its class. */
@@ -126,6 +128,7 @@ function walkRoutes(): WalkedRoute[] {
           // The HANDLER's alone, as `PasswordChangeGuard` reads it: on a class
           // it opens nothing, so it must not be counted as opening anything.
           allowedBeforePasswordChange: Reflect.getMetadata(ALLOWED_BEFORE_PASSWORD_CHANGE_KEY, fn) === true,
+          allowedBeforePasswordChangeOnClass: Reflect.getMetadata(ALLOWED_BEFORE_PASSWORD_CHANGE_KEY, cls) === true,
           scopes: meta<string[]>(SCOPES_KEY),
           sessionOnly: guardedBySessionOnly(cls) || guardedBySessionOnly(fn),
           uuidParams,
@@ -296,6 +299,20 @@ describe('every route declares how it is reached', () => {
   it('lets a session that must change its password reach PUT /v1/me/password and nothing else', () => {
     const allowed = ROUTES.filter((r) => r.allowedBeforePasswordChange).map((r) => r.label).sort();
     expect(allowed).toEqual(['PUT /v1/me/password']);
+  });
+
+  /**
+   * The guard reads the marker off the handler alone, and the pin above does
+   * too — so a marker on a CONTROLLER CLASS opens nothing today and is
+   * counted nowhere. The day the guard switches to `getAllAndOverride`, that
+   * marker would open every route of the class while the pin stayed green.
+   * So no class may carry it at all.
+   */
+  it('lets no controller class carry @AllowedBeforePasswordChange', () => {
+    const onClass = [
+      ...new Set(ROUTES.filter((r) => r.allowedBeforePasswordChangeOnClass).map((r) => r.label)),
+    ].sort();
+    expect(onClass, `routes whose controller class is marked:\n${onClass.join('\n')}`).toEqual([]);
   });
 
   it('declares, route by route, exactly the access written down for it', () => {
