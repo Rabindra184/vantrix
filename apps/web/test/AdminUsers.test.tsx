@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AdminProject, AdminUser } from '@perfportal/contracts';
 import AdminUsers from '../src/routes/AdminUsers';
+import { adminUsersQueryKey } from '../src/api/admin';
 import { ADMIN_PROJECTS_ROUTE, ADMIN_USERS_ROUTE } from '../src/routes/paths';
 import { PASSWORD_LENGTH_MESSAGE } from '../src/formIssues';
 
@@ -108,6 +109,40 @@ interface Answers {
   users?: () => Promise<Response>;
   projects?: () => Promise<Response>;
   create?: (body: unknown) => Promise<Response>;
+  /** Any other write — the row menu's PATCH, PUT and DELETE, and the members
+   *  routes. `undefined` falls through to `answerWrite`'s ordinary success. */
+  write?: (sent: Sent) => Promise<Response> | undefined;
+}
+
+const noContent = (): Response => new Response(null, { status: 204 });
+
+/** A member as `ProjectMemberSchema` reads one; the page uses none of it. */
+const member = (userId: string, role: string) => ({
+  userId,
+  name: 'Someone',
+  email: 'someone@example.test',
+  role,
+  addedAt: '2026-10-07T10:00:00.000Z',
+});
+
+/**
+ * The ordinary success for each write the row menu can make, shaped as the
+ * real schemas expect. The page reads none of these bodies — every change is
+ * followed by a refetch of both lists — so they only have to parse.
+ */
+function answerWrite({ url, method, body }: Sent): Response {
+  const userRoute = /^\/v1\/admin\/users\/([^/]+)(\/password)?$/.exec(url);
+  const memberRoute = /^\/v1\/projects\/[^/]+\/members(?:\/([^/]+))?$/.exec(url);
+  if (userRoute !== null && userRoute[2] === '/password' && method === 'PUT') return noContent();
+  if (userRoute !== null && method === 'PATCH') {
+    return json(200, user({ id: decodeURIComponent(userRoute[1]!), name: 'Anyone', email: 'anyone@example.test' }));
+  }
+  if (userRoute !== null && method === 'DELETE') return noContent();
+  const role = (body as { role?: string } | undefined)?.role ?? 'viewer';
+  if (memberRoute !== null && method === 'POST') return json(201, member((body as { userId: string }).userId, role));
+  if (memberRoute?.[1] !== undefined && method === 'PATCH') return json(200, member(memberRoute[1], role));
+  if (memberRoute?.[1] !== undefined && method === 'DELETE') return noContent();
+  return json(404, {});
 }
 
 /** Answers the three routes this page reads, plus the session it reads from cache. */
@@ -128,7 +163,8 @@ function stubApi(answers: Answers = {}): Sent[] {
     if (url === '/v1/admin/users' && method === 'POST') {
       return answers.create?.(body) ?? Promise.resolve(json(500, {}));
     }
-    return Promise.resolve(json(404, {}));
+    if (method === 'GET') return Promise.resolve(json(404, {}));
+    return answers.write?.({ url, method, body }) ?? Promise.resolve(answerWrite({ url, method, body }));
   });
   return sent;
 }
@@ -176,7 +212,7 @@ describe('AdminUsers — the shell', () => {
 });
 
 describe('AdminUsers — the table', () => {
-  it('lists each account with its email, project count and status, under the four columns', async () => {
+  it('lists each account with its email, project count and status, under the five columns', async () => {
     stubApi();
     renderPage();
     const users = await table();
@@ -186,6 +222,8 @@ describe('AdminUsers — the table', () => {
       'Email',
       'Projects',
       'Status',
+      // The row menu's column, headed as every other table here heads it.
+      'Actions',
     ]);
     const rows = within(users).getAllByRole('row').slice(1);
     expect(rows.map((row) => within(row).getAllByRole('cell')[1]?.textContent)).toEqual([
@@ -239,7 +277,8 @@ describe('AdminUsers — the table', () => {
     renderPage();
     await table();
 
-    expect(within(await rowOf('cy@example.test')).queryByRole('button')).toBeNull();
+    // Scoped to the ⓘ: the row's menu button is there whatever the count.
+    expect(within(await rowOf('cy@example.test')).queryByRole('button', { name: /: projects$/ })).toBeNull();
   });
 
   /* W6: ten "Sam Lee: projects" buttons in one table is the duplicate-name
@@ -255,8 +294,9 @@ describe('AdminUsers — the table', () => {
     renderPage();
     const users = await table();
 
+    // The ⓘs alone: each row also carries its menu button, named in its own case.
     const names = within(users)
-      .getAllByRole('button')
+      .getAllByRole('button', { name: /: projects$/ })
       .map((button) => button.getAttribute('aria-label'));
     expect(names).toEqual([
       'Sam Lee (sam.one@example.test): projects',
@@ -586,5 +626,721 @@ describe('AdminUsers — Add user', () => {
     expect(within(form()).queryByRole('combobox', { name: 'Project 1' })).toBeNull();
     // The submit is now inside a closed disclosure; the caret goes to what opens it.
     await waitFor(() => expect(screen.getByText('Add user', { selector: 'summary' })).toHaveFocus());
+  });
+});
+
+/* ======================================================================== *
+ * THE ROW MENU
+ * ======================================================================== */
+
+/* A second admin, so "Remove admin" has a row that is not the signed-in one
+   (the session is Ada's). Every case below has at least two rows that could
+   take the same action, so a request sent with the wrong row's id fails. */
+const BEA = user({ id: 'user-bea', name: 'Bea Admin', email: 'bea@example.test', isAdmin: true });
+const ROWS: AdminUser[] = [ADMIN, BEA, FLAGGED, DISABLED];
+
+const writes = (sent: readonly Sent[]) =>
+  sent.filter((s) => s.method !== 'GET').map(({ url, method, body }) => ({ url, method, body }));
+const readsOf = (sent: readonly Sent[], url: string) => sent.filter((s) => s.url === url && s.method === 'GET').length;
+
+const triggerOf = async (who: string) =>
+  within(await table()).findByRole('button', { name: `${who}: more actions` });
+
+async function openMenu(clicker: ReturnType<typeof userEvent.setup>, who: string) {
+  await clicker.click(await triggerOf(who));
+  return screen.findByRole('menu');
+}
+
+async function choose(clicker: ReturnType<typeof userEvent.setup>, who: string, item: string) {
+  const menu = await openMenu(clicker, who);
+  await clicker.click(within(menu).getByRole('menuitem', { name: item }));
+}
+
+/**
+ * The line under a person's row that carries whatever their menu opened (a
+ * confirm, the Reset password block, the edit panel) or refused. `null` when
+ * there is none.
+ */
+async function detailsOf(email: string): Promise<HTMLElement | null> {
+  const next = (await rowOf(email)).nextElementSibling;
+  return next instanceof HTMLElement && next.dataset.testid === 'user-details' ? next : null;
+}
+
+async function mustDetails(email: string): Promise<HTMLElement> {
+  const details = await detailsOf(email);
+  if (details === null) throw new Error(`no details line under ${email}`);
+  return details;
+}
+
+/**
+ * Radix hands focus back to the trigger — or does not — on the macrotask AFTER
+ * the menu unmounts, which is later than the focus a chosen item's block takes.
+ * A focus assertion made the moment the block appears is satisfied by a page
+ * about to lose it (`ProjectPackages.test.tsx` records the same).
+ */
+async function menuSettled() {
+  await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  });
+}
+
+/**
+ * Drops the caret to the page, as a browser may when the control holding it is
+ * disabled mid-request. jsdom never does that itself, and its `blur()` does
+ * nothing on a disabled control, so the caret passes through a focusable
+ * element and is blurred from there.
+ */
+function dropCaret() {
+  const region = screen.getByRole('region', { name: 'Users table' });
+  act(() => {
+    region.focus();
+    region.blur();
+  });
+  expect(document.activeElement).toBe(document.body);
+}
+
+/** The users list, re-read after each change: `set` is what it says from then on. */
+function liveUsers(initial: AdminUser[]) {
+  let current = initial;
+  return {
+    answer: () => Promise.resolve(json(200, { users: current })),
+    set: (next: AdminUser[]) => {
+      current = next;
+    },
+  };
+}
+
+describe('AdminUsers — the row menu', () => {
+  /* W6, again: one trigger per row, named after its person, and the email
+     joins the name only where another row shares it. */
+  it('names each row’s menu after its person, adding the email only where a display name repeats', async () => {
+    const twins = [
+      user({ id: 'u1', name: 'Sam Lee', email: 'sam.one@example.test' }),
+      user({ id: 'u2', name: 'Sam Lee', email: 'sam.two@example.test' }),
+      FLAGGED,
+    ];
+    stubApi({ users: () => Promise.resolve(json(200, { users: twins })) });
+    renderPage();
+    const users = await table();
+
+    expect(
+      within(users)
+        .getAllByRole('button', { name: /: more actions$/ })
+        .map((button) => button.getAttribute('aria-label')),
+    ).toEqual([
+      'Sam Lee (sam.one@example.test): more actions',
+      'Sam Lee (sam.two@example.test): more actions',
+      'Bo Flagged: more actions',
+    ]);
+  });
+
+  it('offers each account the actions its state allows', async () => {
+    stubApi({ users: () => Promise.resolve(json(200, { users: ROWS })) });
+    renderPage();
+    await table();
+    const clicker = userEvent.setup();
+    const items = async (who: string) => {
+      const menu = await openMenu(clicker, who);
+      const labels = within(menu)
+        .getAllByRole('menuitem')
+        .map((item) => item.textContent);
+      await clicker.keyboard('{Escape}');
+      await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+      return labels;
+    };
+
+    expect(await items('Bo Flagged')).toEqual(['Edit projects and roles', 'Reset password', 'Disable', 'Make admin', 'Remove']);
+    expect(await items('Cy Disabled')).toEqual(['Edit projects and roles', 'Reset password', 'Enable', 'Make admin', 'Remove']);
+    expect(await items('Bea Admin')).toEqual(['Edit projects and roles', 'Reset password', 'Disable', 'Remove admin', 'Remove']);
+  });
+
+  /* The API refuses these three on your own account; offering them would be
+     offering a refusal. */
+  it('leaves Disable, Reset password and Remove off the signed-in admin’s own row', async () => {
+    stubApi({ users: () => Promise.resolve(json(200, { users: ROWS })) });
+    renderPage();
+    await table();
+    const clicker = userEvent.setup();
+
+    const menu = await openMenu(clicker, 'Ada Admin');
+    expect(within(menu).getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
+      'Edit projects and roles',
+      'Remove admin',
+    ]);
+  });
+
+  it('applies Enable, Make admin and Remove admin at once, each to its own row’s account', async () => {
+    const sent = stubApi({ users: () => Promise.resolve(json(200, { users: ROWS })) });
+    renderPage();
+    await table();
+    const clicker = userEvent.setup();
+
+    await choose(clicker, 'Bo Flagged', 'Make admin');
+    await choose(clicker, 'Cy Disabled', 'Enable');
+    await choose(clicker, 'Bea Admin', 'Remove admin');
+
+    await waitFor(() => expect(writes(sent)).toHaveLength(3));
+    expect(writes(sent)).toEqual([
+      { url: '/v1/admin/users/user-flagged', method: 'PATCH', body: { isAdmin: true } },
+      { url: '/v1/admin/users/user-disabled', method: 'PATCH', body: { disabled: false } },
+      { url: '/v1/admin/users/user-bea', method: 'PATCH', body: { isAdmin: false } },
+    ]);
+    // Nothing asked first: no row grew a confirm.
+    expect(screen.queryAllByTestId('user-details')).toEqual([]);
+  });
+
+  /* W7: a role or an account change moves both tables. */
+  it('re-reads both lists after a change', async () => {
+    const sent = stubApi({ users: () => Promise.resolve(json(200, { users: ROWS })) });
+    renderPage();
+    await table();
+    await waitFor(() => expect(readsOf(sent, '/v1/admin/projects')).toBe(1));
+    const clicker = userEvent.setup();
+    const usersBefore = readsOf(sent, '/v1/admin/users');
+
+    await choose(clicker, 'Bo Flagged', 'Make admin');
+
+    await waitFor(() => expect(readsOf(sent, '/v1/admin/users')).toBe(usersBefore + 1));
+    await waitFor(() => expect(readsOf(sent, '/v1/admin/projects')).toBe(2));
+  });
+
+  it('asks before disabling, in that row, and disables only that account on the confirm', async () => {
+    const sent = stubApi({ users: () => Promise.resolve(json(200, { users: ROWS })) });
+    const { container } = renderPage();
+    await table();
+    const clicker = userEvent.setup();
+
+    await choose(clicker, 'Bo Flagged', 'Disable');
+    await menuSettled();
+
+    const details = await mustDetails('bo@example.test');
+    expect(within(details).getByRole('group', { name: 'Disable Bo Flagged? They are signed out everywhere.' })).toBeInTheDocument();
+    expect(writes(sent)).toEqual([]);
+    // Focus lands on Cancel, the safe answer, and stays once the menu has gone.
+    expect(within(details).getByRole('button', { name: 'Cancel' })).toHaveFocus();
+    // Still one primary on the page: the confirm is not a second.
+    expect([...container.querySelectorAll('button.bg-accent')]).toHaveLength(1);
+    expect(within(details).getByRole('button', { name: 'Disable' }).className).not.toContain('bg-accent');
+
+    await clicker.click(within(details).getByRole('button', { name: 'Disable' }));
+
+    await waitFor(() =>
+      expect(writes(sent)).toEqual([{ url: '/v1/admin/users/user-flagged', method: 'PATCH', body: { disabled: true } }]),
+    );
+    await waitFor(async () => expect(await detailsOf('bo@example.test')).toBeNull());
+    // The block is gone; the caret goes back to the menu it came from.
+    await waitFor(async () => expect(await triggerOf('Bo Flagged')).toHaveFocus());
+  });
+
+  it('asks before removing, and removes only that account on the confirm', async () => {
+    const list = liveUsers(ROWS);
+    const sent = stubApi({
+      users: list.answer,
+      write: (s) => {
+        if (s.method === 'DELETE') list.set(ROWS.filter((u) => u.id !== DISABLED.id));
+        return undefined;
+      },
+    });
+    renderPage();
+    await table();
+    const clicker = userEvent.setup();
+
+    await choose(clicker, 'Cy Disabled', 'Remove');
+    await menuSettled();
+    const details = await mustDetails('cy@example.test');
+    expect(within(details).getByRole('group', { name: 'Remove Cy Disabled? Their run notes keep their text.' })).toBeInTheDocument();
+    expect(writes(sent)).toEqual([]);
+    expect(within(details).getByRole('button', { name: 'Cancel' })).toHaveFocus();
+
+    await clicker.click(within(details).getByRole('button', { name: 'Remove' }));
+
+    await waitFor(() => expect(writes(sent)).toEqual([{ url: '/v1/admin/users/user-disabled', method: 'DELETE', body: undefined }]));
+    await waitFor(() => expect(within(screen.getByRole('table', { name: 'Users' })).queryByText('cy@example.test')).toBeNull());
+    // The row is gone with its menu; the caret goes to the table it was in, not to the page.
+    await waitFor(() => expect(screen.getByRole('region', { name: 'Users table' })).toHaveFocus());
+  });
+
+  it('closes a confirm on Cancel without a request, and returns focus to the row’s menu', async () => {
+    const sent = stubApi({ users: () => Promise.resolve(json(200, { users: ROWS })) });
+    renderPage();
+    await table();
+    const clicker = userEvent.setup();
+
+    await choose(clicker, 'Bea Admin', 'Remove');
+    await menuSettled();
+    await clicker.click(within(await mustDetails('bea@example.test')).getByRole('button', { name: 'Cancel' }));
+
+    expect(await detailsOf('bea@example.test')).toBeNull();
+    expect(writes(sent)).toEqual([]);
+    expect(await triggerOf('Bea Admin')).toHaveFocus();
+  });
+
+  /* W11 and W3: a field that shows what is typed, and a short password refused
+     in one sentence before anything is sent. */
+  it('resets a password to a typed temporary one, refusing a short one before sending', async () => {
+    const sent = stubApi({ users: () => Promise.resolve(json(200, { users: ROWS })) });
+    renderPage();
+    await table();
+    const clicker = userEvent.setup();
+
+    await choose(clicker, 'Bo Flagged', 'Reset password');
+    await menuSettled();
+    const details = await mustDetails('bo@example.test');
+    const field = within(details).getByLabelText('Temporary password for Bo Flagged');
+    expect(field).toHaveFocus();
+    expect(field).toHaveAttribute('type', 'text');
+    expect(field).toHaveAttribute('autocomplete', 'off');
+    expect(field).toHaveAttribute('spellcheck', 'false');
+    expect(details).toHaveTextContent('They must choose a new password at next sign-in, and are signed out everywhere.');
+    const submit = within(details).getByRole('button', { name: 'Reset password' });
+    expect(submit.className).not.toContain('bg-accent');
+
+    await clicker.type(field, 'short12');
+    await clicker.click(submit);
+    expect(field).toHaveAccessibleDescription(PASSWORD_LENGTH_MESSAGE);
+    expect(field).toHaveAttribute('aria-invalid', 'true');
+    await waitFor(() => expect(field).toHaveFocus());
+    expect(document.body).not.toHaveTextContent(/String must contain/);
+    expect(writes(sent)).toEqual([]);
+
+    await clicker.clear(field);
+    await clicker.type(field, 'temporary-2');
+    await clicker.click(submit);
+
+    await waitFor(() =>
+      expect(writes(sent)).toEqual([
+        { url: '/v1/admin/users/user-flagged/password', method: 'PUT', body: { password: 'temporary-2' } },
+      ]),
+    );
+    await waitFor(async () => expect(await detailsOf('bo@example.test')).toBeNull());
+    await waitFor(async () => expect(await triggerOf('Bo Flagged')).toHaveFocus());
+  });
+
+  /* W7: LAST_ADMIN's own words, under the row it is about, and only there. */
+  it('shows a 409 LAST_ADMIN’s detail and remediation under that row and no other', async () => {
+    stubApi({
+      users: () => Promise.resolve(json(200, { users: ROWS })),
+      write: (s) =>
+        s.url === '/v1/admin/users/user-bea'
+          ? Promise.resolve(problem(409, 'LAST_ADMIN', 'Bea Admin is the last admin.', 'Make someone else an admin first.'))
+          : undefined,
+    });
+    renderPage();
+    await table();
+    const clicker = userEvent.setup();
+
+    await choose(clicker, 'Bea Admin', 'Remove admin');
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Bea Admin is the last admin.');
+    expect(alert).toHaveTextContent('Make someone else an admin first.');
+    expect(await mustDetails('bea@example.test')).toContainElement(alert);
+    expect(screen.getAllByRole('alert')).toHaveLength(1);
+    for (const email of ['admin@example.test', 'bo@example.test', 'cy@example.test']) {
+      expect(await detailsOf(email)).toBeNull();
+    }
+  });
+
+  it('keeps a refused Remove’s confirm open, with the refusal in it', async () => {
+    stubApi({
+      users: () => Promise.resolve(json(200, { users: ROWS })),
+      write: (s) =>
+        s.method === 'DELETE'
+          ? Promise.resolve(problem(409, 'LAST_ADMIN', 'Bea Admin is the last admin.', 'Make someone else an admin first.'))
+          : undefined,
+    });
+    renderPage();
+    await table();
+    const clicker = userEvent.setup();
+
+    await choose(clicker, 'Bea Admin', 'Remove');
+    await menuSettled();
+    const details = await mustDetails('bea@example.test');
+    await clicker.click(within(details).getByRole('button', { name: 'Remove' }));
+
+    expect(await within(details).findByRole('alert')).toHaveTextContent('Bea Admin is the last admin.');
+    expect(within(details).getByRole('group', { name: 'Remove Bea Admin? Their run notes keep their text.' })).toBeInTheDocument();
+  });
+
+  it('locks a row’s controls while its request is in flight', async () => {
+    stubApi({
+      users: () => Promise.resolve(json(200, { users: ROWS })),
+      write: () => new Promise<Response>(() => {}),
+    });
+    renderPage();
+    await table();
+    const clicker = userEvent.setup();
+
+    await choose(clicker, 'Bo Flagged', 'Disable');
+    await menuSettled();
+    const details = await mustDetails('bo@example.test');
+    await clicker.click(within(details).getByRole('button', { name: 'Disable' }));
+
+    // A request already sent cannot be taken back, so Cancel goes quiet too.
+    await waitFor(() => expect(within(details).getByRole('button', { name: 'Disable' })).toBeDisabled());
+    expect(within(details).getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    const menu = await openMenu(clicker, 'Bo Flagged');
+    for (const item of within(menu).getAllByRole('menuitem')) {
+      expect(item).toHaveAttribute('aria-disabled', 'true');
+    }
+  });
+
+  /* A control is disabled while its request is in flight, and jsdom keeps the
+     caret on a disabled control where a browser may drop it to the page. So
+     these drop it by hand while the request is held, as such a browser would,
+     and then require it back once the answer arrives. */
+  it('hands the caret back to the confirm a refusal came from, once it has been lost to the page', async () => {
+    let answer: (response: Response) => void = () => {};
+    stubApi({
+      users: () => Promise.resolve(json(200, { users: ROWS })),
+      write: (s) =>
+        s.method === 'DELETE'
+          ? new Promise<Response>((resolve) => {
+              answer = resolve;
+            })
+          : undefined,
+    });
+    renderPage();
+    await table();
+    const clicker = userEvent.setup();
+
+    await choose(clicker, 'Bea Admin', 'Remove');
+    await menuSettled();
+    const details = await mustDetails('bea@example.test');
+    const confirm = within(details).getByRole('button', { name: 'Remove' });
+    await clicker.click(confirm);
+    await waitFor(() => expect(confirm).toBeDisabled());
+    dropCaret();
+
+    await act(async () => {
+      answer(problem(409, 'LAST_ADMIN', 'Bea Admin is the last admin.', 'Make someone else an admin first.'));
+    });
+
+    expect(await within(details).findByRole('alert')).toHaveTextContent('Bea Admin is the last admin.');
+    await waitFor(() => expect(confirm).toHaveFocus());
+  });
+
+  /* W15: one inline block at a time across the whole table. */
+  it('opens one block at a time: arming another row closes the first', async () => {
+    stubApi({ users: () => Promise.resolve(json(200, { users: ROWS })) });
+    renderPage();
+    await table();
+    const clicker = userEvent.setup();
+
+    await choose(clicker, 'Bo Flagged', 'Disable');
+    expect(await detailsOf('bo@example.test')).not.toBeNull();
+
+    await choose(clicker, 'Cy Disabled', 'Reset password');
+    expect(await detailsOf('bo@example.test')).toBeNull();
+    expect(within(await mustDetails('cy@example.test')).getByLabelText('Temporary password for Cy Disabled')).toBeInTheDocument();
+
+    await choose(clicker, 'Ada Admin', 'Edit projects and roles');
+    expect(await detailsOf('cy@example.test')).toBeNull();
+    expect(
+      within(await mustDetails('admin@example.test')).getByRole('group', { name: 'Ada Admin: projects and roles' }),
+    ).toBeInTheDocument();
+    expect(screen.getAllByTestId('user-details')).toHaveLength(1);
+  });
+});
+
+describe('AdminUsers — Edit projects and roles', () => {
+  const panelOf = async (who: string, email: string) =>
+    within(await mustDetails(email)).getByRole('group', { name: `${who}: projects and roles` });
+
+  it('names every control in the panel differently, one membership per line', async () => {
+    stubApi({ users: () => Promise.resolve(json(200, { users: ROWS })) });
+    renderPage();
+    await table();
+    const clicker = userEvent.setup();
+
+    await choose(clicker, 'Ada Admin', 'Edit projects and roles');
+    await menuSettled();
+    const panel = await panelOf('Ada Admin', 'admin@example.test');
+
+    const expected: [string, string][] = [
+      ['combobox', 'Role in Checkout'],
+      ['button', 'Remove from project Checkout'],
+      ['combobox', 'Role in Search'],
+      ['button', 'Remove from project Search'],
+      ['combobox', 'Project'],
+      ['combobox', 'Role'],
+      ['button', 'Add'],
+      ['button', 'Close'],
+    ];
+    for (const [role, name] of expected) {
+      expect(within(panel).getByRole(role, { name })).toBeInTheDocument();
+    }
+    expect(within(panel).queryAllByRole('combobox').length + within(panel).queryAllByRole('button').length).toBe(
+      expected.length,
+    );
+    expect(within(panel).getByRole('combobox', { name: 'Role in Checkout' })).toHaveValue('manager');
+    expect(within(panel).getByRole('combobox', { name: 'Role in Search' })).toHaveValue('viewer');
+    // Opening it puts the caret on its first control, and the menu closing does not take it back.
+    expect(within(panel).getByRole('combobox', { name: 'Role in Checkout' })).toHaveFocus();
+  });
+
+  it('saves a role as it is chosen, for that person in that project, and re-reads both lists', async () => {
+    const sent = stubApi({ users: () => Promise.resolve(json(200, { users: ROWS })) });
+    renderPage();
+    await table();
+    await waitFor(() => expect(readsOf(sent, '/v1/admin/projects')).toBe(1));
+    const clicker = userEvent.setup();
+    const usersBefore = readsOf(sent, '/v1/admin/users');
+
+    await choose(clicker, 'Bo Flagged', 'Edit projects and roles');
+    const panel = await panelOf('Bo Flagged', 'bo@example.test');
+    await clicker.selectOptions(within(panel).getByRole('combobox', { name: 'Role in Checkout' }), 'Manager');
+
+    await waitFor(() =>
+      expect(writes(sent)).toEqual([
+        { url: '/v1/projects/checkout/members/user-flagged', method: 'PATCH', body: { role: 'manager' } },
+      ]),
+    );
+    await waitFor(() => expect(readsOf(sent, '/v1/admin/users')).toBe(usersBefore + 1));
+    await waitFor(() => expect(readsOf(sent, '/v1/admin/projects')).toBe(2));
+    // An editor, not a confirm: it stays open for the next change.
+    expect(await panelOf('Bo Flagged', 'bo@example.test')).toBeInTheDocument();
+  });
+
+  it('hands the caret back to a role select once its save is done, if it was lost to the page meanwhile', async () => {
+    let answer: (response: Response) => void = () => {};
+    stubApi({
+      users: () => Promise.resolve(json(200, { users: ROWS })),
+      write: (s) =>
+        s.method === 'PATCH'
+          ? new Promise<Response>((resolve) => {
+              answer = resolve;
+            })
+          : undefined,
+    });
+    renderPage();
+    await table();
+    const clicker = userEvent.setup();
+
+    await choose(clicker, 'Bo Flagged', 'Edit projects and roles');
+    const panel = await panelOf('Bo Flagged', 'bo@example.test');
+    const role = within(panel).getByRole('combobox', { name: 'Role in Checkout' });
+    await clicker.selectOptions(role, 'Manager');
+    await waitFor(() => expect(role).toBeDisabled());
+    // The choice in flight is what the select shows, not the stored role.
+    expect(role).toHaveValue('manager');
+    dropCaret();
+
+    await act(async () => {
+      answer(json(200, member(FLAGGED.id, 'manager')));
+    });
+
+    await waitFor(() => expect(role).toBeEnabled());
+    await waitFor(() => expect(role).toHaveFocus());
+  });
+
+  /* The converse: the caret is only handed back when nobody has taken it. */
+  it('leaves the caret where the reader took it while a save was in flight', async () => {
+    let answer: (response: Response) => void = () => {};
+    stubApi({
+      users: () => Promise.resolve(json(200, { users: ROWS })),
+      write: (s) =>
+        s.method === 'PATCH'
+          ? new Promise<Response>((resolve) => {
+              answer = resolve;
+            })
+          : undefined,
+    });
+    renderPage();
+    await table();
+    const clicker = userEvent.setup();
+
+    await choose(clicker, 'Bo Flagged', 'Edit projects and roles');
+    const panel = await panelOf('Bo Flagged', 'bo@example.test');
+    const role = within(panel).getByRole('combobox', { name: 'Role in Checkout' });
+    await clicker.selectOptions(role, 'Manager');
+    await waitFor(() => expect(role).toBeDisabled());
+    const elsewhere = screen.getByText('Add user', { selector: 'summary' });
+    act(() => elsewhere.focus());
+
+    await act(async () => {
+      answer(json(200, member(FLAGGED.id, 'manager')));
+    });
+
+    await waitFor(() => expect(role).toBeEnabled());
+    // A macrotask more, for anything that would move it after the enabling render.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(elsewhere).toHaveFocus();
+  });
+
+  it('removes a person from one project, then offers it back and keeps the caret in the panel', async () => {
+    const list = liveUsers(ROWS);
+    const sent = stubApi({
+      users: list.answer,
+      write: (s) => {
+        if (s.method === 'DELETE') list.set(ROWS.map((u) => (u.id === FLAGGED.id ? { ...u, memberships: [] } : u)));
+        return undefined;
+      },
+    });
+    renderPage();
+    await table();
+    const clicker = userEvent.setup();
+
+    await choose(clicker, 'Bo Flagged', 'Edit projects and roles');
+    await menuSettled();
+    const panel = await panelOf('Bo Flagged', 'bo@example.test');
+    await clicker.click(within(panel).getByRole('button', { name: 'Remove from project Checkout' }));
+
+    await waitFor(() =>
+      expect(writes(sent)).toEqual([{ url: '/v1/projects/checkout/members/user-flagged', method: 'DELETE', body: undefined }]),
+    );
+    await waitFor(() => expect(within(panel).queryByRole('combobox', { name: 'Role in Checkout' })).toBeNull());
+    const project = within(panel).getByRole('combobox', { name: 'Project' });
+    expect(within(project).getAllByRole('option').map((o) => o.textContent)).toEqual(['Checkout', 'Search', 'Payments']);
+    // The button pressed has gone with its line; the caret goes to what can add it back.
+    await waitFor(() => expect(project).toHaveFocus());
+  });
+
+  /* W5 and W12: the first project they do not hold, as a Viewer. */
+  it('adds a person to a project they do not hold, starting on the first one as a Viewer', async () => {
+    const list = liveUsers(ROWS);
+    const sent = stubApi({
+      users: list.answer,
+      write: (s) => {
+        if (s.method === 'POST') {
+          list.set(
+            ROWS.map((u) =>
+              u.id === FLAGGED.id
+                ? {
+                    ...u,
+                    memberships: [...u.memberships, { projectSlug: 'payments', projectName: 'Payments', role: 'member' as const }],
+                  }
+                : u,
+            ),
+          );
+        }
+        return undefined;
+      },
+    });
+    renderPage();
+    await table();
+    const clicker = userEvent.setup();
+
+    await choose(clicker, 'Bo Flagged', 'Edit projects and roles');
+    await menuSettled();
+    const panel = await panelOf('Bo Flagged', 'bo@example.test');
+    const add = within(panel).getByRole('group', { name: 'Add to project' });
+    const project = within(add).getByRole('combobox', { name: 'Project' });
+    // Checkout is theirs already, so it is not offered, and Search comes first.
+    expect(project).toHaveValue('search');
+    expect(within(project).getAllByRole('option').map((o) => [o.textContent, (o as HTMLOptionElement).value])).toEqual([
+      ['Search', 'search'],
+      ['Payments', 'payments'],
+    ]);
+    expect(within(add).getByRole('combobox', { name: 'Role' })).toHaveValue('viewer');
+
+    await clicker.selectOptions(project, 'Payments');
+    await clicker.selectOptions(within(add).getByRole('combobox', { name: 'Role' }), 'Member');
+    await clicker.click(within(add).getByRole('button', { name: 'Add' }));
+
+    await waitFor(() =>
+      expect(writes(sent)).toEqual([
+        { url: '/v1/projects/payments/members', method: 'POST', body: { userId: 'user-flagged', role: 'member' } },
+      ]),
+    );
+    // The new line arrives, and the caret goes to its role.
+    await waitFor(() => expect(within(panel).getByRole('combobox', { name: 'Role in Payments' })).toHaveFocus());
+    expect(within(add).getByRole('combobox', { name: 'Role' })).toHaveValue('viewer');
+  });
+
+  it('cannot add once the person holds every project', async () => {
+    const everywhere = user({
+      id: 'user-everywhere',
+      name: 'Eve Everywhere',
+      email: 'eve@example.test',
+      memberships: PROJECTS.map((p) => ({ projectSlug: p.slug, projectName: p.name, role: 'viewer' as const })),
+    });
+    stubApi({ users: () => Promise.resolve(json(200, { users: [ADMIN, everywhere] })) });
+    renderPage();
+    await table();
+    const clicker = userEvent.setup();
+
+    await choose(clicker, 'Eve Everywhere', 'Edit projects and roles');
+    const add = within(await panelOf('Eve Everywhere', 'eve@example.test')).getByRole('group', { name: 'Add to project' });
+    expect(within(add).getByRole('combobox', { name: 'Project' })).toBeDisabled();
+    expect(within(add).getByRole('button', { name: 'Add' })).toBeDisabled();
+  });
+
+  it('cannot add before the projects list has loaded', async () => {
+    stubApi({
+      users: () => Promise.resolve(json(200, { users: ROWS })),
+      projects: () => new Promise<Response>(() => {}),
+    });
+    renderPage();
+    await table();
+    const clicker = userEvent.setup();
+
+    await choose(clicker, 'Bo Flagged', 'Edit projects and roles');
+    const add = within(await panelOf('Bo Flagged', 'bo@example.test')).getByRole('group', { name: 'Add to project' });
+    expect(within(add).getByRole('button', { name: 'Add' })).toBeDisabled();
+  });
+
+  it('shows a refused add’s own words in the panel, and keeps it open', async () => {
+    stubApi({
+      users: () => Promise.resolve(json(200, { users: ROWS })),
+      write: (s) =>
+        s.method === 'POST'
+          ? Promise.resolve(problem(409, 'MEMBER_EXISTS', 'Bo Flagged already holds a role in Search.', 'Change that role instead.'))
+          : undefined,
+    });
+    renderPage();
+    await table();
+    const clicker = userEvent.setup();
+
+    await choose(clicker, 'Bo Flagged', 'Edit projects and roles');
+    const panel = await panelOf('Bo Flagged', 'bo@example.test');
+    await clicker.click(within(panel).getByRole('button', { name: 'Add' }));
+
+    const alert = await within(panel).findByRole('alert');
+    expect(alert).toHaveTextContent('Bo Flagged already holds a role in Search.');
+    expect(alert).toHaveTextContent('Change that role instead.');
+    expect(screen.getAllByRole('alert')).toHaveLength(1);
+  });
+
+  it('closes on Close, and returns focus to the row’s menu', async () => {
+    stubApi({ users: () => Promise.resolve(json(200, { users: ROWS })) });
+    renderPage();
+    await table();
+    const clicker = userEvent.setup();
+
+    await choose(clicker, 'Bo Flagged', 'Edit projects and roles');
+    await clicker.click(within(await panelOf('Bo Flagged', 'bo@example.test')).getByRole('button', { name: 'Close' }));
+
+    expect(await detailsOf('bo@example.test')).toBeNull();
+    expect(await triggerOf('Bo Flagged')).toHaveFocus();
+  });
+});
+
+/* W14: every change triggers a refetch of the list, and a refetch that fails
+   must not take a table that is still true off the screen. */
+describe('AdminUsers — a failed refresh', () => {
+  it('keeps the table it has, and says quietly that it could not be refreshed', async () => {
+    let failing = false;
+    stubApi({
+      users: () =>
+        Promise.resolve(
+          failing
+            ? problem(500, 'INTERNAL', 'The request could not be completed.', 'Retry the request.')
+            : json(200, { users: USERS }),
+        ),
+    });
+    const { client } = renderPage();
+    await table();
+
+    failing = true;
+    await act(() => client.invalidateQueries({ queryKey: adminUsersQueryKey }));
+
+    expect(await screen.findByText('This list could not be refreshed, so it may be out of date.')).toBeInTheDocument();
+    expect(screen.getByRole('table', { name: 'Users' })).toBeInTheDocument();
+    expect(screen.queryByText('Users could not be loaded')).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 });

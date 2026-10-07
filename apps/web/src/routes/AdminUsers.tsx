@@ -1,8 +1,9 @@
-import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import {
   CreateUserRequestSchema,
   PROJECT_ROLES,
+  type AdminProject,
   type AdminProjectListResponse,
   type AdminUser,
   type ProjectRole,
@@ -27,6 +28,8 @@ import {
 import { getSession, sessionQueryKey } from '../api/session';
 import { fieldMessages } from '../formIssues';
 import AdminShell from './AdminShell';
+import { ROLE_LABEL, RowField } from './AdminFields';
+import { UserActions, type Armed } from './AdminUserActions';
 
 /**
  * Administration › Users: every account in the install, and the form that
@@ -36,6 +39,12 @@ import AdminShell from './AdminShell';
  * table (`ProjectRules`' "New rule"). A session refused the list
  * (`403 ADMIN_REQUIRED`) sees the API's own refusal under the heading and
  * nothing else — the form would only be refused too.
+ *
+ * ═══ A FAILED REFRESH KEEPS THE TABLE (ruling W14) ═══
+ * Every change in the table re-reads the list, so a refetch that fails is the
+ * ordinary failure on a flaky network — and the change it follows had worked.
+ * The error page is for a list that never loaded; a list that has loaded stays
+ * on screen with one quiet line saying it may be out of date.
  */
 export default function AdminUsers() {
   const users = useQuery({ queryKey: adminUsersQueryKey, queryFn: fetchAdminUsers });
@@ -49,30 +58,33 @@ export default function AdminUsers() {
     <AdminShell current="users">
       {users.isPending ? (
         <LoadingState label="Loading users…">
-          <SkeletonTable columns={4} />
+          <SkeletonTable columns={5} />
         </LoadingState>
-      ) : users.isError ? (
+      ) : users.data === undefined ? (
         <ErrorState
           title="Users could not be loaded"
-          detail={users.error instanceof ProblemError ? users.error.detail : users.error.message}
+          detail={users.error instanceof ProblemError ? users.error.detail : users.error?.message}
           remediation={users.error instanceof ProblemError ? users.error.remediation : undefined}
         />
       ) : (
         <div className="flex flex-col gap-4">
           <AddUserForm projects={projects} />
-          <UsersTable users={users.data.users} currentUserId={currentUserId} />
+          {/* Not an alert: nothing the reader did failed, and nothing on screen is wrong yet. */}
+          {users.isError && (
+            <p className="text-[0.8125rem] text-muted">This list could not be refreshed, so it may be out of date.</p>
+          )}
+          <UsersTable
+            users={users.data.users}
+            currentUserId={currentUserId}
+            // The last list that loaded, as for the users: a refetch that failed
+            // still leaves real projects to add someone to.
+            projects={projects.data?.projects}
+          />
         </div>
       )}
     </AdminShell>
   );
 }
-
-/** A role as the reader sees it: the enum's own word, capitalised. */
-const ROLE_LABEL: Record<ProjectRole, string> = {
-  viewer: 'Viewer',
-  member: 'Member',
-  manager: 'Manager',
-};
 
 /**
  * One word per account (ruling W4), in this order: an account that cannot
@@ -90,32 +102,45 @@ const spoken = (name: string): string => name.trim().replace(/\s+/g, ' ').toLoca
 
 /**
  * The accounts, one row each: name (with an Admin badge), email, how many
- * projects they hold a role in, and their status.
+ * projects they hold a role in, their status, and a menu of what can be done
+ * to the account (`AdminUserActions`).
  *
- * `currentUserId` is the signed-in admin's own id, from the session. Nothing
- * in this table reads it yet; it is part of the props for the row actions,
- * several of which the API refuses on your own account.
+ * `currentUserId` is the signed-in admin's own id, from the session: their own
+ * row's menu leaves out what the API refuses on your own account. `projects`
+ * is every project in the install, for the edit panel's Add to project, or
+ * `undefined` before that list has loaded.
  */
 export function UsersTable({
   users,
+  currentUserId,
+  projects,
 }: {
   readonly users: readonly AdminUser[];
   readonly currentUserId: string | null;
+  readonly projects: readonly AdminProject[] | undefined;
 }) {
-  /* ═══ ONE NAME PER INFO BUTTON (ruling W6) ═══
-     Display names are not unique and emails are. Every row's ⓘ is named after
-     its person, so two people called Sam Lee would give the table two buttons
-     with one name — the duplicate-name defect this repo has paid for three
-     times. The email joins the name on those rows only; everywhere else the
-     name is the plain one. */
+  /* The one row with a block open, if any (ruling W15). */
+  const [armed, setArmed] = useState<Armed | null>(null);
+  const tableRef = useRef<HTMLTableElement>(null);
+
+  /* ═══ ONE NAME PER ROW CONTROL (ruling W6) ═══
+     Display names are not unique and emails are. Every row's ⓘ and menu are
+     named after their person, so two people called Sam Lee would give the
+     table two buttons with one name — the duplicate-name defect this repo has
+     paid for three times. The email joins the name on those rows only;
+     everywhere else the name is the plain one. */
   const seen = new Map<string, number>();
   for (const user of users) seen.set(spoken(user.name), (seen.get(spoken(user.name)) ?? 0) + 1);
-  const labelOf = (user: AdminUser): string =>
-    (seen.get(spoken(user.name)) ?? 0) > 1 ? `${user.name} (${user.email}): projects` : `${user.name}: projects`;
+  const whoOf = (user: AdminUser): string =>
+    (seen.get(spoken(user.name)) ?? 0) > 1 ? `${user.name} (${user.email})` : user.name;
+
+  /* A removed account takes its row, and the menu the caret would return to,
+     with it; the table's own scroll region is the nearest thing left. */
+  const focusTable = () => tableRef.current?.closest<HTMLElement>('[role="region"]')?.focus();
 
   return (
     <TableFrame name="Users" label="Users table">
-      <table className={TABLE}>
+      <table ref={tableRef} className={TABLE}>
         <caption className="sr-only">Users</caption>
         <thead className={THEAD}>
           <tr>
@@ -131,46 +156,75 @@ export function UsersTable({
             <th scope="col" className={TH}>
               Status
             </th>
+            <th scope="col" className={TH}>
+              Actions
+            </th>
           </tr>
         </thead>
         <tbody>
           {users.map((user) => (
-            <tr key={user.id} className={ROW}>
-              <td className={TD}>
-                {user.name}
-                {/* A TEXT NODE between the two, not only the margin: a margin
-                    moves pixels, and a copy or a screen reader would read
-                    "Ada AdminAdmin". */}
-                {user.isAdmin && (
-                  <>
-                    {' '}
-                    <span className="ml-1 rounded-md border border-default bg-sunken px-1.5 py-0.5 text-[0.75rem] text-muted">
-                      Admin
-                    </span>
-                  </>
-                )}
-              </td>
-              <td className={`${TD} break-all`}>{user.email}</td>
-              <td className={TD}>
-                <span className="inline-flex items-center gap-1">
-                  {user.memberships.length}
-                  {/* Drawn only when there is something to list (ruling W10):
-                      an ⓘ behind a 0 would open onto nothing. */}
-                  {user.memberships.length > 0 && (
-                    <InfoTip label={labelOf(user)}>
-                      <ul>
-                        {user.memberships.map((membership) => (
-                          <li key={membership.projectSlug}>
-                            {membership.projectName} · {ROLE_LABEL[membership.role]}
-                          </li>
-                        ))}
-                      </ul>
-                    </InfoTip>
+            <UserActions
+              key={user.id}
+              user={user}
+              who={whoOf(user)}
+              own={user.id === currentUserId}
+              armed={armed}
+              onArm={setArmed}
+              onGone={focusTable}
+              projects={projects}
+            >
+              {(menu, details) => (
+                <>
+                  <tr className={ROW}>
+                    <td className={TD}>
+                      {user.name}
+                      {/* A TEXT NODE between the two, not only the margin: a margin
+                          moves pixels, and a copy or a screen reader would read
+                          "Ada AdminAdmin". */}
+                      {user.isAdmin && (
+                        <>
+                          {' '}
+                          <span className="ml-1 rounded-md border border-default bg-sunken px-1.5 py-0.5 text-[0.75rem] text-muted">
+                            Admin
+                          </span>
+                        </>
+                      )}
+                    </td>
+                    <td className={`${TD} break-all`}>{user.email}</td>
+                    <td className={TD}>
+                      <span className="inline-flex items-center gap-1">
+                        {user.memberships.length}
+                        {/* Drawn only when there is something to list (ruling W10):
+                            an ⓘ behind a 0 would open onto nothing. */}
+                        {user.memberships.length > 0 && (
+                          <InfoTip label={`${whoOf(user)}: projects`}>
+                            <ul>
+                              {user.memberships.map((membership) => (
+                                <li key={membership.projectSlug}>
+                                  {membership.projectName} · {ROLE_LABEL[membership.role]}
+                                </li>
+                              ))}
+                            </ul>
+                          </InfoTip>
+                        )}
+                      </span>
+                    </td>
+                    <td className={TD}>{statusOf(user)}</td>
+                    <td className={TD}>{menu}</td>
+                  </tr>
+                  {/* The row's open block, or its menu's refusal, on a line of its
+                      own under the row: a confirm, a password field or a list of
+                      projects is wider than any one cell should become. */}
+                  {details !== null && (
+                    <tr data-testid="user-details" className="border-b border-divider last:border-0">
+                      <td colSpan={5} className="px-3 pt-1 pb-3">
+                        {details}
+                      </td>
+                    </tr>
                   )}
-                </span>
-              </td>
-              <td className={TD}>{statusOf(user)}</td>
-            </tr>
+                </>
+              )}
+            </UserActions>
           ))}
         </tbody>
       </table>
@@ -416,7 +470,7 @@ function AddUserForm({ projects }: { readonly projects: UseQueryResult<AdminProj
             <div key={row.key} className="flex flex-wrap items-start gap-3">
               <RowField
                 label="Project"
-                position={index + 1}
+                qualifier={index + 1}
                 id={idOf(rowField(row.key, 'projectSlug'))}
                 error={errorOf(rowField(row.key, 'projectSlug'))}
               >
@@ -435,7 +489,7 @@ function AddUserForm({ projects }: { readonly projects: UseQueryResult<AdminProj
               </RowField>
               <RowField
                 label="Role"
-                position={index + 1}
+                qualifier={index + 1}
                 id={idOf(rowField(row.key, 'role'))}
                 error={errorOf(rowField(row.key, 'role'))}
               >
@@ -485,53 +539,5 @@ function AddUserForm({ projects }: { readonly projects: UseQueryResult<AdminProj
         </form>
       </details>
     </Card>
-  );
-}
-
-/**
- * One field of a project row: `FormField`'s label and error line, with the
- * row's position in the label for a screen reader only.
- *
- * ═══ "Project", READ AS "Project 2" ═══
- * Two rows give the form two Project selects and two Role selects, and a
- * label each of "Project" would leave a screen-reader user unable to tell them
- * apart. The position is in the accessible name, after the visible word, so
- * what is seen is still what is said first.
- */
-function RowField({
-  label,
-  position,
-  id,
-  error,
-  children,
-}: {
-  readonly label: string;
-  readonly position: number;
-  readonly id: string;
-  readonly error?: string;
-  readonly children: ReactNode;
-}) {
-  return (
-    <div className="flex min-w-0 flex-col gap-1.5">
-      <label htmlFor={id} className="text-[0.8125rem] font-medium text-primary">
-        {label}
-        {/* The space is a TEXT NODE outside the span: one inside it is
-            trimmed by the name computation, which read "Project1". */}
-        {' '}
-        <span className="sr-only">{position}</span>
-      </label>
-      {children}
-      {/* The same line `FormField` draws: words in the primary colour, the
-          failed tone as a left rule (see that component for why). */}
-      {error !== undefined && (
-        <p
-          id={errorId(id)}
-          className="border-l-2 pl-2 text-[0.75rem] leading-snug text-primary"
-          style={{ borderLeftColor: 'var(--color-status-failed)' }}
-        >
-          {error}
-        </p>
-      )}
-    </div>
   );
 }
