@@ -722,12 +722,12 @@ const responses: Record<string, ResponseObject> = {
       'The credential is valid but may not perform this operation. Code FORBIDDEN: the ' +
       'credential lacks the scope the operation requires — a bearer token minted without it, or ' +
       'a signed-in session on an operation whose scope no session holds ("stream" and ' +
-      '"telemetry": opening and streaming a live run, posting telemetry). For a signed-in ' +
-      'session on a project operation, also: code ROLE_REQUIRED when its role in the project is ' +
-      'below the one the operation needs (the detail naming that role), or ADMIN_REQUIRED when ' +
-      'the operation is an admin\'s and the account is not one. A session that holds no role in ' +
-      'the project is never told so with a 403: it gets the 404 a project or run that does not ' +
-      'exist gets. application/problem+json with a required "remediation".',
+      '"telemetry": opening, streaming to and closing a live run, posting telemetry). For a ' +
+      'signed-in session on a project operation, also: code ROLE_REQUIRED when its role in the ' +
+      'project is below the one the operation needs (the detail naming that role), or ' +
+      'ADMIN_REQUIRED when the operation is an admin\'s and the account is not one. A session ' +
+      'that holds no role in the project is never told so with a 403: it gets the 404 a project ' +
+      'or run that does not exist gets. application/problem+json with a required "remediation".',
     content: problem(),
   },
   NotFound: {

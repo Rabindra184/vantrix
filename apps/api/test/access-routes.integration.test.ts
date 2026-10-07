@@ -1,4 +1,9 @@
+import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { ParseUUIDPipe, RequestMethod } from '@nestjs/common';
 import { GUARDS_METADATA, METHOD_METADATA, PATH_METADATA, ROUTE_ARGS_METADATA } from '@nestjs/common/constants.js';
 import { RouteParamtypes } from '@nestjs/common/enums/route-paramtypes.enum.js';
@@ -96,7 +101,9 @@ function walkRoutes(): WalkedRoute[] {
             | undefined) ?? {};
         const uuidParams = Object.entries(args)
           .filter(([argKey]) => argKey.split(':')[0] === String(RouteParamtypes.PARAM))
-          .filter(([, arg]) => (arg.pipes ?? []).some((pipe) => pipe instanceof ParseUUIDPipe))
+          // An instance (`uuidParam`, `new ParseUUIDPipe(...)`) or the class itself
+          // (`@Param('x', ParseUUIDPipe)`), which Nest instantiates.
+          .filter(([, arg]) => (arg.pipes ?? []).some((pipe) => pipe instanceof ParseUUIDPipe || pipe === ParseUUIDPipe))
           .map(([, arg]) => String(arg.data));
         out.push({
           label: `${RequestMethod[verb]} ${path}`,
@@ -487,7 +494,20 @@ describe('the role matrix', () => {
   }
 
   beforeAll(async () => {
-    ctx = await createTestApp();
+    // A live close waits INGEST_WAIT_MS (25s by default) for a verdict nothing
+    // here will produce. Only a session let through the close route would
+    // reach that wait — the failure the @BearerOnly cases exist to catch — so
+    // it is shortened to let that failure surface as a status rather than as
+    // a request deadline. Read once, when createTestApp loads the config, the
+    // way live.integration.test.ts sets it.
+    const previousWait = process.env.INGEST_WAIT_MS;
+    process.env.INGEST_WAIT_MS = '50';
+    try {
+      ctx = await createTestApp();
+    } finally {
+      if (previousWait === undefined) delete process.env.INGEST_WAIT_MS;
+      else process.env.INGEST_WAIT_MS = previousWait;
+    }
     const b = await ctx.prisma.project.create({
       data: { orgId: ctx.orgId, slug: 'search', name: 'Search', settings: {} },
     });
@@ -729,28 +749,128 @@ describe('the role matrix', () => {
   });
 
   /*
-   * ═══ A @BearerOnly ROUTE REFUSES A SESSION ═══
+   * ═══ A @BearerOnly ROUTE REFUSES A SESSION, AND EACH REFUSAL IS PINNED ═══
    *
    * `@BearerOnly` takes no action, so `AccessGuard` judges nothing on it: the
-   * marker is a claim that a session cannot use the route at all — no scope
-   * a session holds, or a handler that answers PROJECT_REQUIRED. Each one is
-   * sent as a signed-in ADMIN, the session with the most reach, and must be
-   * refused with a 4xx. A route marked bearer-only that a session can in fact
-   * use is a route nobody's role is checked on.
+   * marker claims a session cannot use the route at all. Each route is sent
+   * as a signed-in ADMIN, the session with the most reach, and must answer
+   * the EXACT refusal written below — a bare "some 4xx" was satisfied by
+   * validation or run state, which answers whoever asks: with the `stream`
+   * and `telemetry` scopes handed to sessions, all six stayed green.
+   *
+   * So each request is shaped to be one the route WOULD accept from a token
+   * of its project — a real bundle, a valid body and headers, a run that is
+   * running — leaving the credential as the only thing that can refuse it.
+   * There are two kinds of refusal:
+   *
+   *   - THE SCOPE, 403 FORBIDDEN, where no session holds it (`stream`,
+   *     `telemetry`). On stream and close this is the ONLY refusal: those
+   *     handlers look the run up by org when the credential names no project,
+   *     so a session let past the scope would write to, or close, any running
+   *     run in its org.
+   *   - PROJECT_REQUIRED, 400, the handler's first statement. A session names
+   *     no project (`authenticateSession` sets no `projectId`), so this is a
+   *     STRUCTURAL refusal: it holds whatever scopes a session carries, and on
+   *     POST /v1/runs and GET /v1/projects/:slug/runs — whose scopes, `ingest`
+   *     and `read`, every session holds — it is the real and only one.
+   *     Opening a live run and posting telemetry reach it too once past their
+   *     scope, which is why their pair is the scope's: a session reaching the
+   *     handler there means the scope stopped refusing it.
+   *
+   * The list must equal the walk's @BearerOnly set, so a seventh route fails
+   * until its refusal is written down.
    */
   describe('a @BearerOnly route refuses a session', () => {
-    const bearerOnly = ROUTES.filter((r) => r.bearerOnly);
+    const LOG = fileURLToPath(
+      new URL('../../../fixtures/gatling-3.15.1.2/reference-report/simulation.log', import.meta.url),
+    );
+    /** A run opened over the stream token for A, left running. */
+    let liveRunId: string;
+    /** A real results bundle: the reference simulation.log, tarred the way ingest expects. */
+    let bundle: Buffer;
 
-    it('finds the bearer-only routes', () => {
-      expect(bearerOnly.length).toBeGreaterThan(4);
+    beforeAll(async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'access-routes-'));
+      const results = join(dir, 'paritysimulation');
+      mkdirSync(results, { recursive: true });
+      copyFileSync(LOG, join(results, 'simulation.log'));
+      execFileSync('tar', ['-czf', join(dir, 'bundle.tgz'), '-C', dir, 'paritysimulation']);
+      bundle = readFileSync(join(dir, 'bundle.tgz'));
+
+      const opened = await request(ctx.app.getHttpServer())
+        .post('/v1/runs/live')
+        .set('Authorization', `Bearer ${ctx.streamToken}`)
+        .send({ tool: 'gatling' });
+      expect(opened.status, JSON.stringify(opened.body)).toBe(201);
+      liveRunId = opened.body.runId as string;
     });
 
-    for (const r of bearerOnly) {
-      it(`${r.label} refuses a signed-in admin`, async () => {
-        const { verb, url } = fill(r.label, A);
-        const res = await send(verb, url, cookies.admin);
-        expect(res.status, `${r.label}: ${res.status} ${JSON.stringify(res.body)}`).toBeGreaterThanOrEqual(400);
-        expect(res.status, `${r.label}: ${res.status} ${JSON.stringify(res.body)}`).toBeLessThan(500);
+    const asAdmin = (req: request.Test): request.Test =>
+      req.set('Cookie', cookies.admin).timeout({ deadline: 15_000, response: 15_000 });
+    const server = () => request(ctx.app.getHttpServer());
+    const telemetrySample = () => ({
+      sampledAt: new Date().toISOString(),
+      cpuUserMs: 1000, cpuSystemMs: 500, cpuIdleMs: 8000, cpuIowaitMs: 10,
+      memUsedBytes: 1_000_000, memTotalBytes: 8_000_000,
+      netRxBytes: 10_000, netTxBytes: 20_000,
+      tcpInSegs: 100, tcpOutSegs: 120, tcpRetransSegs: 1, tcpInErrs: 0,
+      tcpActiveOpens: 5, tcpPassiveOpens: 3,
+      tcpStates: { ESTABLISHED: 10 },
+    });
+
+    const REFUSALS: Readonly<Record<string, { expected: readonly [number, string]; send: () => request.Test }>> = {
+      // A real bundle and valid metadata; `waitMs: 0` so a token's post would
+      // not wait. PROJECT_REQUIRED is checked before the body is read.
+      'POST /v1/runs': {
+        expected: [400, 'PROJECT_REQUIRED'],
+        send: () =>
+          asAdmin(server().post('/v1/runs'))
+            .field('metadata', JSON.stringify({ tool: 'gatling', waitMs: 0 }))
+            .attach('bundle', bundle, 'bundle.tgz'),
+      },
+      // A real project's slug and no query parameters, so nothing else in the
+      // handler has anything to refuse.
+      'GET /v1/projects/:slug/runs': {
+        expected: [400, 'PROJECT_REQUIRED'],
+        send: () => asAdmin(server().get(`/v1/projects/${A.slug}/runs`)),
+      },
+      // A valid open body: INVALID_LIVE_OPEN cannot answer it.
+      'POST /v1/runs/live': {
+        expected: [403, 'FORBIDDEN'],
+        send: () => asAdmin(server().post('/v1/runs/live')).send({ tool: 'gatling' }),
+      },
+      // A running run, its cursor's offset (0, nothing streamed yet) and a
+      // non-empty octet-stream body: past the scope, a token's chunk lands.
+      'POST /v1/runs/:id/stream': {
+        expected: [403, 'FORBIDDEN'],
+        send: () =>
+          asAdmin(server().post(`/v1/runs/${liveRunId}/stream`))
+            .set('Content-Type', 'application/octet-stream')
+            .set('X-Stream-Offset', '0')
+            .send(Buffer.from('bytes')),
+      },
+      // A running run, so RUN_NOT_RUNNING cannot answer.
+      'POST /v1/runs/:id/close': {
+        expected: [403, 'FORBIDDEN'],
+        send: () => asAdmin(server().post(`/v1/runs/${liveRunId}/close`)),
+      },
+      // A valid batch: INVALID_TELEMETRY cannot answer it.
+      'POST /v1/telemetry': {
+        expected: [403, 'FORBIDDEN'],
+        send: () => asAdmin(server().post('/v1/telemetry')).send({ host: 'gen-1', samples: [telemetrySample()] }),
+      },
+    };
+
+    it('pins a refusal for exactly the walk’s @BearerOnly routes', () => {
+      const walked = ROUTES.filter((r) => r.bearerOnly).map((r) => r.label).sort();
+      expect(walked.length).toBeGreaterThan(4);
+      expect(Object.keys(REFUSALS).sort(), 'write each @BearerOnly route’s refusal into REFUSALS').toEqual(walked);
+    });
+
+    for (const [label, { expected, send: request_ }] of Object.entries(REFUSALS)) {
+      it(`${label} refuses a signed-in admin ${expected.join(' ')}`, async () => {
+        const res = await request_();
+        expect([res.status, res.body.code], `${label}: ${JSON.stringify(res.body)}`).toStrictEqual([...expected]);
       });
     }
   });
