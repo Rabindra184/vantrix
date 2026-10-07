@@ -29,7 +29,7 @@ export class TelemetryController {
       // UNREACHABLE IN PRACTICE, unlike IngestController's identical-looking
       // branch. @Scopes('telemetry') above already refused any caller
       // without the "telemetry" scope before this handler runs, and a
-      // session's scopes are always exactly ['read', 'ingest']
+      // session's scopes are always exactly ['read', 'ingest', 'runner']
       // (auth.middleware.ts) — no session has ever been minted with
       // "telemetry", so one can never reach here. Every credential that DOES
       // reach here is therefore a bearer token, and ApiToken.projectId is
