@@ -193,7 +193,10 @@ All admin operations go through `/v1/admin`, which calls Better Auth's admin
 plugin server-side with the admin's own request headers, keeping `/v1`'s
 problem+json errors, its OpenAPI entries, and one place a future audit log
 records from. **Better Auth's own `/auth/admin/*` routes are refused (404)**
-by a middleware mounted ahead of the Better Auth handler.
+by a Better Auth plugin whose `onRequest` judges the exact Request the router
+routes. An Express guard in front of the handler was bypassed by dot-segments
+and by the Host and X-Forwarded-Proto headers, which better-call uses to build
+the routed URL.
 
 | route | does |
 | --- | --- |
