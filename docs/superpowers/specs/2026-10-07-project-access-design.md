@@ -140,9 +140,12 @@ and still cannot, so they take no role.
 ### The guard
 
 - Every session-reachable route declares its action with
-  `@Requires('<action>')`. The existing `AuthGuard` and `@Scopes` are folded
-  into it: for a bearer credential the guard checks the table's token scope,
-  exactly as `@Scopes` does today; for a session it checks the role.
+  `@Requires('<action>')`. The new guard checks SESSIONS only. The bearer
+  path (`AuthGuard`, `@Scopes`, `SessionOnlyGuard`) stays exactly as it is,
+  because CI ingest depends on it not shifting by a byte; instead a test
+  requires every route's `@Scopes` to equal its action's token scope in the
+  table, and every session-only action's route to carry `SessionOnlyGuard`,
+  so the two cannot drift apart.
 - The project comes from `:slug`, or from the run for `/v1/runs/:id` routes,
   resolved by the same queries that already enforce org isolation.
 - **A test walks every registered route** through Nest's metadata (the
