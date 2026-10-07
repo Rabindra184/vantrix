@@ -1,7 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { RequestMethod } from '@nestjs/common';
 import { GUARDS_METADATA, METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants.js';
-import { ACCESS_ACTIONS, PROJECT_ROLES, type AccessAction, type ProjectRole } from '@perfportal/contracts';
+import {
+  ACCESS_ACTIONS,
+  PROJECT_ROLES,
+  type AccessAction,
+  type AccessRole,
+  type ProjectRole,
+} from '@perfportal/contracts';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AppModule } from '../src/app.module.js';
@@ -236,8 +242,8 @@ describe('the document names the refusals the guard sends', () => {
  * each holding a run. For every action some route declares, one
  * representative request, sent by:
  *
- *   - the lowest role the action asks for, in A — it passes the guard: not a
- *     403, and not the 404 an invisible project or run gets;
+ *   - the lowest role the spec gives the action, in A — it passes the
+ *     guard: not a 403, and not the 404 an invisible project or run gets;
  *   - the role just below it, in A — 403 ROLE_REQUIRED naming the role it
  *     needs. Only member- and manager-level actions have one; a viewer-level
  *     action's "below" is holding no role at all, which is the next row. For
@@ -258,23 +264,31 @@ type Verb = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 interface Probe {
   readonly action: AccessAction;
+  /**
+   * The lowest role the spec's permission table gives this action, WRITTEN
+   * HERE rather than read from `ACCESS_ACTIONS`. The guard reads that table;
+   * a matrix taking its expectations from the same row would agree with the
+   * guard whatever the row said, so a table edit that hands viewers an edit
+   * action would pass it. Spelled out, that edit fails the row below.
+   */
+  readonly role: AccessRole;
   /** The route, spelled as the walk spells it; the matrix asserts that route declares `action`. */
   readonly route: `${Verb} /${string}`;
   readonly body?: object;
 }
 
 const PROBES: readonly Probe[] = [
-  { action: 'project:read', route: 'GET /v1/projects/:slug/tests' },
-  { action: 'rules:read', route: 'GET /v1/projects/:slug/rules' },
-  { action: 'run:note', route: 'PUT /v1/runs/:id/note', body: {} },
-  { action: 'run:upload', route: 'POST /v1/projects/:slug/runs' },
-  { action: 'runner:run', route: 'POST /v1/projects/:slug/runner/runs' },
-  { action: 'packages:manage', route: 'POST /v1/projects/:slug/packages' },
-  { action: 'packages:delete', route: 'DELETE /v1/projects/:slug/packages/:packageId' },
-  { action: 'rules:edit', route: 'POST /v1/projects/:slug/rules', body: {} },
-  { action: 'tests:manage', route: 'PATCH /v1/projects/:slug/tests/:testSlug', body: {} },
-  { action: 'tokens:manage', route: 'GET /v1/projects/:slug/tokens' },
-  { action: 'projects:create', route: 'POST /v1/projects', body: {} },
+  { action: 'project:read', role: 'viewer', route: 'GET /v1/projects/:slug/tests' },
+  { action: 'rules:read', role: 'viewer', route: 'GET /v1/projects/:slug/rules' },
+  { action: 'run:note', role: 'member', route: 'PUT /v1/runs/:id/note', body: {} },
+  { action: 'run:upload', role: 'member', route: 'POST /v1/projects/:slug/runs' },
+  { action: 'runner:run', role: 'member', route: 'POST /v1/projects/:slug/runner/runs' },
+  { action: 'packages:manage', role: 'member', route: 'POST /v1/projects/:slug/packages' },
+  { action: 'packages:delete', role: 'member', route: 'DELETE /v1/projects/:slug/packages/:packageId' },
+  { action: 'rules:edit', role: 'member', route: 'POST /v1/projects/:slug/rules', body: {} },
+  { action: 'tests:manage', role: 'manager', route: 'PATCH /v1/projects/:slug/tests/:testSlug', body: {} },
+  { action: 'tokens:manage', role: 'manager', route: 'GET /v1/projects/:slug/tokens' },
+  { action: 'projects:create', role: 'admin', route: 'POST /v1/projects', body: {} },
 ];
 
 /** What a request's path parameters are filled with: project A and its run, or targets that do not exist. */
@@ -407,7 +421,8 @@ describe('the role matrix', () => {
   });
 
   for (const p of PROBES) {
-    const { role, label } = ACCESS_ACTIONS[p.action];
+    const { role } = p;
+    const { label } = ACCESS_ACTIONS[p.action];
 
     describe(`${p.action} — ${p.route}`, () => {
       if (role === 'admin') {
