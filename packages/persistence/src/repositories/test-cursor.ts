@@ -1,3 +1,5 @@
+import { isUuid } from './uuid.js';
+
 /**
  * The opaque cursor `TestRepository.listOrg` pages by.
  *
@@ -38,8 +40,6 @@
  * every row still comes through it, so a cursor minted in another organisation
  * can only ever place the page among THIS caller's rows.
  */
-import { isUuid } from './uuid.js';
-
 export interface OrgTestCursorKey {
   /** The test's latest arrival, or null for a test that has never run. */
   readonly latestAt: Date | null;
