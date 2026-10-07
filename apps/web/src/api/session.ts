@@ -26,10 +26,18 @@ export class AuthError extends Error {
 
 /**
  * Better Auth's own `get-session`/`sign-in` response shape — the base
- * `user`/`session` models with no plugins enabled (the organization plugin
- * is deliberately absent; see `packages/persistence/src/auth.ts`). Not a
- * `@perfportal/contracts` schema: this surface is deliberately outside that
- * contract (D-1), so there is nothing to import here.
+ * `user`/`session` models, plus the two `user` fields this app reads from what
+ * `packages/persistence/src/auth.ts` adds to them: the admin plugin's `role`
+ * (an admin is exactly `'admin'`) and the `mustChangePassword` additional
+ * field. That plugin adds other columns this type does not list, because
+ * nothing here reads them; the organization plugin is deliberately absent.
+ * Not a `@perfportal/contracts` schema: this surface is deliberately outside
+ * that contract (D-1), so there is nothing to import here.
+ *
+ * Both of those fields are OPTIONAL here although the server sends them: a
+ * response from an API older than them carries neither, and `getSession`
+ * casts its body rather than parsing it, so nothing would fill them in. A
+ * reader must treat an absent field as "not known", never as `true`.
  */
 export interface Session {
   session: {
@@ -49,6 +57,10 @@ export interface Session {
     image: string | null;
     createdAt: string;
     updatedAt: string;
+    /** The admin plugin's role: `'admin'` for an install-wide admin, `'user'` otherwise. */
+    role?: string | null;
+    /** True while the person must replace a password they did not choose; `PUT /v1/me/password` clears it. */
+    mustChangePassword?: boolean;
   };
 }
 

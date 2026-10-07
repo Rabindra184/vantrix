@@ -5,7 +5,7 @@ import AuthGate from './AuthGate';
 import Login from './routes/Login';
 import RouteFallback from './components/RouteFallback';
 import RouteErrorBoundary from './components/RouteErrorBoundary';
-import { DEFAULT_ROUTE, HOME_ROUTE, NEW_PROJECT_ROUTE, NO_ORG_ROUTE } from './routes/paths';
+import { ACCOUNT_PASSWORD_ROUTE, DEFAULT_ROUTE, HOME_ROUTE, NEW_PROJECT_ROUTE, NO_ORG_ROUTE } from './routes/paths';
 
 /**
  * ═══ EVERY AUTHENTICATED ROUTE IS A SEPARATE CHUNK ═══
@@ -25,6 +25,7 @@ import { DEFAULT_ROUTE, HOME_ROUTE, NEW_PROJECT_ROUTE, NO_ORG_ROUTE } from './ro
  * `default` is the component; the two run tabs that once shared `RunDetail`'s
  * module that way are `RunSummary` now, and a module of their own.)
  */
+const AccountPassword = lazy(() => import('./routes/AccountPassword'));
 const GroupDetail = lazy(() => import('./routes/GroupDetail'));
 const Home = lazy(() => import('./routes/Home'));
 const NewProject = lazy(() => import('./routes/NewProject'));
@@ -77,6 +78,10 @@ export default function App() {
                 has to stay one no project slug can be (see `NEW_PROJECT_ROUTE`),
                 and a hand-typed copy here could quietly drift back to `/new`. */}
             <Route path={NEW_PROJECT_ROUTE} element={<NewProject />} />
+            {/* The account menu's Change password. The forced change at first
+                sign-in is not this route: the gate above shows it in place of
+                whatever was asked for. */}
+            <Route path={ACCOUNT_PASSWORD_ROUTE} element={<AccountPassword />} />
             <Route path="/projects/:slug/run/new" element={<NewRunnerRun />} />
             <Route path="/projects/:slug/setup" element={<ProjectSetup />} />
             <Route path="/projects/:slug/packages" element={<ProjectPackages />} />

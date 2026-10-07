@@ -3,7 +3,7 @@ import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 /* Mocked before the import below, because sign out posts on select and jsdom
@@ -49,12 +49,16 @@ afterEach(() => {
   delete document.documentElement.dataset.theme;
 });
 
-function renderMenu(identity: string | null = 'qa@perfportal.test') {
+function renderMenu(identity: string | null = 'qa@perfportal.test', { isAdmin = false } = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter>
-        <AccountMenu identity={identity} />
+      <MemoryRouter initialEntries={['/runs']}>
+        <Routes>
+          <Route path="/runs" element={<AccountMenu identity={identity} isAdmin={isAdmin} />} />
+          <Route path="/account/password" element={<p>change password stand-in</p>} />
+          <Route path="/admin/users" element={<p>administration stand-in</p>} />
+        </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -165,5 +169,65 @@ describe('AccountMenu — open', () => {
     const item = await screen.findByRole('menuitem', { name: /sign out/i });
     await user.click(item);
     await waitFor(() => expect(signOutCalls).toBeGreaterThan(0));
+  });
+});
+
+/**
+ * ═══ TWO DESTINATIONS, AND WHO SEES THEM ═══
+ *
+ * Change password is everyone's: it is the one account setting a person owns.
+ * Administration is an admin's alone — `isAdmin` is a REQUIRED prop, so a
+ * caller that forgot it fails to compile rather than hiding the item silently.
+ * Hiding is for clarity; the API refuses a non-admin either way.
+ *
+ * Both are real menu items that are LINKS: a `menuitem` with an `href`, so
+ * the arrows reach them like every other item and choosing one navigates.
+ */
+describe('AccountMenu — account pages', () => {
+  it('links everyone to Change password, and offers no Administration to a non-admin', async () => {
+    const user = userEvent.setup();
+    renderMenu('qa@perfportal.test', { isAdmin: false });
+    await user.click(trigger());
+
+    const item = await screen.findByRole('menuitem', { name: 'Change password' });
+    expect(item).toHaveAttribute('href', '/account/password');
+    expect(screen.queryByRole('menuitem', { name: 'Administration' })).toBeNull();
+  });
+
+  it('links an admin to Administration as well', async () => {
+    const user = userEvent.setup();
+    renderMenu('admin@perfportal.test', { isAdmin: true });
+    await user.click(trigger());
+
+    expect(await screen.findByRole('menuitem', { name: 'Change password' })).toHaveAttribute(
+      'href',
+      '/account/password',
+    );
+    expect(screen.getByRole('menuitem', { name: 'Administration' })).toHaveAttribute('href', '/admin/users');
+  });
+
+  /** An `href` is not a navigation: the item has to take the reader there
+   *  when selected, as a link inside a Radix item, not merely carry one. */
+  it('takes the reader to the page when an item is chosen', async () => {
+    const user = userEvent.setup();
+    renderMenu('admin@perfportal.test', { isAdmin: true });
+    await user.click(trigger());
+    await user.click(await screen.findByRole('menuitem', { name: 'Administration' }));
+
+    expect(await screen.findByText('administration stand-in')).toBeInTheDocument();
+  });
+
+  it('reaches Change password from the keyboard', async () => {
+    const user = userEvent.setup();
+    renderMenu();
+    trigger().focus();
+    await user.keyboard('{Enter}');
+    const item = await screen.findByRole('menuitem', { name: 'Change password' });
+    // The arrows walk the items; Change password is reachable by them.
+    for (let i = 0; i < 6 && document.activeElement !== item; i += 1) await user.keyboard('{ArrowDown}');
+    expect(item).toHaveFocus();
+    await user.keyboard('{Enter}');
+
+    expect(await screen.findByText('change password stand-in')).toBeInTheDocument();
   });
 });

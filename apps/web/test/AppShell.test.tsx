@@ -14,7 +14,7 @@ afterEach(cleanup);
  * it with ONE request in flight instead of two, so a red test names its own
  * cause instead of implicating the run list's own fetching.
  */
-function renderShell() {
+function renderShell(session: unknown = {}) {
   vi.stubGlobal('fetch', (input: RequestInfo) =>
     Promise.resolve(
       String(input).includes('/v1/projects')
@@ -22,7 +22,9 @@ function renderShell() {
             JSON.stringify({ code: 'INTERNAL', detail: 'boom', remediation: 'Retry later.' }),
             { status: 500, headers: { 'Content-Type': 'application/problem+json' } },
           )
-        : new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }),
+        : String(input).includes('/auth/get-session')
+          ? new Response(JSON.stringify(session), { status: 200, headers: { 'Content-Type': 'application/json' } })
+          : new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }),
     ),
   );
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -104,6 +106,44 @@ describe('AppShell', () => {
     const header = screen.getByRole('banner');
     expect(within(header).getByRole('link', { name: 'PerfPortal' })).toHaveAttribute('href', '/');
     expect(within(header).queryByRole('link', { name: 'Home' })).toBeNull();
+  });
+});
+
+/**
+ * ═══ THE MENU'S ADMIN FLAG COMES FROM THE SESSION, AND ONLY `'admin'` IS ONE ═══
+ *
+ * `AccountMenu.test.tsx` hands the menu its `isAdmin`, so it proves the menu
+ * reads the prop and nothing about where the prop comes from. These read it
+ * off the session the shell is given — Better Auth's admin plugin's
+ * `user.role` — including a session with no role at all, which an API older
+ * than the plugin sends.
+ */
+describe('AppShell — the account menu’s Administration item', () => {
+  const sessionOf = (user: Record<string, unknown>) => ({
+    session: { id: 's1' },
+    user: { id: 'u1', name: 'Ada', email: 'ada@perfportal.test', ...user },
+  });
+
+  async function openMenu(session: unknown) {
+    const user = userEvent.setup();
+    renderShell(session);
+    // The menu's name carries the identity once the session has been read.
+    await screen.findByRole('button', { name: 'Account: Ada' });
+    await user.click(screen.getByTestId('account-menu-trigger'));
+    await screen.findByRole('menuitem', { name: 'Change password' });
+  }
+
+  it('offers Administration to an admin', async () => {
+    await openMenu(sessionOf({ role: 'admin' }));
+    expect(screen.getByRole('menuitem', { name: 'Administration' })).toHaveAttribute('href', '/admin/users');
+  });
+
+  it.each([
+    ['an ordinary account', sessionOf({ role: 'user' })],
+    ['a session with no role', sessionOf({})],
+  ])('offers no Administration to %s', async (_who, session) => {
+    await openMenu(session);
+    expect(screen.queryByRole('menuitem', { name: 'Administration' })).toBeNull();
   });
 });
 

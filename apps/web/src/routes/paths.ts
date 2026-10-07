@@ -92,6 +92,21 @@ export function runComparePath(runId: string, runs?: readonly string[]): string 
 export const NO_ORG_ROUTE = '/no-organisation';
 
 /**
+ * Change your own password, from the account menu. The forced change at first
+ * sign-in has no URL of its own: `AuthGate` shows it in place of whatever was
+ * asked for.
+ */
+export const ACCOUNT_PASSWORD_ROUTE = '/account/password';
+
+/**
+ * Administration's two pages, for an install-wide admin: accounts and
+ * projects. The account menu links to the first. Neither is a `/projects/`
+ * segment, so neither can shadow a project slug.
+ */
+export const ADMIN_USERS_ROUTE = '/admin/users';
+export const ADMIN_PROJECTS_ROUTE = '/admin/projects';
+
+/**
  * One project — which is now its TESTS, not its runs.
  *
  * ═══ THIS URL CHANGED WHAT IT SHOWS, DELIBERATELY ═══

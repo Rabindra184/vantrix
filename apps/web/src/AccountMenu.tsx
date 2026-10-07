@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   DropdownMenu,
@@ -11,9 +11,10 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from './components/ui/dropdown-menu';
-import { AlertIcon, MonitorIcon, MoonIcon, SignOutIcon, SunIcon } from './components/icons';
+import { AdminIcon, AlertIcon, MonitorIcon, MoonIcon, PasswordIcon, SignOutIcon, SunIcon } from './components/icons';
 import { applyTheme, readTheme, type ThemeChoice } from './theme';
 import { signOut } from './api/session';
+import { ACCOUNT_PASSWORD_ROUTE, ADMIN_USERS_ROUTE } from './routes/paths';
 
 /**
  * Who is signed in, the theme, and the way out — behind one control.
@@ -58,8 +59,23 @@ import { signOut } from './api/session';
  * component to the leak. A failed sign-out does not redirect — the cookie may
  * still be valid, and sending someone to /login while they are in fact signed
  * in tells them the opposite of the truth.
+ *
+ * ═══ AND THE ACCOUNT'S OWN PAGES ═══
+ *
+ * Change password is everyone's; Administration is an install-wide admin's
+ * alone. `isAdmin` is REQUIRED, with no default: a default of false would hide
+ * the item from every admin whose caller forgot to pass it, and nothing would
+ * say so. Hiding it is for clarity only — the API refuses a non-admin either
+ * way. Both are router links inside Radix items, so they are real `menuitem`s
+ * the arrows reach, and choosing one navigates.
  */
-export default function AccountMenu({ identity }: { readonly identity: string | null }) {
+export default function AccountMenu({
+  identity,
+  isAdmin,
+}: {
+  readonly identity: string | null;
+  readonly isAdmin: boolean;
+}) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [failed, setFailed] = useState(false);
@@ -131,6 +147,26 @@ export default function AccountMenu({ identity }: { readonly identity: string | 
         <p data-testid="signed-in-as" className="px-2 pb-1 text-[0.8125rem] break-all text-primary">
           {identity ?? 'an account this page could not read'}
         </p>
+
+        {/* Under the identity, because they are pages ABOUT it. `asChild`
+            makes the router `<Link>` the item itself — one element that is
+            both the `menuitem` and the link — rather than a link nested in
+            a menuitem, which would be two focusable things for one choice. */}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem asChild>
+          <Link to={ACCOUNT_PASSWORD_ROUTE}>
+            <PasswordIcon aria-hidden="true" className="h-3.5 w-3.5 text-muted" />
+            Change password
+          </Link>
+        </DropdownMenuItem>
+        {isAdmin && (
+          <DropdownMenuItem asChild>
+            <Link to={ADMIN_USERS_ROUTE}>
+              <AdminIcon aria-hidden="true" className="h-3.5 w-3.5 text-muted" />
+              Administration
+            </Link>
+          </DropdownMenuItem>
+        )}
 
         <DropdownMenuSeparator />
 

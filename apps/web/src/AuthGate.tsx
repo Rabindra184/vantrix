@@ -1,13 +1,21 @@
 import { useState } from 'react';
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ZodError } from 'zod';
+import ChoosePassword from './ChoosePassword';
 import { AlertMark } from './components/States';
 import { ActivityIcon } from './components/icons';
 import { ProblemError } from './api/fetch';
-import { activityQueryOptions, browserTimeZone } from './api/activity';
+import { activityQueryKey, activityQueryOptions, browserTimeZone } from './api/activity';
 import { getSession, sessionQueryKey } from './api/session';
 import { NO_ORG_ROUTE, loginPathFor } from './routes/paths';
+
+/**
+ * The code the API's password gate refuses every other `/v1` route with while
+ * a session must change its password. Written here rather than imported: the
+ * API sets it, and no contract module exports it. See the probe's 403 below.
+ */
+const PASSWORD_CHANGE_REQUIRED = 'PASSWORD_CHANGE_REQUIRED';
 
 /**
  * The session bootstrap, asked once on load, whose answer decides `/login`
@@ -28,7 +36,31 @@ import { NO_ORG_ROUTE, loginPathFor } from './routes/paths';
  *
  * The branch is on the numeric `status`, never on the `code` string: status
  * is the contract (spec §7), while a code is a label the API is free to make
- * more specific later.
+ * more specific later. With ONE exception, the probe's 403
+ * `PASSWORD_CHANGE_REQUIRED`, below: there the code is the only thing that
+ * tells two 403s apart.
+ *
+ * ═══ A PASSWORD THAT MUST BE CHANGED COMES FIRST ═══
+ *
+ * At first sign-in, and after an admin resets a password, the session carries
+ * `user.mustChangePassword`, and every `/v1` route but `PUT /v1/me/password`
+ * answers 403 `PASSWORD_CHANGE_REQUIRED` — the probe included. A gate that
+ * asked it would read that 403 as "a member of no organisation" and send the
+ * person to a page telling them they belong nowhere. So the gate reads the
+ * flag as soon as the session has loaded, does not ask the probe while it is
+ * set, and shows `ChoosePassword` in place of everything — ahead of the latch
+ * below, which keeps the app through a failed READ and is no licence to show
+ * it to a session that must do this first.
+ *
+ * The flag is optional on the session — an API older than it omits it, and a
+ * cached session can predate the reset that set it — so the probe CAN still
+ * come back with that 403. That is the one 403 the gate reads by its code:
+ * both mean "authenticated but refused", and only the code says whether the
+ * cure is choosing a password or being added to an organisation.
+ *
+ * Once the password is changed the gate asks both questions again — the
+ * session for its cleared flag, and the probe in case it had already answered
+ * that 403 — and the reader lands on the address they asked for.
  *
  * ═══ THE PROBE IS THE HOME PAGE'S OWN QUESTION ═══
  *
@@ -77,7 +109,11 @@ export default function AuthGate() {
   // nothing to show that anything was lost.
   const intended = `${location.pathname}${location.search}${location.hash}`;
 
+  const queryClient = useQueryClient();
   const session = useQuery({ queryKey: sessionQueryKey, queryFn: getSession });
+  /* OPTIONAL AT EVERY HOP: an API older than the flag sends no such field, and
+     `AppShell` records a session body that arrived without a `user` at all. */
+  const mustChangePassword = session.data?.user?.mustChangePassword === true;
   // Computed per render rather than once at import: it is cheap, and a module
   // that read the zone at import would freeze it there (CLAUDE.md records the
   // same trap for a module-scope `Intl.DateTimeFormat`). Home computes it the
@@ -90,9 +126,26 @@ export default function AuthGate() {
     ...activityQueryOptions(tz),
     // Never probe without a session: an unauthenticated probe would answer
     // 401 and land in the same place, having paid a request to learn what
-    // step 1 already knew.
-    enabled: session.data != null,
+    // step 1 already knew. Nor for a session that must change its password:
+    // the probe would answer the password gate's 403 (see the docstring).
+    enabled: session.data != null && !mustChangePassword,
   });
+
+  /* After `PUT /v1/me/password` succeeds. The form stays busy until this
+     settles, so the step is not pressed again over a password that has just
+     stopped being current. Both questions are asked again: the session, for
+     its cleared flag; and the probe, because a 403 it already answered would
+     otherwise stand until something else (a window focus, say) happened to ask
+     again — while it is asked, a gate that has not yet passed shows its
+     bootstrap screen, as on a cold load. A probe the flag kept from ever being
+     asked is not refetched here: invalidating a disabled query asks nothing,
+     and it is asked once the session's flag reads false. */
+  const passwordChanged = async (): Promise<void> => {
+    await Promise.all([
+      queryClient.refetchQueries({ queryKey: sessionQueryKey }),
+      queryClient.invalidateQueries({ queryKey: activityQueryKey(tz) }),
+    ]);
+  };
 
   /* ═══ THE GATE LATCHES ONCE IT HAS ITS ANSWER ═══
    *
@@ -154,13 +207,24 @@ export default function AuthGate() {
 
   if (session.data === null) return <Navigate to={loginPathFor(intended)} replace />;
 
+  // Before the probe's answer and before the latch: see the docstring. The
+  // probe is not asked while this holds, so any answer it has is stale.
+  if (mustChangePassword) return <ChoosePassword onDone={passwordChanged} />;
+
   // The perimeter's two answers, which win whatever the gate has latched.
   // The session expired between the two calls, or since the gate passed.
   if (problem?.status === 401) return <Navigate to={loginPathFor(intended)} replace />;
-  // Authenticated, but a member of no organisation (or no longer one). NOT a
-  // redirect to /login: that is the infinite loop this whole branch exists to
-  // prevent (design §5.1).
-  if (problem?.status === 403) return <Navigate to={NO_ORG_ROUTE} replace />;
+  if (problem?.status === 403) {
+    // THE ONE BRANCH ON A CODE. The password gate's 403 and the
+    // no-organisation 403 share a status and need opposite cures; only the
+    // code tells them apart. Reached when the session did not carry the flag
+    // (an older API, or a session cached before the reset that set it).
+    if (problem.code === PASSWORD_CHANGE_REQUIRED) return <ChoosePassword onDone={passwordChanged} />;
+    // Authenticated, but a member of no organisation (or no longer one). NOT
+    // a redirect to /login: that is the infinite loop this whole branch exists
+    // to prevent (design §5.1).
+    return <Navigate to={NO_ORG_ROUTE} replace />;
+  }
 
   // ═══ ONCE PASSED, ONLY THE PERIMETER CAN TAKE IT BACK ═══
   //
