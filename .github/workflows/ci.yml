@@ -663,8 +663,11 @@ jobs:
             echo "::error::a refused password still minted an API token in $PERFPORTAL_ORG_SLUG ($tokens rows)"; exit 1; }
           echo "out-of-bounds password refused, no account created, no token minted"
 
-      # The default is published in THREE places — DEPLOYMENT.md, the README
-      # and .env.example — and a guide that names a password the product no
+      # The default is published in FOUR places — DEPLOYMENT.md, the README,
+      # .env.example and the comment over the compose file's bootstrap service,
+      # which went on naming `perfportal` after the default changed on
+      # 2026-09-19, because it was the one copy this list left out — and a
+      # guide that names a password the product no
       # longer sets is worse than one that says nothing: the reader tries it,
       # it fails, and they have no way to tell whether the deployment broke or
       # the document lied. This repo has paid for that shape twice already
@@ -681,11 +684,11 @@ jobs:
           test -n "$pw" || {
             echo "::error::could not read DEFAULT_ADMIN_PASSWORD out of bootstrap.ts — this guard is checking nothing"
             exit 1; }
-          for f in DEPLOYMENT.md README.md infra/.env.example; do
+          for f in DEPLOYMENT.md README.md infra/.env.example infra/docker-compose.yml; do
             grep -qF "$pw" "$f" || {
               echo "::error::$f does not name the default password the code seeds ($pw)"; exit 1; }
           done
-          echo "default password documented in all three: $pw"
+          echo "default password documented in all four: $pw"
 
       # THE OBJECT-STORE HALF. `packages/storage`'s integration tests leave a
       # `test-<uuid>` BUCKET behind apiece, and nothing has ever removed them:

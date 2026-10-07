@@ -168,12 +168,12 @@ services:
       PERFPORTAL_ADMIN_EMAIL: ${PERFPORTAL_ADMIN_EMAIL:-admin@perfportal.local}
       # ═══ A DEFAULT CREDENTIAL, DELIBERATELY, AND SCOPED ═══
       #
-      # Unset here means the published default (`perfportal`) is seeded and
-      # bootstrap prints a warning naming this variable. That is a known
-      # vulnerability class — scanners try published defaults within hours of
-      # a host appearing — and it is the same trade ReportPortal, Grafana and
-      # GitLab make, for the same reason: the alternative was a deployment
-      # nobody could log in to.
+      # Unset here means the published default (`PerfPortal-Setup-2026`) is
+      # seeded and bootstrap prints a warning naming this variable. That is a
+      # known vulnerability class — scanners try published defaults within
+      # hours of a host appearing — and it is the same trade ReportPortal,
+      # Grafana and GitLab make, for the same reason: the alternative was a
+      # deployment nobody could log in to.
       #
       # What keeps it defensible is that it is only ever SEEDED, never
       # re-applied: bootstrap leaves an existing account's password alone, so
