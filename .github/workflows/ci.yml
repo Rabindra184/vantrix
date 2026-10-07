@@ -619,12 +619,20 @@ jobs:
             echo "::error::the second run did not report reusing the account"; exit 1; }
           echo "mixed-case address reused"
 
-      # A PASSWORD OUTSIDE BETTER AUTH'S BOUNDS IS REFUSED, AND MAKES NOTHING.
+      # A PASSWORD OUTSIDE BETTER AUTH'S BOUNDS IS REFUSED: NO ACCOUNT, NO TOKEN.
       # The admin plugin's create skips the bounds sign-up applied, so
       # bootstrap checks them itself. The failure is required to be THAT
       # refusal: a run that died for any other reason would also exit
       # non-zero and leave no account, and pass a check on those two alone.
-      - name: An admin password outside Better Auth's bounds is refused, and creates nothing
+      #
+      # NOT "creates nothing": bootstrap upserts the org and the project
+      # BEFORE the bounds check, so a refused run leaves both behind (an
+      # upsert, so a corrected re-run reuses them). What it must not leave is
+      # an account or an API token — a token minted before the refusal would
+      # be a committed credential whose plaintext was never printed. The
+      # token count is scoped to this step's org for the reason the
+      # membership count above is.
+      - name: An admin password outside Better Auth's bounds is refused, and creates no account and mints no token
         env:
           PERFPORTAL_ORG_SLUG: ci-org-4
           PERFPORTAL_PROJECT_SLUG: ci-project-4
@@ -639,7 +647,10 @@ jobs:
           users="$($PSQL -At -c "select count(*) from \"user\" where email = 'short-password@perfportal.local';")"
           test "$users" = "0" || {
             echo "::error::a refused password still created the account ($users rows)"; exit 1; }
-          echo "out-of-bounds password refused, no account created"
+          tokens="$($PSQL -At -c "select count(*) from api_token t join org o on o.id = t.org_id where o.slug = '$PERFPORTAL_ORG_SLUG';")"
+          test "$tokens" = "0" || {
+            echo "::error::a refused password still minted an API token in $PERFPORTAL_ORG_SLUG ($tokens rows)"; exit 1; }
+          echo "out-of-bounds password refused, no account created, no token minted"
 
       # The default is published in THREE places — DEPLOYMENT.md, the README
       # and .env.example — and a guide that names a password the product no
