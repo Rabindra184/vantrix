@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { RequestMethod } from '@nestjs/common';
-import { GUARDS_METADATA, METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants.js';
+import { ParseUUIDPipe, RequestMethod } from '@nestjs/common';
+import { GUARDS_METADATA, METHOD_METADATA, PATH_METADATA, ROUTE_ARGS_METADATA } from '@nestjs/common/constants.js';
+import { RouteParamtypes } from '@nestjs/common/enums/route-paramtypes.enum.js';
 import {
   ACCESS_ACTIONS,
   PROJECT_ROLES,
@@ -29,13 +30,15 @@ import { signInAsAdmin, signInAsProjectMember } from './support/session.js';
  * own metadata on every controller `AppModule` registers — the walk
  * `openapi.integration.test.ts` uses — rather than a list of routes kept by
  * hand: a route added later joins these checks by existing. They check that
- * each route declares one way in, that its token scope agrees with its
- * action's row, that a project action names its project, and that the
- * document declares the refusals the guard can now send.
+ * each route declares one way in, and that the way in is the one written down
+ * for it below; that its token scope agrees with its action's row; that a
+ * project action names its project and a `@NotProjectScoped` route names
+ * none; and that the document declares the refusals the guard can now send.
  *
  * The role matrix then drives one representative request per declared action
- * through the real app, for each kind of caller, and the last group checks the
- * bearer path did not move.
+ * through the real app, for each kind of caller; every route with a
+ * uuid-piped sub-parameter and every `@BearerOnly` route gets a request of its
+ * own; and the last group checks the bearer path did not move.
  */
 
 interface WalkedRoute {
@@ -50,6 +53,8 @@ interface WalkedRoute {
   readonly scopes: readonly string[] | undefined;
   /** `SessionOnlyGuard` on the handler or its class. */
   readonly sessionOnly: boolean;
+  /** Path parameters whose `@Param` carries a `ParseUUIDPipe` (`uuidParam`). */
+  readonly uuidParams: readonly string[];
 }
 
 /**
@@ -82,6 +87,17 @@ function walkRoutes(): WalkedRoute[] {
           .replace(/(.)\/$/, '$1');
         const meta = <T>(k: string): T | undefined =>
           (Reflect.getMetadata(k, fn) as T | undefined) ?? (Reflect.getMetadata(k, cls) as T | undefined);
+        // `@Param(name, pipe)` is recorded on the CLASS, keyed by method name,
+        // as "<paramtype>:<index>" entries — the read openapi.integration.test.ts
+        // uses for `@Res()`.
+        const args =
+          (Reflect.getMetadata(ROUTE_ARGS_METADATA, cls, key) as
+            | Record<string, { data?: unknown; pipes?: unknown[] }>
+            | undefined) ?? {};
+        const uuidParams = Object.entries(args)
+          .filter(([argKey]) => argKey.split(':')[0] === String(RouteParamtypes.PARAM))
+          .filter(([, arg]) => (arg.pipes ?? []).some((pipe) => pipe instanceof ParseUUIDPipe))
+          .map(([, arg]) => String(arg.data));
         out.push({
           label: `${RequestMethod[verb]} ${path}`,
           path,
@@ -91,6 +107,7 @@ function walkRoutes(): WalkedRoute[] {
           isPublic: meta<boolean>(IS_PUBLIC_KEY) === true,
           scopes: meta<string[]>(SCOPES_KEY),
           sessionOnly: guardedBySessionOnly(cls) || guardedBySessionOnly(fn),
+          uuidParams,
         });
       }
     }
@@ -102,6 +119,94 @@ function walkRoutes(): WalkedRoute[] {
 }
 
 const ROUTES = walkRoutes();
+
+/** How a route is reached: the action it `@Requires`, or one of the three statements. */
+type Access = AccessAction | 'bearer-only' | 'not-project-scoped' | 'public';
+
+/** Every marker a walked route carries, as `Access` values — one, if it is declared right. */
+function markers(r: WalkedRoute): Access[] {
+  return [
+    r.requires ?? null,
+    r.bearerOnly ? 'bearer-only' : null,
+    r.notProjectScoped ? 'not-project-scoped' : null,
+    r.isPublic ? 'public' : null,
+  ].filter((m): m is Access => m !== null);
+}
+
+/**
+ * ═══ WHICH ROUTE TAKES WHICH ACCESS, WRITTEN DOWN ═══
+ *
+ * Copied from the annotation table in
+ * docs/superpowers/plans/2026-10-07-project-access-pr1-enforcement.md (Task
+ * 6), one row per route the app registers. The walk proves each route carries
+ * SOME marker; only a list written apart from the controllers can say it
+ * carries the RIGHT one. Without it, `@Requires('rules:read')` on token
+ * minting passed every check in this file: one marker, a null scope like
+ * every session-only action, and nothing in the matrix sending that request.
+ *
+ * So the walked map must EQUAL this one. A route added later fails here until
+ * someone writes down who may call it; a route whose marker changes fails
+ * naming both. Keep it in step with the plan, never with the code.
+ */
+const ACCESS_BY_ROUTE: Readonly<Record<string, Access>> = {
+  'GET /healthz': 'public',
+  'GET /readyz': 'public',
+
+  'GET /v1/activity': 'not-project-scoped',
+  'GET /v1/projects': 'not-project-scoped',
+  'GET /v1/runs': 'not-project-scoped',
+  'GET /v1/tests': 'not-project-scoped',
+
+  'POST /v1/runs': 'bearer-only',
+  'POST /v1/runs/live': 'bearer-only',
+  'POST /v1/runs/:id/stream': 'bearer-only',
+  'POST /v1/runs/:id/close': 'bearer-only',
+  'POST /v1/telemetry': 'bearer-only',
+  'GET /v1/projects/:slug/runs': 'bearer-only',
+
+  'POST /v1/projects': 'projects:create',
+
+  'GET /v1/runs/:id': 'project:read',
+  'GET /v1/runs/:id/stats': 'project:read',
+  'GET /v1/runs/:id/series': 'project:read',
+  'GET /v1/runs/:id/errors': 'project:read',
+  'GET /v1/runs/:id/errors/series': 'project:read',
+  'GET /v1/runs/:id/telemetry': 'project:read',
+  'GET /v1/runs/:id/distribution': 'project:read',
+  'GET /v1/runs/:id/users': 'project:read',
+  'GET /v1/runs/:id/scatter': 'project:read',
+  'GET /v1/runs/:id/trends': 'project:read',
+  'GET /v1/runs/:id/events': 'project:read',
+  'PUT /v1/runs/:id/note': 'run:note',
+
+  'GET /v1/projects/:slug/tests': 'project:read',
+  'GET /v1/projects/:slug/tests/:testSlug': 'project:read',
+  'PATCH /v1/projects/:slug/tests/:testSlug': 'tests:manage',
+  'DELETE /v1/projects/:slug/tests/:testSlug': 'tests:manage',
+
+  'POST /v1/projects/:slug/runs': 'run:upload',
+
+  'POST /v1/projects/:slug/runner/runs': 'runner:run',
+  'GET /v1/projects/:slug/runner/runs': 'project:read',
+  'POST /v1/projects/:slug/runner/runs/:jobId/cancel': 'runner:run',
+  'GET /v1/projects/:slug/runner/runs/:jobId/logs': 'project:read',
+  'POST /v1/projects/:slug/runner/runs/:jobId/retry': 'runner:run',
+
+  'GET /v1/projects/:slug/packages': 'project:read',
+  'POST /v1/projects/:slug/packages': 'packages:manage',
+  'PUT /v1/projects/:slug/packages/:packageId/content': 'packages:manage',
+  'PATCH /v1/projects/:slug/packages/:packageId': 'packages:manage',
+  'DELETE /v1/projects/:slug/packages/:packageId': 'packages:delete',
+
+  'GET /v1/projects/:slug/rules': 'rules:read',
+  'POST /v1/projects/:slug/rules': 'rules:edit',
+  'PATCH /v1/projects/:slug/rules/:ruleId': 'rules:edit',
+  'DELETE /v1/projects/:slug/rules/:ruleId': 'rules:edit',
+
+  'GET /v1/projects/:slug/tokens': 'tokens:manage',
+  'POST /v1/projects/:slug/tokens': 'tokens:manage',
+  'DELETE /v1/projects/:slug/tokens/:prefix': 'tokens:manage',
+};
 
 /** Where the run routes live. A run names its project through the run row. */
 const isRunRoute = (path: string): boolean => path === '/v1/runs/:id' || path.startsWith('/v1/runs/:id/');
@@ -117,15 +222,7 @@ describe('every route declares how it is reached', () => {
   });
 
   it('gives each route exactly one of @Requires, @BearerOnly, @NotProjectScoped and @Public', () => {
-    const wrong = ROUTES.map((r) => ({
-      label: r.label,
-      markers: [
-        r.requires === undefined ? null : `@Requires('${r.requires}')`,
-        r.bearerOnly ? '@BearerOnly' : null,
-        r.notProjectScoped ? '@NotProjectScoped' : null,
-        r.isPublic ? '@Public' : null,
-      ].filter((m): m is string => m !== null),
-    }))
+    const wrong = ROUTES.map((r) => ({ label: r.label, markers: markers(r) }))
       .filter((r) => r.markers.length !== 1)
       .map((r) => `${r.label}: ${r.markers.length === 0 ? 'none' : r.markers.join(' + ')}`)
       .sort();
@@ -144,6 +241,21 @@ describe('every route declares how it is reached', () => {
     const both = ROUTES.filter((r) => r.isPublic && r.requires !== undefined).map((r) => r.label).sort();
     expect(both, `routes that are @Public AND @Requires — public in effect:\n${both.join('\n')}`).toEqual([]);
   });
+
+  it('declares, route by route, exactly the access written down for it', () => {
+    const walked = new Map(ROUTES.map((r) => [r.label, markers(r).join(' + ') || 'none']));
+    expect(walked.size, 'two routes walked to one label').toBe(ROUTES.length);
+    const written = new Map<string, string>(Object.entries(ACCESS_BY_ROUTE));
+
+    const diff = [
+      ...[...written].filter(([label]) => !walked.has(label)).map(([label, access]) => `missing: ${label} (written ${access}) is not a registered route`),
+      ...[...walked].filter(([label]) => !written.has(label)).map(([label, access]) => `extra: ${label} declares ${access} — write its access down in ACCESS_BY_ROUTE`),
+      ...[...walked]
+        .filter(([label, access]) => written.has(label) && written.get(label) !== access)
+        .map(([label, access]) => `changed: ${label} declares ${access}, written ${written.get(label)}`),
+    ].sort();
+    expect(diff, `the routes' access differs from ACCESS_BY_ROUTE:\n${diff.join('\n')}`).toEqual([]);
+  });
 });
 
 describe('each route’s token scope agrees with its action', () => {
@@ -155,7 +267,7 @@ describe('each route’s token scope agrees with its action', () => {
    * scope says one thing while its action's row says another fails naming
    * both.
    */
-  it('takes exactly the table’s scope, or is session-only where the table names none', () => {
+  it('takes exactly the table’s scope and admits tokens, or is session-only where the table names none', () => {
     const declared = ROUTES.filter((r) => r.requires !== undefined);
     const withScope = declared.filter((r) => ACCESS_ACTIONS[r.requires!].scope !== null);
     const sessionOnly = declared.filter((r) => ACCESS_ACTIONS[r.requires!].scope === null);
@@ -167,6 +279,12 @@ describe('each route’s token scope agrees with its action', () => {
       ...withScope
         .filter((r) => JSON.stringify(r.scopes ?? []) !== JSON.stringify([ACCESS_ACTIONS[r.requires!].scope]))
         .map((r) => `${r.label}: ${r.requires} takes "${ACCESS_ACTIONS[r.requires!].scope}", @Scopes is ${JSON.stringify(r.scopes ?? [])}`),
+      // The other direction: SessionOnlyGuard on a route the table opens to a
+      // token refuses that token outright, so the scope above would be a
+      // promise the route never keeps.
+      ...withScope
+        .filter((r) => r.sessionOnly)
+        .map((r) => `${r.label}: ${r.requires} is open to a "${ACCESS_ACTIONS[r.requires!].scope}" token, but SessionOnlyGuard refuses every token`),
       ...sessionOnly
         .filter((r) => !r.sessionOnly)
         .map((r) => `${r.label}: ${r.requires} is session-only, and neither the route nor its class carries SessionOnlyGuard`),
@@ -189,6 +307,22 @@ describe('a project action sits on a route that names its project', () => {
       .map((r) => `${r.label}: ${r.requires}`)
       .sort();
     expect(unnamed, unnamed.join('\n')).toEqual([]);
+  });
+
+  /**
+   * THE ESCAPE HATCH STAYS NARROW. `@NotProjectScoped` takes no action, so
+   * `AccessGuard` judges nothing on it. On a route that names a project or a
+   * run, that is the whole hole: any session in the org could act on any
+   * project through it. It is for org-wide routes only.
+   */
+  it('puts no @NotProjectScoped route on a path that names a project or a run', () => {
+    const orgWide = ROUTES.filter((r) => r.notProjectScoped);
+    expect(orgWide.length).toBeGreaterThan(3);
+    const named = orgWide
+      .filter((r) => r.path.split('/').includes(':slug') || isRunRoute(r.path))
+      .map((r) => r.label)
+      .sort();
+    expect(named, `@NotProjectScoped routes that name a project or a run:\n${named.join('\n')}`).toEqual([]);
   });
 });
 
@@ -491,16 +625,41 @@ describe('the role matrix', () => {
    * which is what proves the route really has a pipe or a body check to reach.
    */
   describe('an outsider meets the 404 before any pipe or body check', () => {
-    const malformedSubParam = [
-      'DELETE /v1/projects/:slug/packages/not-a-uuid',
-      'DELETE /v1/projects/:slug/rules/not-a-uuid',
-    ] as const;
+    /*
+     * EVERY project route with a uuid-piped sub-parameter, read off the walk
+     * (`uuidParam` is a `ParseUUIDPipe`), with that parameter malformed. The
+     * lowest role the spec gives the route's action reaches the pipe — 400
+     * INVALID_ID, which proves there is a pipe to reach — and both outsiders
+     * get the 404 a missing slug gets.
+     */
+    const SPEC_ROLE = new Map(PROBES.map((p) => [p.action, p.role]));
+    const piped = ROUTES.filter(
+      (r) =>
+        r.requires !== undefined &&
+        r.path.split('/').includes(':slug') &&
+        r.uuidParams.some((name) => name !== 'slug'),
+    );
 
-    for (const route of malformedSubParam) {
+    it('finds the uuid-piped project routes, the runner job’s among them', () => {
+      expect(piped.length).toBeGreaterThan(7);
+      const labels = piped.map((r) => r.label);
+      for (const job of [
+        'POST /v1/projects/:slug/runner/runs/:jobId/cancel',
+        'GET /v1/projects/:slug/runner/runs/:jobId/logs',
+        'POST /v1/projects/:slug/runner/runs/:jobId/retry',
+      ]) {
+        expect(labels, job).toContain(job);
+      }
+    });
+
+    for (const r of piped) {
+      const route = r.uuidParams.reduce((label, name) => label.replace(`:${name}`, 'not-a-uuid'), r.label);
       it(`${route}: the same 404 for a real project as for a missing one`, async () => {
+        const role = SPEC_ROLE.get(r.requires!);
+        if (role === undefined || role === 'admin') throw new Error(`${r.label}: no project role for ${r.requires}`);
         const reached = fill(route, A);
-        const asMember = await send(reached.verb, reached.url, cookies.member);
-        expect([asMember.status, asMember.body.code]).toStrictEqual([400, 'INVALID_ID']);
+        const asLowest = await send(reached.verb, reached.url, cookies[role]);
+        expect([asLowest.status, asLowest.body.code], role).toStrictEqual([400, 'INVALID_ID']);
 
         for (const { key } of OUTSIDERS) {
           const invisible = await send(reached.verb, reached.url, cookies[key]);
@@ -567,6 +726,33 @@ describe('the role matrix', () => {
         ]);
       }
     });
+  });
+
+  /*
+   * ═══ A @BearerOnly ROUTE REFUSES A SESSION ═══
+   *
+   * `@BearerOnly` takes no action, so `AccessGuard` judges nothing on it: the
+   * marker is a claim that a session cannot use the route at all — no scope
+   * a session holds, or a handler that answers PROJECT_REQUIRED. Each one is
+   * sent as a signed-in ADMIN, the session with the most reach, and must be
+   * refused with a 4xx. A route marked bearer-only that a session can in fact
+   * use is a route nobody's role is checked on.
+   */
+  describe('a @BearerOnly route refuses a session', () => {
+    const bearerOnly = ROUTES.filter((r) => r.bearerOnly);
+
+    it('finds the bearer-only routes', () => {
+      expect(bearerOnly.length).toBeGreaterThan(4);
+    });
+
+    for (const r of bearerOnly) {
+      it(`${r.label} refuses a signed-in admin`, async () => {
+        const { verb, url } = fill(r.label, A);
+        const res = await send(verb, url, cookies.admin);
+        expect(res.status, `${r.label}: ${res.status} ${JSON.stringify(res.body)}`).toBeGreaterThanOrEqual(400);
+        expect(res.status, `${r.label}: ${res.status} ${JSON.stringify(res.body)}`).toBeLessThan(500);
+      });
+    }
   });
 
   /*

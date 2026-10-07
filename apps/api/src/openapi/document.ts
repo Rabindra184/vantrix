@@ -719,13 +719,15 @@ const responses: Record<string, ResponseObject> = {
   },
   Forbidden: {
     description:
-      'The credential is valid but may not perform this operation. For a bearer token, it lacks ' +
-      'the scope the operation requires (code FORBIDDEN). For a signed-in session, either its ' +
-      'role in the project is below the one the operation needs (code ROLE_REQUIRED, the detail ' +
-      'naming that role), or the operation is an admin\'s and the account is not one (code ' +
-      'ADMIN_REQUIRED). A session that holds no role in the project is never told so with a 403: ' +
-      'it gets the 404 a project or run that does not exist gets. application/problem+json with ' +
-      'a required "remediation".',
+      'The credential is valid but may not perform this operation. Code FORBIDDEN: the ' +
+      'credential lacks the scope the operation requires — a bearer token minted without it, or ' +
+      'a signed-in session on an operation whose scope no session holds ("stream" and ' +
+      '"telemetry": opening and streaming a live run, posting telemetry). For a signed-in ' +
+      'session on a project operation, also: code ROLE_REQUIRED when its role in the project is ' +
+      'below the one the operation needs (the detail naming that role), or ADMIN_REQUIRED when ' +
+      'the operation is an admin\'s and the account is not one. A session that holds no role in ' +
+      'the project is never told so with a 403: it gets the 404 a project or run that does not ' +
+      'exist gets. application/problem+json with a required "remediation".',
     content: problem(),
   },
   NotFound: {
@@ -1401,9 +1403,11 @@ const paths: Record<string, PathItemObject> = {
       tags: ['projects'],
       security: [{ cookieAuth: [] }],
       description:
-        'Requires a signed-in session. A project is the application or service boundary that ' +
-        'tokens, on-prem runner jobs, and performance runs are attached to. Bearer tokens are ' +
-        'refused here because they are already project-scoped and must not create siblings.',
+        'Requires a signed-in session whose account is an admin: any other session is refused ' +
+        '403 ADMIN_REQUIRED, whatever role it holds in any project. A project is the application ' +
+        'or service boundary that tokens, on-prem runner jobs, and performance runs are attached ' +
+        'to. Bearer tokens are refused here because they are already project-scoped and must not ' +
+        'create siblings.',
       requestBody: {
         required: true,
         description: 'A display name and URL slug for the new project.',
