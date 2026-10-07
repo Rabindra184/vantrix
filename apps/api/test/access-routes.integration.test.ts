@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -768,8 +768,10 @@ describe('the role matrix', () => {
    *     handlers look the run up by org when the credential names no project,
    *     so a session let past the scope would write to, or close, any running
    *     run in its org.
-   *   - PROJECT_REQUIRED, 400, the handler's first statement. A session names
-   *     no project (`authenticateSession` sets no `projectId`), so this is a
+   *   - PROJECT_REQUIRED, 400, raised before the handler looks up a project
+   *     or validates a body (on GET /v1/projects/:slug/runs only the query's
+   *     single-value checks come first). A session names no project
+   *     (`authenticateSession` sets no `projectId`), so this is a
    *     STRUCTURAL refusal: it holds whatever scopes a session carries, and on
    *     POST /v1/runs and GET /v1/projects/:slug/runs — whose scopes, `ingest`
    *     and `read`, every session holds — it is the real and only one.
@@ -790,12 +792,18 @@ describe('the role matrix', () => {
     let bundle: Buffer;
 
     beforeAll(async () => {
+      // Built in a scratch directory and removed once read: the bundle lives
+      // in memory from here on, and nothing else here cleans the temp dir.
       const dir = mkdtempSync(join(tmpdir(), 'access-routes-'));
-      const results = join(dir, 'paritysimulation');
-      mkdirSync(results, { recursive: true });
-      copyFileSync(LOG, join(results, 'simulation.log'));
-      execFileSync('tar', ['-czf', join(dir, 'bundle.tgz'), '-C', dir, 'paritysimulation']);
-      bundle = readFileSync(join(dir, 'bundle.tgz'));
+      try {
+        const results = join(dir, 'paritysimulation');
+        mkdirSync(results, { recursive: true });
+        copyFileSync(LOG, join(results, 'simulation.log'));
+        execFileSync('tar', ['-czf', join(dir, 'bundle.tgz'), '-C', dir, 'paritysimulation']);
+        bundle = readFileSync(join(dir, 'bundle.tgz'));
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
 
       const opened = await request(ctx.app.getHttpServer())
         .post('/v1/runs/live')
