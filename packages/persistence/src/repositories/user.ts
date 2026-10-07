@@ -33,6 +33,12 @@ export interface OrgUserRow {
  * two-int4 advisory keys in separate key spaces (`pg_locks.objsubid` 1 and
  * 2), so this cannot collide with the worker's per-run locks, which are the
  * two-int4 `(RUN_INGEST_LOCK_NAMESPACE, hashtext(run_id))`.
+ *
+ * PER ORG, while the admin flag (`user.role`) is per ACCOUNT, install-wide.
+ * That is correct because an install has one org (spec, section 1), and a
+ * database holding several (the tests') does not share admins between them
+ * in practice. It does mean this key serialises ONE org's admin changes and
+ * must never be read as covering an account that is an admin of several.
  */
 export function adminLockKey(orgId: string): bigint {
   return createHash('sha256').update(`${orgId}:admins`).digest().readBigInt64BE(0);
@@ -106,9 +112,17 @@ export class UserRepository {
   /**
    * Admins of `orgId` who are not disabled. `banned IS NOT TRUE` rather than
    * `= false`, because the column is nullable and a NULL is not a ban.
+   *
+   * Counted per org although `user.role` is install-wide: see `adminLockKey`
+   * for why that is correct, and what it does not cover.
+   *
+   * `db` is the client to count on. Inside `withAdminLock`, pass the lock's
+   * own transaction client: counting on `this.prisma` there would hold a
+   * SECOND pool connection while the first waits on the lock (see
+   * `withAdminLock`).
    */
-  async countActiveAdmins(orgId: string): Promise<number> {
-    const [row] = await this.prisma.$queryRaw<{ n: number }[]>`
+  async countActiveAdmins(orgId: string, db: Prisma.TransactionClient | PrismaClient = this.prisma): Promise<number> {
+    const [row] = await db.$queryRaw<{ n: number }[]>`
       SELECT count(*)::int AS n
       FROM "user" u
       JOIN org_member m ON m.user_id = u.id
@@ -124,12 +138,22 @@ export class UserRepository {
    * is what lets "is this the last active admin?" be read and acted on
    * without a second admin changing the answer in between.
    *
-   * The transaction holds NOTHING BUT THE LOCK. `fn` takes no transaction
-   * client, and the Better Auth calls it makes run on Better Auth's own
-   * connections and commit there, on their own: when `fn` throws, the lock is
-   * released and what `fn` already wrote stays written. A read `fn` makes
-   * through this repository (`countActiveAdmins`) runs on another connection
-   * at READ COMMITTED, so it sees what the previous holder committed.
+   * ═══ ONE CONNECTION PER ADMIN CHANGE: `fn` READS ON `tx` ═══
+   *
+   * Every caller holds one pool connection for its whole wait on the lock. A
+   * holder that then read on `this.prisma` would need a SECOND, and N
+   * same-org calls on a pool of N would leave it none: P2024 "Timed out
+   * fetching a new connection", with every other request on that shared pool
+   * starving behind it (measured: a pool of two, two concurrent calls). So
+   * `fn` is handed the lock's own transaction client, and does its reads
+   * (`countActiveAdmins(orgId, tx)`) on it. At READ COMMITTED each statement
+   * there sees whatever the previous holder committed.
+   *
+   * Better Auth's own writes do NOT go through `tx`: they run on Better
+   * Auth's client (`createAuth`'s own `createPrisma`, a separate pool) and
+   * commit there, on their own. So the lock's transaction rolls back nothing
+   * of theirs: when `fn` throws, the lock is released and what `fn` already
+   * wrote through Better Auth stays written.
    *
    * Not re-entrant: `fn` calling `withAdminLock` for the same org opens a
    * second transaction on another connection, which queues behind this one,
@@ -142,10 +166,10 @@ export class UserRepository {
    * has its transaction rolled back (the lock goes with it) and the call
    * rejects, even though `fn`'s own writes stand.
    */
-  async withAdminLock<T>(orgId: string, fn: () => Promise<T>): Promise<T> {
+  async withAdminLock<T>(orgId: string, fn: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
     return this.prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(${adminLockKey(orgId).toString()}::bigint)`;
-      return fn();
+      return fn(tx);
     }, LOCK_WAITING_TX);
   }
 

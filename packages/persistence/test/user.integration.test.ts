@@ -109,12 +109,13 @@ describe('UserRepository.listInOrg', () => {
   });
 
   /**
-   * `user."createdAt"` is a bare `timestamp`, which node-postgres would decode
-   * in this PROCESS's zone and Prisma decodes as UTC (CLAUDE.md, "An instant
-   * column must be timestamptz"). The repository reads it through Prisma, so
-   * the instant written is the instant read in any zone. Pinned under a zone
-   * that is NOT UTC, because in UTC the two decodings agree and a raw-SQL
-   * rewrite that forgot the conversion would pass.
+   * `user."createdAt"` is a bare `timestamp`, which node-postgres (the pg
+   * pool) decodes in this PROCESS's zone and Prisma — its query API and its
+   * `$queryRaw` alike — decodes as UTC (CLAUDE.md, "An instant column must be
+   * timestamptz"). The repository reads it through Prisma, so the instant
+   * written is the instant read in any zone. Pinned under a zone that is NOT
+   * UTC, because in UTC the two decodings agree: what this catches is a
+   * rewrite that moves the read onto the pg pool without converting.
    */
   it('reads createdAt as the instant that was written, whatever zone this process is in', async () => {
     const written = new Date('2026-03-04T05:06:07.000Z');
@@ -282,6 +283,61 @@ describe('UserRepository.withAdminLock', () => {
       await holder.query('SELECT pg_advisory_unlock_all()').catch(() => undefined);
       holder.release();
       if (pending) await Promise.allSettled([pending]);
+    }
+  });
+
+  /**
+   * ═══ AN ADMIN CHANGE HOLDS ONE CONNECTION, NOT TWO ═══
+   *
+   * Every caller holds a pool connection for its whole wait on the lock. If
+   * the holder then counted admins on ANOTHER connection, N same-org calls on
+   * a pool of N would leave it nothing to count with: P2024 "Timed out
+   * fetching a new connection" after Prisma's pool timeout, while the API's
+   * shared pool starves every other request. So the count runs on the lock's
+   * own transaction client.
+   *
+   * Forced rather than raced: a raw connection holds the lock until BOTH calls
+   * are observed queued behind it (each on its own pool connection, the whole
+   * pool of two), and only then lets go.
+   */
+  it('lets two same-org calls on a pool of two both finish, counting on the lock connection', async () => {
+    await user('a-only', { role: 'admin' });
+    await join('a-only', orgA);
+    const limited = createPrisma(url, { connectionLimit: 2 });
+    const repo = new UserRepository(limited);
+    const holder = await pool.connect();
+    let pending: Promise<unknown>[] = [];
+    try {
+      const { rows } = await holder.query<{ pid: number }>('SELECT pg_backend_pid() AS pid');
+      const holderPid = rows[0]!.pid;
+      await holder.query('SELECT pg_advisory_lock($1::bigint)', [adminLockKey(orgA).toString()]);
+
+      const started = [0, 1].map(() => repo.withAdminLock(orgA, (tx) => repo.countActiveAdmins(orgA, tx)));
+      pending = started;
+      const calls = Promise.allSettled(started);
+      await waitUntil('both calls to queue behind the holder', async () => {
+        const queued = await pool.query<{ n: number }>(
+          `WITH RECURSIVE queued(pid) AS (
+             SELECT pid FROM pg_stat_activity WHERE $1 = ANY (pg_blocking_pids(pid))
+             UNION
+             SELECT a.pid FROM pg_stat_activity a JOIN queued q ON q.pid = ANY (pg_blocking_pids(a.pid))
+           )
+           SELECT count(*)::int AS n FROM queued`,
+          [holderPid],
+        );
+        return queued.rows[0]!.n === 2;
+      });
+      await holder.query('SELECT pg_advisory_unlock($1::bigint)', [adminLockKey(orgA).toString()]);
+
+      const settled = await calls;
+      const failures = settled.flatMap((s) => (s.status === 'rejected' ? [String(s.reason)] : []));
+      expect(failures, 'a call failed instead of counting on its own connection').toEqual([]);
+      expect(settled.map((s) => (s.status === 'fulfilled' ? s.value : null))).toEqual([1, 1]);
+    } finally {
+      await holder.query('SELECT pg_advisory_unlock_all()').catch(() => undefined);
+      holder.release();
+      await Promise.allSettled(pending);
+      await limited.$disconnect();
     }
   });
 

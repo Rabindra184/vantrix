@@ -623,6 +623,26 @@ jobs:
             echo "::error::an operator-chosen password was flagged for a change (read: '$must')"; exit 1; }
           echo "chosen password honoured, no default warning, not flagged"
 
+      # ...and a password bootstrap GENERATES is flagged, like the default:
+      # nobody chose it, and it has been printed to a terminal. This is the
+      # `--admin-email` path a human at a terminal takes, which the compose
+      # service never does, so neither step above can see its arm of the rule.
+      # Slugs as positional arguments, the way `infra/README.md` runs it, with
+      # neither PERFPORTAL_ADMIN_EMAIL nor PERFPORTAL_ADMIN_PASSWORD set.
+      - name: A password bootstrap generates for --admin-email is flagged for a change
+        run: |
+          pnpm --filter @perfportal/persistence run bootstrap ci-org-5 ci-project-5 --admin-email ci-gen@perfportal.local > /tmp/b7.txt 2>&1 || {
+            echo "::error::bootstrap --admin-email failed"; cat /tmp/b7.txt; exit 1; }
+          grep -q 'Password: ' /tmp/b7.txt || {
+            echo "::error::no password was printed — the account was not created by this run"; exit 1; }
+          if grep -q 'PUBLISHED DEFAULT' /tmp/b7.txt; then
+            echo "::error::the --admin-email path seeded the published default instead of generating one"; exit 1
+          fi
+          must="$($PSQL -At -c "select \"mustChangePassword\" from \"user\" where email='ci-gen@perfportal.local';")"
+          test "$must" = "t" || {
+            echo "::error::a generated password was not flagged for a change (read: '$must')"; exit 1; }
+          echo "generated password flagged for a change"
+
       # A MIXED-CASE ADDRESS HAS TO BE FOUND AGAIN. Better Auth stores the
       # address lowercased, so a lookup by the address as written finds
       # nothing on the second run, tries to create the account again, and
