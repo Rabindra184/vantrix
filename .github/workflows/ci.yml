@@ -647,6 +647,17 @@ jobs:
           users="$($PSQL -At -c "select count(*) from \"user\" where email = 'short-password@perfportal.local';")"
           test "$users" = "0" || {
             echo "::error::a refused password still created the account ($users rows)"; exit 1; }
+          # The org and the project this step names must EXIST before a
+          # token count scoped to them means anything: a join on an org that
+          # was never written counts zero tokens whatever bootstrap did, and
+          # the check below would pass against nothing. Both are upserted
+          # before the bounds check, so exactly one of each is the state.
+          orgs="$($PSQL -At -c "select count(*) from org where slug = '$PERFPORTAL_ORG_SLUG';")"
+          test "$orgs" = "1" || {
+            echo "::error::expected the org $PERFPORTAL_ORG_SLUG upserted before the bounds check, found $orgs rows — the token count would be vacuous"; exit 1; }
+          projects="$($PSQL -At -c "select count(*) from project p join org o on o.id = p.org_id where o.slug = '$PERFPORTAL_ORG_SLUG' and p.slug = '$PERFPORTAL_PROJECT_SLUG';")"
+          test "$projects" = "1" || {
+            echo "::error::expected the project $PERFPORTAL_PROJECT_SLUG upserted before the bounds check, found $projects rows — the token count would be vacuous"; exit 1; }
           tokens="$($PSQL -At -c "select count(*) from api_token t join org o on o.id = t.org_id where o.slug = '$PERFPORTAL_ORG_SLUG';")"
           test "$tokens" = "0" || {
             echo "::error::a refused password still minted an API token in $PERFPORTAL_ORG_SLUG ($tokens rows)"; exit 1; }
