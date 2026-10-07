@@ -10,6 +10,10 @@ export interface TenantScope {
    * every project in the org, and anyone else's is narrowed by `projectIds`
    * below. When absent, callers filter on org_id - never on a guessed project -
    * plus `visibilityClause` wherever an org-wide read must honour that list.
+   *
+   * A session that names one project of its own (`GET /v1/runs?project=`)
+   * carries it here too, beside its `projectIds`: the caller checked the
+   * session can see it before narrowing to it.
    */
   readonly projectId?: string;
   /**
@@ -29,8 +33,10 @@ export interface TenantScope {
  * A TenantScope known to carry a project. Every caller today builds its scope
  * from a run row or a bearer token, both of which always have one — so this
  * costs no call site anything, and keeps the compiler enforcing "this query
- * genuinely needs a project" for methods that are not findById/list (the two
- * that must accept a project-less session scope).
+ * genuinely needs a project" for every method that is not one of those taking
+ * a project-less session scope: `RunRepository.findById`/`setNote` and the
+ * org-wide lists (`RunRepository.list`, `TestRepository.listOrg`,
+ * `ProjectRepository.listForOrg`, `ActivityRepository.read`).
  */
 export type ProjectScope = TenantScope & { projectId: string };
 
@@ -44,6 +50,14 @@ export type ProjectScope = TenantScope & { projectId: string };
  * the answer for a person who belongs to no project; returning `null` for it
  * would hand them the whole org. That is why the test is `=== undefined` and
  * never a truthiness or length check.
+ *
+ * `column` IS SPLICED INTO THE SQL AS WRITTEN, NOT BOUND. It must be a literal
+ * in the calling code — a trusted identifier such as `'r.project_id'` — and
+ * never anything that came from a request; only the id list is a parameter.
+ *
+ * Callers AND the clause onto the org predicate they already have, never into
+ * an OR: a branch the planner cannot index costs every other branch of an OR
+ * its index (see the run search in `RunRepository.list`).
  */
 export function visibilityClause(scope: TenantScope, column: string, params: unknown[]): string | null {
   if (scope.projectIds === undefined) return null;

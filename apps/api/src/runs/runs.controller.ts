@@ -19,6 +19,7 @@ import { noteOf, RunsService, warmupMsOf } from './runs.service.js';
 import { notFound, projectNotFound, runNotFound } from '../common/validation.js';
 import { SessionOnlyGuard } from '../auth/session-only.guard.js';
 import { BearerOnly, NotProjectScoped, Requires } from '../auth/access.decorator.js';
+import { canSeeProject, listScope } from '../auth/access.js';
 
 // AuthGuard is registered globally via APP_GUARD (see auth.module.ts), so
 // every route authenticates by default — @UseGuards(AuthGuard) here would be
@@ -40,10 +41,10 @@ export class RunsController {
 
   /**
    * Org-scoped by credential, not by URL. A bearer token carries a projectId
-   * and stays restricted to it, exactly as before. A session carries none and
-   * sees every run in its org unless "project" narrows it by slug — the
-   * spread below takes the org-only branch of RunRepository.list whenever a
-   * session names no project.
+   * and stays restricted to it, exactly as before. A session carries none: an
+   * admin's sees every run in its org and anyone else's the runs of the
+   * projects they hold a role in (`listScope`), unless "project" narrows it
+   * by slug to one of those.
    */
   @Get()
   @NotProjectScoped()
@@ -90,6 +91,12 @@ export class RunsController {
           'Omit "project", or use a session, which can read every project in the org.',
         );
       }
+      // A session naming a project it cannot see gets the missing project's
+      // 404, for the reason above: once the list is narrowed to its own
+      // projects, an empty 200 here would say the slug exists. A bearer token
+      // has already matched its own project on the line above, so this
+      // refuses sessions only.
+      if (!canSeeProject(tenant, named.id)) throw projectNotFound(project);
       projectId = named.id;
     }
 
@@ -157,8 +164,15 @@ export class RunsController {
 
     const parsedCursor = parseCursor(cursor);
     const filters = parseRunListFilters({ q, status, verdict });
+    // The session's own projects ride along even when "project" names one:
+    // that one was checked above, so the extra clause narrows nothing, and the
+    // list stays defined by the same scope whichever filters arrive.
     const page = await this.runs.runs().list(
-      { orgId: tenant.orgId, projectId: projectId ? projectId : undefined },
+      {
+        orgId: tenant.orgId,
+        projectId: projectId ? projectId : undefined,
+        projectIds: listScope(tenant).projectIds,
+      },
       {
         limit: parseLimit(limit),
         cursor: parsedCursor ? parsedCursor : undefined,

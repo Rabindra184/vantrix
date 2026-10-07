@@ -5,11 +5,14 @@ import {
   ProjectListResponseSchema,
   ProjectSummarySchema,
   type ProjectListResponse,
+  type ProjectRole,
   type ProjectSummary,
   type RunStatus,
   type RunVerdict,
 } from '@perfportal/contracts';
-import { ProjectRepository } from '@perfportal/persistence';
+import { ProjectMemberRepository, ProjectRepository } from '@perfportal/persistence';
+import type { Tenant } from '../auth/auth.guard.js';
+import { listScope } from '../auth/access.js';
 import { SessionOnlyGuard } from '../auth/session-only.guard.js';
 import { Scopes } from '../auth/scopes.decorator.js';
 import { badRequest, conflict } from '../common/validation.js';
@@ -20,21 +23,30 @@ import { NotProjectScoped, Requires } from '../auth/access.decorator.js';
 // per-route.
 @Controller('/v1/projects')
 export class ProjectsController {
-  constructor(private readonly projects: ProjectRepository) {}
+  constructor(
+    private readonly projects: ProjectRepository,
+    private readonly projectMembers: ProjectMemberRepository,
+  ) {}
 
   /**
-   * The projects this credential can see — one rule, not two. A session
-   * names no project and sees its whole org's; a bearer token is minted
-   * against exactly one and sees that one, as a one-element list. Not a 400
-   * for the token: asking what it can see is a reasonable question with a
-   * correct answer, and a CI job resolving its own slug is the caller.
+   * The projects this credential can see — one rule, not two. An admin's
+   * session sees its whole org's; anyone else's sees the projects they hold a
+   * role in, and none when they hold none (`listScope`); a bearer token is
+   * minted against exactly one and sees that one, as a one-element list. Not
+   * a 400 for the token: asking what it can see is a reasonable question with
+   * a correct answer, and a CI job resolving its own slug is the caller.
+   *
+   * Each item carries the caller's `role` there — see `rolesOf`.
    */
   @Get()
   @NotProjectScoped()
   @Scopes('read')
   async list(@Req() req: Request): Promise<ProjectListResponse> {
     const tenant = req.tenant!;
-    const rows = await this.projects.listForOrg(tenant.orgId, tenant.projectId);
+    const [rows, roles] = await Promise.all([
+      this.projects.listForOrg(listScope(tenant)),
+      this.rolesOf(tenant),
+    ]);
     // The repository reads status and verdict off raw SQL, so they arrive as
     // `string`. Narrowed here rather than in the repository, which has no
     // business importing the contract's enums — and the assembled response
@@ -58,8 +70,28 @@ export class ProjectsController {
                 status: r.latestRun.status as RunStatus,
                 verdict: r.latestRun.verdict as RunVerdict | null,
               },
+        role: roles.get(r.id) ?? null,
       })),
     });
+  }
+
+  /**
+   * The caller's role in each project, by project id; a project absent from
+   * the map is `role: null` on the wire.
+   *
+   * A non-admin session already carries its roles — `loadSessionAccess` read
+   * them for this request, and they are exactly the projects it can see. An
+   * admin's session does not, because an admin sees every project and that
+   * lookup is skipped for them; so it is made here, on this one route, and a
+   * project where the admin holds no row reads `null`. A bearer token is a
+   * machine credential and holds no role anywhere.
+   */
+  private async rolesOf(tenant: Tenant): Promise<ReadonlyMap<string, ProjectRole>> {
+    if (tenant.projectId !== undefined) return new Map();
+    if (tenant.isAdmin === true) {
+      return tenant.userId === undefined ? new Map() : this.projectMembers.rolesForUser(tenant.userId);
+    }
+    return tenant.projectRoles ?? new Map();
   }
 
   @Post()

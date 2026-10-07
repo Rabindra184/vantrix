@@ -1,5 +1,5 @@
 import { Prisma, type PrismaClient } from '@prisma/client';
-import type { ProjectScope } from './tenant.js';
+import { visibilityClause, type ProjectScope, type TenantScope } from './tenant.js';
 
 /**
  * Re-exported, not redeclared: this package used to define its own FLAT
@@ -172,12 +172,24 @@ export class ProjectRepository {
    * run list's top row name different runs, and nothing on screen looks
    * wrong.
    *
-   * `projectId` narrows to a single project for a bearer token, which is
-   * scoped to exactly one. Absent for a session, which sees the whole org.
+   * `scope.projectId` narrows to a single project for a bearer token, which is
+   * scoped to exactly one. A session carries none: an admin's sees the whole
+   * org, and anyone else's is narrowed to `scope.projectIds` by
+   * `visibilityClause` — on `p.id`, the project's own key, since the row read
+   * here IS the project. Positional parameters rather than Prisma's tagged
+   * template, because that clause numbers its `$n` after the ones bound here.
    */
-  async listForOrg(orgId: string, projectId?: string): Promise<ProjectListRow[]> {
-    const projectFilter = projectId === undefined ? Prisma.empty : Prisma.sql`AND p.id = ${projectId}::uuid`;
-    const rows = await this.prisma.$queryRaw<RawProjectRow[]>`
+  async listForOrg(scope: TenantScope): Promise<ProjectListRow[]> {
+    const filters = ['p.org_id = $1::uuid'];
+    const params: unknown[] = [scope.orgId];
+    if (scope.projectId !== undefined) {
+      params.push(scope.projectId);
+      filters.push(`p.id = $${params.length}::uuid`);
+    }
+    const visible = visibilityClause(scope, 'p.id', params);
+    if (visible !== null) filters.push(visible);
+    const rows = await this.prisma.$queryRawUnsafe<RawProjectRow[]>(
+      `
       SELECT p.id, p.slug, p.name,
              r.id AS "latestRunId", r.status AS "latestRunStatus",
              r.verdict AS "latestRunVerdict"
@@ -189,10 +201,11 @@ export class ProjectRepository {
         ORDER BY COALESCE(tool_started_at, started_at) DESC, id DESC
         LIMIT 1
       ) r ON true
-      WHERE p.org_id = ${orgId}::uuid
-      ${projectFilter}
+      WHERE ${filters.join(' AND ')}
       ORDER BY p.name ASC
-    `;
+      `,
+      ...params,
+    );
     return rows.map((row: RawProjectRow) => ({
       id: row.id,
       slug: row.slug,

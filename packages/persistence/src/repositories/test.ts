@@ -2,7 +2,7 @@ import type { PrismaClient } from '@prisma/client';
 import { escapeLike } from './like.js';
 import { runP95, runScopeStatOn, type RunRecord } from './run.js';
 import { decodeOrgTestCursor, encodeOrgTestCursor } from './test-cursor.js';
-import type { ProjectScope, TenantScope } from './tenant.js';
+import { visibilityClause, type ProjectScope, type TenantScope } from './tenant.js';
 
 /**
  * A test as a reader's list sees it: the row, plus the two facts a list is
@@ -297,6 +297,12 @@ export class TestRepository {
       params.push(scope.projectId);
       filters.push(`t.project_id = $${params.length}::uuid`);
     }
+    // A non-admin session's projects, on the TEST's project_id — the row this
+    // list is made of; a test belongs to exactly one project. The run count,
+    // latest run and p95 history below are then read by the ids of the tests
+    // this page kept.
+    const visible = visibilityClause(scope, 't.project_id', params);
+    if (visible !== null) filters.push(visible);
 
     if (opts.cursor) {
       const at = decodeOrgTestCursor(opts.cursor);

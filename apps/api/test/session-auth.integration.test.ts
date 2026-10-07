@@ -1113,7 +1113,7 @@ describe('GET /v1/runs — org-scoped by credential', () => {
 // GET /v1/projects under a session. Every existing test against this route
 // (projects.integration.test.ts) authenticates with ctx.readToken, a
 // project-scoped bearer token — so all of them go down
-// ProjectRepository.listForOrg's `AND p.id = $2` branch and none of them
+// ProjectRepository.listForOrg's `p.id = $2` branch and none of them
 // exercise the org-wide branch a session takes. Placed here, beside the
 // GET /v1/runs session tests above, rather than duplicating
 // signInAsAdmin into projects.integration.test.ts — this file is where

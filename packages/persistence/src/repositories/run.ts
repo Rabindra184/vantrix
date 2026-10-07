@@ -3,7 +3,7 @@ import { clampPercentile } from '@perfportal/statistics';
 import type { Prisma, PrismaClient } from '@prisma/client';
 import type { RunStatus, RunVerdict } from '@perfportal/contracts';
 import { escapeLike } from './like.js';
-import type { ProjectScope, TenantScope } from './tenant.js';
+import { visibilityClause, type ProjectScope, type TenantScope } from './tenant.js';
 import { isUuid } from './uuid.js';
 
 export interface RunRecord {
@@ -996,6 +996,36 @@ export class RunRepository {
   }
 
   /**
+   * The run a page cursor names, read through the SAME scope as the page: the
+   * org, a bearer token's project, and a session's visible projects. A cursor
+   * is a run id, so resolving it with less would answer differently for a run
+   * that exists in a project the session cannot see (the page continues from
+   * it) than for one that does not exist at all (an empty page) — and that
+   * difference says the id exists.
+   */
+  private async cursorRun(
+    scope: TenantScope,
+    id: string,
+  ): Promise<{ id: string; startedAt: Date; toolStartedAt: Date | null } | null> {
+    const filters = ['id = $1::uuid', 'org_id = $2::uuid'];
+    const params: unknown[] = [id, scope.orgId];
+    if (scope.projectId) {
+      params.push(scope.projectId);
+      filters.push(`project_id = $${params.length}::uuid`);
+    }
+    const visible = visibilityClause(scope, 'project_id', params);
+    if (visible !== null) filters.push(visible);
+    const rows = await this.prisma.$queryRawUnsafe<
+      { id: string; startedAt: Date; toolStartedAt: Date | null }[]
+    >(
+      `SELECT id, started_at AS "startedAt", tool_started_at AS "toolStartedAt"
+         FROM run WHERE ${filters.join(' AND ')}`,
+      ...params,
+    );
+    return rows[0] ?? null;
+  }
+
+  /**
    * Ordered by the run's real start when known — coalesce(tool_started_at,
    * started_at) — falling back to ingest time for a run the worker has not
    * yet completed. `id DESC` is the tiebreaker so cursor pagination stays
@@ -1014,18 +1044,11 @@ export class RunRepository {
   ): Promise<{ items: RunListItem[]; nextCursor: string | null }> {
     let cursorKey: { effective: Date; id: string } | null = null;
     if (opts.cursor) {
-      const cursorRun = await this.prisma.run.findFirst({
-        where: {
-          id: opts.cursor,
-          orgId: scope.orgId,
-          projectId: scope.projectId ? scope.projectId : undefined,
-        },
-        select: { id: true, startedAt: true, toolStartedAt: true },
-      });
-      // A cursor that no longer resolves (wrong tenant, deleted row) yields
-      // an empty page rather than reinterpreting it as "start from the top"
-      // — silently restarting pagination would resurface items the caller
-      // already saw.
+      const cursorRun = await this.cursorRun(scope, opts.cursor);
+      // A cursor that no longer resolves (wrong tenant, deleted row, a run in
+      // a project this session cannot see) yields an empty page rather than
+      // reinterpreting it as "start from the top" — silently restarting
+      // pagination would resurface items the caller already saw.
       if (!cursorRun) return { items: [], nextCursor: null };
       cursorKey = { effective: cursorRun.toolStartedAt ?? cursorRun.startedAt, id: cursorRun.id };
     }
@@ -1036,6 +1059,11 @@ export class RunRepository {
       params.push(scope.projectId);
       filters.push(`r.project_id = $${params.length}::uuid`);
     }
+    // A non-admin session's projects, ANDed beside the org predicate — never
+    // inside the search's OR below, whose BitmapOr needs every branch on this
+    // one table. Nothing at all for an admin or a bearer token.
+    const visible = visibilityClause(scope, 'r.project_id', params);
+    if (visible !== null) filters.push(visible);
     if (cursorKey) {
       params.push(cursorKey.effective, cursorKey.id);
       filters.push(

@@ -25,6 +25,8 @@ describe('GET /v1/projects', () => {
       slug: 'checkout',
       name: 'Checkout',
       latestRun: null,
+      // A machine credential holds no role in any project.
+      role: null,
     });
   });
 
