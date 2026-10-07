@@ -284,9 +284,10 @@ exists. Your data lives in named volumes and is not touched by a rebuild.
 
 **The project-access release cannot be rolled back by image alone.** Its
 migration promotes every existing org member to admin and drops
-`org_member.role`, which older images read on every signed-in request — so an
-older image against the upgraded database answers every session request 500.
-To go back past it, restore the backup you took before upgrading
+`org_member.role`, which older images read. Under Compose an older image will
+not start at all: its `bootstrap` reads that column, fails, and `api` waits on
+it. Run directly, it answers every signed-in request with a 500. To go back
+past it, restore the backup you took before upgrading
 ([below](#backup-and-restore)).
 
 ### Keep upgrading at least once a year — the metrics tables are partitioned
