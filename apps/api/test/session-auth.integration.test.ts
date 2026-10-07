@@ -1,8 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, mkdirSync, readFileSync, copyFileSync, readdirSync } from 'node:fs';
-import { request as httpRequest } from 'node:http';
-import type { AddressInfo } from 'node:net';
+import { connect as tcpConnect, type AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -38,6 +37,36 @@ beforeAll(() => {
   execFileSync('tar', ['-czf', out, '-C', dir, 'run-1']);
   bundle = readFileSync(out);
 });
+
+/**
+ * One HTTP/1.1 request over a raw socket, its request line and headers on the
+ * wire exactly as given — no client library normalising a path or rewriting
+ * `Host` on the way out — and the status code that comes back.
+ */
+function rawStatus(
+  port: number,
+  req: { method: string; path: string; headers: Record<string, string>; body?: string },
+): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const lines = [`${req.method} ${req.path} HTTP/1.1`, ...Object.entries(req.headers).map(([k, v]) => `${k}: ${v}`)];
+    if (req.body !== undefined) lines.push(`Content-Length: ${Buffer.byteLength(req.body)}`);
+    lines.push('Connection: close');
+    let received = '';
+    const socket = tcpConnect(port, '127.0.0.1', () => {
+      socket.write(`${lines.join('\r\n')}\r\n\r\n${req.body ?? ''}`);
+    });
+    socket.setEncoding('latin1');
+    socket.on('data', (chunk: string) => {
+      received += chunk;
+    });
+    socket.on('error', reject);
+    socket.on('close', () => {
+      const status = /^HTTP\/1\.1 (\d{3})/.exec(received)?.[1];
+      if (status === undefined) reject(new Error(`no status line in ${JSON.stringify(received.slice(0, 200))}`));
+      else resolve(Number(status));
+    });
+  });
+}
 
 describe('/auth/*', () => {
   /**
@@ -115,23 +144,18 @@ describe('/auth/*', () => {
    * `/auth/./admin/list-users` reaches the plugin — measured at 200 with
    * every account in the install against a guard registered on
    * `/auth/admin/*splat`. A browser normalises these before sending, and so
-   * may an HTTP client library, which is why this goes through `node:http`:
+   * may an HTTP client library, which is why this goes through a raw socket:
    * it puts the path on the wire byte for byte.
+   *
+   * `/auth/ADMIN/list-users` cannot fail against an unguarded app — Better
+   * Auth's router (rou3) is case-sensitive and 404s it anyway — and is kept
+   * only so the refusal's case-insensitivity has a witness.
    */
   it('refuses the admin routes however the path is spelled', async () => {
     ctx = await createTestApp();
     const { cookie } = await signInAsAdmin(ctx, 'admin-spellings@example.test');
     const { port } = ctx.app.getHttpServer().address() as AddressInfo;
-
-    const statusOf = (path: string) =>
-      new Promise<number | undefined>((resolve, reject) => {
-        const req = httpRequest({ host: '127.0.0.1', port, path, method: 'GET', headers: { cookie } }, (res) => {
-          res.resume();
-          res.on('end', () => resolve(res.statusCode));
-        });
-        req.on('error', reject);
-        req.end();
-      });
+    const host = `127.0.0.1:${port}`;
 
     const spellings = [
       '/auth/./admin/list-users',
@@ -140,10 +164,56 @@ describe('/auth/*', () => {
       '/auth/ADMIN/list-users',
       '/auth/admin/list-users?limit=5',
     ];
-    const answered = await Promise.all(spellings.map(async (p) => `${p} ${await statusOf(p)}`));
+    const answered = await Promise.all(
+      spellings.map(async (path) => `${path} ${await rawStatus(port, { method: 'GET', path, headers: { Host: host, Cookie: cookie } })}`),
+    );
     expect(answered).toEqual(spellings.map((p) => `${p} 404`));
-    // ...while the same mount still serves Better Auth's ordinary routes.
-    expect(await statusOf('/auth/get-session')).toBe(200);
+    // ...while the same socket, the same way, still reaches an ordinary route:
+    // a refusal that 404s everything would pass every line above.
+    expect(await rawStatus(port, { method: 'GET', path: '/auth/get-session', headers: { Host: host, Cookie: cookie } })).toBe(200);
+  });
+
+  /**
+   * Better Auth's Node adapter does not route on the path Express saw. It
+   * builds the URL by CONCATENATION — `${x-forwarded-proto || proto}://${host}`
+   * + the request path — and routes on `new URL(that).pathname`. So a path
+   * smuggled into `Host` or `X-Forwarded-Proto` is the path it routes, while
+   * Express, and anything keyed on Express's path, sees `/auth/get-session`.
+   * Measured against an Express guard that resolved the path exactly as
+   * Better Auth does: every case here answered 200, the create-user one
+   * creating an admin. Sent over a raw socket so the headers leave unmodified.
+   */
+  it('refuses the admin routes when a header names them', async () => {
+    ctx = await createTestApp();
+    const { cookie } = await signInAsAdmin(ctx, 'admin-headers@example.test');
+    const { port } = ctx.app.getHttpServer().address() as AddressInfo;
+    const host = `127.0.0.1:${port}`;
+    const getSession = (headers: Record<string, string>) =>
+      rawStatus(port, { method: 'GET', path: '/auth/get-session', headers: { Cookie: cookie, ...headers } });
+
+    const smuggled = {
+      'Host with ?': await getSession({ Host: `${host}/auth/admin/list-users?` }),
+      'Host with #': await getSession({ Host: `${host}/auth/admin/list-users#` }),
+      'X-Forwarded-Proto': await getSession({
+        Host: host,
+        'X-Forwarded-Proto': `http://${host}/auth/admin/list-users?x=`,
+      }),
+      'create-user through Host': await rawStatus(port, {
+        method: 'POST',
+        path: '/auth/sign-in/email',
+        headers: { Host: `${host}/auth/admin/create-user?`, Cookie: cookie, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'smuggled-header@example.test', password: 'correct-horse-battery', name: 'S', role: 'admin' }),
+      }),
+    };
+    expect(smuggled).toEqual({
+      'Host with ?': 404,
+      'Host with #': 404,
+      'X-Forwarded-Proto': 404,
+      'create-user through Host': 404,
+    });
+    expect(await ctx.prisma.user.count({ where: { email: 'smuggled-header@example.test' } })).toBe(0);
+    // The control, through the same helper: an ordinary route still answers.
+    expect(await getSession({ Host: host })).toBe(200);
   });
 });
 
