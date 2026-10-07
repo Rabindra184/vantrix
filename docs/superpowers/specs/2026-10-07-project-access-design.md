@@ -89,8 +89,10 @@ a row keeps admin rights; the row matters only if they are later demoted.
 
 ### Account flags
 
-- `user.must_change_password boolean NOT NULL DEFAULT false`, a Better Auth
-  additional field not settable through its public endpoints.
+- `user."mustChangePassword" boolean NOT NULL DEFAULT false`, a Better Auth
+  additional field not settable through its public endpoints. Camel-cased
+  like every other column of Better Auth's `user` table. It arrives in PR 2
+  with the gate that reads it, never as a column nothing reads.
 - `user.banned`, `ban_reason`, `ban_expires` and `session.impersonated_by`:
   the admin plugin's own columns. `banned` is "disabled".
 
@@ -278,19 +280,27 @@ Copy follows the clean-UI text rule (`2026-10-04-clean-ui-design.md`).
 1. **PR 1, enforcement:** schema and migration, Better Auth admin plugin,
    sign-up closed and `/auth/admin/*` refused, bootstrap and fixtures moved,
    the permission table, the guard and its route walk, list filtering,
-   `role` on `GET /v1/projects`, the password-change gate. Everyone is an
-   admin after the migration, so nothing changes on screen.
+   `role` on `GET /v1/projects`, the live feed's membership check. Everyone
+   is an admin after the migration, so nothing changes on screen.
 2. **PR 2, administration:** the `/v1/admin` and `/members` routes, the
-   Administration pages, the first-sign-in step, `PUT /v1/me/password`.
+   Administration pages, the password-change gate together with
+   `PUT /v1/me/password` and the first-sign-in step. The gate waits for its
+   route: its remediation names `PUT /v1/me/password`, and a remediation
+   naming a route that does not exist yet is the defect the
+   remediations-name-a-real-lever branch removed.
 3. **PR 3, project experience:** the Members section, role-aware controls,
    the no-projects state, New project admin-only in the UI.
 
 ## Open points for the plan
 
-- **Confirm Better Auth 1.6.26's server-side create call** works without an
-  admin session (bootstrap creates the first admin with no one signed in).
-  If it needs headers, bootstrap writes the user and account rows through
-  Better Auth's internal adapter instead. Task 1 measures it.
+- **Settled while planning: Better Auth 1.6.26's server-side create call
+  needs no session.** Its `/admin/create-user` handler throws `UNAUTHORIZED`
+  only when there is no session AND the call carries a request or headers
+  (`plugins/admin/routes.mjs`), so `auth.api.createUser({ body })` from a
+  script creates the first admin with nobody signed in.
+- **The WebSocket live feed authenticates on its own.** An upgrade never
+  passes through Nest's guards, so `LiveGateway` gets the same membership
+  check as the guard, or it would be a way around it.
 - **Confirm the admin plugin's columns** against `prisma migrate diff`, so
   `schema.prisma` and the migration agree (the schema-matches-migrations
   guard enforces it).
