@@ -22,8 +22,10 @@ ADD COLUMN     "role" TEXT DEFAULT 'user';
 -- project_member starts empty and an admin assigns people afterwards. An
 -- account with no membership could see nothing and stays 'user'.
 --
--- Placed after the "role" column exists and BEFORE org_member's own role is
--- dropped, which is the last moment both are present.
+-- Placed after the "role" column exists, which it writes, and before
+-- org_member's own role is dropped, which it deliberately does not read:
+-- every member is promoted whatever that column said, because the column was
+-- never read and could not have narrowed anyone's access.
 --
 -- The one statement between the ADMINS markers is read and executed verbatim
 -- by packages/persistence/test/access-backfill.integration.test.ts: keep it

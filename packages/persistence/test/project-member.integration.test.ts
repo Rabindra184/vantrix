@@ -48,7 +48,11 @@ describe('ProjectMemberRepository', () => {
   it('refuses a second membership for the same person in the same project', async () => {
     const repo = new ProjectMemberRepository(prisma);
     await repo.add({ projectId, userId: 'u1', role: 'member', addedBy: null });
-    await expect(repo.add({ projectId, userId: 'u1', role: 'viewer', addedBy: null })).rejects.toThrow();
+    // P2002, the primary key: refused for being a duplicate, not for any
+    // other reason a bare `toThrow()` would also accept.
+    await expect(repo.add({ projectId, userId: 'u1', role: 'viewer', addedBy: null })).rejects.toMatchObject({
+      code: 'P2002',
+    });
     // The refused write changed nothing: the first role stands.
     expect(await repo.rolesForUser('u1')).toEqual(new Map([[projectId, 'member']]));
   });
