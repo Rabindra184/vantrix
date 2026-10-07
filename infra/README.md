@@ -129,14 +129,15 @@ left alone, never silently invalidated.
 ## Getting a human account
 
 Pass `--admin-email` to also create a session-authenticated admin account, a
-member of the same org, via Better Auth's own sign-up (never raw SQL, so the
-password hash is one Better Auth's own login path can verify):
+member of the same org, via Better Auth's admin plugin (never raw SQL, so the
+password hash is one Better Auth's own login path can verify). Sign-up is
+closed, so this — or an existing admin — is the only way an account is made:
 
     pnpm bootstrap --admin-email you@example.test
 
-This is **not** safe to re-run with the same address — Better Auth rejects a
-second sign-up for an email already in use, so re-running fails loudly rather
-than silently minting a second password. The plaintext password is printed
+This is **not** safe to re-run with the same address — bootstrap refuses an
+email that already has an account, so re-running fails loudly rather than
+silently minting a second password. The plaintext password is printed
 to stdout exactly once, the same way the API token is; copy it immediately.
 
 Log in with it against `/auth/*` (Better Auth's own error/response shapes,
@@ -261,9 +262,9 @@ afterwards — the token is stored as an Argon2id hash and the password as
 Better Auth's own hash. Copy both before the terminal scrolls.
 
 Re-running is safe for the org and the project, which are reused by slug. It
-is NOT safe to re-run with the same `--admin-email`: Better Auth refuses a
-second sign-up for an address already in use, and the command fails loudly
-rather than minting a second password.
+is NOT safe to re-run with the same `--admin-email`: bootstrap refuses an
+address that already has an account, and the command fails loudly rather
+than minting a second password.
 
 **The runner needs the two ids this step just printed.** Its first lines are
 

@@ -525,13 +525,23 @@ jobs:
       # the hand-run version of this check joined on `user_id` where the
       # column is `"userId"`, so it compared two empty strings and passed
       # against nothing.
-      - name: Bootstrap is idempotent and never re-passwords an account
+      #
+      # AND IT MUST NEVER RE-PROMOTE ONE. The admin flag is `user.role`, and an
+      # admin can take it away from the bootstrap account like any other. A
+      # reuse path that "made sure" the account was an admin would undo that
+      # demotion on the next `up`, silently. So the account is demoted here,
+      # bootstrap runs a THIRD time, and the role has to still be `user`. Each
+      # read of the role is asserted before the next step relies on it: a
+      # demotion that did not take would make the final check pass against
+      # nothing, the vacuous shape the fingerprint above already guards.
+      - name: Bootstrap is idempotent, and never re-passwords or re-promotes an account
         env:
           PERFPORTAL_ORG_SLUG: ci-org
           PERFPORTAL_PROJECT_SLUG: ci-project
           PERFPORTAL_ADMIN_EMAIL: ci-admin@perfportal.local
         run: |
           FP() { $PSQL -At -c "select md5(a.password) from account a join \"user\" u on u.id=a.\"userId\" where u.email='ci-admin@perfportal.local';"; }
+          ROLE() { $PSQL -At -c "select \"role\" from \"user\" where email='ci-admin@perfportal.local';"; }
 
           pnpm --filter @perfportal/persistence run bootstrap > /tmp/b1.txt 2>&1
           grep -q 'PUBLISHED DEFAULT' /tmp/b1.txt || {
@@ -559,6 +569,21 @@ jobs:
           test "$members" = "1" || {
             echo "::error::expected exactly 1 membership in ci-org, saw $members"; exit 1; }
           echo "idempotent: account reused, credential untouched, no duplicate membership"
+
+          role="$(ROLE)"
+          test "$role" = "admin" || {
+            echo "::error::bootstrap did not create its account as an admin (role: '$role')"; exit 1; }
+          $PSQL -q -c "UPDATE \"user\" SET \"role\" = 'user' WHERE email = 'ci-admin@perfportal.local';"
+          role="$(ROLE)"
+          test "$role" = "user" || {
+            echo "::error::the demotion did not take (role: '$role') — the re-promotion check would be vacuous"; exit 1; }
+
+          pnpm --filter @perfportal/persistence run bootstrap > /tmp/b2b.txt 2>&1 || {
+            echo "::error::the third run failed"; cat /tmp/b2b.txt; exit 1; }
+          role="$(ROLE)"
+          test "$role" = "user" || {
+            echo "::error::the third run RE-PROMOTED an account an admin had demoted (role: '$role')"; exit 1; }
+          echo "a demoted bootstrap account stays demoted"
 
       # ...and an operator who chooses a password never gets the published one.
       - name: A chosen admin password is used, and warns about nothing
