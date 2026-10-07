@@ -9,6 +9,12 @@
  * other id, and `AccessGuard`, which leaves such an id to the pipe's 400 and
  * answers a well-formed one it cannot find with a 404. A test in
  * apps/api/test/access.test.ts holds this function against the pipe itself.
+ *
+ * Two more use it to keep a malformed id away from a `uuid` column, where it
+ * would be a cast error rather than "not found": the live gateway's
+ * `authorize`, which refuses such a run id before reading the session, and
+ * `decodeOrgTestCursor`. One pattern, so none of them can drift from the
+ * pipe's.
  */
 const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

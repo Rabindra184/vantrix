@@ -117,6 +117,37 @@ describe('/auth/*', () => {
   });
 
   /**
+   * `POST /auth/update-user` is Better Auth's own self-service route, open to
+   * every session, and it writes whatever user fields its input schema allows.
+   * The admin flag IS a user field — `user.role`, owned by the admin plugin —
+   * so the plugin declaring it `input: false` is all that stands between any
+   * account and making itself an admin. Pinned, because a later
+   * `user.additionalFields` or plugin schema that re-declared `role` as input
+   * would hand every account the install. `banned` is the same plugin's
+   * field and is refused the same way (for a truthy value: Better Auth skips
+   * a falsy one for an `input: false` field rather than refusing it).
+   */
+  it('refuses a session that tries to make itself an admin through update-user', async () => {
+    ctx = await createTestApp();
+    const { cookie, userId } = await signInAsProjectMember(ctx, 'self-promoter@example.test', [
+      { projectId: ctx.projectId, role: 'viewer' },
+    ]);
+    const server = ctx.app.getHttpServer();
+
+    const promote = await request(server).post('/auth/update-user').set('Cookie', cookie).send({ role: 'admin' });
+    const ban = await request(server).post('/auth/update-user').set('Cookie', cookie).send({ banned: true });
+
+    expect([promote.status, promote.body.code]).toEqual([400, 'FIELD_NOT_ALLOWED']);
+    expect([ban.status, ban.body.code]).toEqual([400, 'FIELD_NOT_ALLOWED']);
+    const row = await ctx.prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { role: true, banned: true } });
+    expect(row).toEqual({ role: 'user', banned: false });
+    // ...while the same route, the same way, still updates a field a person
+    // may set: a refusal of every update would pass the lines above.
+    await request(server).post('/auth/update-user').set('Cookie', cookie).send({ name: 'Renamed' }).expect(200);
+    expect((await ctx.prisma.user.findUniqueOrThrow({ where: { id: userId } })).name).toBe('Renamed');
+  });
+
+  /**
    * The admin plugin's own HTTP routes are refused, EVEN TO AN ADMIN: every
    * admin operation goes through `/v1/admin`, where errors are problem+json,
    * the operations are documented, and one place can record them. Left

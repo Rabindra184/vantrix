@@ -3,7 +3,7 @@ import type { Duplex } from 'node:stream';
 import { Injectable, type OnApplicationBootstrap, type OnModuleDestroy } from '@nestjs/common';
 import type { HttpAdapterHost } from '@nestjs/core';
 import type { LiveDelta } from '@perfportal/contracts';
-import type { OrgMemberRepository, ProjectMemberRepository, RunRepository } from '@perfportal/persistence';
+import { isUuid, type OrgMemberRepository, type ProjectMemberRepository, type RunRepository } from '@perfportal/persistence';
 import { fromNodeHeaders } from 'better-auth/node';
 import { Redis } from 'ioredis';
 import { WebSocket, WebSocketServer } from 'ws';
@@ -18,8 +18,6 @@ import { LiveHub, type LiveSink } from './live-hub.js';
  * "not this endpoint's path" and leaving the socket to hang.
  */
 const LIVE_PATH = /^\/v1\/runs\/([^/]+)\/live$/;
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * One code, and one reason, for every refusal `authorize` makes: a malformed
@@ -224,7 +222,7 @@ export class LiveGateway implements OnApplicationBootstrap, OnModuleDestroy {
     // Before the repository, not after: `run.id` is a uuid column, so a
     // malformed id reaches Postgres as a cast error -- a 500-shaped outcome
     // that is loudly DIFFERENT from the silent refusal below.
-    if (!UUID.test(runId)) return null;
+    if (!isUuid(runId)) return null;
 
     const session = await auth.api.getSession({ headers: fromNodeHeaders(req.headers) });
     if (!session) return null;

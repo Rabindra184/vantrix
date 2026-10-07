@@ -454,6 +454,27 @@ describe('the live gateway rejects what it should', () => {
     expect(conn.frames[0]!.type).toBe('snapshot');
     expect(conn.frames[0]!.delta.runId).toBe(runId);
   });
+
+  /**
+   * A run id that is not a UUID is refused like a run that does not exist —
+   * 4401, same reason, no frame — and not by the outage path. `run.id` is a
+   * uuid column, so an id that reached `findById` would be a cast error, the
+   * catch would answer the upgrade 503 and the client would see a transport
+   * error (outcome 0 here): a refusal loudly DIFFERENT from every other. The
+   * caller is an admin, so nothing but the shape of the id can refuse it.
+   */
+  it('closes a malformed run id as it closes an unknown one, not as an outage', async () => {
+    const port = await start();
+    const { cookie } = await signInAsAdmin(ctx, `malformed-${randomUUID()}@example.com`);
+
+    const malformed = connect(port, '/v1/runs/not-a-uuid/live', cookie);
+    const missing = connect(port, `/v1/runs/${randomUUID()}/live`, cookie);
+
+    expect(await outcome(malformed)).toBe(CLOSE_UNAUTHORIZED);
+    expect(await outcome(missing)).toBe(CLOSE_UNAUTHORIZED);
+    expect(malformed.reason).toBe(missing.reason);
+    expect(malformed.frames).toHaveLength(0);
+  });
 });
 
 describe('the live gateway seeds, replays, then follows', () => {
