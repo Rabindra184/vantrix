@@ -10,7 +10,7 @@ import { TerminalWaiter } from '../runs/terminal-waiter.js';
 import { IngestService } from './ingest.service.js';
 import { IDEMPOTENCY_HEADER, resolveIdempotencyKey } from './idempotency.js';
 import { readMultipart } from './multipart.js';
-import { notFound } from '../common/validation.js';
+import { projectNotFound } from '../common/validation.js';
 
 /**
  * Uploading a bundle from a BROWSER (review 09-13 M05).
@@ -71,7 +71,7 @@ export class ProjectIngestController {
     const tenant = req.tenant!;
     const project = await this.projects.findBySlugInOrg(tenant.orgId, slug);
     // 404, never 403 — see the class docstring.
-    if (!project) throw notFound(`No project "${slug}" in this organisation.`, 'Check the slug, or list the projects this credential can reach with GET /v1/projects.');
+    if (!project) throw projectNotFound(slug);
 
     /* Everything below is `IngestController.post` verbatim, with the project
        resolved from the URL instead of read off the credential. Shared through

@@ -123,19 +123,24 @@ describe('cookiesAreSecure', () => {
  * and its user ride in a signed cookie, and a demoted admin keeps the flag
  * for the cache's maxAge. This fails that change instead of letting it ship.
  *
- * Built against a database that is never contacted: constructing the
- * instance opens no connection, and nothing here queries.
+ * Read from the options Better Auth RUNS with, not the ones createAuth
+ * passed: `auth.$context` builds them in `createAuthContext`, merging in every
+ * plugin's `init().options`, and that merged object is what each request
+ * reads (`ctx.context.options`). A plugin that switched the cache on would
+ * leave `auth.options` untouched and slip past a check of it.
+ *
+ * Built against a database that is never contacted: resolving the context
+ * opens no connection, and nothing here queries.
  */
 describe('createAuth', () => {
-  it('keeps the session cookie cache off, so a demotion lands on the next request', () => {
+  it('keeps the session cookie cache off, so a demotion lands on the next request', async () => {
     const auth = createAuth({
       databaseUrl: 'postgresql://unused:unused@127.0.0.1:1/unused',
       baseUrl: 'http://localhost:3000',
     });
 
-    // Read through Better Auth's own option type: `auth.options` is typed as
-    // exactly what createAuth passed, which has no `cookieCache` to name.
-    const session: BetterAuthOptions['session'] = auth.options.session;
+    // Typed through Better Auth's own option type, which names `cookieCache`.
+    const session: BetterAuthOptions['session'] = (await auth.$context).options.session;
     expect(session?.cookieCache?.enabled).toBeFalsy();
   });
 });

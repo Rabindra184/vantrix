@@ -5,6 +5,7 @@ import {
   ProjectSummarySchema,
   TOKEN_SCOPES,
   roleSatisfies,
+  type ProjectRole,
 } from '../src/index.js';
 
 /**
@@ -23,6 +24,24 @@ describe('project roles', () => {
     expect(roleSatisfies('manager', 'manager')).toBe(true);
     expect(roleSatisfies('member', 'manager')).toBe(false);
   });
+
+  /**
+   * FAILS CLOSED, BOTH WAYS. The ranking is an array index, and `indexOf`
+   * answers -1 for a role it has never heard of. Compared naively, an unknown
+   * REQUIRED role ranks below everything and is satisfied by any role at all
+   * — so `'admin'` reaching here (a caller that skipped the admin flag) or a
+   * role spelled wrong would let a viewer through. The types forbid both; a
+   * value from a database row or an `as` does not ask the types.
+   */
+  it('satisfies nothing when the required role is not a project role', () => {
+    expect(roleSatisfies('manager', 'admin' as ProjectRole)).toBe(false);
+    expect(roleSatisfies('viewer', 'owner' as ProjectRole)).toBe(false);
+  });
+
+  it('satisfies nothing when the held role is not a project role', () => {
+    expect(roleSatisfies('owner' as ProjectRole, 'viewer')).toBe(false);
+    expect(roleSatisfies('owner' as ProjectRole, 'owner' as ProjectRole)).toBe(false);
+  });
 });
 
 describe('ACCESS_ACTIONS', () => {
@@ -40,6 +59,22 @@ describe('ACCESS_ACTIONS', () => {
     // is minted against one project: a scope there would let a CI credential
     // create projects or manage people.
     for (const a of Object.values(ACCESS_ACTIONS)) if (a.role === 'admin') expect(a.scope).toBeNull();
+  });
+
+  /**
+   * The table is read by the guard on every request and by the route walk;
+   * a write to one row anywhere would change both for the life of the
+   * process. `Readonly<Record<…>>` only stops a row being REPLACED, so the
+   * rows carry their own `readonly`. A compile-time claim: `pnpm typecheck`
+   * reports an unused `@ts-expect-error` (TS2578) the day a row's fields can
+   * be assigned again. The function is never called, so nothing is mutated.
+   */
+  it('keeps every row read-only, not only the table', () => {
+    const assignToARow = (): void => {
+      // @ts-expect-error -- a row's role is readonly
+      ACCESS_ACTIONS['project:read'].role = 'manager';
+    };
+    expect(typeof assignToARow).toBe('function');
   });
 });
 

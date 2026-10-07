@@ -13,7 +13,7 @@ import { ProjectRepository, TokenRepository, type TokenSummaryRow } from '@perfp
 import type { Request } from 'express';
 import { SessionOnlyGuard } from '../auth/session-only.guard.js';
 import { badRequest } from '../common/validation.js';
-import { notFound } from '../common/validation.js';
+import { notFound, projectNotFound } from '../common/validation.js';
 
 /**
  * Mints a project API token — the one credential-issuing route on this API.
@@ -132,7 +132,7 @@ export class TokensController {
    */
   private async resolveProject(orgId: string, slug: string) {
     const project = await this.projects.findBySlugInOrg(orgId, slug);
-    if (!project) throw notFound(`No project "${slug}" in this organisation.`, 'Check the slug, or list the projects this credential can reach with GET /v1/projects.');
+    if (!project) throw projectNotFound(slug);
     return project;
   }
 

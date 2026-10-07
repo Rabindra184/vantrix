@@ -4,6 +4,7 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 import type { RunStatus, RunVerdict } from '@perfportal/contracts';
 import { escapeLike } from './like.js';
 import type { ProjectScope, TenantScope } from './tenant.js';
+import { UUID_SHAPE } from './test-cursor.js';
 
 export interface RunRecord {
   id: string;
@@ -871,6 +872,27 @@ export class RunRepository {
       include: RUN_INCLUDE,
     });
     return row ? toRecord(row) : null;
+  }
+
+  /**
+   * The project a run belongs to, looked up within one org — what
+   * `AccessGuard` judges a `/v1/runs/:id` request against. Null when the org
+   * holds no such run, which the guard passes to the controller to answer.
+   *
+   * ═══ NULL, WITHOUT A QUERY, FOR AN ID THAT IS NOT A UUID ═══
+   *
+   * The guard runs before parameter pipes, so it hands over the raw path
+   * segment. Sent to the `uuid` column, a malformed one fails the query — a
+   * 500 where the controller's `uuidParam` would have answered 400
+   * INVALID_ID. `UUID_SHAPE` is that pipe's own pattern, so this declines
+   * exactly the ids the pipe refuses: one it accepts is always looked up
+   * (else the guard would wave it through unjudged), and one it refuses
+   * never is (else a non-member would get a 404 where a member gets 400).
+   */
+  async projectIdOf(orgId: string, runId: string): Promise<string | null> {
+    if (!UUID_SHAPE.test(runId)) return null;
+    const row = await this.prisma.run.findFirst({ where: { id: runId, orgId }, select: { projectId: true } });
+    return row?.projectId ?? null;
   }
 
   /** Unscoped by design: the worker holds a job, not a caller's credential. */

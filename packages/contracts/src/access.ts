@@ -48,7 +48,7 @@ export type AccessAction =
  * role in this project."), so it reads as the subject of a sentence.
  */
 export const ACCESS_ACTIONS: Readonly<
-  Record<AccessAction, { role: AccessRole; scope: TokenScopeName | null; label: string }>
+  Record<AccessAction, Readonly<{ role: AccessRole; scope: TokenScopeName | null; label: string }>>
 > = {
   'project:read': { role: 'viewer', scope: 'read', label: 'Reading this project' },
   'rules:read': { role: 'viewer', scope: null, label: 'Viewing SLA rules' },
@@ -66,7 +66,19 @@ export const ACCESS_ACTIONS: Readonly<
   'users:manage': { role: 'admin', scope: null, label: 'Managing users' },
 };
 
-/** Whether a person holding `held` in a project meets an action asking for `required`. */
+/**
+ * Whether a person holding `held` in a project meets an action asking for
+ * `required`.
+ *
+ * FALSE when either is not a project role. `indexOf` answers -1 for a role
+ * it does not know, which a bare `>=` reads as the lowest rank of all — so an
+ * unknown REQUIRED role would be satisfied by anyone. The types rule both out;
+ * a value read from a row, or `'admin'` from an `AccessRole` a caller forgot
+ * to handle first, does not consult the types. The admin flag is never a
+ * project role, so a caller checks it BEFORE asking this.
+ */
 export function roleSatisfies(held: ProjectRole, required: ProjectRole): boolean {
-  return PROJECT_ROLES.indexOf(held) >= PROJECT_ROLES.indexOf(required);
+  const heldRank = PROJECT_ROLES.indexOf(held);
+  const requiredRank = PROJECT_ROLES.indexOf(required);
+  return heldRank !== -1 && requiredRank !== -1 && heldRank >= requiredRank;
 }

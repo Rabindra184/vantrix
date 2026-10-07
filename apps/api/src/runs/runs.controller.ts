@@ -16,7 +16,7 @@ import { ProjectRepository, TestRepository, type RunListItem, type RunRecord, ty
 import { Scopes } from '../auth/scopes.decorator.js';
 import { checkTally } from './check-tally.js';
 import { noteOf, RunsService, warmupMsOf } from './runs.service.js';
-import { notFound } from '../common/validation.js';
+import { notFound, projectNotFound, runNotFound } from '../common/validation.js';
 import { SessionOnlyGuard } from '../auth/session-only.guard.js';
 
 // AuthGuard is registered globally via APP_GUARD (see auth.module.ts), so
@@ -76,7 +76,7 @@ export class RunsController {
       // exists, and an empty 200 describes a project that exists and happens
       // to be idle. The status code must not distinguish "no such project"
       // from "not yours".
-      if (!named) throw notFound(`No project "${project}" in this organisation.`, 'Check the slug, or list the projects this credential can reach with GET /v1/projects.');
+      if (!named) throw projectNotFound(project);
       // A bearer token is minted against exactly one project. Naming another
       // is a caller mistake, not a permission question — and answering with
       // that token's own runs under someone else's slug would be a silent
@@ -179,8 +179,7 @@ export class RunsController {
     const run = await this.runs
       .runs()
       .findById({ orgId: tenant.orgId, projectId: tenant.projectId }, id);
-    if (!run) throw notFound(`No run ${id} in this project.`, 'Check the run id. GET /v1/runs lists the runs a signed-in user can reach; '
-        + 'GET /v1/projects/{slug}/runs lists those a project token can.');
+    if (!run) throw runNotFound(id);
 
     await respondWithRun(this.runs, run, res);
   }

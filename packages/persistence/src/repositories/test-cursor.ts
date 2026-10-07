@@ -46,7 +46,13 @@ export interface OrgTestCursorKey {
 }
 
 const BASE64URL = /^[A-Za-z0-9_-]+$/;
-const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/**
+ * A UUID as the API's `uuidParam` accepts one: 8-4-4-4-12 hex, either case
+ * — the same pattern as Nest's `ParseUUIDPipe` with no version. Shared with
+ * `RunRepository.projectIdOf`, which has to refuse exactly what that pipe
+ * refuses (see there). Not exported from the package index.
+ */
+export const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** An instant `encode` can have written for a real run: a plain four-digit year. */
 const FOUR_DIGIT_YEAR = /^\d{4}-/;
 /**

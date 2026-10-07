@@ -16,6 +16,7 @@ import {
 } from '@perfportal/persistence';
 import pg from 'pg';
 import { loadConfig } from '../config.js';
+import { AccessGuard } from './access.guard.js';
 import { AuthGuard } from './auth.guard.js';
 import { AuthMiddleware } from './auth.middleware.js';
 
@@ -43,6 +44,15 @@ export const CONFIG = Symbol('CONFIG');
     // useExisting (not useClass) so this is the same instance as the
     // AuthGuard provider above, not a second one.
     { provide: APP_GUARD, useExisting: AuthGuard },
+    // AFTER AuthGuard, and the position is the order: Nest collects APP_GUARD
+    // providers in the order they are listed here and runs global guards in
+    // that order (DependenciesScanner.insertProvider ->
+    // ApplicationConfig.addGlobalGuard, then GuardsConsumer awaits each in
+    // turn). So a token missing a scope is refused by AuthGuard before this
+    // looks anything up. access-guard.integration.test.ts reads the order
+    // back from the running app.
+    AccessGuard,
+    { provide: APP_GUARD, useExisting: AccessGuard },
   ],
   exports: [CONFIG, PrismaClient, pg.Pool, TokenRepository, OrgMemberRepository, ProjectMemberRepository, ProjectRepository, RunnerRepository, RunRepository, RuleRepository, TestRepository, ActivityRepository, AuthGuard, AuthMiddleware],
 })

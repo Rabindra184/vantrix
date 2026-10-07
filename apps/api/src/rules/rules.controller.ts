@@ -29,7 +29,7 @@ import {
 import type { Request } from 'express';
 import { SessionOnlyGuard } from '../auth/session-only.guard.js';
 import { badRequest, uuidParam } from '../common/validation.js';
-import { notFound } from '../common/validation.js';
+import { notFound, projectNotFound } from '../common/validation.js';
 
 /**
  * Authoring the SLA rules a project's runs are judged against.
@@ -203,8 +203,7 @@ export class RulesController {
    */
   private async resolveProject(orgId: string, slug: string): Promise<{ id: string }> {
     const project = await this.projects.findBySlugInOrg(orgId, slug);
-    if (project === null)
-      throw notFound(`No project "${slug}" in this organisation.`, 'Check the slug, or list the projects this credential can reach with GET /v1/projects.');
+    if (project === null) throw projectNotFound(slug);
     return project;
   }
 

@@ -31,7 +31,7 @@ import {
 } from '@perfportal/persistence';
 import { CONFIG } from '../auth/auth.module.js';
 import { Scopes } from '../auth/scopes.decorator.js';
-import { badRequest, conflict, notFound, uuidParam } from '../common/validation.js';
+import { badRequest, conflict, notFound, projectNotFound, uuidParam } from '../common/validation.js';
 import type { AppConfig } from '../config.js';
 import {
   assertSimulationListed,
@@ -358,7 +358,7 @@ export class RunnerController {
   ): Promise<ProjectRecord> {
     const project = await this.projects.findBySlugInOrg(orgId, slug);
     if (!project || (credentialProjectId !== undefined && credentialProjectId !== project.id)) {
-      throw notFound(`No project "${slug}" in this organisation.`, 'Check the slug, or list the projects this credential can reach with GET /v1/projects.');
+      throw projectNotFound(slug);
     }
     return project;
   }

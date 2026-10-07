@@ -35,7 +35,7 @@ import {
 import { CONFIG } from '../auth/auth.module.js';
 import { Scopes } from '../auth/scopes.decorator.js';
 import { SessionOnlyGuard } from '../auth/session-only.guard.js';
-import { badRequest, conflict, notFound, uuidParam } from '../common/validation.js';
+import { badRequest, conflict, projectNotFound, uuidParam } from '../common/validation.js';
 import type { AppConfig } from '../config.js';
 import { emptyFile, extensionFor, inspectArtifact, packageNotFound, sanitizeFilename } from './package-files.js';
 import { readRawUpload } from './raw-upload.js';
@@ -305,10 +305,7 @@ export class PackagesController {
     const tenant = req.tenant!;
     const project = await this.projects.findBySlugInOrg(tenant.orgId, slug);
     if (!project || (tenant.projectId !== undefined && tenant.projectId !== project.id)) {
-      throw notFound(
-        `No project "${slug}" in this organisation.`,
-        'Check the slug, or list the projects this credential can reach with GET /v1/projects.',
-      );
+      throw projectNotFound(slug);
     }
     return project;
   }

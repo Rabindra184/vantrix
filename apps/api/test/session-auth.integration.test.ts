@@ -387,7 +387,7 @@ describe('AuthMiddleware — what a session tenant knows about its projects', ()
     return req.tenant;
   }
 
-  it('marks an admin, with no project list and no roles query to show for it', async () => {
+  it('marks an admin, with an empty roles map and no project list', async () => {
     ctx = await createTestApp();
     const { cookie } = await signInAsAdmin(ctx, `admin-${randomUUID()}@example.test`);
 

@@ -1,3 +1,4 @@
+import { roleSatisfies, type AccessRole, type ProjectRole } from '@perfportal/contracts';
 import type { ProjectMemberRepository, TenantScope } from '@perfportal/persistence';
 import type { Tenant } from './auth.guard.js';
 
@@ -76,4 +77,29 @@ export function canSeeProject(
   if (tenant.projectId !== undefined) return tenant.projectId === projectId;
   if (tenant.isAdmin === true) return true;
   return tenant.projectRoles?.has(projectId) === true;
+}
+
+/**
+ * What a SESSION may do with one action in one project — the whole rule,
+ * kept apart from the guard's lookups so every case can be read and tested
+ * in one place. `required` is the action's row in `ACCESS_ACTIONS`; `role`
+ * is the session's role in the project the route names, or null when it
+ * holds none there.
+ *
+ * In order: an admin passes everything. An admin action refuses everyone
+ * else, whatever role they hold. No role in the project is `not-found`, never
+ * a 403 — the project is one this person cannot see, and the answer has to
+ * be the one a project that does not exist gets. Otherwise the role is
+ * ranked against the action's; `'admin'` is settled above, so it never
+ * reaches `roleSatisfies`.
+ */
+export function accessDecision(input: {
+  required: AccessRole;
+  isAdmin: boolean;
+  role: ProjectRole | null;
+}): 'allow' | 'not-found' | 'role-required' | 'admin-required' {
+  if (input.isAdmin) return 'allow';
+  if (input.required === 'admin') return 'admin-required';
+  if (input.role === null) return 'not-found';
+  return roleSatisfies(input.role, input.required) ? 'allow' : 'role-required';
 }

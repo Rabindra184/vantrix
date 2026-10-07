@@ -28,7 +28,7 @@ import type { Request } from 'express';
 import { Scopes } from '../auth/scopes.decorator.js';
 import { badRequest, parseLimit, uuidParam } from '../common/validation.js';
 import { inRange, resolveRange, snapWindow } from '../common/window.js';
-import { notFound } from '../common/validation.js';
+import { runNotFound } from '../common/validation.js';
 
 // AuthGuard is registered globally via APP_GUARD (see auth.module.ts), so
 // every route authenticates by default — @UseGuards(AuthGuard) here would be
@@ -58,8 +58,7 @@ export class MetricsController {
       { orgId: tenant.orgId, projectId: tenant.projectId },
       id,
     );
-    if (!run) throw notFound(`No run ${id} in this project.`, 'Check the run id. GET /v1/runs lists the runs a signed-in user can reach; '
-        + 'GET /v1/projects/{slug}/runs lists those a project token can.');
+    if (!run) throw runNotFound(id);
     return run;
   }
 
