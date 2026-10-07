@@ -127,17 +127,35 @@ describe('every typed input is trimmed before it is stored', () => {
     const files = readdirSync(dir).filter((f) => f.endsWith('.ts'));
     expect(files.length, 'collected no contract sources — the path has rotted').toBeGreaterThan(5);
 
+    // PASSWORDS are the second exemption, argued the opposite way from
+    // `problem.ts`: they ARE input, and that is exactly why they must not be
+    // trimmed. A password's whitespace is part of the secret — Better Auth's
+    // sign-in verifies exactly the string it is sent — so a trimmed stored
+    // password is one the person can never type back in. Named line by line,
+    // so any OTHER bounded string in `me.ts` still has to trim, and
+    // `me.test.ts` pins that the whitespace survives a parse.
+    const secrets = [
+      { file: 'me.ts', line: /^export const PasswordSchema = z\.string\(\)/ },
+      { file: 'me.ts', line: /^currentPassword: z\.string\(\)/ },
+    ];
+    const secretsMatched = new Set<number>();
+
     let bounded = 0;
     const offenders: string[] = [];
     for (const file of files) {
       for (const line of strip(readFileSync(`${dir}/${file}`, 'utf8')).split('\n')) {
         if (!/z\.string\(\)[.a-zA-Z()0-9_]*\.(min|max)\(/.test(line)) continue;
         bounded += 1;
-        // `problem.ts` is the one exemption and is argued: every field there
+        // `problem.ts` is the first exemption and is argued: every field there
         // is written by THIS server for an error document, never received, so
         // there is no client whitespace to absorb. Delete the exemption the
         // day a Problem field becomes an input.
         if (file === 'problem.ts') continue;
+        const secret = secrets.findIndex((s) => s.file === file && s.line.test(line.trim()));
+        if (secret !== -1) {
+          secretsMatched.add(secret);
+          continue;
+        }
         if (!/z\.string\(\)\.trim\(\)/.test(line)) offenders.push(`${file}: ${line.trim()}`);
       }
     }
@@ -145,5 +163,9 @@ describe('every typed input is trimmed before it is stored', () => {
     // ever, which is indistinguishable from a clean package.
     expect(bounded, 'matched no bounded strings — the pattern has rotted').toBeGreaterThan(20);
     expect(offenders, offenders.join('; ')).toEqual([]);
+    // And an exemption that matches nothing is one waiting to excuse the
+    // wrong line: the field it named moved or was renamed.
+    const stale = secrets.filter((_, i) => !secretsMatched.has(i)).map((s) => `${s.file}: ${s.line}`);
+    expect(stale, `password exemptions matching no bounded line: ${stale.join('; ')}`).toEqual([]);
   });
 });
