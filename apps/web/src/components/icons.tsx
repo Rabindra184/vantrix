@@ -15,6 +15,7 @@ import {
   FileText,
   Funnel,
   GitCompareArrows,
+  House,
   Inbox,
   Info,
   KeyRound,
@@ -98,6 +99,9 @@ function icon(Glyph: LucideIcon) {
 
 /** The brand mark: an activity trace, which is what this product draws. */
 export const ActivityIcon = icon(Activity);
+
+/** The portfolio home page — the rail's first row. */
+export const HomeIcon = icon(House);
 
 /** Every run in the organisation — a stack of rows. */
 export const LayersIcon = icon(Layers);

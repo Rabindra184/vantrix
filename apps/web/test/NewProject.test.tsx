@@ -157,4 +157,17 @@ describe('NewProject', () => {
     expect(screen.getByLabelText('Project name')).toBeInTheDocument();
     expect(screen.getByLabelText('URL slug')).toBeInTheDocument();
   });
+
+  /**
+   * TWO WAYS OUT, TO TWO PLACES. "Runs" names the run list and goes there;
+   * Cancel means "nowhere in particular" and goes to the default route — the
+   * home page since it took `/`. Until then both were one string, so a link
+   * that read the wrong constant was right by accident; these pin which is
+   * which now that they differ.
+   */
+  it('sends "Runs" to the run list and Cancel to the home page', () => {
+    renderNewProject();
+    expect(screen.getByRole('link', { name: 'Runs' })).toHaveAttribute('href', '/runs');
+    expect(screen.getByRole('link', { name: 'Cancel' })).toHaveAttribute('href', '/');
+  });
 });

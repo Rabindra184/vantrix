@@ -261,6 +261,7 @@ describe('CommandPalette', () => {
     await screen.findByRole('option', { name: 'Tests · Checkout' });
     const goTo = screen.getByRole('group', { name: 'Go to' });
     expect(optionNames(goTo)).toEqual([
+      'Home',
       'All runs',
       'New project',
       'Tests · Checkout',
@@ -585,8 +586,9 @@ describe('CommandPalette', () => {
     vi.useFakeTimers();
     stubApi({ tests: () => json(tests([SMOKE])) });
     const { onOpenChange } = renderPalette({ route: '/projects/checkout/rules' });
-    // Before anything is typed, Go to is on screen and its first row is highlighted.
-    expect(screen.getByRole('option', { name: 'All runs' })).toHaveAttribute('aria-selected', 'true');
+    // Before anything is typed, Go to is on screen and its first row — Home —
+    // is highlighted.
+    expect(screen.getByRole('option', { name: 'Home' })).toHaveAttribute('aria-selected', 'true');
 
     // A fast typist: the whole word, then Enter, all inside the 150 ms pause.
     fireEvent.change(input(), { target: { value: 'smoke' } });

@@ -8,7 +8,7 @@ import { ProblemError } from '../api/fetch';
 import { fetchProjects, projectsQueryKey } from '../api/projects';
 import useDocumentTitle from '../useDocumentTitle';
 import {
-  DEFAULT_ROUTE,
+  ALL_RUNS_ROUTE,
   projectAccessPath,
   projectNewRunnerRunPath,
   projectPackagesPath,
@@ -182,7 +182,8 @@ export default function ProjectShell({
         /* NOT "Back to project": every one of these six URLs carries the slug
            that just failed to resolve, so an offer to go back to the project
            is an offer to reload the same error. The org's run list is the
-           nearest place that exists.
+           nearest place that exists — `ALL_RUNS_ROUTE`, which is what these
+           words name, and not the default route, which is the home page now.
 
            NOT "All runs" either, however natural those words are here:
            `ProjectRail` renders a row with exactly that name on every
@@ -191,7 +192,7 @@ export default function ProjectShell({
            `project-tests.spec.ts` already caught once for "All runs" and
            `run-list.spec.ts` for "New project". */
         action={
-          <Link to={DEFAULT_ROUTE} className={linkButtonClasses}>
+          <Link to={ALL_RUNS_ROUTE} className={linkButtonClasses}>
             <ChevronLeftIcon className="h-3.5 w-3.5" />
             Back to the run list
           </Link>

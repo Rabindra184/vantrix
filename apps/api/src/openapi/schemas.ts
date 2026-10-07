@@ -1,6 +1,7 @@
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import type { ZodTypeAny } from 'zod';
 import {
+  ActivityResponseSchema,
   DistributionResponseSchema,
   ErrorSeriesResponseSchema,
   ErrorsResponseSchema,
@@ -106,6 +107,7 @@ const SOURCE: Record<string, ZodTypeAny> = {
   TestListResponse: TestListResponseSchema,
   OrgTestSummary: OrgTestSummarySchema,
   OrgTestListResponse: OrgTestListResponseSchema,
+  ActivityResponse: ActivityResponseSchema,
   UpdateTestRequest: UpdateTestRequestSchema,
   RunNoteRequest: RunNoteRequestSchema,
   RunNoteResponse: RunNoteResponseSchema,

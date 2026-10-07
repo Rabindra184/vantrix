@@ -5,7 +5,7 @@ import AuthGate from './AuthGate';
 import Login from './routes/Login';
 import RouteFallback from './components/RouteFallback';
 import RouteErrorBoundary from './components/RouteErrorBoundary';
-import { DEFAULT_ROUTE, NEW_PROJECT_ROUTE, NO_ORG_ROUTE } from './routes/paths';
+import { DEFAULT_ROUTE, HOME_ROUTE, NEW_PROJECT_ROUTE, NO_ORG_ROUTE } from './routes/paths';
 
 /**
  * ═══ EVERY AUTHENTICATED ROUTE IS A SEPARATE CHUNK ═══
@@ -26,6 +26,7 @@ import { DEFAULT_ROUTE, NEW_PROJECT_ROUTE, NO_ORG_ROUTE } from './routes/paths';
  * module that way are `RunSummary` now, and a module of their own.)
  */
 const GroupDetail = lazy(() => import('./routes/GroupDetail'));
+const Home = lazy(() => import('./routes/Home'));
 const NewProject = lazy(() => import('./routes/NewProject'));
 const NoOrg = lazy(() => import('./routes/NoOrg'));
 const ProjectRuns = lazy(() => import('./routes/ProjectRuns'));
@@ -57,7 +58,6 @@ export default function App() {
     <RouteErrorBoundary>
     <Suspense fallback={<RouteFallback />}>
       <Routes>
-        <Route path="/" element={<Navigate to={DEFAULT_ROUTE} replace />} />
         <Route path="/login" element={<Login />} />
         {/* Outside AuthGate on purpose: the gate is what redirects here, so
             gating this route would send a membership-less user in a circle —
@@ -66,6 +66,12 @@ export default function App() {
 
         <Route element={<AuthGate />}>
           <Route element={<AppShell />}>
+            {/* `/` IS A PAGE, the portfolio home. It was a redirect to the run
+                list until the home page existed; inside the gate and the shell
+                like every other page, so a signed-out visitor is asked to sign
+                in and then lands here, which is also where `DEFAULT_ROUTE`
+                sends them. */}
+            <Route path={HOME_ROUTE} element={<Home />} />
             <Route path="/runs" element={<RunList />} />
             {/* Declared from the constant, not a second literal: the segment
                 has to stay one no project slug can be (see `NEW_PROJECT_ROUTE`),
@@ -107,8 +113,8 @@ export default function App() {
               <Route path="compare" element={<RunCompare />} />
               {/* A section this run does not have — a stale link to a renamed
                   tab, most often. Handled HERE rather than by the catch-all at
-                  the bottom of this file, which would redirect to `/runs` and
-                  lose the run the reader was looking at. See
+                  the bottom of this file, which would redirect to the home page
+                  and lose the run the reader was looking at. See
                   `RunSectionNotFound`.
 
                   It cannot shadow the two `/runs/:runId/...` routes below: a
@@ -134,8 +140,8 @@ export default function App() {
                 rule to be got wrong.
 
                 BEFORE the catch-all below, which redirects anything unmatched to
-                `/runs` — without these two routes a reader who clicked a row
-                would land silently on the run list. */}
+                the home page — without these two routes a reader who clicked a
+                row would land silently on it. */}
             <Route path="/runs/:runId/requests/:name" element={<RequestDetail />} />
             <Route path="/runs/:runId/groups/:name" element={<GroupDetail />} />
           </Route>

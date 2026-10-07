@@ -18,26 +18,33 @@ test('the skeleton has the columns of the table it stands in for', async ({ page
   const admin = await seedAdmin();
   await seedProjectWithRuns(admin.orgId, 'alpha', 'Alpha Service', 3);
   await signIn(page, admin);
+  // Sign-in lands on Home now; the org-wide list is a page of its own.
+  await page.goto('/runs');
   await expect(page.getByTestId('run-row').first()).toBeVisible();
 
-  /* ═══ WHERE THIS PLACEHOLDER IS ACTUALLY REACHABLE, WHICH TOOK FINDING ═══
+  /* ═══ WHERE THIS PLACEHOLDER IS REACHABLE, AND WHY IT WAS ONCE HARD TO REACH ═══
    *
-   * MEASURED, three ways:
-   *   - a COLD load of /runs never draws it. `AuthGate` waits on the session
-   *     AND on the first runs page, so stalling `/v1/runs` leaves the screen
-   *     reading "Checking your session…" and the run list never renders its
-   *     pending state at all.
-   *   - an in-app navigation to /runs never draws it either: that query is
-   *     already cached from the bootstrap, so there is no pending state to
-   *     show.
-   *   - a PROJECT-scoped list does. Its query key carries the slug, nothing
-   *     has fetched it, and `AuthGate`'s bootstrap only awaits the org-wide
-   *     page.
+   * When this case was written, `AuthGate`'s membership probe WAS the org-wide
+   * run list's first page: a cold /runs load waited on it behind "Checking your
+   * session…", and the list arrived pre-filled from the gate's answer, so the
+   * org-wide skeleton was never drawn. That is why a skeleton declaring SIX
+   * columns for a table of nine survived two column changes.
    *
-   * That is why a skeleton declaring SIX columns for a table of nine survived
-   * two column changes: on the page it was written for it is unreachable, and
-   * the one place it does appear is a different column count again. */
-  await page.getByRole('link', { name: 'Alpha Service' }).click();
+   * That is no longer so. The probe is `GET /v1/activity` (the home page's
+   * read), so a cold /runs load fetches its own first page and draws its own
+   * skeleton. This case still measures the PROJECT-scoped list, whose query
+   * key carries the slug and which nothing on the way here has fetched: it is
+   * the placeholder with the different column count (8, no Project column),
+   * and the one whose shape drifted. The org-wide list above is cached by the
+   * time the stall goes in, so it is not what gets measured.
+   *
+   * The project is reached through the RAIL, by name, inside its own nav: the
+   * home page's "Runs by project" carries a link of the same name to the same
+   * place, and a page-wide query would have to say which one it means. */
+  await page
+    .getByRole('navigation', { name: 'Projects', exact: true })
+    .getByRole('link', { name: 'Alpha Service' })
+    .click();
   await stall(page, '**/v1/runs**', 1_500);
   await page.getByRole('link', { name: 'Runs', exact: true }).click();
 
@@ -97,19 +104,41 @@ test('a failed load shows the server’s own remediation, not a bare failure', a
  * ═══ THE ONE RENDER BEFORE THE APP KNOWS ANYTHING ═══
  *
  * `AuthGate` draws `Bootstrapping()` for both a pending session and a pending
- * first page. It has no unit file at all, and no spec had ever seen it — it
- * exists for about 40ms against a local API.
+ * membership probe. No spec had ever seen it — it exists for about 40ms
+ * against a local API.
  */
 test('the cold start says what it is doing rather than showing nothing', async ({ page }) => {
   const admin = await seedAdmin();
   await seedRunWithData(admin.orgId);
   await signIn(page, admin);
 
-  /* STALLS THE RUNS PAGE, NOT THE SESSION — which is what actually produces
+  /* HOLDS THE GATE'S PROBE, NOT THE SESSION — which is what actually produces
      this screen. `AuthGate` renders `Bootstrapping()` for a pending session OR
-     a pending first runs page, and on a cold load the second is the slower of
-     the two. */
-  await stall(page, '**/v1/runs**', 2_000);
+     a pending membership probe, and on a cold load the second is the slower of
+     the two. The probe is `GET /v1/activity` now (the home page's read); it was
+     the org-wide runs page, and this stalled `/v1/runs` to match. Left that way
+     the case went on PASSING after the probe moved — the screen it waits for
+     still flashes by on a loaded machine, so the stall had stopped being the
+     reason it was there, and nothing said so.
+
+     So the probe is held until THIS CASE releases it, not for a fixed time, and
+     the case proves the hold is what it sees. Counting hits alone would not do
+     that: with the hold on the old `/v1/runs`, the run list asks that URL as
+     soon as the gate passes, so a count goes above zero either way. What only
+     a held PROBE produces is a screen that is STILL "Checking your session…"
+     after the hold has caught a request — a screen merely flashing by is gone
+     by then and does not come back. Inlined rather than `stall()`, because
+     the release and the count belong to this one case. */
+  let held = 0;
+  let release!: () => void;
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route('**/v1/activity**', async (route) => {
+    held += 1;
+    await released;
+    await route.continue();
+  });
   await page.goto('/runs');
 
   /* A STATUS, NOT A SPINNER ALONE. A reader who cannot see a spinner — or is
@@ -120,7 +149,12 @@ test('the cold start says what it is doing rather than showing nothing', async (
   await expect(status).toBeVisible();
   await expect(status).toContainText(/checking your session/i);
 
-  // And it resolves rather than sticking, once the stall expires.
+  // The hold caught the gate's probe, and the screen is still up because of it.
+  await expect.poll(() => held, 'the gate never asked GET /v1/activity').toBeGreaterThan(0);
+  await expect(status).toContainText(/checking your session/i);
+
+  // And it resolves rather than sticking, once the probe is answered.
+  release();
   await expect(page.getByTestId('run-row').first()).toBeVisible({ timeout: 15_000 });
 });
 
@@ -147,6 +181,8 @@ test('a chunk that fails to load leaves a page, not a blank screen', async ({ pa
   const admin = await seedAdmin();
   await seedRunWithData(admin.orgId);
   await signIn(page, admin);
+  // Sign-in lands on Home now; the run list is where this case starts.
+  await page.goto('/runs');
   await expect(page.getByTestId('run-row').first()).toBeVisible();
 
   // One route's chunk, not all of them: the interesting claim is that the rest

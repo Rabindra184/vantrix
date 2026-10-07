@@ -8,7 +8,7 @@ import ProjectRail from './ProjectRail';
 import AccountMenu from './AccountMenu';
 import SearchTrigger from './palette/SearchTrigger';
 import { ActivityIcon } from './components/icons';
-import { DEFAULT_ROUTE } from './routes/paths';
+import { HOME_ROUTE } from './routes/paths';
 
 /**
  * ═══ A ONE-SHOT REVEAL IS RIGHT ONLY ON A PAGE ALREADY LAID OUT ═══
@@ -337,10 +337,16 @@ export default function AppShell() {
           corner once the rail is sticky too — while staying below ECharts'
           own tooltips, which it portals at a far higher index. */}
       <header className="sticky top-0 z-40 flex h-header items-center gap-3 border-b border-default bg-surface/85 px-4 backdrop-blur-md sm:px-6">
-        {/* The brand doubles as the way back to the org-wide list, which is
-            why it is a `<Link>` and not a heading: a heading here would
-            compete with the `<h1>` every page renders inside `<main>`. */}
-        <Link to={DEFAULT_ROUTE} className="flex items-center gap-2.5">
+        {/* The brand doubles as the way back to the home page, which is why it
+            is a `<Link>` and not a heading: a heading here would compete with
+            the `<h1>` every page renders inside `<main>`. It went to the run
+            list until the home page took `/`.
+
+            Its accessible name is the product's, "PerfPortal" — never "Home".
+            The rail's row is the one link by that name on every authenticated
+            page, and the suites reach it as such: a brand also called "Home"
+            would make every strict-mode query for it resolve two elements. */}
+        <Link to={HOME_ROUTE} className="flex items-center gap-2.5">
           {/* `text-on-brand`, not `text-white`: the glyph must be ink on the
               orange tile in BOTH themes — white on #f97316 is a 2.8:1
               graphic. See the token's note in tokens.css. */}

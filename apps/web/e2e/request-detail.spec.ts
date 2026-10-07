@@ -23,9 +23,12 @@ test('a nested request page loads from a pasted URL, not just a click', async ({
   await page.goto(`/runs/${runId}/requests/${encodeURIComponent(NESTED)}`);
 
   await expect(page.getByRole('heading', { level: 1 })).toHaveText(NESTED);
-  // The catch-all redirects an unmatched path to /runs, so a normalised %2F
-  // shows up precisely here.
-  expect(new URL(page.url()).pathname).not.toBe('/runs');
+  // The page is the one the URL named, %2F and all. A server that normalised
+  // the %2F to a slash would send `/requests/Catalog/List Products`, which
+  // `/requests/:name` cannot match: the run route's own not-found child takes
+  // it and the pathname stays that longer path. So a check that the path is
+  // merely not '/runs' could never fail; this one names where the reader must be.
+  expect(new URL(page.url()).pathname).toBe(`/runs/${runId}/requests/${encodeURIComponent(NESTED)}`);
 
   // §10-6 / §9 checkpoint 1: this page renders no run shell. Design §3a's own
   // routing assumption was verified by hand once and never pinned — without

@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { CubeIcon, LayersIcon, PanelCollapseIcon, PanelExpandIcon } from './components/icons';
+import { CubeIcon, HomeIcon, LayersIcon, PanelCollapseIcon, PanelExpandIcon } from './components/icons';
 import { fetchProjects, projectsQueryKey } from './api/projects';
 import { cn } from './lib/cn';
-import { DEFAULT_ROUTE, projectPath } from './routes/paths';
+import { ALL_RUNS_ROUTE, HOME_ROUTE, projectPath } from './routes/paths';
 
 /**
  * Whether the reader last left the rail collapsed. Same storage discipline as
@@ -43,9 +43,10 @@ function storeCollapsed(collapsed: boolean): void {
  * THE BRAND IS NO LONGER HERE. It moved to the shell's full-width header
  * (`AppShell.tsx`), which is where the design pass merged it with the theme
  * control and Sign out — see that file on why three bands of chrome above the
- * content on a phone became two. It is still a `<Link>` to the org-wide list
- * and still not a heading, for the reason it never was one: a heading there
- * would compete with the `<h1>` every page renders inside `<main>`.
+ * content on a phone became two. It is still a `<Link>` — to the home page now,
+ * the org-wide list before there was one — and still not a heading, for the
+ * reason it never was one: a heading there would compete with the `<h1>` every
+ * page renders inside `<main>`.
  *
  * Below `lg` the same `<nav>` lays out horizontally and scrolls. Deliberately
  * NOT a drawer: a toggle overlay needs focus management, an escape handler, a
@@ -198,6 +199,34 @@ export default function ProjectRail() {
         aria-label="Projects"
         className="flex gap-1 overflow-x-auto px-2 pb-2 lg:min-h-0 lg:flex-1 lg:flex-col lg:overflow-x-visible lg:overflow-y-auto lg:pb-4"
       >
+        {/* ═══ HOME FIRST — AND ITS `end` IS BELT AND BRACES, MEASURED ═══
+
+            `/` is a prefix of every path in the app, and a Home row current on
+            every page would claim the reader is home while they read a run.
+            `end` is the obvious guard, and in React Router 7.18.2 it changes
+            nothing: `NavLink` prefix-matches only when the character AFTER the
+            prefix is a `/`, and after a `to` of `/` that character is the
+            first letter of the next segment. Removing `end` here leaves every
+            `ProjectRail.test.tsx` case green, so it is kept to state the
+            intent and to survive a router that drops that rule — and "Home is
+            not current anywhere else" is pinned by behaviour, whichever of
+            the two is doing the work. Same treatment as the rows below in
+            every other respect (icon, `lg:sr-only` label, the collapsed
+            `title`), for the reasons the next two comments give.
+
+            "Home" is the rail's word, like "All runs" and every project name:
+            no page may add a link with it (CLAUDE.md's reserved-vocabulary
+            rule), which is why the brand link is named "PerfPortal". */}
+        <NavLink
+          to={HOME_ROUTE}
+          end
+          title={collapsed ? 'Home' : undefined}
+          className={({ isActive }) => rowClasses(collapsed, isActive)}
+        >
+          <HomeIcon className="h-4 w-4 shrink-0 opacity-70" />
+          <span className={cn(collapsed && 'lg:sr-only')}>Home</span>
+        </NavLink>
+
         {/* `end` is load-bearing: without it React Router marks this active
             for /runs/:runId too, so the rail would claim the reader is on the
             org-wide list while they are reading one run.
@@ -217,7 +246,7 @@ export default function ProjectRail() {
             strip's rows carry a tooltip that merely repeats their visible
             label — redundancy, accepted, where the nesting was not. */}
         <NavLink
-          to={DEFAULT_ROUTE}
+          to={ALL_RUNS_ROUTE}
           end
           title={collapsed ? 'All runs' : undefined}
           className={({ isActive }) => rowClasses(collapsed, isActive)}
@@ -237,8 +266,8 @@ export default function ProjectRail() {
             same action announced twice in one view.
 
             Removing it from the RAIL rather than from the heading, because
-            this `<nav>` is a list of DESTINATIONS — "All runs" and one row
-            per project — and creating something is not a place. `RunList`
+            this `<nav>` is a list of DESTINATIONS — Home, "All runs" and one
+            row per project — and creating something is not a place. `RunList`
             already owns an `action` slot for exactly this, which is where
             `ProjectRuns` puts Setup and New on-prem run too. */}
         {items.map((project) => (

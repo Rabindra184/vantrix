@@ -90,6 +90,21 @@ describe('AppShell', () => {
     expect(brand.compareDocumentPosition(inHeader[0]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(inHeader[0]!.compareDocumentPosition(account) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
+
+  /**
+   * The brand is the way back to the front door — the home page now, the run
+   * list until there was one — and it is named after the PRODUCT. "Home" is the
+   * rail's row on every authenticated page; a brand link named that would be a
+   * second link with one name in the document, which is the collision
+   * CLAUDE.md records twice.
+   */
+  it('takes the brand back to the home page, under the product’s name and not the rail’s word', async () => {
+    renderShell();
+    expect(await screen.findByRole('navigation', { name: 'Projects' })).toBeInTheDocument();
+    const header = screen.getByRole('banner');
+    expect(within(header).getByRole('link', { name: 'PerfPortal' })).toHaveAttribute('href', '/');
+    expect(within(header).queryByRole('link', { name: 'Home' })).toBeNull();
+  });
 });
 
 /* ======================================================================== *

@@ -104,15 +104,21 @@ OrgTestListResponse = { items: OrgTestSummary[], nextCursor: string | null }
 ```
 
 - **"Latest run"** is ARRIVAL order, `created_at DESC, id DESC`: the order
-  the project catalogue already uses and run numbers follow, so the latest run
-  is always the test's highest-numbered one. It is read per test with a
+  the project catalogue already uses. It is read per test with a
   `LATERAL … LIMIT 1` over the existing `run_test_id_created_at_idx`.
+  - **It is USUALLY the test's highest-numbered run, not always** (corrected
+    while planning PR 2; this bullet first said "always"). A run is numbered
+    when it JOINS its test — an upload when the worker finalizes it, a live
+    run when its log header arrives — so two overlapping ingests of one test
+    can be numbered in the other order from the one they arrived in. Arrival
+    stays the rule: PR 1 shipped it, and the home page's windows are about
+    what arrived. `OrgTestLatestRun`'s docstring and the `listTests` OpenAPI
+    text already say this.
   - **This is not the run list's order, and the spec first said it was.**
     `RunRepository.list` sorts by when the test RAN,
     `COALESCE(tool_started_at, started_at) DESC, id DESC`. The two differ only
     for a bundle uploaded after a newer one: it is the latest run here and sits
-    lower in the run list. Run numbering is arrival order, so arrival is the
-    honest meaning of "latest" for a test.
+    lower in the run list.
   - `TestSummary.latestRun`'s docstring claims the run list's ordering; the
     code never used it. The docstring is corrected in PR 1.
 - **`p95Ms` and `p95History`** are the run-scope response-time p95 the run
@@ -205,13 +211,31 @@ document and the session isolation cases.
 response echoes the zone used. A zone `Intl` rejects is 400
 `INVALID_TIMEZONE`, with a remediation giving `Europe/London` as an example.
 
-**Two windows, both copied from Gatling Enterprise, both on `run.created_at`**
-(arrival: the order "latest run" and run numbers follow, served by the existing
-`(status, created_at)` and `(test_id, created_at)` indexes. The run list itself
-sorts by when the test ran, so a late upload counts here on the day it
-arrived):
+**Two windows, both from Gatling Enterprise, both on `run.created_at`, and —
+since the final review — both starting at the same instant**
+(arrival: the order "latest run" follows. The day counts and the attention read
+are both org-wide arrival ranges, served by a new `(org_id, created_at)` index
+because nothing served one and `AuthGate` asks this endpoint on every cold load
+(corrected while planning PR 2); `running` uses the `(status, created_at)` one.
+There is no per-test read: the attention list is one org-wide read of the
+window that keeps each test's latest run (corrected at the final review, which
+found this sentence naming a `(test_id, created_at)` read nothing makes). The
+run list itself sorts by when the test ran, so a late upload counts here on the
+day it arrived):
 
-- **Attention window:** the last 168 hours before now.
+- **Attention window:** from the first of the glance's eight boundaries (the
+  first instant of the oldest glance day in `tz`) to now. **Corrected at the
+  final review** from "the last 168 hours before now": Gatling Enterprise's 168
+  hours beside seven CALENDAR days leaves a slice — the 24 hours minus today's
+  time of day before the oldest day's midnight — that is inside the attention
+  window and in no glance day. A failing run that arrived in it was listed
+  over seven empty columns; a passing one left the page reading "No runs in
+  the last 7 days" beside "Run N · 6 days ago", under a heading whose range
+  held it. So the attention window now starts where the glance does: the heading's range, the seven
+  columns, the attention list, `attentionTotal`, `passRate` and the gap state
+  all describe the same seven calendar days. The cost: a test that failed
+  before that midnight drops off Home up to a day earlier than it would in
+  Gatling Enterprise.
 - **Glance days:** the 7 calendar days ending today in `tz`. Node computes the
   eight local-midnight boundaries with `Intl` (DST-correct) and passes them to
   SQL as UTC instants; SQL only counts runs between them. Postgres's own zone
@@ -252,8 +276,9 @@ without re-deriving it.
 **The attention rule is Gatling Enterprise's:** per test, the latest run in
 the attention window; kept when it needs attention. A test that failed and
 then passed is not listed. A run with no test (a failed upload that never
-parsed a header) cannot be grouped, so each such run in the window is its own
-row; these are the "stuck ingests". Its Test cell reads the run's simulation
+parsed a header — a "stuck ingest" — or, since deleting a test sets its runs'
+`test_id` to NULL, a run whose test was deleted) cannot be grouped, so each
+such run in the window is its own row. Its Test cell reads the run's simulation
 when one was recorded, else "Upload" and the short id, linking to the run.
 
 **`successful`** is finished (`complete`) and not needing attention. Runs still
@@ -364,7 +389,11 @@ checkpoint commit, with the replacement count asserted.
     × checks combination;
   - a test that failed and then passed is not listed;
   - a failed upload with no test is listed;
-  - a run at 167 h is in the window and one at 169 h is not;
+  - a run at the window's first instant (the oldest glance day's first
+    instant) is in it and one a millisecond earlier is not, and a run that
+    arrived in the 168 hours before now but before that instant is in no
+    count and no row (the attention window was corrected at the final review;
+    see "Two windows");
   - `byProject` order and limit; another org's runs never counted;
   - `running` ignores the window.
 - Unit, page: all four attention states; each card failing alone; `/` is

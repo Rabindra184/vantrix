@@ -592,10 +592,16 @@ describe('the status TEXT palette', () => {
  * collided with a series colour would make a band, or the donut, and an
  * unrelated line read as the same thing on one page.
  *
- * `STATUS_COLORS` (TEXT) is deliberately NOT checked here: it is never
- * painted as a chart mark (design §11 — text never wears a mark colour), so a
- * collision with a categorical hue would not create the confusion this guard
- * exists to prevent.
+ * `STATUS_COLORS` (TEXT) is deliberately NOT checked here: no ECharts mark
+ * wears it (design §11 — text never wears a mark colour), so a collision with
+ * a categorical hue would not create the confusion this guard exists to
+ * prevent. ONE DELIBERATE EXCEPTION, outside ECharts: the home page's
+ * seven-day glance (`home/Glance.tsx`) fills its bars with `--color-status-*`,
+ * this TEXT palette, because its bars have to clear 3:1 against the card as a
+ * non-text mark and this is the palette gated for contrast against the card
+ * (the brighter mark palette is not) — and the glance draws no
+ * categorical series beside its bars, so there is nothing for them to be
+ * mistaken for. That bends the split knowingly; it does not widen this guard.
  */
 describe('the marks and bands share no colour with the categorical palette', () => {
   const categorical = new Set<string>([...CATEGORICAL, ...CATEGORICAL_DARK]);

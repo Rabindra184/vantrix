@@ -1,13 +1,33 @@
-/** Where an authenticated session with nowhere particular to go ends up. */
-export const DEFAULT_ROUTE = '/runs';
+/**
+ * The portfolio home page — "which of my tests should I look at", then every
+ * test in the org.
+ *
+ * `/` itself, the address a reader types when they type nothing in particular.
+ * It was a redirect to the run list for the app's whole life before the home
+ * page existed; it is a page now, and the run list is one row down the rail.
+ */
+export const HOME_ROUTE = '/';
+/**
+ * Where an authenticated session with nowhere particular to go ends up: after
+ * signing in with no `?next=`, after a hostile `?next=` is refused, at an
+ * unknown path, and on a cancelled form.
+ *
+ * That is the home page, and it is a separate NAME from `HOME_ROUTE` on
+ * purpose: a link to the home page means the page, while this is a decision
+ * about where a reader lands, and the two are free to come apart again.
+ */
+export const DEFAULT_ROUTE = HOME_ROUTE;
 /**
  * The org-wide run list, by what it IS rather than by where a session lands.
  *
- * Today the two are the same string, which is exactly why they are two names:
- * `DEFAULT_ROUTE` is a decision about where somebody with nowhere particular
- * to go ends up, and it can move without the run list moving. A link that
- * means "all runs" has to keep meaning that, so it reads this and never
- * `DEFAULT_ROUTE`.
+ * It was the same string as `DEFAULT_ROUTE` until the home page took `/`, and
+ * that is exactly why the two were always two names: the default route moved
+ * and the run list did not. Every link that means "all runs" reads this and
+ * never `DEFAULT_ROUTE`. Four of them read the default until the home page took
+ * `/` — the rail's All runs row, `RunDetail`'s "Back to all runs",
+ * `ProjectShell`'s "Back to the run list" and `NewProject`'s "Runs" — and each
+ * was right the day before and wrong the day after. Home's "Running now" was
+ * born reading this one.
  */
 export const ALL_RUNS_ROUTE = '/runs';
 /**

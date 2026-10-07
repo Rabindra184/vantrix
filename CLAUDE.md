@@ -128,7 +128,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **207 files / 2880 tests**, it
+`nvm use` first, and if a run reports fewer than **216 files / 3350 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -145,6 +145,391 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The portfolio-home branch (`feat/portfolio-home`, PR 2 of the portfolio-home
+and command-palette spec,
+`docs/superpowers/specs/2026-10-05-portfolio-home-and-command-palette-design.md`,
+plan `docs/superpowers/plans/2026-10-06-portfolio-home.md`) added NINE unit
+files — `apps/api/test/activity-days.test.ts` (20),
+`packages/contracts/test/activity.test.ts` (23) and
+`packages/contracts/test/attention.test.ts` (248: eight cases and a 120-row
+status × verdict × checks matrix asserted twice, against an independent
+per-clause table rather than the function it tests), and in `apps/web/test`
+`AttentionCard.test.tsx` (42), `Glance.test.tsx` (9), `Home.test.tsx` (20),
+`HomeTests.test.tsx` (42), `Sparkline.test.tsx` (15) and `homeFormat.test.ts`
+(28) — and 23 cases elsewhere (`AuthGate.test.tsx` 15, `ProjectRail.test.tsx`
+3, `paths.test.ts` 3, `AppShell.test.tsx` 1, `NewProject.test.tsx` 1), from
+**207 / 2880 to 216 / 3350**. Integration gains the four new `.ts` unit files,
+`apps/api/test/activity.integration.test.ts` (14) and
+`packages/persistence/test/activity.integration.test.ts` (14), plus
+`session-auth` 1 and `paths` 3: **188 / 2514 to 194 / 2865**. **e2e rises to
+197** (`apps/web/e2e/home.spec.ts`, 5). It adds `GET /v1/activity` (seven
+local glance days, the tests whose latest run needs attention, runs by
+project, the running count and the org's last run), moves `needsAttention`
+into `packages/contracts` beside `attentionReasons`, adds the
+`(org_id, created_at)` index `run_org_id_created_at_idx` (migration
+`20261006120000_run_org_created_at`), and makes `/` the Home page: `/runs` is
+still the run list, and `DEFAULT_ROUTE` is now Home. Measured on the tree with
+`main` (#267, #268) merged in.
+
+**A PROBE THAT THE PAGE BEHIND IT ALSO OBSERVES CAN LOOP, AND NEITHER
+COMPONENT'S TESTS COULD SEE IT.** `AuthGate`'s membership probe moved from the
+run list to `GET /v1/activity`, the query Home draws. A first-load 400 on `/`
+then looped for ever: the gate passed on the 400 and mounted Home; Home's
+second observer re-fetched the data-less errored entry (TanStack's
+`retryOnMount`); the shared query went back to `pending`; the gate drew
+Bootstrapping, which unmounted Home; and round again. The Task 7 review
+measured 20 requests in 20 ticks, and the reproduction case 10 in ten 20 ms
+ticks. Every case was green throughout, because `AuthGate.test.tsx` let
+through a stand-in that observed nothing and `Home.test.tsx` rendered Home
+without the gate. The fix is a render-time latch: once the probe has answered,
+the gate never shows Bootstrapping again for that session, and a 401 or 403
+still wins at any time. It is state set DURING render — not an effect (the
+page's own effects run first and have already started the re-fetch) and not a
+ref (React cannot take back a ref written in a render it discards). The cases
+now let through a child asking the same question with the same options, and
+Home's run through the real gate. **Two components sharing a query key share
+its states, and a test of either alone has removed the other observer.** The
+same review found that a shared KEY does not share an answer: with no
+`staleTime` a cold `/` asked twice, under two docstrings saying the answer was
+reused. `activityQueryOptions(tz)` carries `staleTime: ACTIVITY_POLL_MS` for
+both callers, and a cold `/` is one request.
+
+**TWO WINDOWS ON ONE PAGE CONTRADICTED EACH OTHER, AND THEN A ZONE DID.** The
+spec took both of Gatling Enterprise's windows: attention over the 168 hours
+before now, the glance over seven CALENDAR days in the reader's zone. Side by
+side they leave a slice — 24 hours minus today's time of day, before the
+oldest day's midnight — inside one window and outside the other. A failing
+run there was listed over seven empty columns, and a passing one left "No runs
+in the last 7 days" beside "Run N · 6 days ago" under a heading whose range
+held it. The final review ruled ONE window: attention starts at the glance's
+first local midnight (`boundaries[0]`), the 168-hour constant is deleted, and
+the spec records the deviation from itself and from GE. The same
+contradiction then came back twice by ZONE rather than extent. "N days ago"
+counted elapsed 24-hour periods, so a run just before `boundaries[0]` could
+still read "6 days ago"; `daysAgo` counts calendar days in `window.tz` now.
+And the heading's range was formatted in the viewer's zone, which differs from
+`window.tz` after the UTC retry below — a Chicago reader at 03:00Z read
+"Sep 29 – Oct 5" over columns Sep 30 .. Oct 6 — so it formats in `window.tz`
+(`963ef60`). **A window has a zone as well as an extent, and every reader of it
+has to be handed both.** That range is one `Intl.DateTimeFormat#formatRange`
+now, which no longer doubles the year ("Sep 30, 2026 – Oct 6, 2026") and
+writes THIN spaces (U+2009) around its dash: `toHaveTextContent` normalises
+the element's whitespace and not the expectation's, so the case compares the
+exact `textContent` built by the same call.
+
+**A ZONE THE BROWSER REPORTS CAN BE ONE THE SERVER REFUSES, AND THE DOCSTRING
+SAID IT COULD NOT.** `resolveTimeZone` answers 400 `INVALID_TIMEZONE` for
+whatever Node's ICU rejects, and the browser's `resolvedOptions().timeZone`
+comes from a different ICU: one that detects no zone answers `Etc/Unknown`,
+which Node 22 rejects (measured). The attention card then failed permanently.
+`browserTimeZone` maps `Etc/Unknown` to UTC, `fetchActivity` asks ONCE more in
+UTC on a 400 (this client never repeats `tz`, so a 400 is the zone), and the
+gate's 400 latch stays as the backstop — a 400 means the middleware has
+already accepted the session and its membership, so it passes the gate rather
+than showing the outage page.
+
+**THE ADDRESS IS THE FILTER, AND REACT ROUTER'S TRANSITION GAP NEEDS TWO STATES
+TO SAY SO.** `HomeTests` first held its filter in component state and wrote it
+back into `?q=`, so a same-route navigation that dropped or changed `?q=` — the
+rail's Home row, the brand, Back — was overwritten, and a Home click left two
+identical history entries. Now `q` is read from the URL on every render (it
+keys the request and tags the cursor stack), and the box is a draft whose
+debounced value only drives the WRITE, with `replace: true`. Telling the
+component's own write from an outside navigation by `urlQ !== written` is
+wrong under React Router 7.18, which applies a location change inside
+`startTransition`: the urgent render recording "I wrote chec" can commit
+before the one in which the address says `chec`, and in that gap the box is
+wiped under the reader. Reproduced deterministically with a `Suspense` gate
+holding the transition back; two states fix it — `seen`, the last `q`
+rendered, and `written`, the last value written or re-seeded from. The cursor
+stack resets DURING render when `q` changes; an effect would send the new
+filter with the old cursor for one render.
+
+**FIVE CASES COULD NOT FAIL FOR WHAT THEY NAMED, AND THE FINAL REVIEW NAMED
+THEM.**
+
+  - **"Latest" is by ARRIVAL, and `seedRun` always started its run 60 s before
+    it arrived**, so start and arrival agreed on ORDER in every fixture.
+    Swapping `created_at` for `COALESCE(a.tool_started_at, a.started_at)` in
+    the four reads — the attention window, the latest-per-test `DISTINCT ON`,
+    the final sort, the last run — was measured against the old fixtures:
+    three of the four passed 14 of 14, and the fourth failed only by accident
+    of a boundary-exact fixture the window fix had just added. The fixtures
+    make start and arrival disagree on order now, and each swap fails its own
+    case.
+  - The tz → calendar case compared Kolkata's date with UTC's, which differ
+    only from 18:30 to 24:00 UTC, so `glanceDays('UTC', now)` hard-wired
+    passed it the rest of the day. It uses `Pacific/Kiritimati` and
+    `Pacific/Pago_Pago`, 25 hours apart, whose `days[6].date` always differ.
+  - `HomeTests.test.tsx` asserted a wall clock
+    (`performance.now() - before < HOME_FILTER_DEBOUNCE_MS`); it fakes
+    `setTimeout` and asserts the request was made with the debounce timer
+    still pending.
+  - `AttentionCard.test.tsx`'s "beside on desktop, after on phone" asserted
+    DOM order alone, which a layout ignoring `compact` satisfies.
+  - The Havana and Azores skipped-midnight rows used 2027 dates — tzdata
+    PROJECTIONS, which a tzdata release can move. They are the 2024
+    transitions now, read off Node 22's ICU.
+
+**A LOCAL MIDNIGHT IS A SEARCH, NOT AN OFFSET.** `glanceDays` builds the eight
+boundaries with `Intl` (one `DateTimeFormat` per call, never at module scope)
+and hands SQL UTC instants, so Postgres's own zone database is never
+consulted. The plan's two-pass offset candidate is wrong in BOTH directions:
+a skipped midnight (`America/Santiago`, 03:00Z where the day starts at 04:00Z),
+a midnight read twice (`Asia/Amman`, 2021-10-29), and a date that never
+happened (`Pacific/Apia`, 2011-12-30, a zero-length day). Swept over every
+zone `Intl.supportedValuesOf('timeZone')` lists at a seven-day stride, the
+candidate was wrong 14 times in 2024–2027 and 703 times in 1985–2023. A
+boundary is kept only when it is on its date and the millisecond before it is
+not, and is otherwise found by binary search within two days: 0 violations
+over 6,581,652 boundaries.
+
+**`verdict = 'failed'` IS NULL FOR A RUN WITH NO VERDICT, AND A PLAN THAT NAMES
+AN INDEX IS NOT A PLAN THAT USES IT.** The plan's `needsAttentionSql` read
+`a.verdict = 'failed'`: for a verdict-less run `false OR NULL OR false` is
+NULL, so the run neither needed attention nor did not, and `NOT NULL` dropped a
+complete no-verdict run out of `successful` too. It is
+`IS NOT DISTINCT FROM 'failed'`, caught by the case that seeds all 120 status ×
+verdict × checks combinations and requires the SQL and the TypeScript
+`needsAttention` to agree on every run. And the first days query —
+`generate_series` LEFT JOINed to `run` — planned an index scan on
+`run_org_id_created_at_idx` with only `org_id` in its Index Cond, each day's
+range a join filter over a Materialize of every run the org has, seven times;
+the EXPLAIN case passed on it because it asserted the index's NAME. It is a
+`CROSS JOIN LATERAL` aggregate per day (an aggregate with no `GROUP BY` still
+returns a row, so an empty day is zeros), and the case requires `created_at`
+in the Index Cond.
+
+**THE NEW INDEX CHANGED AN EXISTING PLAN GUARD, AND THE RUN SEARCH'S PLAN FOR A
+SELECTIVE ORG.** `repositories.integration.test.ts`'s "can serve the search from
+its trigram indexes" runs `RUN_SEARCH_COLUMNS`' six-way OR with
+`enable_seqscan = off` on a one-row table; with its org conjunct the planner
+took `run_org_id_created_at_idx` and applied the OR as a plain filter, so the
+case failed in the correct state. The conjunct is dropped — with no other
+index able to serve the query, naming all six is what reachability means — and
+the Task 3 review measured that the edited guard still catches both
+regressions it was written for, a `COALESCE` around a column and a dropped
+trigram index. The implementer's report expected no production effect and
+said it had not measured one; the review did. For a SELECTIVE org the run
+search moved from a BitmapOr over the trigram indexes (planner estimate 8978)
+to an org-index scan with the OR as a Filter (estimate 2054); for an org
+holding 95% of the table the plan did not change. Recorded, not acted on.
+
+**MERGING `main` PUT THE CONDITIONAL-SPREAD RULE BACK, AND ITS FIRST CATCH WAS
+THIS BRANCH'S OWN TEST.** This branch's controller found that rule inert with
+`eslint --print-config` while Task 1 ran and filed it as a separate task; #268,
+the eslint-spread-rule-inert branch, is the fix. Task 1's matrix builder in
+`attention.test.ts` omitted `verdict` and `checks` with
+`...(cond ? {} : { key })` — flagged at its review, lint-clean because the rule
+was off — and after the merge `pnpm lint` failed on exactly those two lines.
+The fix the rule usually asks for, a named key holding `undefined`, would have
+changed the test: its "absent" rows exist to exercise an OMITTED optional
+field. Each half is a typed `Pick<AttentionInput, …>` partial spread as a
+value (`d4ffc3a`), so the field is still omitted and a mistyped key is a
+compile error again.
+
+**A LAST-RUN CELL WITH NO REASONS WAS COLOUR ALONE.** `LastRunCell` drew a
+badge per attention reason and, for a run with none — every passing row of
+the tests table — only a 3 px left rule in the outcome's colour: WCAG 1.4.1.
+With no reasons it draws ONE badge now, the run's `STATUS` mark while it is
+pending, parsing or running and its `VERDICT` mark once it is complete.
+
+**WHEN `/` CHANGED MEANING, TWO SPECS WENT ON PASSING ON THE WRONG PAGE.**
+`run-list.spec.ts`'s empty-org case signed in, landed on Home rather than
+`/runs`, and passed on Home's identical "No runs yet", so the run list's empty
+state was verified in no browser. It goes to `/runs` and asserts the run
+list's own `<h1>` first. And `resilience.spec.ts`'s cold-start case still
+stalled `**/v1/runs**` after the gate's probe had moved; it passed because a
+loaded machine shows the bootstrap screen for a moment anyway. A hit count on
+the held URL is not enough either — with the old stall the run list hits
+`/v1/runs` as soon as the gate passes — so the case holds `**/v1/activity**`
+and, once the status appears, asserts it STILL reads "Checking your
+session…", which only a held probe produces. Moved back to `/v1/runs`, that
+re-check is the line that fails (`Received string: "Loading runs…"`). **A
+landing page that changes is a change to every spec that lands there.**
+
+**RULINGS, EACH A DECISION RATHER THAN AN OVERSIGHT:**
+
+  - ONE window, from the glance's first local midnight to now — a deviation
+    from the spec's and GE's 168 hours. The cost: a test that failed before
+    that midnight drops off Home up to a day earlier than it would in GE.
+  - `daysAgo` counts calendar days in `window.tz`, so a run at 23:59 yesterday
+    reads "1 day ago" a minute later.
+  - The gate latches on data, a 400, a 2xx the schema refuses (`ZodError`, the
+    membership is proven) and a failed SESSION refetch once the session has
+    data; a 401 or 403 wins at any time; a 2xx that is not JSON, and any other
+    failure before the gate has passed, still show the outage page. The cost:
+    a stale page stays up through a real outage until the next navigation.
+  - A first-load 400 that UTC cannot rescue costs at most four probe
+    requests — the gate's ask and Home's `retryOnMount` re-ask, each the zone
+    and then UTC (`retryOnMount: false` would stop Home retrying ANY
+    first-load failure); a request already in UTC is not asked twice; and
+    every poll of a refused zone pays a 400 and its retry.
+  - The shared `staleTime` means a quick revisit with nothing running can show
+    an answer up to 30 s old.
+  - One `ErrorState`, in the attention slot, for a failed activity read; the
+    two side cards say a quiet "Could not be loaded." — one failure, one
+    alert.
+  - The glance's bar fills are `--color-status-*`, not the mark palette
+    `--chart-status-*`: `#10b981` is 2.54:1 on white, under 1.4.11's 3:1.
+    `Glance.tsx` and `palette.test.ts` record it as the one deliberate
+    exception to the text/mark split.
+  - Reason badges borrow `marks.tsx`: `failed` takes `STATUS.failed`,
+    `incomplete` `STATUS.incomplete`, `gate_failed` `VERDICT.failed`, and
+    `assertion_failed` `STATUS.failed`'s glyph and colour, each with
+    `reasonLabel`'s words.
+  - `LastRunCell`'s `run.checks` is required and nullable: the
+    `assertion_failed` badge's label is the failed-check count, and a default
+    would be silent.
+  - Project names are TEXT everywhere on Home but Runs by project, whose links
+    go where the rail's row of the same name goes, `projectPath(slug)`.
+  - `attentionTotal` counts TESTS, uncapped (`count(*) OVER ()` before the
+    `LIMIT`), while `days[i].needsAttention` counts runs; the header reads the
+    total when twenty rows are sent.
+  - `tz` is echoed as sent, trimmed, never ICU's canonical name
+    (`Asia/Kolkata`, not `Asia/Calcutta`); `INVALID_TIMEZONE` quotes the
+    trimmed zone.
+  - `passRateLabel` floors `rate * 100 + 1e-9`: a bare `Math.floor` reads
+    29/100 as 28%, and 199/200 still reads 99%.
+  - The clean state says "1 run"; the glance is drawn in the filled and clean
+    states only.
+  - An empty page past the first reads "These tests are no longer here" with
+    "Back to the first page" (`RunList`'s copy), and a failed read past page
+    one carries the same action.
+  - Home is the palette's first row, and the one highlighted before anything
+    is typed. The brand link is named "PerfPortal", never "Home".
+  - The rail's Home `NavLink` keeps `end` as intent only: React Router 7.18.2
+    never prefix-matches `to="/"`, and removing it survived 19 of 19. "Home is
+    not current on `/runs`" is the guard.
+  - The attention table is named "Needs attention", not "Tests that need
+    attention", which a substring query for Home's own Tests table would
+    match. The reserved-name case matches `/home|all runs/i` as a SUBSTRING:
+    `\bhome\b` misses "Homepage" (measured on Node 22).
+  - `AttentionCard` is handed `new Date(window.to)` as its now — the server's
+    instant for the answer on screen.
+  - Copy outside the spec's list: "The activity could not be loaded",
+    "Loading activity…", "Could not be loaded.", "No runs in the last 7
+    days." and a bare "Hello" for a user with no name.
+
+**KNOWN AND LEFT, EACH A DECISION RATHER THAN AN OVERSIGHT** (the final
+review's LEAVE triage, and its re-review's):
+
+  - No contracts case refuses a non-ISO `window.from` / `window.to` or a
+    missing `tz`.
+  - Nothing pins `INVALID_TIMEZONE` quoting the trimmed zone rather than the
+    raw one.
+  - The Kolkata-to-Calcutta guard depends on ICU canonicalising, and the
+    `Etc/Unknown` case on ICU rejecting it.
+  - `glanceDays`' binary-search bracket is stated, not asserted (swept clean).
+  - `assertBoundaries` checks the count, not ascending order.
+  - The boundary-refusal case reaches `read`'s guard, not
+    `activityDaysQuery`'s.
+  - Replacing the controller's `ActivityResponseSchema.parse` with the raw
+    object fails nothing; a row with status `bogus` should answer 500.
+  - `singleValue`'s remediation example `?tz=checkout` is itself an invalid
+    zone.
+  - `getActivity`'s description omits `test: null` attention rows.
+  - No OpenAPI case pins `getActivity`'s `ActivityBadRequest` or its `tz`
+    parameter, and no API case echoes a padded `tz`.
+  - `Glance`'s negative remainder (successful plus needs-attention above the
+    total) is untested.
+  - The glance's numbers are colour and height alone for a sighted keyboard
+    or touch reader; the header's "N tests" over twenty rows says nothing of
+    twenty shown. Both are as the spec asks.
+  - "Run" plus the first eight of the id is written twice (`LastRunCell`,
+    `AttentionCard`), and the link class string three times.
+  - `Sparkline`'s `r={PAD}` conflates padding and radius.
+  - No case pins an outside navigation on page two resetting the cursor
+    stack, or Previous while a next page is in flight.
+  - An outside navigation superseding the component's own in-flight write,
+    and ending on the same `q`, leaves the box stale.
+  - `HomeTests`' timer-count precondition could be met by TanStack's own
+    timers; the ordering assertion carries the case.
+  - A latched gate renders the outlet while the session is pending, reachable
+    only after a cache wipe that does not navigate, and every
+    `queryClient.clear()` here navigates.
+  - `resilience.spec.ts`' `held > 0` can be met by Home's own probe after
+    `signIn`: wait for the Hello `<h1>` before routing, and release in a
+    `finally`.
+  - `acceptance.spec.ts` says the twentieth rail row is "clicked"; it is
+    scrolled to and asserted visible.
+  - The org-wide nine-column skeleton on a cold `/runs` is unmeasured.
+  - `VERDICT.none` reads "no verdict yet" on a finished run that will never
+    have one.
+
+**RED-VERIFIED ON `963ef60` AS THE CHECKPOINT**, each anchor's count asserted,
+persistence rebuilt with `tsc -b` and its emitted `dist` grepped, the tree
+restored and `git status` read after each:
+
+```
+  a  needsAttentionSql's CASE around tool_assertions     the 120-combination SQL/TS case ALONE
+     removed                                             ("cannot extract elements from a scalar")
+  b  latest-per-test DISTINCT ON ordered created_at ASC  the latest-in-window case, and the tenancy
+                                                         case through its own fixture
+  c  glanceDays' skipped-midnight correction removed     the five skipped-midnight rows (Santiago,
+     (the read-twice one kept)                           Havana, Azores, Apia, the Santiago sweep);
+                                                         Amman green
+  d  passRateLabel: Math.floor -> Math.round             both floor cases (199/200 reads 100%; the
+                                                         sweep, 39,320 ratios off)
+  e  the attention header from attention.length          the 22-tests capped case ALONE
+  f  HomeTests' cursor reset on a q change removed       page two, A -> B -> A, and the phone case:
+                                                         one claim three ways
+  g  resolveTimeZone echoes resolvedOptions().timeZone   both unit echo cases, and the API's echo
+                                                         case ALONE of its 14
+  h  tenantFilter's projectId predicate removed          the token case in each layer, each ALONE
+  i  the gate's probe back on the run list               14 of 20, the URL case naming the claim
+                                                         (the stub 404s every other URL by design)
+  j  the controller's window back to now - 168 h         the before-midnight case, and window.from in
+                                                         the schema case
+```
+
+**WHAT WAS RUN**, on Node v22.19.0 at `963ef60`, every total predicted from the
+source first: `pnpm build`, `typecheck` and `lint` exit 0 by their own exit
+codes; `test:unit` **216 / 3350**, exit 0, zero `Errors` lines;
+`test:integration` **194 / 2865, exit 0, zero failures**; `pnpm test:e2e
+--workers=2` **197 passed, exit 0**, the runner reading back `Running 197
+tests using 2 workers`, with no flaky case and no retry — each the prediction
+exactly, on the first run, against the SCRATCH DATABASE `perfportal_home`, a
+scratch Redis INDEX (db 1) and e2e port 3700. Memory was the tight resource
+all session: swap at 7,117 of 8,192 MB when it began, free pages between 4,510
+and 66,808, the 1-minute load at 2.95 (unit), 7.37 (integration, after the
+load gate) and 3.25 (e2e) at each start. Firefox and WebKit were not run
+locally.
+
+**AND THE REAL RUNS, AGAINST THE DEVELOPER DATABASE**, with the API, worker and
+runner from this checkout's `dist` on Node 22 and Redis db 13 (it held no
+job). `prisma migrate deploy` applied `20261006120000_run_org_created_at` and
+the run count stayed 25. `ParitySimulation` through the Gradle plugin, twice,
+into a new project `home-verify`: test `example-paritysimulation`, Run 1 and
+Run 2, 895 requests each, checks `{ failed: 1, total: 3 }`, p95 645.59 and
+658.63 (Gatling exits 1 by design on its own failing `Search` p95).
+`GET /v1/activity?tz=Asia/Kolkata` went from `days[6]` 0 / 0 / 0 and
+`lastRun` null, to 1 / 0 / 1 after Run 1, to 2 / 0 / 2 after Run 2, with
+`runCount` 2, `passRate` 0 and `attentionTotal` 1 — the TEST, while the day
+counts two RUNS — its one row naming Run 2 with
+`reasons: ["assertion_failed"]` and the tool start rather than the arrival as
+`startedAt`; `window.from` was `2026-09-29T18:30:00.000Z`, Kolkata's midnight
+six days ago (Los Angeles' `2026-09-30T07:00:00.000Z`, UTC's
+`2026-09-30T00:00:00.000Z`). Then one run through the on-prem runner, polled
+every 3 s while it streamed: `running` read 1 for 21 consecutive polls and 0
+once it finished; the run was numbered Run 1 of `home-onprem-parity` while
+still streaming, sat in `total` and in neither `successful` nor
+`needsAttention` while in flight, and ended with `days[6]` 3 / 0 / 3 and
+`attentionTotal` 2, its own test listed first; `lastRun.startedAt` moved from
+the open to the tool start once the header arrived. `tz=Etc/Unknown` answered
+400 `INVALID_TIMEZONE` and `tz=UTC` 200 with the same counts. The palette's
+reads held: `GET /v1/tests?q=paritysim` answered
+`home-verify/example-paritysimulation` with `p95History` [645.59, 658.63], and
+`number=1`, `2`, `99` and `abc` answered Run 1, Run 2, an empty page and 400
+`INVALID_RUN_NUMBER`. A read token for `palette-verify` saw only that
+project's activity — neither `home-verify` nor either run id appears in the
+body — and `/v1/runs?project=home-verify` answered it 400 `PROJECT_MISMATCH`.
+Every 200 parsed with `ActivityResponseSchema` (13 reads and all 29 polls),
+`OrgTestListResponseSchema` (3) or `RunListResponseSchema` (5). No product
+defect. The four tokens were revoked and the processes stopped by PID (the
+worker ignored SIGTERM for 20 s and took `kill -9`). The page itself was not
+rendered: nothing signed in.
 
 The palette-placeholder-after-clear branch added no unit FILE and 2 cases to
 `apps/web/test/CommandPalette.test.tsx`, from **206 / 2867 to 206 / 2869**.
@@ -18133,8 +18518,9 @@ document. Two links, one name, two destinations; a screen-reader user hears
 the same words for both. `project-tests.spec.ts` failed as a strict-mode
 violation naming both elements, which is the only reason it was caught
 before merge. The label is **Project runs** now. **The rail's vocabulary —
-"All runs", and every project name — is reserved: a page's own controls have
-to be named around it.**
+"Home", "All runs", and every project name — is reserved: a page's own controls
+have to be named around it.** (The portfolio-home branch put a Home row above
+All runs, which is why the brand link is named "PerfPortal" and not "Home".)
 
 **A truncated read does not throw — `subarray` returns a short buffer.**
 `BinaryReader.readString` reads a length then slices, and slicing past the

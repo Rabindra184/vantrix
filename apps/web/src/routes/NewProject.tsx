@@ -10,7 +10,7 @@ import { ProblemError } from '../api/fetch';
 import { createProject, projectsQueryKey } from '../api/projects';
 import { INPUT } from '../components/tableStyles';
 import useDocumentTitle from '../useDocumentTitle';
-import { DEFAULT_ROUTE, projectSetupPath } from './paths';
+import { ALL_RUNS_ROUTE, DEFAULT_ROUTE, projectSetupPath } from './paths';
 
 export default function NewProject() {
   useDocumentTitle('New project');
@@ -51,7 +51,11 @@ export default function NewProject() {
   return (
     <div className="flex max-w-3xl flex-col gap-6">
       <div className="flex min-w-0 flex-col gap-1">
-        <Link to={DEFAULT_ROUTE} className="inline-flex items-center gap-1 text-[0.8125rem] font-medium text-muted hover:text-primary">
+        {/* "Runs" names the run list, so it goes there — `ALL_RUNS_ROUTE`, not
+            the default route, which is the home page now. Cancel below is the
+            other kind of link: "nowhere in particular", so it does read the
+            default. */}
+        <Link to={ALL_RUNS_ROUTE} className="inline-flex items-center gap-1 text-[0.8125rem] font-medium text-muted hover:text-primary">
           <ChevronLeftIcon className="h-3.5 w-3.5" />
           Runs
         </Link>

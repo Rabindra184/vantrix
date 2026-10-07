@@ -407,6 +407,15 @@ test('another org run is not readable', async ({ page }) => {
   await expect(page.getByTestId('problem-remediation')).not.toBeEmpty();
   // And none of the run itself leaks through the error.
   await expect(page.getByTestId('run-duration')).toHaveCount(0);
+  // The way out goes to the RUN LIST, which is what its words say. It read the
+  // default route, which was the run list until the home page took `/`; a link
+  // that means "all runs" reads `ALL_RUNS_ROUTE` and never the default.
+  // `exact`, because Playwright's name match is a case-insensitive substring:
+  // the claim is about this one link, not about any whose name contains it.
+  await expect(page.getByRole('link', { name: 'Back to all runs', exact: true })).toHaveAttribute(
+    'href',
+    '/runs',
+  );
 });
 
 test('each tab is its own URL, reachable directly', async ({ page }) => {
@@ -656,15 +665,15 @@ test('each tab of a LIVE run is its own URL, reachable directly', async ({ page 
  * The Load generators tab lived at `/telemetry` before it was
  * `/load-generators` (a Report section now, reached by a redirect). Before the
  * not-found route existed, any such URL matched nothing under `/runs/:runId`
- * and fell through to `App.tsx`'s global `<Route path="*">`,
- * which redirects to `/runs`. The reader was silently moved from the run they
- * had open to the top of the run list.
+ * and fell through to `App.tsx`'s global `<Route path="*">`, which redirects
+ * to `DEFAULT_ROUTE` — the run list then, the home page `/` now. The reader
+ * was silently moved from the run they had open to the top of another page.
  *
  * ONLY A BROWSER CAN SEE THIS. It is a claim about the real router resolving
  * a real URL — jsdom tests mount one component under a stand-in route table,
  * which is exactly the layer the bug lived above.
  */
-test('an unknown run section keeps the run on screen instead of redirecting to the list', async ({
+test('an unknown run section keeps the run on screen instead of redirecting away from it', async ({
   page,
 }) => {
   const admin = await seedAdmin();

@@ -2,7 +2,9 @@ import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PROJECT_SLUG_PATTERN } from '@perfportal/contracts';
 import {
+  ALL_RUNS_ROUTE,
   DEFAULT_ROUTE,
+  HOME_ROUTE,
   NEW_PROJECT_ROUTE,
   projectNewRunnerRunPath,
   projectPackagesPath,
@@ -34,6 +36,27 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+/**
+ * ═══ THE FRONT DOOR AND THE RUN LIST ARE TWO PLACES NOW ═══
+ *
+ * For the app's whole life before the home page they were one string under two
+ * names, which is exactly why they were two names: `DEFAULT_ROUTE` is where
+ * somebody with nowhere particular to go lands, and it moved; `ALL_RUNS_ROUTE`
+ * is what a link that means "all runs" points at, and it did not. A link that
+ * read the wrong one of the two would have been right yesterday and wrong
+ * today with nothing failing, so both values are pinned.
+ */
+describe('the default route and the run list', () => {
+  it('lands a session with nowhere particular to go on the home page', () => {
+    expect(HOME_ROUTE).toBe('/');
+    expect(DEFAULT_ROUTE).toBe(HOME_ROUTE);
+  });
+
+  it('keeps the run list where it was', () => {
+    expect(ALL_RUNS_ROUTE).toBe('/runs');
+  });
 });
 
 describe('safeNext', () => {
@@ -175,11 +198,11 @@ describe('static routes cannot shadow a project slug', () => {
   /**
    * A RUN SUB-PATH MUST NOT FALL THROUGH TO THE GLOBAL CATCH-ALL.
    *
-   * `App.tsx` ends with `<Route path="*">` redirecting to `/runs`, so before
-   * this child route existed a stale link to a renamed section — the Load
-   * generators tab lived at `/telemetry` before `/load-generators` — silently
-   * teleported the reader from the run they had open to the top of the run
-   * list, with nothing on screen accounting for it.
+   * `App.tsx` ends with `<Route path="*">` redirecting to the default route
+   * (the run list then, the home page now), so before this child route
+   * existed a stale link to a renamed section — the Load generators tab lived
+   * at `/telemetry` before `/load-generators` — silently teleported the reader
+   * away from the run they had open, with nothing on screen accounting for it.
    *
    * Read out of `App.tsx` for the same reason the project scan below is: the
    * failure this guards against is somebody deleting the child route later,
@@ -225,6 +248,19 @@ describe('static routes cannot shadow a project slug', () => {
     );
   });
 
+  /**
+   * `/` IS THE HOME PAGE, NOT A REDIRECT. It was `<Navigate to={DEFAULT_ROUTE}>`
+   * for the app's whole life, and leaving that line in place beside a Home
+   * route would be a redirect to itself. Inside `AppShell`, under `AuthGate`,
+   * like every other page of the product — read out of `App.tsx` for the
+   * reason the cases around it are.
+   */
+  it('renders the home page at /, inside the shell, rather than redirecting', () => {
+    expect(APP).not.toMatch(/<Route\s+path="\/"\s+element=\{<Navigate/);
+    const shell = APP.slice(APP.indexOf('<Route element={<AppShell />}>'));
+    expect(shell).toMatch(/<Route\s+path=\{HOME_ROUTE\}\s+element=\{<Home\s*\/>\}/);
+  });
+
   it('declares at least one project route, so the scan below is not vacuous', () => {
     expect(APP).toMatch(/path=(?:"|\{)[^\n]*projects/);
   });
@@ -246,9 +282,9 @@ describe('static routes cannot shadow a project slug', () => {
 
   /**
    * A SUB-PATH NOBODY DECLARED FALLS THROUGH TO THE GLOBAL CATCH-ALL, and
-   * that catch-all redirects to `/runs`. So deleting either of these routes
-   * does not produce a 404 a reader can act on — it teleports them from the
-   * project they were looking at to the top of the org's run list, silently.
+   * that catch-all redirects to the default route. So deleting either of these
+   * routes does not produce a 404 a reader can act on — it teleports them from
+   * the project they were looking at to the org's front door, silently.
    * The same failure `RunSectionNotFound` exists to prevent one route over,
    * and the same reason this file reads `App.tsx` rather than listing routes
    * of its own: the regression it guards against is a future deletion.

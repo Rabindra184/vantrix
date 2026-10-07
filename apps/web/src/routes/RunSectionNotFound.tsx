@@ -8,10 +8,11 @@ import { runPath } from './paths';
  *
  * WHY IT IS A CHILD ROUTE AND NOT THE GLOBAL CATCH-ALL. Anything unmatched
  * used to fall through to `App.tsx`'s `<Route path="*">`, which redirects to
- * `/runs` — so a stale bookmark to a renamed section (the Load generators tab
- * lived at `/telemetry` before it was `/load-generators`) silently teleported
- * the reader from a run they had open to the top of the run list, with
- * nothing on screen accounting for it. Rendered here instead, inside
+ * `DEFAULT_ROUTE` — the run list when this was written, the portfolio home
+ * page now — so a stale bookmark to a renamed section (the Load generators
+ * tab lived at `/telemetry` before it was `/load-generators`) silently
+ * teleported the reader from a run they had open to the top of another page,
+ * with nothing on screen accounting for it. Rendered here instead, inside
  * `RunShell`'s `<Outlet/>`, the header and the tab strip both stay put: the
  * reader keeps the run, is told which part of the URL was not understood, and
  * the tabs they DID want are one click away.

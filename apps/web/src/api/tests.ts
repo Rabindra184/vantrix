@@ -47,6 +47,21 @@ export function fetchProjectTests(slug: string): Promise<TestListResponse> {
  */
 export const orgTestsQueryKey = (q: string, limit: number) => ['org-tests', q, limit] as const;
 
+/**
+ * The same list as a TABLE reads it: one answer per `(search text, page size,
+ * cursor)`. The palette's key above deliberately carries no cursor because it
+ * only ever shows a first page; a paged table's must, or page two would read
+ * page one's cached answer under the same key.
+ *
+ * Both keys begin `['org-tests', q, limit…]` and stay distinct, which matters
+ * because they share a prefix and a cache: the palette asks for five and the
+ * home page for twenty-five, and the cursor makes this one a different SHAPE
+ * from the palette's even at the same limit. `null` is the first page — spelled
+ * out, not omitted, so page one has a key of its own.
+ */
+export const orgTestsPageQueryKey = (q: string, limit: number, cursor: string | null) =>
+  ['org-tests', q, limit, cursor] as const;
+
 export interface OrgTestsOptions {
   /** Search text. Trimmed; empty after trimming sends no `q` at all. */
   readonly q?: string;
