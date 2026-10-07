@@ -117,7 +117,7 @@ credential types cannot drift apart:
 | `rules:read` | viewer | (session only) | `GET …/rules` |
 | `members:read` | viewer | (session only) | `GET …/members` |
 | `run:note` | member | (session only) | `PUT /v1/runs/:id/note` |
-| `run:upload` | member | `ingest` | `POST /v1/projects/:slug/runs` (session); bearer keeps `POST /v1/runs` |
+| `run:upload` | member | (session only) | `POST /v1/projects/:slug/runs`; a token keeps uploading through `POST /v1/runs`, which is bearer-only and takes no role |
 | `runner:run` | member | `runner` | `POST …/runner/runs`, `…/cancel`, `…/retry` |
 | `packages:manage` | member | `runner` | `POST`, `PUT …/content`, `PATCH` on packages |
 | `packages:delete` | member | (session only, as today) | `DELETE` on packages |
