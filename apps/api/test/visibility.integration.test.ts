@@ -281,6 +281,70 @@ describe('GET /v1/runs filters, for a session that cannot see B', () => {
     expect([invisible.status, invisible.body]).toStrictEqual([200, { items: [], nextCursor: null }]);
     expect([missing.status, missing.body]).toStrictEqual([200, { items: [], nextCursor: null }]);
   });
+
+  /**
+   * THE VISIBILITY CLAUSE AND THE CURSOR CLAUSE IN ONE STATEMENT. Every case
+   * above runs at most one of them per query, so a slip in how the two number
+   * their placeholders — each appends to the same parameter list — would
+   * surface only here, as a 500 or as the wrong page.
+   *
+   * A second run in A lands BETWEEN B's two in the org's order, so following
+   * A's cursor walks past B's failed run: a cursor clause that lost the
+   * visibility filter would hand it over on page two.
+   */
+  it("pages through A's runs by cursor without ever reaching B's", async () => {
+    const viewer = await member('pager', [{ projectId: A, role: 'viewer' }]);
+    const testA = await ctx.prisma.test.findFirstOrThrow({ where: { projectId: A } });
+    const runA2 = await seedRun(A, testA.id, 15, { status: 'complete', verdict: 'passed' });
+
+    const pages: string[][] = [];
+    let cursor: string | null = null;
+    do {
+      const res = await get(`/v1/runs?limit=1${cursor === null ? '' : `&cursor=${cursor}`}`, viewer);
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+      const page = RunListResponseSchema.parse(res.body);
+      pages.push(page.items.map((r) => r.id));
+      cursor = page.nextCursor;
+    } while (cursor !== null && pages.length < 5);
+
+    // Newest first: A's second run, then the cursor continues to A's first —
+    // never to B's failed run, which sits between them by start time.
+    expect(pages).toStrictEqual([[runA2], [runA]]);
+    expect(pages.flat()).not.toContain(runBFailed);
+    expect(pages.flat()).not.toContain(runBRunning);
+  });
+
+  /**
+   * NEVER INSIDE THE SEARCH'S OR, BEHAVIOURALLY. `q` is matched against the
+   * org's project names as well as the run's own columns, and that project
+   * lookup is NOT narrowed — it returns B for "search" whoever asks — so the
+   * run query's OR gains `project_id = ANY([B])`. The visibility clause is
+   * ANDed beside that OR; moved inside it, or dropped, it becomes one more
+   * way to MATCH and B's runs come through. This is the one input where that
+   * shows.
+   *
+   * The admin half is what keeps the viewer's empty page from passing
+   * vacuously: the same `q` really does find B's runs, so the viewer is
+   * refused them rather than the search finding nothing.
+   */
+  it("finds nothing for a search naming B's project, where an admin finds B's runs", async () => {
+    const viewer = await member('searcher', [{ projectId: A, role: 'viewer' }]);
+    const admin = await signInAsAdmin(ctx, `admin-search-${randomUUID()}@example.test`);
+
+    const asViewer = await get('/v1/runs?q=search', viewer);
+    const asAdmin = await get('/v1/runs?q=search', admin);
+    expect([asViewer.status, asAdmin.status]).toStrictEqual([200, 200]);
+
+    expect(RunListResponseSchema.parse(asViewer.body).items.map((r) => r.id)).toStrictEqual([]);
+    expect(RunListResponseSchema.parse(asAdmin.body).items.map((r) => r.id)).toStrictEqual([
+      runBRunning,
+      runBFailed,
+    ]);
+
+    // And the viewer's search still works for the project it CAN see.
+    const own = await get('/v1/runs?q=checkout', viewer);
+    expect(RunListResponseSchema.parse(own.body).items.map((r) => r.id)).toStrictEqual([runA]);
+  });
 });
 
 /**
