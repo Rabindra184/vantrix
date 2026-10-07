@@ -257,6 +257,11 @@ class RunRoutes {
   @Put(':id/note') @Requires('run:note') note(): void {}
 }
 
+@Controller('/v1/runs/:id')
+class RunScopedRoutes {
+  @Get('stats') @Requires('project:read') stats(): void {}
+}
+
 @Controller('/v1/admin/users')
 class AdminRoutes {
   @Post() @Requires('users:manage') create(): void {}
@@ -388,15 +393,57 @@ describe('AccessGuard', () => {
   });
 
   /**
-   * Nothing to judge, so nothing to decide: the controller answers its own
-   * 404 for a project or run that is not there, as it did before the guard —
-   * and the guard's own 404 is the same helper, so the two agree.
+   * A target the org does not hold gets the SAME 404 as one this session
+   * cannot see, from the guard, rather than being passed to the controller.
+   * Guards run before pipes and handlers, so a pass-through would let a pipe
+   * on a sub-parameter, or a body check, answer the missing target first —
+   * and the two answers would differ. Compared in two worlds that differ only
+   * in whether the target exists, so the bodies can be equal byte for byte.
    */
-  it('passes a project or run that does not exist through to the controller', async () => {
-    const guard = guardWith({ projects: { findBySlugInOrg: findCheckout() }, runs: { projectIdOf: async () => null } });
+  it('answers a project the org does not hold exactly as one this session cannot see', async () => {
+    const outsider = nonAdmin([[B, 'manager']]);
+    const missing = guardWith({ projects: { findBySlugInOrg: async () => null } });
+    const invisible = guardWith({ projects: { findBySlugInOrg: findCheckout() } });
 
-    await expect(guard.canActivate(call(SlugRoutes, 'edit', nonAdmin([]), { slug: 'nope' }))).resolves.toBe(true);
-    await expect(guard.canActivate(call(RunRoutes, 'note', nonAdmin([]), { id: RUN }))).resolves.toBe(true);
+    const missingBody = await refusal(missing.canActivate(call(SlugRoutes, 'edit', outsider, { slug: 'checkout' })));
+    const invisibleBody = await refusal(invisible.canActivate(call(SlugRoutes, 'edit', outsider, { slug: 'checkout' })));
+
+    expect(missingBody).toStrictEqual(invisibleBody);
+    expect(missingBody).toStrictEqual(problemOf(projectNotFound('checkout')));
+  });
+
+  it('answers a well-formed run id the org does not hold exactly as a run this session cannot see', async () => {
+    const outsider = nonAdmin([[B, 'manager']]);
+    const missing = guardWith({ runs: { projectIdOf: async () => null } });
+    const invisible = guardWith({ runs: { projectIdOf: async () => A } });
+
+    const missingBody = await refusal(missing.canActivate(call(RunRoutes, 'note', outsider, { id: RUN })));
+    const invisibleBody = await refusal(invisible.canActivate(call(RunRoutes, 'note', outsider, { id: RUN })));
+
+    expect(missingBody).toStrictEqual(invisibleBody);
+    expect(missingBody).toStrictEqual(problemOf(runNotFound(RUN)));
+  });
+
+  /**
+   * The one target left to the controller: an id that is not a UUID names no
+   * run, so the pipe's 400 — which every caller gets alike — says nothing
+   * about which runs exist. Passed through WITHOUT a lookup.
+   */
+  it('leaves a malformed run id to the controller, without a lookup', async () => {
+    for (const id of ['not-a-uuid', `{${RUN}}`, RUN.replaceAll('-', '')]) {
+      await expect(guardWith().canActivate(call(RunRoutes, 'note', nonAdmin([]), { id })), id).resolves.toBe(true);
+    }
+  });
+
+  /** `/v1/runs/:id` with the parameter in the CONTROLLER's prefix — the shape of the metrics routes. */
+  it("judges a run route whose controller prefix carries the id, as the metrics routes' does", async () => {
+    const runs = { projectIdOf: vi.fn(async () => A) };
+
+    await expect(guardWith({ runs }).canActivate(call(RunScopedRoutes, 'stats', nonAdmin([[A, 'viewer']]), { id: RUN }))).resolves.toBe(true);
+    expect(runs.projectIdOf).toHaveBeenCalledWith(ORG, RUN);
+    expect(
+      await refusal(guardWith({ runs }).canActivate(call(RunScopedRoutes, 'stats', nonAdmin([[B, 'viewer']]), { id: RUN }))),
+    ).toStrictEqual(problemOf(runNotFound(RUN)));
   });
 
   it('lets an admin through a project action without looking the project up', async () => {
@@ -433,13 +480,15 @@ describe('AccessGuard', () => {
 /**
  * ═══ THE GUARD'S IDEA OF A RUN ID IS THE PIPE'S, EXACTLY ═══
  *
- * `AccessGuard` runs before parameter pipes and asks `projectIdOf` with the
- * raw segment. An id `uuidParam` accepts that `projectIdOf` declined to look
- * up would pass the guard unjudged and reach the controller; one the pipe
- * refuses that `projectIdOf` looked up would answer a non-member 404 where a
- * member gets 400. Measured against the pipe itself, not a copy of its rule.
+ * `AccessGuard` runs before parameter pipes, sees the raw segment, and leaves
+ * an id to the controller exactly when it judges it malformed. An id
+ * `uuidParam` accepts that the guard left alone would reach the controller
+ * unjudged; one the pipe refuses that the guard answered 404 would get a
+ * non-member a 404 where a member gets 400. `projectIdOf` must not send what
+ * the pipe refuses to the `uuid` column either. Measured against the pipe
+ * itself, not a copy of its rule.
  */
-describe('projectIdOf and uuidParam agree on what a run id is', () => {
+describe('the guard, projectIdOf and uuidParam agree on what a run id is', () => {
   it.each([
     [RUN],
     [RUN.toUpperCase()],
@@ -459,8 +508,17 @@ describe('projectIdOf and uuidParam agree on what a run id is', () => {
         () => false,
       );
     const findFirst = vi.fn(async () => null);
-    await new RunRepository({ run: { findFirst } } as unknown as PrismaClient).projectIdOf(ORG, id);
+    const runs = new RunRepository({ run: { findFirst } } as unknown as PrismaClient);
+    await runs.projectIdOf(ORG, id);
+    expect(findFirst.mock.calls.length > 0, 'projectIdOf queries').toBe(pipeAccepts);
 
-    expect(findFirst.mock.calls.length > 0).toBe(pipeAccepts);
+    // An outsider, and a run the org does not hold: judged (404) iff the pipe accepts the id.
+    const judged = await guardWith({ runs })
+      .canActivate(call(RunRoutes, 'note', nonAdmin([[B, 'manager']]), { id }))
+      .then(
+        () => false,
+        (e: unknown) => problemOf(e).status === 404,
+      );
+    expect(judged, 'the guard answers 404').toBe(pipeAccepts);
   });
 });

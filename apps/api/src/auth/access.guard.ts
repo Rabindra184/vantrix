@@ -2,7 +2,7 @@ import { Injectable, RequestMethod, type CanActivate, type ExecutionContext } fr
 import { METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants.js';
 import { Reflector } from '@nestjs/core';
 import { ACCESS_ACTIONS, type AccessAction } from '@perfportal/contracts';
-import { ProjectRepository, RunRepository } from '@perfportal/persistence';
+import { isUuid, ProjectRepository, RunRepository } from '@perfportal/persistence';
 import type { Request } from 'express';
 import { accessDenied, projectNotFound, runNotFound } from '../common/validation.js';
 import { accessDecision } from './access.js';
@@ -38,11 +38,17 @@ import { SESSION_TOKEN_ID_PREFIX } from './session-only.guard.js';
  *      so an admin hits it too.
  *   3. An admin passes without the lookup: nothing it could find changes the
  *      answer.
- *   4. A project or run the org does not hold passes through, and the
- *      controller answers the 404 it always has.
- *   5. `accessDecision` decides. Not a member: the SAME 404 a missing
- *      project or run gets (`projectNotFound` / `runNotFound`), so membership
- *      cannot be probed. Too low a role: ROLE_REQUIRED, naming the role.
+ *   4. A run id that is not a UUID passes through without a lookup: it names
+ *      no run, and the controller's `uuidParam` answers it 400 for every
+ *      caller alike. Anything else the org does NOT hold is answered here,
+ *      with the same `projectNotFound` / `runNotFound` an invisible target
+ *      gets. Passing a missing target on would let a pipe on another path
+ *      parameter, or a body check, answer it before the controller's own
+ *      lookup — a different answer from an invisible target's 404, and so a
+ *      way to list which slugs and run ids exist.
+ *   5. `accessDecision` decides. Not a member: that same 404, so membership
+ *      cannot be probed either. Too low a role: ROLE_REQUIRED, naming the
+ *      role.
  *
  * Both lookups are scoped by the session's org, which is what keeps another
  * org's project out — `canSeeProject` and `accessDecision` do not check it.
@@ -82,10 +88,18 @@ export class AccessGuard implements CanActivate {
       projectId = project?.id ?? null;
       notVisible = () => projectNotFound(target.slug);
     } else {
+      // MALFORMED, not missing: an id that is not a UUID names no run at all,
+      // so the controller's `uuidParam` answers it 400 for every caller alike
+      // and that 400 reveals nothing. The one target left to the controller.
+      if (!isUuid(target.id)) return true;
       projectId = await this.runs.projectIdOf(tenant.orgId, target.id);
       notVisible = () => runNotFound(target.id);
     }
-    if (projectId === null) return true;
+    // MISSING answers exactly as INVISIBLE, from here. Passing it on would let
+    // whatever runs between this guard and the controller's own lookup — a
+    // pipe on another path parameter, a body check — answer a missing target
+    // first, and the difference would list which slugs and run ids exist.
+    if (projectId === null) throw notVisible();
 
     const decision = accessDecision({
       required,

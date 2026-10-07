@@ -38,6 +38,8 @@
  * every row still comes through it, so a cursor minted in another organisation
  * can only ever place the page among THIS caller's rows.
  */
+import { isUuid } from './uuid.js';
+
 export interface OrgTestCursorKey {
   /** The test's latest arrival, or null for a test that has never run. */
   readonly latestAt: Date | null;
@@ -46,13 +48,6 @@ export interface OrgTestCursorKey {
 }
 
 const BASE64URL = /^[A-Za-z0-9_-]+$/;
-/**
- * A UUID as the API's `uuidParam` accepts one: 8-4-4-4-12 hex, either case
- * — the same pattern as Nest's `ParseUUIDPipe` with no version. Shared with
- * `RunRepository.projectIdOf`, which has to refuse exactly what that pipe
- * refuses (see there). Not exported from the package index.
- */
-export const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** An instant `encode` can have written for a real run: a plain four-digit year. */
 const FOUR_DIGIT_YEAR = /^\d{4}-/;
 /**
@@ -84,7 +79,7 @@ export function decodeOrgTestCursor(cursor: string): OrgTestCursorKey | null {
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
   const { at, name, id } = parsed as Record<string, unknown>;
 
-  if (typeof id !== 'string' || !UUID_SHAPE.test(id)) return null;
+  if (typeof id !== 'string' || !isUuid(id)) return null;
   if (typeof name !== 'string' || name.includes('\u0000') || LONE_SURROGATE.test(name)) return null;
 
   if (at === null) return { latestAt: null, name, id };

@@ -84,12 +84,17 @@ export function forbidden(message: string, remediation: string): ForbiddenExcept
  * A project or run the caller cannot see must answer exactly as one that does
  * not exist, or comparing the two answers reveals which projects and runs
  * exist (docs/superpowers/specs/2026-10-07-project-access-design.md, section
- * 2). `AccessGuard` refuses with these, and the controllers' own "not there"
- * answers call the same ones, so the two bodies cannot drift apart — only the
- * traceId differs. The wording is what those controllers already sent,
- * unchanged. Two 404s in runs.controller.ts word it differently and still
- * spell their own (the run note's, and the bearer-only project run list's):
- * moving them here changes their response, so that is its own decision.
+ * 2). For a non-admin session on a `@Requires` route, `AccessGuard` answers
+ * BOTH itself, with one of these — a missing target and an invisible one go
+ * through the same call, so their bodies differ only in traceId. (A malformed
+ * run id is the exception it leaves to the controller's 400.)
+ *
+ * The controllers' own "not there" answers, which admins, bearer tokens and
+ * unannotated routes still reach, call these too, so the wording is one
+ * thing everywhere — and is what those controllers already sent, unchanged.
+ * Two 404s in runs.controller.ts word it differently and still spell their
+ * own (the run note's, and the bearer-only project run list's): moving them
+ * here changes their response, so that is its own decision.
  */
 
 /** A project slug the caller's org does not hold, or holds out of their reach. */

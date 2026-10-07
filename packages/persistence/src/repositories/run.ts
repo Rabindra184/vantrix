@@ -4,7 +4,7 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 import type { RunStatus, RunVerdict } from '@perfportal/contracts';
 import { escapeLike } from './like.js';
 import type { ProjectScope, TenantScope } from './tenant.js';
-import { UUID_SHAPE } from './test-cursor.js';
+import { isUuid } from './uuid.js';
 
 export interface RunRecord {
   id: string;
@@ -877,20 +877,20 @@ export class RunRepository {
   /**
    * The project a run belongs to, looked up within one org — what
    * `AccessGuard` judges a `/v1/runs/:id` request against. Null when the org
-   * holds no such run, which the guard passes to the controller to answer.
+   * holds no such run.
    *
    * ═══ NULL, WITHOUT A QUERY, FOR AN ID THAT IS NOT A UUID ═══
    *
-   * The guard runs before parameter pipes, so it hands over the raw path
-   * segment. Sent to the `uuid` column, a malformed one fails the query — a
-   * 500 where the controller's `uuidParam` would have answered 400
-   * INVALID_ID. `UUID_SHAPE` is that pipe's own pattern, so this declines
-   * exactly the ids the pipe refuses: one it accepts is always looked up
-   * (else the guard would wave it through unjudged), and one it refuses
-   * never is (else a non-member would get a 404 where a member gets 400).
+   * The guard runs before parameter pipes, so a caller may hand over the raw
+   * path segment. Sent to the `uuid` column, a malformed one fails the query —
+   * a 500 where the controller's `uuidParam` would have answered 400
+   * INVALID_ID. `isUuid` is that pipe's own pattern, so this declines exactly
+   * the ids the pipe refuses. The guard checks `isUuid` itself first, to tell
+   * a malformed id (left to the pipe) from a missing one (its 404); this check
+   * stays so that no caller can reach the column with one.
    */
   async projectIdOf(orgId: string, runId: string): Promise<string | null> {
-    if (!UUID_SHAPE.test(runId)) return null;
+    if (!isUuid(runId)) return null;
     const row = await this.prisma.run.findFirst({ where: { id: runId, orgId }, select: { projectId: true } });
     return row?.projectId ?? null;
   }

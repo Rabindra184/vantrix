@@ -48,9 +48,15 @@ export const CONFIG = Symbol('CONFIG');
     // providers in the order they are listed here and runs global guards in
     // that order (DependenciesScanner.insertProvider ->
     // ApplicationConfig.addGlobalGuard, then GuardsConsumer awaits each in
-    // turn). So a token missing a scope is refused by AuthGuard before this
-    // looks anything up. access-guard.integration.test.ts reads the order
-    // back from the running app.
+    // turn). AccessGuard never judges a bearer token, so what the order
+    // decides is a SESSION's answer on a @Requires route whose @Scopes it
+    // lacks (a session holds read, ingest and runner): AuthGuard's scope 403,
+    // the same whichever project or run is named, before AccessGuard looks
+    // anything up — rather than a 404 or ROLE_REQUIRED that depends on the
+    // target. Outside /v1, where no middleware runs, it is also AuthGuard
+    // that sets req.tenant for AccessGuard to read.
+    // access-guard.integration.test.ts reads the order back from the running
+    // app.
     AccessGuard,
     { provide: APP_GUARD, useExisting: AccessGuard },
   ],
