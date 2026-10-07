@@ -3,6 +3,7 @@ import {
   ChangePasswordRequestSchema,
   PASSWORD_MAX_LENGTH,
   PASSWORD_MIN_LENGTH,
+  PASSWORD_UNCHANGED,
   PasswordSchema,
 } from '../src/index.js';
 
@@ -91,8 +92,31 @@ describe('ChangePasswordRequestSchema', () => {
       expect.objectContaining({
         path: ['newPassword'],
         message: 'The new password is the same as the current one.',
+        params: { code: PASSWORD_UNCHANGED },
       }),
     ]);
+  });
+
+  /**
+   * zod 3 runs the refinement even when a field has already failed, so a
+   * short password typed back reports the length issue FIRST and the
+   * unchanged one second. A caller reading the first issue would answer
+   * "too short" and miss that it is also the same password; the code is what
+   * finds the right one. The precondition is asserted, so this case cannot
+   * pass by the issue happening to come first.
+   */
+  it('marks the same-password issue by code, found even behind another issue', () => {
+    const r = ChangePasswordRequestSchema.safeParse({ currentPassword: 'short', newPassword: 'short' });
+    expect(r.success).toBe(false);
+    if (r.success) return;
+    const index = r.error.issues.findIndex(
+      (issue) => issue.code === 'custom' && issue.params?.['code'] === PASSWORD_UNCHANGED,
+    );
+    expect(index, 'no issue carries the PASSWORD_UNCHANGED code').toBeGreaterThan(-1);
+    expect(r.error.issues[0]?.code, 'the length issue must come first for this case to mean anything').toBe(
+      'too_small',
+    );
+    expect(index).toBeGreaterThan(0);
   });
 
   /** Untrimmed on both sides, so whitespace is a real difference — the same

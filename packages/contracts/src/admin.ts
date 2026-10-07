@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import { PROJECT_ROLES } from './access.js';
 import { PasswordSchema } from './me.js';
-import { PROJECT_SLUG_PATTERN } from './project.js';
 
 /**
  * The schemas behind `/v1/admin`: an admin managing every account and seeing
@@ -49,13 +48,19 @@ export type AdminUserListResponse = z.infer<typeof AdminUserListResponseSchema>;
  */
 const UserNameSchema = z.string().trim().min(1).max(120);
 
-/** One project row on an Add user form: which project, and what role. */
+/**
+ * One project row on an Add user form: which project, and what role.
+ *
+ * `projectSlug` is NOT checked against `PROJECT_SLUG_PATTERN`. That grammar is
+ * what `POST /v1/projects` lets a new slug be, not what every existing slug
+ * is: bootstrap writes its slug verbatim from argv or
+ * `PERFPORTAL_PROJECT_SLUG`, so a project slugged `Checkout_API` can exist and
+ * serve its routes. A regex here would refuse every role in it, so whether
+ * the slug names a project is the route's lookup to decide.
+ */
 const ProjectGrantSchema = z
   .object({
-    projectSlug: z
-      .string()
-      .trim()
-      .regex(PROJECT_SLUG_PATTERN, 'Use lowercase letters, numbers and single hyphens.'),
+    projectSlug: z.string().trim().min(1),
     role: z.enum(PROJECT_ROLES),
   })
   .strict();
@@ -63,10 +68,12 @@ const ProjectGrantSchema = z
 /**
  * The body of `POST /v1/admin/users`.
  *
- * `email` is trimmed and lowercased here. Better Auth stores an email
- * lowercased but does not trim it, and the admin routes look an account up
- * ignoring case — so this hands both the one spelling they agree on, and a
- * pasted trailing space cannot become part of an address.
+ * `email` is trimmed and lowercased here. The admin routes look an account up
+ * ignoring case, so lowercasing hands them the spelling Better Auth stores.
+ * The trim is about the address the admin meant: Better Auth's `createUser`
+ * refuses a padded one outright (its own email check throws 400
+ * INVALID_EMAIL, an error the admin routes would otherwise have to map), so
+ * a pasted trailing space would otherwise fail a create that was right.
  *
  * `password` is the temporary one the person must replace at first sign-in.
  * `auth.api.createUser` does not check its length, so `PasswordSchema` is the
@@ -106,6 +113,10 @@ export const CreateUserRequestSchema = z
   })
   .strict();
 export type CreateUserRequest = z.infer<typeof CreateUserRequestSchema>;
+/** What a client may SEND, before the defaults apply: `isAdmin` and
+ *  `projects` optional. `CreateUserRequest` is the parsed shape, with both
+ *  filled in. */
+export type CreateUserRequestInput = z.input<typeof CreateUserRequestSchema>;
 
 /**
  * The body of `PATCH /v1/admin/users/:userId`. No email and no password: the

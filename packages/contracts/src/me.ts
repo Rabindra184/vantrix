@@ -25,6 +25,17 @@ export const PASSWORD_MAX_LENGTH = 128;
 export const PasswordSchema = z.string().min(PASSWORD_MIN_LENGTH).max(PASSWORD_MAX_LENGTH);
 
 /**
+ * The `params.code` of the issue `ChangePasswordRequestSchema` raises when the
+ * new password equals the current one — and the way a caller finds that
+ * issue: not by position and not by message. zod 3 runs a `.refine` on an
+ * object whose fields already failed, so `{ currentPassword: 'abc',
+ * newPassword: 'abc' }` reports the length issue FIRST and this one second,
+ * which makes "the first issue" the wrong one. A code rather than the message
+ * as a constant, so the wording can change without breaking the match.
+ */
+export const PASSWORD_UNCHANGED = 'PASSWORD_UNCHANGED';
+
+/**
  * The body of `PUT /v1/me/password`: change your own password, which also
  * clears a forced change.
  *
@@ -35,7 +46,8 @@ export const PasswordSchema = z.string().min(PASSWORD_MIN_LENGTH).max(PASSWORD_M
  * The refinement is the spec's rule that the new password must differ from
  * the current one — a person forced to replace a temporary password who types
  * it back would clear the flag over the same secret an admin chose. Compared
- * untrimmed, as Better Auth would compare them.
+ * untrimmed, as Better Auth would compare them. Its issue carries
+ * `params.code === PASSWORD_UNCHANGED`.
  */
 export const ChangePasswordRequestSchema = z
   .object({
@@ -46,5 +58,6 @@ export const ChangePasswordRequestSchema = z
   .refine((body) => body.newPassword !== body.currentPassword, {
     path: ['newPassword'],
     message: 'The new password is the same as the current one.',
+    params: { code: PASSWORD_UNCHANGED },
   });
 export type ChangePasswordRequest = z.infer<typeof ChangePasswordRequestSchema>;

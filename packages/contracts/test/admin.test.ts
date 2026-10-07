@@ -8,6 +8,7 @@ import {
   PROJECT_ROLES,
   SetPasswordRequestSchema,
   UpdateUserRequestSchema,
+  type CreateUserRequestInput,
 } from '../src/index.js';
 
 /** Roles a project row must never hold: `admin` is an ACCOUNT flag, not a
@@ -24,7 +25,10 @@ describe('CreateUserRequestSchema', () => {
    * access nobody chose to grant.
    */
   it('defaults to an ordinary account in no project', () => {
-    expect(CreateUserRequestSchema.parse(CREATE)).toEqual({ ...CREATE, isAdmin: false, projects: [] });
+    // Typed as the INPUT a client sends: `pnpm typecheck` refuses this line if
+    // either default ever becomes required there.
+    const sent: CreateUserRequestInput = CREATE;
+    expect(CreateUserRequestSchema.parse(sent)).toEqual({ ...CREATE, isAdmin: false, projects: [] });
   });
 
   it('keeps an admin flag and project rows it is given', () => {
@@ -33,10 +37,11 @@ describe('CreateUserRequestSchema', () => {
   });
 
   /**
-   * Better Auth stores an email lowercased and does not trim it, and the admin
-   * routes look an account up ignoring case — so the schema hands them the
-   * one spelling both agree on, and a pasted trailing space cannot become
-   * part of an address.
+   * The admin routes look an account up ignoring case, so the schema hands
+   * them the lowercase spelling Better Auth stores. The trim accepts the
+   * address the admin meant: Better Auth's own create refuses a padded one
+   * with 400 INVALID_EMAIL, an error the admin routes would otherwise have to
+   * map.
    */
   it('trims and lowercases the email, and refuses one that is not an address', () => {
     expect(CreateUserRequestSchema.parse({ ...CREATE, email: '  Asha@Example.TEST ' }).email).toBe(
@@ -77,13 +82,24 @@ describe('CreateUserRequestSchema', () => {
     }
   });
 
-  /** The slug grammar is `CreateProjectRequestSchema`'s, so a row can only
-   *  name something that could be a project. */
-  it('refuses a project row whose slug no project could have', () => {
-    for (const projectSlug of ['Checkout', 'check out', 'check--out', '']) {
+  /**
+   * A row must name SOMETHING, so a blank slug is refused. It is not held to
+   * `CreateProjectRequestSchema`'s grammar: bootstrap writes a project's slug
+   * verbatim, so `Checkout_API` can be a real project, and a grammar here
+   * would refuse every role in it. Whether the slug names a project is the
+   * route's lookup to decide. The pair keeps both halves honest: a regex
+   * coming back fails the second assertion.
+   */
+  it('refuses a blank project slug, and accepts one outside the new-project grammar', () => {
+    for (const projectSlug of ['', '   ']) {
       const body = { ...CREATE, projects: [{ projectSlug, role: 'viewer' }] };
-      expect(CreateUserRequestSchema.safeParse(body).success, projectSlug).toBe(false);
+      expect(CreateUserRequestSchema.safeParse(body).success, JSON.stringify(projectSlug)).toBe(false);
     }
+    const parsed = CreateUserRequestSchema.parse({
+      ...CREATE,
+      projects: [{ projectSlug: ' Checkout_API ', role: 'viewer' }],
+    });
+    expect(parsed.projects).toEqual([{ projectSlug: 'Checkout_API', role: 'viewer' }]);
   });
 
   /**
