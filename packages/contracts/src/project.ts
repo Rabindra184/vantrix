@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { PROJECT_ROLES } from './access.js';
 import { RunStatusSchema, RunVerdictSchema } from './run.js';
 
 export const ProjectSummarySchema = z.object({
@@ -21,6 +22,17 @@ export const ProjectSummarySchema = z.object({
       verdict: RunVerdictSchema.nullable(),
     })
     .nullable(),
+  /**
+   * The caller's role in this project, so the UI can show and hide controls.
+   * `null` is an admin who holds no membership row here: the admin flag is
+   * what lets them see the project, so read that flag before this field.
+   *
+   * `.nullable().optional()`, and the OPTIONAL half is the load-bearing one,
+   * for the reason `TokenSummarySchema.expiresAt` records: the browser drops
+   * a body that fails this schema, so a response from a pod that predates the
+   * field must still parse during a rolling deploy.
+   */
+  role: z.enum(PROJECT_ROLES).nullable().optional(),
 });
 export type ProjectSummary = z.infer<typeof ProjectSummarySchema>;
 

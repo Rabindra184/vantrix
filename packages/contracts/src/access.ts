@@ -1,0 +1,72 @@
+import type { TokenScopeName } from './tokens.js';
+
+/**
+ * The roles a person can hold in ONE project, in rank order: each role can do
+ * everything the one before it can. The order of this array IS the ranking
+ * `roleSatisfies` reads, so a fourth role goes in at its rank, not at the end.
+ *
+ * `admin` is deliberately not here. It is a flag on the ACCOUNT
+ * (`user.role === 'admin'`), not a membership, so no project row can grant it.
+ */
+export const PROJECT_ROLES = ['viewer', 'member', 'manager'] as const;
+export type ProjectRole = (typeof PROJECT_ROLES)[number];
+
+/** The lowest standing an action asks for: a project role, or the admin flag. */
+export type AccessRole = ProjectRole | 'admin';
+
+export type AccessAction =
+  | 'project:read'
+  | 'rules:read'
+  | 'members:read'
+  | 'run:note'
+  | 'run:upload'
+  | 'runner:run'
+  | 'packages:manage'
+  | 'packages:delete'
+  | 'rules:edit'
+  | 'tests:manage'
+  | 'tokens:manage'
+  | 'members:manage'
+  | 'projects:create'
+  | 'users:manage';
+
+/**
+ * Every action a project route can declare, with the lowest role that may
+ * perform it AND the token scope a bearer credential needs for it — one table,
+ * so the two credential types cannot drift apart
+ * (docs/superpowers/specs/2026-10-07-project-access-design.md, section 2).
+ *
+ * `scope: null` means SESSION ONLY: no token may perform the action, whatever
+ * its scopes. That is every admin action, because a token is minted against
+ * one project and an admin action is a decision about the whole organisation.
+ *
+ * `run:upload` is null although `POST /v1/runs` takes `ingest`: that is the
+ * bearer route, and it declares no action. The route this action guards is
+ * the browser upload, which is session-only today and stays so.
+ *
+ * `label` names the action in a refusal ("Editing SLA rules needs the Member
+ * role in this project."), so it reads as the subject of a sentence.
+ */
+export const ACCESS_ACTIONS: Readonly<
+  Record<AccessAction, { role: AccessRole; scope: TokenScopeName | null; label: string }>
+> = {
+  'project:read': { role: 'viewer', scope: 'read', label: 'Reading this project' },
+  'rules:read': { role: 'viewer', scope: null, label: 'Viewing SLA rules' },
+  'members:read': { role: 'viewer', scope: null, label: 'Viewing members' },
+  'run:note': { role: 'member', scope: null, label: 'Editing run notes' },
+  'run:upload': { role: 'member', scope: null, label: 'Uploading runs' },
+  'runner:run': { role: 'member', scope: 'runner', label: 'Starting, cancelling and retrying runs' },
+  'packages:manage': { role: 'member', scope: 'runner', label: 'Managing packages' },
+  'packages:delete': { role: 'member', scope: null, label: 'Deleting packages' },
+  'rules:edit': { role: 'member', scope: null, label: 'Editing SLA rules' },
+  'tests:manage': { role: 'manager', scope: null, label: 'Renaming and deleting tests' },
+  'tokens:manage': { role: 'manager', scope: null, label: 'Managing API tokens' },
+  'members:manage': { role: 'admin', scope: null, label: 'Managing members' },
+  'projects:create': { role: 'admin', scope: null, label: 'Creating projects' },
+  'users:manage': { role: 'admin', scope: null, label: 'Managing users' },
+};
+
+/** Whether a person holding `held` in a project meets an action asking for `required`. */
+export function roleSatisfies(held: ProjectRole, required: ProjectRole): boolean {
+  return PROJECT_ROLES.indexOf(held) >= PROJECT_ROLES.indexOf(required);
+}
