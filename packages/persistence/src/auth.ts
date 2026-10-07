@@ -1,5 +1,6 @@
 import { betterAuth } from 'better-auth';
 import { prismaAdapter } from 'better-auth/adapters/prisma';
+import { admin } from 'better-auth/plugins/admin';
 import { createPrisma } from './client.js';
 
 /**
@@ -82,6 +83,22 @@ export function cookiesAreSecure(baseUrl: string, allowInsecure = false): boolea
 }
 
 /**
+ * The admin plugin exactly as `createAuth` configures it, as an INTERFACE so
+ * the emitted `.d.ts` names it rather than spelling it out. Spelled out, its
+ * endpoint types reference better-auth's own copy of zod (4.x), which this
+ * package cannot name — `tsc -b` refuses with TS2742 — and depending on zod 4
+ * here just to let the compiler print a type is not a trade worth making.
+ * An interface is always emitted by name; a type alias of `ReturnType` is not.
+ */
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type -- the empty body is the point: a NAMED copy of the supertype, for declaration emit (above)
+export interface AdminPlugin
+  extends ReturnType<typeof admin<{ defaultRole: string; adminRoles: string[] }>> {}
+
+function adminPlugin(): AdminPlugin {
+  return admin({ defaultRole: 'user', adminRoles: ['admin'] });
+}
+
+/**
  * Shared Better Auth config for both `apps/api` (a module-scope `const`
  * mounted on the raw Express instance, see better-auth.instance.ts) and
  * `packages/persistence/scripts/bootstrap.ts` (which runs from this package
@@ -98,6 +115,23 @@ export function cookiesAreSecure(baseUrl: string, allowInsecure = false): boolea
  * The organization plugin is deliberately absent: `org` and `project` are the
  * tenancy source of truth (spec §3). Two org models would give two answers to
  * "what may this caller see?", and that disagreement is a tenancy leak.
+ *
+ * ═══ SIGN-UP IS CLOSED, AND THE ADMIN PLUGIN IS HOW ACCOUNTS ARE MADE ═══
+ *
+ * `disableSignUp` refuses `POST /auth/sign-up/email` outright: who may see a
+ * project is decided by an administrator, so nobody can mint themselves an
+ * account. Every account is created with the admin plugin's server-side
+ * `auth.api.createUser` instead — by bootstrap for the first admin, and by
+ * the integration helpers and the e2e fixtures for theirs. Called with no
+ * headers, that handler needs no session, which is what lets bootstrap make
+ * the first admin with nobody signed in.
+ *
+ * The plugin's own HTTP routes (`/auth/admin/*`) are a second admin API this
+ * product does not offer; `mountBetterAuth` answers them 404 before this
+ * handler sees them. The plugin is here for its server-side calls and for the
+ * columns it owns: `user.role` (the admin flag is exactly `'admin'`, every
+ * other account `'user'`), `banned`/`banReason`/`banExpires`, and
+ * `session.impersonatedBy`.
  */
 export function createAuth(opts: {
   databaseUrl: string;
@@ -114,7 +148,8 @@ export function createAuth(opts: {
     baseURL: opts.baseUrl,
     trustedOrigins: [opts.baseUrl],
     database: prismaAdapter(createPrisma(opts.databaseUrl), { provider: 'postgresql' }),
-    emailAndPassword: { enabled: true },
+    emailAndPassword: { enabled: true, disableSignUp: true },
+    plugins: [adminPlugin()],
     session: { expiresIn: 60 * 60 * 24 * 14, updateAge: 60 * 60 * 24 },
     advanced: {
       defaultCookieAttributes: {

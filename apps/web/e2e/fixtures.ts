@@ -319,20 +319,31 @@ async function ingestAndProcess(token: string): Promise<string> {
   return body.id;
 }
 
-/** A signed-up admin, its own fresh org, and the 'checkout' project every
+/** Creates an account the way an administrator does. Sign-up is closed
+ *  (`createAuth`'s `disableSignUp`), so this is the admin plugin's
+ *  server-side create; called with no headers it needs no session. The
+ *  admin flag is exactly `role: 'admin'`, and every other account is
+ *  `'user'`. */
+async function createAccount(email: string, name: string, role: 'admin' | 'user'): Promise<string> {
+  const { user } = await auth.api.createUser({ body: { email, password: PASSWORD, name, role } });
+  return user.id;
+}
+
+/** An admin, its own fresh org, and the 'checkout' project every
  *  orgId-taking seed below ingests into. */
 export async function seedAdmin(): Promise<{ email: string; password: string; orgId: string }> {
   const email = `${unique('admin')}@example.test`;
-  const signUp = await auth.api.signUpEmail({ body: { email, password: PASSWORD, name: 'Admin' } });
+  const userId = await createAccount(email, 'Admin', 'admin');
   const { orgId } = await createOrgAndProject();
-  await orgMembers.add(signUp.user.id, orgId);
+  await orgMembers.add(userId, orgId);
   return { email, password: PASSWORD, orgId };
 }
 
-/** A signed-up user with NO org_member row — Task 5's 403-after-login case. */
+/** A user with NO org_member row — Task 5's 403-after-login case. Not an
+ *  admin either: the account is real and belongs to nobody's install. */
 export async function seedUserWithoutOrg(): Promise<{ email: string; password: string }> {
   const email = `${unique('orphan')}@example.test`;
-  await auth.api.signUpEmail({ body: { email, password: PASSWORD, name: 'Orphan' } });
+  await createAccount(email, 'Orphan', 'user');
   return { email, password: PASSWORD };
 }
 
@@ -341,11 +352,9 @@ export async function seedUserWithoutOrg(): Promise<{ email: string; password: s
  *  same one: this org's project must stay run-less for the whole test. */
 export async function seedAdminForEmptyOrg(): Promise<{ email: string; password: string }> {
   const email = `${unique('empty-admin')}@example.test`;
-  const signUp = await auth.api.signUpEmail({
-    body: { email, password: PASSWORD, name: 'Empty Org Admin' },
-  });
+  const userId = await createAccount(email, 'Empty Org Admin', 'admin');
   const { orgId } = await createOrgAndProject();
-  await orgMembers.add(signUp.user.id, orgId);
+  await orgMembers.add(userId, orgId);
   return { email, password: PASSWORD };
 }
 

@@ -1,9 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { OrgMemberRepository } from '@perfportal/persistence';
 import { createTestApp, type TestContext } from './support/app.js';
-import { signUp } from './support/session.js';
+import { signInAsAdmin } from './support/session.js';
 
 /**
  * ═══ PUT /v1/runs/{id}/note ═══
@@ -22,10 +21,7 @@ const EMAIL = 'note-writer@example.test';
 
 beforeEach(async () => {
   ctx = await createTestApp();
-  const signed = await signUp(ctx.app, EMAIL);
-  cookie = signed.cookie;
-  userId = signed.userId;
-  await ctx.app.get(OrgMemberRepository).add(userId, ctx.orgId);
+  ({ cookie, userId } = await signInAsAdmin(ctx, EMAIL));
 });
 
 afterEach(async () => {

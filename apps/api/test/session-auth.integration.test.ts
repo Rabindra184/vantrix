@@ -1,18 +1,19 @@
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, mkdirSync, readFileSync, copyFileSync, readdirSync } from 'node:fs';
+import { request as httpRequest } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ActivityResponseSchema } from '@perfportal/contracts';
 import { hashToken, mintToken } from '@perfportal/core';
-import { OrgMemberRepository } from '@perfportal/persistence';
 import { Queue } from 'bullmq';
 import request from 'supertest';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { createTestApp, type TestContext } from './support/app.js';
 import { runPipelineFor } from './support/pipeline.js';
-import { signUp, signUpAndLogin, signUpAsOrgMember } from './support/session.js';
+import { signInAsAdmin, signInAsProjectMember, signInWithoutOrg } from './support/session.js';
 
 let ctx: TestContext;
 
@@ -39,22 +40,110 @@ beforeAll(() => {
 });
 
 describe('/auth/*', () => {
-  it('serves /auth/* without a session', async () => {
+  /**
+   * Sign-up is CLOSED: an account is created by an admin, or by bootstrap,
+   * through the admin plugin's server-side create. This case is also what
+   * proves `/auth/*` is still served at all, so it asserts Better Auth's own
+   * refusal code and not merely a non-2xx: with nothing mounted, Nest 404s
+   * with a problem+json body, which a bare status check would read as a
+   * refusal. (An EMPTY-bodied 404 here would instead mean basePath is
+   * misconfigured — Better Auth 404s that way when it does not match.)
+   */
+  it("refuses a self-service sign-up in Better Auth's own words, and creates no account", async () => {
     ctx = await createTestApp();
     const res = await request(ctx.app.getHttpServer())
       .post('/auth/sign-up/email')
       .send({ email: 'a@example.test', password: 'correct-horse-battery', name: 'A' });
 
-    // A real sign-up, not just "not a 500": with nothing mounted, Nest 404s
-    // and ProblemFilter renders a non-empty problem+json body, which would
-    // make the brief's original `status < 500 && body !== {}` assertion pass
-    // even though /auth/* is not served at all.
-    expect(res.status).toBe(200);
-    expect(res.body.user.email).toBe('a@example.test');
-    // An empty body on a 404 here would mean basePath is misconfigured
-    // (Better Auth 404s with an empty body when basePath doesn't match) —
-    // a different failure from Nest's 404, useful to know when debugging.
-    expect(res.headers['set-cookie']).toBeTruthy();
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(res.body.code).toBe('EMAIL_PASSWORD_SIGN_UP_DISABLED');
+    expect(res.headers['set-cookie']).toBeUndefined();
+    expect(await ctx.prisma.user.count({ where: { email: 'a@example.test' } })).toBe(0);
+  });
+
+  it('signs in an admin, and the session reports the admin flag', async () => {
+    ctx = await createTestApp();
+    const { cookie } = await signInAsAdmin(ctx, 'admin-flag@example.test');
+    const res = await request(ctx.app.getHttpServer())
+      .get('/auth/get-session')
+      .set('Cookie', cookie)
+      .expect(200);
+    expect(res.body.user.email).toBe('admin-flag@example.test');
+    expect(res.body.user.role).toBe('admin');
+  });
+
+  it('signs in a project member who belongs to nothing, and that account is not an admin', async () => {
+    ctx = await createTestApp();
+    const { cookie } = await signInAsProjectMember(ctx, 'member-of-nothing@example.test', []);
+    const res = await request(ctx.app.getHttpServer())
+      .get('/auth/get-session')
+      .set('Cookie', cookie)
+      .expect(200);
+    expect(res.body.user.email).toBe('member-of-nothing@example.test');
+    expect(res.body.user.role).toBe('user');
+  });
+
+  /**
+   * The admin plugin's own HTTP routes are refused, EVEN TO AN ADMIN: every
+   * admin operation goes through `/v1/admin`, where errors are problem+json,
+   * the operations are documented, and one place can record them. Left
+   * reachable, `/auth/admin/*` is a second, undocumented admin API beside it.
+   *
+   * `list-users` is a GET, so a POST to it is refused by Better Auth's own
+   * router whatever the guard does — that half cannot fail against an
+   * unguarded app, and the GET beside it is what can. `create-user` is the
+   * route that matters most, so the case also proves it created nothing.
+   */
+  it("refuses the admin plugin's own routes, even to an admin", async () => {
+    ctx = await createTestApp();
+    const { cookie } = await signInAsAdmin(ctx, 'admin-routes@example.test');
+    const server = ctx.app.getHttpServer();
+
+    await request(server).post('/auth/admin/list-users').set('Cookie', cookie).expect(404);
+    await request(server).get('/auth/admin/list-users').set('Cookie', cookie).expect(404);
+    await request(server)
+      .post('/auth/admin/create-user')
+      .set('Cookie', cookie)
+      .send({ email: 'smuggled@example.test', password: 'correct-horse-battery', name: 'S', role: 'admin' })
+      .expect(404);
+    expect(await ctx.prisma.user.count({ where: { email: 'smuggled@example.test' } })).toBe(0);
+  });
+
+  /**
+   * A guard keyed on the path AS SENT is not a guard: Better Auth resolves
+   * the path through `new URL()` first, so dot segments collapse and
+   * `/auth/./admin/list-users` reaches the plugin — measured at 200 with
+   * every account in the install against a guard registered on
+   * `/auth/admin/*splat`. A browser normalises these before sending, and so
+   * may an HTTP client library, which is why this goes through `node:http`:
+   * it puts the path on the wire byte for byte.
+   */
+  it('refuses the admin routes however the path is spelled', async () => {
+    ctx = await createTestApp();
+    const { cookie } = await signInAsAdmin(ctx, 'admin-spellings@example.test');
+    const { port } = ctx.app.getHttpServer().address() as AddressInfo;
+
+    const statusOf = (path: string) =>
+      new Promise<number | undefined>((resolve, reject) => {
+        const req = httpRequest({ host: '127.0.0.1', port, path, method: 'GET', headers: { cookie } }, (res) => {
+          res.resume();
+          res.on('end', () => resolve(res.statusCode));
+        });
+        req.on('error', reject);
+        req.end();
+      });
+
+    const spellings = [
+      '/auth/./admin/list-users',
+      '/auth/foo/../admin/list-users',
+      '/auth/%2e/admin/list-users',
+      '/auth/ADMIN/list-users',
+      '/auth/admin/list-users?limit=5',
+    ];
+    const answered = await Promise.all(spellings.map(async (p) => `${p} ${await statusOf(p)}`));
+    expect(answered).toEqual(spellings.map((p) => `${p} 404`));
+    // ...while the same mount still serves Better Auth's ordinary routes.
+    expect(await statusOf('/auth/get-session')).toBe(200);
   });
 });
 
@@ -131,7 +220,7 @@ describe('AuthMiddleware — session cookie branch on /v1', () => {
   it('accepts a session cookie on /v1', async () => {
     ctx = await createTestApp();
     const runId = await seedCompleteRun(ctx);
-    const cookie = await signUpAsOrgMember(ctx, 'b@example.test');
+    const { cookie } = await signInAsAdmin(ctx, 'b@example.test');
     await request(ctx.app.getHttpServer()).get(`/v1/runs/${runId}`).set('Cookie', cookie).expect(200);
   });
 
@@ -158,7 +247,7 @@ describe('AuthMiddleware — session cookie branch on /v1', () => {
   it('401s a stale cookie after logout', async () => {
     ctx = await createTestApp();
     const runId = await seedCompleteRun(ctx);
-    const cookie = await signUpAsOrgMember(ctx, 'd@example.test');
+    const { cookie } = await signInAsAdmin(ctx, 'd@example.test');
     await request(ctx.app.getHttpServer()).get(`/v1/runs/${runId}`).set('Cookie', cookie).expect(200);
     await request(ctx.app.getHttpServer()).post('/auth/sign-out').set('Cookie', cookie).expect(200);
     // The same cookie string, now revoked server-side. A session store that only
@@ -188,7 +277,7 @@ describe('AuthMiddleware — session cookie branch on /v1', () => {
   it('403s a user with no org membership', async () => {
     ctx = await createTestApp();
     const runId = await seedCompleteRun(ctx);
-    const cookie = await signUpAndLogin(ctx.app, 'orphan@example.test'); // no org_member row
+    const cookie = await signInWithoutOrg(ctx.app, 'orphan@example.test'); // no org_member row
     const res = await request(ctx.app.getHttpServer())
       .get(`/v1/runs/${runId}`)
       .set('Cookie', cookie)
@@ -205,7 +294,7 @@ describe('AuthMiddleware — session cookie branch on /v1', () => {
 describe('project-scoped routes require a project, which a session does not have', () => {
   it('refuses to ingest with a session, naming the fix', async () => {
     ctx = await createTestApp();
-    const cookie = await signUpAsOrgMember(ctx, 'ingest-session@example.test');
+    const { cookie } = await signInAsAdmin(ctx, 'ingest-session@example.test');
     const res = await request(ctx.app.getHttpServer())
       .post('/v1/runs')
       .set('Cookie', cookie)
@@ -219,7 +308,7 @@ describe('project-scoped routes require a project, which a session does not have
 
   it('refuses GET /v1/projects/:slug/runs with a session', async () => {
     ctx = await createTestApp();
-    const cookie = await signUpAsOrgMember(ctx, 'list-session@example.test');
+    const { cookie } = await signInAsAdmin(ctx, 'list-session@example.test');
     const res = await request(ctx.app.getHttpServer())
       .get('/v1/projects/checkout/runs')
       .set('Cookie', cookie)
@@ -427,7 +516,7 @@ describe('cross-org isolation on every session-reachable endpoint', () => {
 
   it('404s every endpoint for a run in another org, and 200s the identical URL shape for a run in its own org', async () => {
     ctx = await createTestApp();
-    const cookie = await signUpAsOrgMember(ctx, 'cross-org@example.test');
+    const { cookie } = await signInAsAdmin(ctx, 'cross-org@example.test');
 
     // Own-org run: really ingested, not seedCompleteRun's bare row.
     // GET .../distribution 404s with no histogram, and the scatter/series
@@ -508,7 +597,7 @@ describe('cross-org isolation on every session-reachable endpoint', () => {
   it('a session and a project token see identical data for the same run', async () => {
     ctx = await createTestApp();
     const runId = await ingestFullRun(ctx);
-    const cookie = await signUpAsOrgMember(ctx, 'session-token-parity@example.test');
+    const { cookie } = await signInAsAdmin(ctx, 'session-token-parity@example.test');
 
     const viaToken = await request(ctx.app.getHttpServer())
       .get(`/v1/runs/${runId}/stats`)
@@ -546,10 +635,8 @@ describe('cross-org isolation on every session-reachable endpoint', () => {
     await testIn(ctx.orgId, ctx.projectId, 'ours-smoke');
     await testIn(otherOrg.id, otherProject.id, 'theirs-smoke');
 
-    const ours = await signUpAsOrgMember(ctx, 'tests-ours@example.test');
-    const member = await signUp(ctx.app, 'tests-theirs@example.test');
-    await ctx.app.get(OrgMemberRepository).add(member.userId, otherOrg.id);
-    const theirs = member.cookie;
+    const { cookie: ours } = await signInAsAdmin(ctx, 'tests-ours@example.test');
+    const { cookie: theirs } = await signInAsAdmin({ ...ctx, orgId: otherOrg.id }, 'tests-theirs@example.test');
 
     const slugs = async (cookie: string, query = ''): Promise<string[]> => {
       const res = await request(ctx.app.getHttpServer())
@@ -616,10 +703,8 @@ describe('cross-org isolation on every session-reachable endpoint', () => {
     await seedActivity(ctx.orgId, ctx.projectId, 'ours-smoke');
     await seedActivity(otherOrg.id, otherProject.id, 'theirs-smoke');
 
-    const ours = await signUpAsOrgMember(ctx, 'activity-ours@example.test');
-    const member = await signUp(ctx.app, 'activity-theirs@example.test');
-    await ctx.app.get(OrgMemberRepository).add(member.userId, otherOrg.id);
-    const theirs = member.cookie;
+    const { cookie: ours } = await signInAsAdmin(ctx, 'activity-ours@example.test');
+    const { cookie: theirs } = await signInAsAdmin({ ...ctx, orgId: otherOrg.id }, 'activity-theirs@example.test');
 
     const seen = async (cookie: string) => {
       const res = await request(ctx.app.getHttpServer())
@@ -671,7 +756,7 @@ describe('GET /v1/runs — org-scoped by credential', () => {
     const secondToken = await mintIngestTokenFor(ctx, ctx.orgId, second.id);
     const secondRunId = await ingestFullRun(ctx, secondToken);
 
-    const cookie = await signUpAsOrgMember(ctx, 'lister@example.test');
+    const { cookie } = await signInAsAdmin(ctx, 'lister@example.test');
     const res = await request(ctx.app.getHttpServer())
       .get('/v1/runs')
       .set('Cookie', cookie)
@@ -703,7 +788,7 @@ describe('GET /v1/runs — org-scoped by credential', () => {
     const searchToken = await mintIngestTokenFor(ctx, ctx.orgId, search.id);
     const searchRunId = await ingestFullRun(ctx, searchToken);
 
-    const cookie = await signUpAsOrgMember(ctx, 'project-filter-session@example.test');
+    const { cookie } = await signInAsAdmin(ctx, 'project-filter-session@example.test');
 
     // Unfiltered: both projects' runs — the baseline that makes the two
     // filtered assertions below discriminating rather than vacuous.
@@ -755,7 +840,7 @@ describe('GET /v1/runs — org-scoped by credential', () => {
     const otherToken = await mintIngestTokenFor(ctx, otherOrg.id, otherProject.id);
     await ingestFullRun(ctx, otherToken);
 
-    const cookie = await signUpAsOrgMember(ctx, 'lister2@example.test');
+    const { cookie } = await signInAsAdmin(ctx, 'lister2@example.test');
     const res = await request(ctx.app.getHttpServer())
       .get('/v1/runs')
       .set('Cookie', cookie)
@@ -837,7 +922,7 @@ describe('GET /v1/runs — org-scoped by credential', () => {
       },
     });
 
-    const cookie = await signUpAsOrgMember(ctx, 'pager@example.test');
+    const { cookie } = await signInAsAdmin(ctx, 'pager@example.test');
 
     const firstPage = await request(ctx.app.getHttpServer())
       .get('/v1/runs?limit=1')
@@ -868,7 +953,7 @@ describe('GET /v1/runs — org-scoped by credential', () => {
 // ProjectRepository.listForOrg's `AND p.id = $2` branch and none of them
 // exercise the org-wide branch a session takes. Placed here, beside the
 // GET /v1/runs session tests above, rather than duplicating
-// signUpAsOrgMember into projects.integration.test.ts — this file is where
+// signInAsAdmin into projects.integration.test.ts — this file is where
 // the session-credential story for this API lives, which is also why Task
 // 4's own `?project=` session test sits in the describe block just above.
 describe('GET /v1/projects — org-scoped by credential', () => {
@@ -891,7 +976,7 @@ describe('GET /v1/projects — org-scoped by credential', () => {
       data: { orgId: otherOrg.id, slug: 'other-project', name: 'Other Project' },
     });
 
-    const cookie = await signUpAsOrgMember(ctx, 'projects-session@example.test');
+    const { cookie } = await signInAsAdmin(ctx, 'projects-session@example.test');
     const res = await request(ctx.app.getHttpServer())
       .get('/v1/projects')
       .set('Cookie', cookie)

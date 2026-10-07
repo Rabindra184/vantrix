@@ -1,14 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { connect as tcpConnect, type AddressInfo } from 'node:net';
 import type { LiveDelta } from '@perfportal/contracts';
-import { OrgMemberRepository } from '@perfportal/persistence';
 import { Redis } from 'ioredis';
 import request from 'supertest';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
 import { LiveHub } from '../src/live/live-hub.js';
 import { createTestApp, type TestContext } from './support/app.js';
-import { signUp, signUpAsOrgMember } from './support/session.js';
+import { signInAsAdmin } from './support/session.js';
 
 // Same fallback every other integration suite in this directory uses for a
 // raw ioredis client (live-hub.integration.test.ts, live.integration.test.ts).
@@ -201,8 +200,7 @@ describe('the live gateway rejects what it should', () => {
     const other = await ctx.prisma.org.create({
       data: { slug: `org-${randomUUID().slice(0, 8)}`, name: 'Other' },
     });
-    const { cookie, userId } = await signUp(ctx.app, `outsider-${randomUUID()}@example.com`);
-    await ctx.app.get(OrgMemberRepository).add(userId, other.id);
+    const { cookie } = await signInAsAdmin({ ...ctx, orgId: other.id }, `outsider-${randomUUID()}@example.com`);
 
     const conn = connect(port, `/v1/runs/${runId}/live`, cookie);
 
@@ -341,7 +339,7 @@ describe('the live gateway rejects what it should', () => {
   it("survives socket.close() itself throwing inside serve's own catch", async () => {
     const port = await start();
     const runId = await openLiveRun();
-    const cookie = await signUpAsOrgMember(ctx, `member-${randomUUID()}@example.com`);
+    const { cookie } = await signInAsAdmin(ctx, `member-${randomUUID()}@example.com`);
 
     const hub = ctx.app.get(LiveHub);
     const joinSpy = vi.spyOn(hub, 'join').mockRejectedValueOnce(new Error('join boom'));
@@ -380,9 +378,8 @@ describe('the live gateway rejects what it should', () => {
     const other = await ctx.prisma.org.create({
       data: { slug: `org-${randomUUID().slice(0, 8)}`, name: 'Other' },
     });
-    const { cookie: outsider, userId } = await signUp(ctx.app, `outsider-${randomUUID()}@example.com`);
-    await ctx.app.get(OrgMemberRepository).add(userId, other.id);
-    const member = await signUpAsOrgMember(ctx, `member-${randomUUID()}@example.com`);
+    const { cookie: outsider } = await signInAsAdmin({ ...ctx, orgId: other.id }, `outsider-${randomUUID()}@example.com`);
+    const { cookie: member } = await signInAsAdmin(ctx, `member-${randomUUID()}@example.com`);
 
     const foreign = connect(port, `/v1/runs/${runId}/live`, outsider);
     const missing = connect(port, `/v1/runs/${randomUUID()}/live`, member);
@@ -397,7 +394,7 @@ describe('the live gateway seeds, replays, then follows', () => {
   it('replays from the stream entry AT the snapshot seq, which the snapshot does not contain', async () => {
     const port = await start();
     const runId = await openLiveRun();
-    const cookie = await signUpAsOrgMember(ctx, `member-${randomUUID()}@example.com`);
+    const { cookie } = await signInAsAdmin(ctx, `member-${randomUUID()}@example.com`);
     // C is the last delta the snapshot's CONTENT covers; the key is stamped
     // C+1. See snapshotFixture -- the whole point of this case is that the two
     // numbers differ, so the fixture must not be built from the gateway's own
@@ -431,7 +428,7 @@ describe('the live gateway seeds, replays, then follows', () => {
   it('tells a client seeded from a snapshot alone to resume one behind its label', async () => {
     const port = await start();
     const runId = await openLiveRun();
-    const cookie = await signUpAsOrgMember(ctx, `member-${randomUUID()}@example.com`);
+    const { cookie } = await signInAsAdmin(ctx, `member-${randomUUID()}@example.com`);
     const C = 5;
     await seedSnapshot(runId, snapshotFixture(runId, C, [0, 1000, 2000]));
 
@@ -448,7 +445,7 @@ describe('the live gateway seeds, replays, then follows', () => {
   it('marks the seed partial when the stream no longer reaches the snapshot seq', async () => {
     const port = await start();
     const runId = await openLiveRun();
-    const cookie = await signUpAsOrgMember(ctx, `member-${randomUUID()}@example.com`);
+    const { cookie } = await signInAsAdmin(ctx, `member-${randomUUID()}@example.com`);
     const C = 5;
     await seedSnapshot(runId, snapshotFixture(runId, C, [0, 1000, 2000, 3000, 4000]));
     // C+1 is missing: the snapshot stops at C, the stream starts at C+2.
@@ -466,7 +463,7 @@ describe('the live gateway seeds, replays, then follows', () => {
   it('sends a partial snapshot rather than refusing when the key has expired', async () => {
     const port = await start();
     const runId = await openLiveRun();
-    const cookie = await signUpAsOrgMember(ctx, `member-${randomUUID()}@example.com`);
+    const { cookie } = await signInAsAdmin(ctx, `member-${randomUUID()}@example.com`);
     await redis!.del(`live:${runId}:snapshot`);
     await appendDeltas(runId, [deltaFixture(runId, 9, [8000])]);
 
@@ -482,7 +479,7 @@ describe('the live gateway seeds, replays, then follows', () => {
   it('sends an empty partial snapshot when neither key exists yet', async () => {
     const port = await start();
     const runId = await openLiveRun();
-    const cookie = await signUpAsOrgMember(ctx, `member-${randomUUID()}@example.com`);
+    const { cookie } = await signInAsAdmin(ctx, `member-${randomUUID()}@example.com`);
 
     const [first] = await collect(connect(port, `/v1/runs/${runId}/live`, cookie), 1);
 
@@ -502,7 +499,7 @@ describe('the live gateway seeds, replays, then follows', () => {
   it('ignores a malformed resume cursor and seeds in full', async () => {
     const port = await start();
     const runId = await openLiveRun();
-    const cookie = await signUpAsOrgMember(ctx, `member-${randomUUID()}@example.com`);
+    const { cookie } = await signInAsAdmin(ctx, `member-${randomUUID()}@example.com`);
     const snapshot = snapshotFixture(runId, 5, [0, 1000, 2000, 3000, 4000]);
     await seedSnapshot(runId, snapshot);
 
@@ -520,7 +517,7 @@ describe('the live gateway seeds, replays, then follows', () => {
   it('reconstructs a run whose stream no longer reaches its start', async () => {
     const port = await start();
     const runId = await openLiveRun();
-    const cookie = await signUpAsOrgMember(ctx, `member-${randomUUID()}@example.com`);
+    const { cookie } = await signInAsAdmin(ctx, `member-${randomUUID()}@example.com`);
     const C = 5;
     const snapshot = snapshotFixture(runId, C, [0, 1000, 2000, 3000, 4000]);
     await seedSnapshot(runId, snapshot);
@@ -549,7 +546,7 @@ describe('the live gateway seeds, replays, then follows', () => {
   it('follows the run live once the seed is delivered', async () => {
     const port = await start();
     const runId = await openLiveRun();
-    const cookie = await signUpAsOrgMember(ctx, `member-${randomUUID()}@example.com`);
+    const { cookie } = await signInAsAdmin(ctx, `member-${randomUUID()}@example.com`);
     await seedSnapshot(runId, snapshotFixture(runId, 0, [0]));
     const conn = connect(port, `/v1/runs/${runId}/live`, cookie);
     await collect(conn, 1);
@@ -566,7 +563,7 @@ describe('the live gateway seeds, replays, then follows', () => {
   it('replays forward from the client-supplied lastSeq instead of re-seeding', async () => {
     const port = await start();
     const runId = await openLiveRun();
-    const cookie = await signUpAsOrgMember(ctx, `member-${randomUUID()}@example.com`);
+    const { cookie } = await signInAsAdmin(ctx, `member-${randomUUID()}@example.com`);
     await seedSnapshot(runId, snapshotFixture(runId, 5, [0, 1000, 2000, 3000, 4000]));
     await appendDeltas(runId, [6, 7, 8].map((seq) => deltaFixture(runId, seq, [(seq - 1) * 1000])));
 
@@ -590,7 +587,7 @@ describe('the live gateway seeds, replays, then follows', () => {
   it('leaves the hub room when the socket closes, so the subscription tears down', async () => {
     const port = await start();
     const runId = await openLiveRun();
-    const cookie = await signUpAsOrgMember(ctx, `member-${randomUUID()}@example.com`);
+    const { cookie } = await signInAsAdmin(ctx, `member-${randomUUID()}@example.com`);
     const hub = ctx.app.get(LiveHub);
     const conn = connect(port, `/v1/runs/${runId}/live`, cookie);
     await collect(conn, 1);

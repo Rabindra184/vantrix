@@ -2,7 +2,7 @@ import request from 'supertest';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ProjectListResponseSchema, ProjectSummarySchema } from '@perfportal/contracts';
 import { createTestApp, type TestContext } from './support/app.js';
-import { signUpAsOrgMember } from './support/session.js';
+import { signInAsAdmin } from './support/session.js';
 
 let ctx: TestContext;
 
@@ -94,7 +94,7 @@ describe('GET /v1/projects', () => {
 describe('POST /v1/projects', () => {
   it('creates a project for a signed-in org member and lists it afterwards', async () => {
     ctx = await createTestApp();
-    const cookie = await signUpAsOrgMember(ctx, 'project-create@example.test');
+    const { cookie } = await signInAsAdmin(ctx, 'project-create@example.test');
     const res = await request(ctx.app.getHttpServer())
       .post('/v1/projects')
       .set('Cookie', cookie)
@@ -119,7 +119,7 @@ describe('POST /v1/projects', () => {
 
   it('rejects duplicate slugs inside the organisation, and says what to do about it', async () => {
     ctx = await createTestApp();
-    const cookie = await signUpAsOrgMember(ctx, 'project-duplicate@example.test');
+    const { cookie } = await signInAsAdmin(ctx, 'project-duplicate@example.test');
     const res = await request(ctx.app.getHttpServer())
       .post('/v1/projects')
       .set('Cookie', cookie)
@@ -140,7 +140,7 @@ describe('POST /v1/projects', () => {
 
   it('rejects invalid project details', async () => {
     ctx = await createTestApp();
-    const cookie = await signUpAsOrgMember(ctx, 'project-invalid@example.test');
+    const { cookie } = await signInAsAdmin(ctx, 'project-invalid@example.test');
     for (const body of [
       { name: '  ', slug: 'search-api' },
       { name: 'Search', slug: 'Search API' },
