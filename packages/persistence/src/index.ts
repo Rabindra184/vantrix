@@ -5,6 +5,7 @@ export * from './repositories/project.js';
 export * from './repositories/token.js';
 export * from './repositories/membership.js';
 export * from './repositories/project-member.js';
+export * from './repositories/user.js';
 export * from './repositories/like.js';
 export * from './repositories/uuid.js';
 export * from './repositories/run.js';

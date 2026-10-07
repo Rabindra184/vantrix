@@ -141,6 +141,30 @@ function generatePassword(): string {
 const DEFAULT_ADMIN_PASSWORD = 'PerfPortal-Setup-2026';
 
 /**
+ * The admin account bootstrap was asked for, and the password it will get.
+ *
+ * ═══ `mustChangePassword`: TRUE EXACTLY WHEN NOBODY CHOSE THIS PASSWORD ═══
+ *
+ * The published default is one anyone can look up, and a generated one has
+ * been printed to a terminal, where it may also have been captured. Both are
+ * flagged: the person signing in with them has to choose their own. An
+ * operator who set `PERFPORTAL_ADMIN_PASSWORD` chose theirs, and is not
+ * flagged.
+ * The rule is decided by where the PASSWORD came from, so it is the same
+ * whether the account was asked for through `PERFPORTAL_ADMIN_EMAIL` or
+ * `--admin-email`.
+ *
+ * Written only when the account is CREATED: a re-run that finds the account
+ * leaves the flag alone, as it leaves the password and the role alone.
+ */
+interface WantedAdmin {
+  email: string;
+  password: string;
+  usingDefaultPassword: boolean;
+  mustChangePassword: boolean;
+}
+
+/**
  * Who to create, and with what — CLI first, then environment, then the
  * documented defaults.
  *
@@ -154,25 +178,21 @@ const DEFAULT_ADMIN_PASSWORD = 'PerfPortal-Setup-2026';
  * `docker-compose.yml`'s bootstrap service always sets. That is the whole
  * difference between the two callers.
  */
-function resolveAdmin(adminEmail: string | undefined): {
-  email: string;
-  password: string;
-  usingDefaultPassword: boolean;
-} | undefined {
+function resolveAdmin(adminEmail: string | undefined): WantedAdmin | undefined {
   const email = adminEmail ?? process.env.PERFPORTAL_ADMIN_EMAIL;
   if (!email) return undefined;
 
   const chosen = process.env.PERFPORTAL_ADMIN_PASSWORD;
-  if (chosen) return { email, password: chosen, usingDefaultPassword: false };
+  if (chosen) return { email, password: chosen, usingDefaultPassword: false, mustChangePassword: false };
 
   // A CLI caller gets a random password, as it always has: they are reading
   // stdout and can save it. Only the container path, which nobody is watching,
   // falls back to the documented default — otherwise every `compose up` would
   // mint a password the deployer has to go hunting for in logs.
   if (process.env.PERFPORTAL_ADMIN_EMAIL && !adminEmail) {
-    return { email, password: DEFAULT_ADMIN_PASSWORD, usingDefaultPassword: true };
+    return { email, password: DEFAULT_ADMIN_PASSWORD, usingDefaultPassword: true, mustChangePassword: true };
   }
-  return { email, password: generatePassword(), usingDefaultPassword: false };
+  return { email, password: generatePassword(), usingDefaultPassword: false, mustChangePassword: true };
 }
 
 async function main(): Promise<void> {
@@ -248,11 +268,16 @@ async function main(): Promise<void> {
      * keeps whatever role it has. `ci.yml`'s bootstrap step demotes the
      * account, runs this a third time, and fails if it is an admin again.
      *
+     * Nor to `mustChangePassword`, for the same reason one field over: a
+     * re-run that set it on an account whose flag is clear would undo
+     * whatever cleared it, on every `up`. The same CI step clears it and
+     * requires it still clear after the next run.
+     *
      * The lookup is by the LOWERCASED address because that is what Better
      * Auth stores: an operator who wrote `Admin@Corp.example` would otherwise
      * find nothing on the second run, try to create the account again, and
      * have every later `up` fail on "user already exists". */
-    let admin: { email: string; password: string; usingDefaultPassword: boolean } | undefined;
+    let admin: WantedAdmin | undefined;
     let adminExisted = false;
     if (wanted) {
       const existing = await prisma.user.findFirst({ where: { email: wanted.email.toLowerCase() } });
@@ -309,10 +334,13 @@ async function main(): Promise<void> {
           password,
           name: titleCase(wanted.email.split('@')[0] ?? 'admin'),
           role: 'admin',
+          // `data` is how a server-side create sets a field declared
+          // `input: false`; see WantedAdmin for the rule.
+          data: { mustChangePassword: wanted.mustChangePassword },
         },
       });
       await new OrgMemberRepository(prisma).add(created.user.id, org.id);
-      admin = { email: wanted.email, password, usingDefaultPassword: wanted.usingDefaultPassword };
+      admin = wanted;
     }
 
     // Reuse the API's own token format and hashing path (@perfportal/core) —

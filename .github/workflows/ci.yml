@@ -534,7 +534,15 @@ jobs:
       # read of the role is asserted before the next step relies on it: a
       # demotion that did not take would make the final check pass against
       # nothing, the vacuous shape the fingerprint above already guards.
-      - name: Bootstrap is idempotent, and never re-passwords or re-promotes an account
+      #
+      # `mustChangePassword` IS SEEDED TRUE HERE, AND NEVER RE-SET. Nobody
+      # chose the published default, so the account it is seeded on is
+      # flagged to choose its own. A re-run that set the flag on an account
+      # whose flag is clear would undo whatever cleared it, on every `up` —
+      # so the flag is cleared beside the demotion and has to still be clear
+      # after the third run. `-At` prints a boolean as `t`/`f`, and a missing
+      # row as nothing, which neither comparison accepts.
+      - name: Bootstrap is idempotent, and never re-passwords, re-promotes or re-flags an account
         env:
           PERFPORTAL_ORG_SLUG: ci-org
           PERFPORTAL_PROJECT_SLUG: ci-project
@@ -542,12 +550,16 @@ jobs:
         run: |
           FP() { $PSQL -At -c "select md5(a.password) from account a join \"user\" u on u.id=a.\"userId\" where u.email='ci-admin@perfportal.local';"; }
           ROLE() { $PSQL -At -c "select \"role\" from \"user\" where email='ci-admin@perfportal.local';"; }
+          MUST() { $PSQL -At -c "select \"mustChangePassword\" from \"user\" where email='ci-admin@perfportal.local';"; }
 
           pnpm --filter @perfportal/persistence run bootstrap > /tmp/b1.txt 2>&1
           grep -q 'PUBLISHED DEFAULT' /tmp/b1.txt || {
             echo "::error::seeding the default password printed no warning"; exit 1; }
           before="$(FP)"
           test -n "$before" || { echo "::error::no credential stored — the fingerprint check would be vacuous"; exit 1; }
+          must="$(MUST)"
+          test "$must" = "t" || {
+            echo "::error::the published default was seeded without mustChangePassword (read: '$must')"; exit 1; }
 
           pnpm --filter @perfportal/persistence run bootstrap > /tmp/b2.txt 2>&1 || {
             echo "::error::the second run failed; bootstrap is not idempotent"; cat /tmp/b2.txt; exit 1; }
@@ -573,20 +585,27 @@ jobs:
           role="$(ROLE)"
           test "$role" = "admin" || {
             echo "::error::bootstrap did not create its account as an admin (role: '$role')"; exit 1; }
-          $PSQL -q -c "UPDATE \"user\" SET \"role\" = 'user' WHERE email = 'ci-admin@perfportal.local';"
+          $PSQL -q -c "UPDATE \"user\" SET \"role\" = 'user', \"mustChangePassword\" = false WHERE email = 'ci-admin@perfportal.local';"
           role="$(ROLE)"
           test "$role" = "user" || {
             echo "::error::the demotion did not take (role: '$role') — the re-promotion check would be vacuous"; exit 1; }
+          must="$(MUST)"
+          test "$must" = "f" || {
+            echo "::error::clearing mustChangePassword did not take (read: '$must') — the re-flag check would be vacuous"; exit 1; }
 
           pnpm --filter @perfportal/persistence run bootstrap > /tmp/b2b.txt 2>&1 || {
             echo "::error::the third run failed"; cat /tmp/b2b.txt; exit 1; }
           role="$(ROLE)"
           test "$role" = "user" || {
             echo "::error::the third run RE-PROMOTED an account an admin had demoted (role: '$role')"; exit 1; }
-          echo "a demoted bootstrap account stays demoted"
+          must="$(MUST)"
+          test "$must" = "f" || {
+            echo "::error::the third run RE-FLAGGED an account whose flag was clear (read: '$must')"; exit 1; }
+          echo "a demoted bootstrap account stays demoted, and a cleared flag stays clear"
 
-      # ...and an operator who chooses a password never gets the published one.
-      - name: A chosen admin password is used, and warns about nothing
+      # ...and an operator who chooses a password never gets the published one,
+      # and is not asked to choose it again at first sign-in.
+      - name: A chosen admin password is used, warns about nothing, and is not flagged for a change
         env:
           PERFPORTAL_ORG_SLUG: ci-org-2
           PERFPORTAL_PROJECT_SLUG: ci-project-2
@@ -599,7 +618,10 @@ jobs:
           if grep -q 'PUBLISHED DEFAULT' /tmp/b3.txt; then
             echo "::error::warned about a default that was never used"; exit 1
           fi
-          echo "chosen password honoured, no default warning"
+          must="$($PSQL -At -c "select \"mustChangePassword\" from \"user\" where email='chosen@perfportal.local';")"
+          test "$must" = "f" || {
+            echo "::error::an operator-chosen password was flagged for a change (read: '$must')"; exit 1; }
+          echo "chosen password honoured, no default warning, not flagged"
 
       # A MIXED-CASE ADDRESS HAS TO BE FOUND AGAIN. Better Auth stores the
       # address lowercased, so a lookup by the address as written finds

@@ -148,6 +148,51 @@ describe('/auth/*', () => {
   });
 
   /**
+   * `mustChangePassword` marks an account whose owner has to choose a new
+   * password, so the session has to carry it — and nobody may clear it
+   * through Better Auth's own self-service route, or choosing one is a single
+   * request away from optional. The field is `input: false`: a truthy value is
+   * refused outright, and a falsy one is DROPPED rather than refused (the
+   * same asymmetry as `banned` above), so the second request below is the one
+   * that matters. It also carries a name, so the route provably processed the
+   * request and kept only what a person may set.
+   */
+  it('reports mustChangePassword on the session, and never lets a session set or clear it', async () => {
+    ctx = await createTestApp();
+    const { cookie, userId } = await signInAsProjectMember(ctx, 'flagged@example.test', [
+      { projectId: ctx.projectId, role: 'viewer' },
+    ]);
+    const server = ctx.app.getHttpServer();
+    const flag = async () =>
+      (await ctx.prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { mustChangePassword: true } }))
+        .mustChangePassword;
+
+    const session = await request(server).get('/auth/get-session').set('Cookie', cookie).expect(200);
+    expect(session.body.user.mustChangePassword).toBe(false);
+
+    const raise = await request(server).post('/auth/update-user').set('Cookie', cookie).send({ mustChangePassword: true });
+    expect([raise.status, raise.body.code]).toEqual([400, 'FIELD_NOT_ALLOWED']);
+    expect(await flag()).toBe(false);
+
+    await ctx.prisma.user.update({ where: { id: userId }, data: { mustChangePassword: true } });
+    const flagged = await request(server).get('/auth/get-session').set('Cookie', cookie).expect(200);
+    expect(flagged.body.user.mustChangePassword).toBe(true);
+
+    await request(server).post('/auth/update-user').set('Cookie', cookie).send({ mustChangePassword: false });
+    expect(await flag()).toBe(true);
+    await request(server)
+      .post('/auth/update-user')
+      .set('Cookie', cookie)
+      .send({ mustChangePassword: false, name: 'Still Flagged' })
+      .expect(200);
+    const row = await ctx.prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    expect({ name: row.name, mustChangePassword: row.mustChangePassword }).toEqual({
+      name: 'Still Flagged',
+      mustChangePassword: true,
+    });
+  });
+
+  /**
    * The admin plugin's own HTTP routes are refused, EVEN TO AN ADMIN: every
    * admin operation goes through `/v1/admin`, where errors are problem+json,
    * the operations are documented, and one place can record them. Left

@@ -226,6 +226,18 @@ export function createAuth(opts: {
     trustedOrigins: [opts.baseUrl],
     database: prismaAdapter(createPrisma(opts.databaseUrl), { provider: 'postgresql' }),
     emailAndPassword: { enabled: true, disableSignUp: true },
+    // `mustChangePassword` rides on every `getSession().user`, which is how a
+    // gate can read it with no second query. `input: false` is what keeps it
+    // out of the person's own hands: `/auth/update-user` refuses a true value
+    // (FIELD_NOT_ALLOWED) and drops a false one, so nobody can clear their own
+    // flag. A server-side `auth.api.createUser` may still set it through its
+    // `data`, which bypasses `input`. `session-auth.integration.test.ts` pins
+    // both halves.
+    user: {
+      additionalFields: {
+        mustChangePassword: { type: 'boolean', defaultValue: false, input: false },
+      },
+    },
     // refuseAdminHttp LAST: a plugin's onRequest may replace the request, and
     // the refusal has to judge the one the router will actually route.
     plugins: [adminPlugin(), refuseAdminHttp()],
