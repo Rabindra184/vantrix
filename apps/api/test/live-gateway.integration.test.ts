@@ -6,8 +6,9 @@ import request from 'supertest';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
 import { LiveHub } from '../src/live/live-hub.js';
+import { CLOSE_UNAUTHORIZED } from '../src/live/live.gateway.js';
 import { createTestApp, type TestContext } from './support/app.js';
-import { signInAsAdmin } from './support/session.js';
+import { signInAsAdmin, signInAsProjectMember } from './support/session.js';
 
 // Same fallback every other integration suite in this directory uses for a
 // raw ioredis client (live-hub.integration.test.ts, live.integration.test.ts).
@@ -25,6 +26,8 @@ interface Conn {
   socket: WebSocket;
   frames: Frame[];
   closed: Promise<number>;
+  /** The close frame's reason text, once the socket has closed. */
+  reason?: string;
 }
 
 let ctx: TestContext;
@@ -165,11 +168,27 @@ function connect(port: number, path: string, cookie?: string): Conn {
     // event and kills the worker. Resolving 0 keeps the two shapes
     // distinguishable in an assertion.
     socket.on('error', () => resolve(0));
-    socket.on('close', (code) => resolve(code));
+    socket.on('close', (code, reason) => {
+      conn.reason = String(reason);
+      resolve(code);
+    });
   });
-  const conn = { socket, frames, closed };
+  const conn: Conn = { socket, frames, closed };
   conns.push(conn);
   return conn;
+}
+
+/**
+ * Whichever comes first: the close code, or 'accepted' on the first frame.
+ * Awaiting `closed` alone would turn an accepted socket -- the defect -- into
+ * a hang that reports as a timeout rather than as the wrong answer.
+ */
+function outcome(conn: Conn): Promise<number | 'accepted'> {
+  if (conn.frames.length > 0) return Promise.resolve('accepted');
+  return Promise.race([
+    conn.closed,
+    new Promise<'accepted'>((resolve) => conn.socket.once('message', () => resolve('accepted'))),
+  ]);
 }
 
 function collect(conn: Conn, count: number): Promise<Frame[]> {
@@ -387,6 +406,53 @@ describe('the live gateway rejects what it should', () => {
     expect(await foreign.closed).toBe(await missing.closed);
     expect(foreign.frames).toHaveLength(0);
     expect(missing.frames).toHaveLength(0);
+  });
+
+  /**
+   * PROJECT MEMBERSHIP, NOT JUST THE ORG. The upgrade never reaches Nest's
+   * guards, so whatever decides which project a session may see on the HTTP
+   * path decides nothing here unless the gateway asks too -- and an org
+   * check alone lets any member of the install watch any project's run.
+   *
+   * Refused EXACTLY as an unknown run id is, code and reason both: a
+   * distinguishable refusal would tell a member of one project which run ids
+   * exist in the others. The role held elsewhere is the highest there is, so
+   * this cannot pass by a role being too low rather than in the wrong project.
+   */
+  it("closes a member of another project as it closes an unknown run id", async () => {
+    const port = await start();
+    const runId = await openLiveRun();
+    const elsewhere = await ctx.prisma.project.create({
+      data: { orgId: ctx.orgId, slug: 'payments', name: 'Payments' },
+    });
+    const { cookie } = await signInAsProjectMember(ctx, `elsewhere-${randomUUID()}@example.com`, [
+      { projectId: elsewhere.id, role: 'manager' },
+    ]);
+
+    const foreign = connect(port, `/v1/runs/${runId}/live`, cookie);
+    const missing = connect(port, `/v1/runs/${randomUUID()}/live`, cookie);
+
+    expect(await outcome(foreign)).toBe(CLOSE_UNAUTHORIZED);
+    expect(await outcome(missing)).toBe(CLOSE_UNAUTHORIZED);
+    expect(foreign.reason).toBe(missing.reason);
+    expect(foreign.frames).toHaveLength(0);
+    expect(missing.frames).toHaveLength(0);
+  });
+
+  // The pair to the case above: without it, a gateway that refused every
+  // non-admin would pass that one. The lowest role is enough to watch.
+  it("accepts a member of the run's own project", async () => {
+    const port = await start();
+    const runId = await openLiveRun();
+    const { cookie } = await signInAsProjectMember(ctx, `viewer-${randomUUID()}@example.com`, [
+      { projectId: ctx.projectId, role: 'viewer' },
+    ]);
+
+    const conn = connect(port, `/v1/runs/${runId}/live`, cookie);
+
+    expect(await outcome(conn)).toBe('accepted');
+    expect(conn.frames[0]!.type).toBe('snapshot');
+    expect(conn.frames[0]!.delta.runId).toBe(runId);
   });
 });
 

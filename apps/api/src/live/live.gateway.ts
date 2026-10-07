@@ -3,10 +3,11 @@ import type { Duplex } from 'node:stream';
 import { Injectable, type OnApplicationBootstrap, type OnModuleDestroy } from '@nestjs/common';
 import type { HttpAdapterHost } from '@nestjs/core';
 import type { LiveDelta } from '@perfportal/contracts';
-import type { OrgMemberRepository, RunRepository } from '@perfportal/persistence';
+import type { OrgMemberRepository, ProjectMemberRepository, RunRepository } from '@perfportal/persistence';
 import { fromNodeHeaders } from 'better-auth/node';
 import { Redis } from 'ioredis';
 import { WebSocket, WebSocketServer } from 'ws';
+import { canSeeProject, loadSessionAccess } from '../auth/access.js';
 import { auth } from '../auth/better-auth.instance.js';
 import { LiveHub, type LiveSink } from './live-hub.js';
 
@@ -20,7 +21,10 @@ const LIVE_PATH = /^\/v1\/runs\/([^/]+)\/live$/;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** Not authenticated, not a member, or not this org's run — one code for all three. */
+/**
+ * Not authenticated, not a member of the org, not this org's run, or a run in
+ * a project the caller cannot see — one code, and one reason, for all four.
+ */
 export const CLOSE_UNAUTHORIZED = 4401;
 
 /** The client stopped reading. It reconnects and re-seeds; design §3.4. */
@@ -178,6 +182,7 @@ export class LiveGateway implements OnApplicationBootstrap, OnModuleDestroy {
     private readonly hub: LiveHub,
     private readonly runs: RunRepository,
     private readonly members: OrgMemberRepository,
+    private readonly projectMembers: ProjectMemberRepository,
     private readonly adapterHost: HttpAdapterHost,
   ) {
     this.#redis = new Redis(redisUrl);
@@ -209,9 +214,10 @@ export class LiveGateway implements OnApplicationBootstrap, OnModuleDestroy {
    * in review, and is unauthenticated. So the checks are here, explicitly, and
    * they run BEFORE the handshake completes rather than on an accepted socket.
    *
-   * This resolves the session exactly as `auth.middleware.ts` does. It must
-   * not resolve it some other way: two answers to "who is this" is two
-   * authorization models, and the weaker one wins.
+   * This resolves the session exactly as `auth.middleware.ts` does, and asks
+   * which projects it may see through the same `loadSessionAccess` and
+   * `canSeeProject`. It must not answer either some other way: two answers to
+   * "who is this" is two authorization models, and the weaker one wins.
    */
   private async authorize(req: IncomingMessage, runId: string): Promise<{ orgId: string } | null> {
     // Before the repository, not after: `run.id` is a uuid column, so a
@@ -225,12 +231,19 @@ export class LiveGateway implements OnApplicationBootstrap, OnModuleDestroy {
     const membership = await this.members.findOrgForUser(session.user.id);
     if (!membership) return null;
 
-    // A run in another org and a run that does not exist answer the SAME way,
-    // because `findById` is org-scoped and returns null for both. Splitting
-    // them turns this endpoint into an existence oracle for run ids across the
-    // whole deployment.
+    // Read BEFORE the run, so refusing a run that does not exist and refusing
+    // a run in a project this person cannot see make the same queries in the
+    // same order: neither refusal is a round trip shorter than the other.
+    const access = await loadSessionAccess(session.user, this.projectMembers);
+
+    // A run in another org, a run in a project of this org the caller holds no
+    // role in, and a run that does not exist all answer the SAME way:
+    // `findById` is org-scoped and returns null for the first and the last,
+    // and the membership check folds the middle one into that same `null`.
+    // Splitting any of them turns this endpoint into an existence oracle for
+    // run ids — across the deployment, or across the projects of one org.
     const run = await this.runs.findById({ orgId: membership.orgId }, runId);
-    if (!run) return null;
+    if (!run || !canSeeProject(access, run.projectId)) return null;
 
     return { orgId: membership.orgId };
   }

@@ -1,5 +1,6 @@
 import { Injectable, UnauthorizedException, type CanActivate, type ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import type { ProjectRole } from '@perfportal/contracts';
 import { splitToken, verifyToken } from '@perfportal/core';
 import { TokenRepository } from '@perfportal/persistence';
 import type { Request } from 'express';
@@ -11,9 +12,10 @@ export interface Tenant {
   /**
    * Present for a bearer token, which is minted against one project. ABSENT
    * for a user session (AuthMiddleware's authenticateSession, auth.middleware.ts),
-   * which is org-scoped: a human may read any run in their org. Mirrors
-   * TenantScope.projectId in @perfportal/persistence, which this Tenant is
-   * always converted into at a repository boundary.
+   * which names no single project: which of its org's projects a session may
+   * see is the three fields below. Mirrors TenantScope.projectId in
+   * @perfportal/persistence, which this Tenant is always converted into at a
+   * repository boundary.
    */
   projectId?: string;
   /**
@@ -25,6 +27,33 @@ export interface Tenant {
    * session's token id names the session, which ends, not the person.
    */
   userId?: string;
+  /*
+   * ═══ THE NEXT THREE ARE A SESSION'S, AND ONLY A SESSION'S ═══
+   *
+   * Set by authenticateSession through `loadSessionAccess` (access.ts) on
+   * every request, and NEVER by authenticateRequest: a bearer token's reach is
+   * its `projectId` and its scopes, exactly as before they existed. Read
+   * through `listScope` and `canSeeProject` in access.ts rather than directly,
+   * so the difference between `[]` and absent is decided in one place.
+   */
+  /**
+   * The install-wide admin flag, exactly `user.role === 'admin'`. Always set
+   * for a session; absent for a bearer token.
+   */
+  isAdmin?: boolean;
+  /**
+   * The projects this person holds a role in, keyed by project id. Always set
+   * for a session — EMPTY for an admin, who sees every project and skips the
+   * query. Absent for a bearer token. Read per request, never cached on the
+   * session, so a removed membership is gone on the next request.
+   */
+  projectRoles?: ReadonlyMap<string, ProjectRole>;
+  /**
+   * The keys of `projectRoles`, for a NON-ADMIN session only — `[]` when they
+   * belong to no project. Absent for an admin and for a bearer token. `[]`
+   * and absent mean opposite things; see TenantScope.projectIds.
+   */
+  projectIds?: readonly string[];
   tokenId: string;
   scopes: string[];
 }

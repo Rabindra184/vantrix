@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { HttpAdapterHost } from '@nestjs/core';
-import { OrgMemberRepository, RunRepository } from '@perfportal/persistence';
+import { OrgMemberRepository, ProjectMemberRepository, RunRepository } from '@perfportal/persistence';
 import { CONFIG } from '../auth/auth.module.js';
 import type { AppConfig } from '../config.js';
 import { LiveHub } from './live-hub.js';
@@ -31,9 +31,10 @@ import { LiveGateway } from './live.gateway.js';
         hub: LiveHub,
         runs: RunRepository,
         members: OrgMemberRepository,
+        projectMembers: ProjectMemberRepository,
         adapterHost: HttpAdapterHost,
-      ) => new LiveGateway(config.redisUrl, hub, runs, members, adapterHost),
-      inject: [CONFIG, LiveHub, RunRepository, OrgMemberRepository, HttpAdapterHost],
+      ) => new LiveGateway(config.redisUrl, hub, runs, members, projectMembers, adapterHost),
+      inject: [CONFIG, LiveHub, RunRepository, OrgMemberRepository, ProjectMemberRepository, HttpAdapterHost],
     },
   ],
   exports: [LiveHub, LiveGateway],

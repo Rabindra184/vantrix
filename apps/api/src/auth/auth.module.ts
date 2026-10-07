@@ -6,6 +6,7 @@ import {
   createPool,
   createPrisma,
   OrgMemberRepository,
+  ProjectMemberRepository,
   ProjectRepository,
   RunnerRepository,
   RunRepository,
@@ -28,6 +29,7 @@ export const CONFIG = Symbol('CONFIG');
     { provide: pg.Pool, useFactory: () => createPool(loadConfig().databaseUrl) },
     { provide: TokenRepository, useFactory: (p: PrismaClient) => new TokenRepository(p), inject: [PrismaClient] },
     { provide: OrgMemberRepository, useFactory: (p: PrismaClient) => new OrgMemberRepository(p), inject: [PrismaClient] },
+    { provide: ProjectMemberRepository, useFactory: (p: PrismaClient) => new ProjectMemberRepository(p), inject: [PrismaClient] },
     { provide: ProjectRepository, useFactory: (p: PrismaClient) => new ProjectRepository(p), inject: [PrismaClient] },
     { provide: RunnerRepository, useFactory: (p: PrismaClient) => new RunnerRepository(p), inject: [PrismaClient] },
     { provide: RunRepository, useFactory: (p: PrismaClient) => new RunRepository(p), inject: [PrismaClient] },
@@ -42,6 +44,6 @@ export const CONFIG = Symbol('CONFIG');
     // AuthGuard provider above, not a second one.
     { provide: APP_GUARD, useExisting: AuthGuard },
   ],
-  exports: [CONFIG, PrismaClient, pg.Pool, TokenRepository, OrgMemberRepository, ProjectRepository, RunnerRepository, RunRepository, RuleRepository, TestRepository, ActivityRepository, AuthGuard, AuthMiddleware],
+  exports: [CONFIG, PrismaClient, pg.Pool, TokenRepository, OrgMemberRepository, ProjectMemberRepository, ProjectRepository, RunnerRepository, RunRepository, RuleRepository, TestRepository, ActivityRepository, AuthGuard, AuthMiddleware],
 })
 export class AuthModule {}
