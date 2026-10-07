@@ -202,7 +202,7 @@ describe('the live gateway rejects what it should', () => {
       data: { slug: `org-${randomUUID().slice(0, 8)}`, name: 'Other' },
     });
     const { cookie, userId } = await signUp(ctx.app, `outsider-${randomUUID()}@example.com`);
-    await ctx.app.get(OrgMemberRepository).add(userId, other.id, 'member');
+    await ctx.app.get(OrgMemberRepository).add(userId, other.id);
 
     const conn = connect(port, `/v1/runs/${runId}/live`, cookie);
 
@@ -381,7 +381,7 @@ describe('the live gateway rejects what it should', () => {
       data: { slug: `org-${randomUUID().slice(0, 8)}`, name: 'Other' },
     });
     const { cookie: outsider, userId } = await signUp(ctx.app, `outsider-${randomUUID()}@example.com`);
-    await ctx.app.get(OrgMemberRepository).add(userId, other.id, 'member');
+    await ctx.app.get(OrgMemberRepository).add(userId, other.id);
     const member = await signUpAsOrgMember(ctx, `member-${randomUUID()}@example.com`);
 
     const foreign = connect(port, `/v1/runs/${runId}/live`, outsider);

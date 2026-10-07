@@ -258,7 +258,7 @@ async function main(): Promise<void> {
           where: { userId: existing.id, orgId: org.id },
         });
         if (!membership) {
-          await new OrgMemberRepository(prisma).add(existing.id, org.id, 'admin');
+          await new OrgMemberRepository(prisma).add(existing.id, org.id);
         }
       }
     }
@@ -276,7 +276,7 @@ async function main(): Promise<void> {
           name: titleCase(wanted.email.split('@')[0] ?? 'admin'),
         },
       });
-      await new OrgMemberRepository(prisma).add(signUp.user.id, org.id, 'admin');
+      await new OrgMemberRepository(prisma).add(signUp.user.id, org.id);
       admin = { email: wanted.email, password, usingDefaultPassword: wanted.usingDefaultPassword };
     }
 

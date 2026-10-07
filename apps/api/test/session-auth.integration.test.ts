@@ -548,7 +548,7 @@ describe('cross-org isolation on every session-reachable endpoint', () => {
 
     const ours = await signUpAsOrgMember(ctx, 'tests-ours@example.test');
     const member = await signUp(ctx.app, 'tests-theirs@example.test');
-    await ctx.app.get(OrgMemberRepository).add(member.userId, otherOrg.id, 'member');
+    await ctx.app.get(OrgMemberRepository).add(member.userId, otherOrg.id);
     const theirs = member.cookie;
 
     const slugs = async (cookie: string, query = ''): Promise<string[]> => {
@@ -618,7 +618,7 @@ describe('cross-org isolation on every session-reachable endpoint', () => {
 
     const ours = await signUpAsOrgMember(ctx, 'activity-ours@example.test');
     const member = await signUp(ctx.app, 'activity-theirs@example.test');
-    await ctx.app.get(OrgMemberRepository).add(member.userId, otherOrg.id, 'member');
+    await ctx.app.get(OrgMemberRepository).add(member.userId, otherOrg.id);
     const theirs = member.cookie;
 
     const seen = async (cookie: string) => {

@@ -97,10 +97,10 @@ INSERT INTO "user" (id, name, email, "updatedAt") VALUES
   -- the whole decision.
   ('u-keeper-shaped',  'Keeper Shaped',  'admin-feedface@example.test',  CURRENT_TIMESTAMP);
 
-INSERT INTO org_member (user_id, org_id, role) VALUES
-  ('u-residue-member', '11111111-1111-1111-1111-111111111111', 'admin'),
-  ('u-residue-plain',  '22222222-2222-2222-2222-222222222222', 'member'),
-  ('u-keeper-member',  '44444444-4444-4444-4444-444444444444', 'admin'),
-  ('u-keeper-shaped',  '44444444-4444-4444-4444-444444444444', 'admin');
+INSERT INTO org_member (user_id, org_id) VALUES
+  ('u-residue-member', '11111111-1111-1111-1111-111111111111'),
+  ('u-residue-plain',  '22222222-2222-2222-2222-222222222222'),
+  ('u-keeper-member',  '44444444-4444-4444-4444-444444444444'),
+  ('u-keeper-shaped',  '44444444-4444-4444-4444-444444444444');
 
 COMMIT;

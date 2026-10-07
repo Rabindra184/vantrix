@@ -25,7 +25,7 @@ beforeEach(async () => {
   const signed = await signUp(ctx.app, EMAIL);
   cookie = signed.cookie;
   userId = signed.userId;
-  await ctx.app.get(OrgMemberRepository).add(userId, ctx.orgId, 'member');
+  await ctx.app.get(OrgMemberRepository).add(userId, ctx.orgId);
 });
 
 afterEach(async () => {

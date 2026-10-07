@@ -30,8 +30,11 @@ describe('OrgMemberRepository', () => {
     const { orgId } = await seedOrg();
     await prisma.user.create({ data: { id: 'u1', name: 'U1', email: 'u1@example.test' } });
     const repo = new OrgMemberRepository(prisma);
-    await repo.add('u1', orgId, 'admin');
-    expect(await repo.findOrgForUser('u1')).toEqual({ orgId, role: 'admin' });
+    await repo.add('u1', orgId);
+    // Exactly the org: the membership carries no role of its own any more.
+    // Admin is a flag on the account and a project role is a project_member
+    // row, so a `role` key here would be a second place to read either from.
+    expect(await repo.findOrgForUser('u1')).toStrictEqual({ orgId });
   });
 
   it('returns the requested user\'s own membership, not just any row in the table', async () => {
@@ -40,10 +43,10 @@ describe('OrgMemberRepository', () => {
     await prisma.user.create({ data: { id: 'u1', name: 'U1', email: 'u1@example.test' } });
     await prisma.user.create({ data: { id: 'u2', name: 'U2', email: 'u2@example.test' } });
     const repo = new OrgMemberRepository(prisma);
-    await repo.add('u1', org1.id, 'admin');
-    await repo.add('u2', org2.id, 'member');
+    await repo.add('u1', org1.id);
+    await repo.add('u2', org2.id);
 
-    expect(await repo.findOrgForUser('u1')).toEqual({ orgId: org1.id, role: 'admin' });
-    expect(await repo.findOrgForUser('u2')).toEqual({ orgId: org2.id, role: 'member' });
+    expect(await repo.findOrgForUser('u1')).toStrictEqual({ orgId: org1.id });
+    expect(await repo.findOrgForUser('u2')).toStrictEqual({ orgId: org2.id });
   });
 });

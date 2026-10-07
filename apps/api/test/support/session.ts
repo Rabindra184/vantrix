@@ -46,8 +46,8 @@ export async function signUpAndLogin(app: INestApplication, email: string): Prom
  * fixture (tokens, projects) in a test file typically belongs to, so
  * joining it is what makes the session's tenant match a bearer token's.
  */
-export async function signUpAsOrgMember(ctx: TestContext, email: string, role = 'member'): Promise<string> {
+export async function signUpAsOrgMember(ctx: TestContext, email: string): Promise<string> {
   const { cookie, userId } = await signUp(ctx.app, email);
-  await ctx.app.get(OrgMemberRepository).add(userId, ctx.orgId, role);
+  await ctx.app.get(OrgMemberRepository).add(userId, ctx.orgId);
   return cookie;
 }

@@ -38,6 +38,7 @@ model Project {
   runnerArtifacts RunnerArtifact[]
   runnerJobs      RunnerJob[]
   packages        Package[]
+  members         ProjectMember[]
 
   @@unique([id, orgId])
   @@unique([orgId, slug])
@@ -803,17 +804,30 @@ model RunAssertion {
 }
 
 model User {
-  id            String      @id
-  name          String
-  email         String
-  emailVerified Boolean     @default(false)
-  image         String?
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
-  sessions      Session[]
-  accounts      Account[]
-  orgMembers    OrgMember[]
-  notedRuns     Run[]
+  id                  String          @id
+  name                String
+  email               String
+  emailVerified       Boolean         @default(false)
+  image               String?
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+  /// Better Auth's admin plugin owns these four, so they keep its camelCase,
+  /// unmapped names like every other column of this table. `role` is the ONE
+  /// admin flag: `'admin'` or `'user'`, nothing else. A project role is never
+  /// here — it is a `project_member` row (see ProjectMember).
+  role                String?         @default("user")
+  /// What the product calls "disabled".
+  banned              Boolean?        @default(false)
+  banReason           String?
+  banExpires          DateTime?
+  sessions            Session[]
+  accounts            Account[]
+  orgMembers          OrgMember[]
+  notedRuns           Run[]
+  projectMembers      ProjectMember[] @relation("ProjectMemberUser")
+  /// The memberships this person granted. Only here because Prisma names both
+  /// ends of a relation; nothing reads it.
+  projectMembersAdded ProjectMember[] @relation("ProjectMemberAddedBy")
 
   @@unique([email])
   @@map("user")
@@ -821,16 +835,16 @@ model User {
 
 // Better Auth owns identity (User/Session/Account/Verification, above); org
 // and project already exist and every query already filters on them (see
-// note atop Org). This is the one new table joining the two: Better Auth
-// answers "who is this?", org_member answers "what may they see?".
+// note atop Org). This joins the two: Better Auth answers "who is this?",
+// org_member answers "does this person belong to this install?". Which
+// projects they may see is project_member's question, below.
+//
+// No `role`: it was written and never read, and migration
+// 20261007120000_project_access dropped it so the admin flag lives in one
+// place (`user.role`) rather than two that could disagree.
 model OrgMember {
   userId    String   @map("user_id")
   orgId     String   @map("org_id") @db.Uuid
-  /// Written, and deliberately unread until M6's RBAC. This project otherwise
-  /// treats a write-only column as a defect (run_indicator.failed was deleted
-  /// for exactly that). Admitted here because it is part of the tenancy key's
-  /// shape and adding it later means migrating live membership rows.
-  role      String
   createdAt DateTime @default(now()) @map("created_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -840,16 +854,42 @@ model OrgMember {
   @@map("org_member")
 }
 
+/// A person's role in ONE project. An admin (`user.role = 'admin'`) sees every
+/// project and needs no row here; a row an admin also holds matters only if
+/// they are later demoted.
+///
+/// `role` is one of `PROJECT_ROLES` in @perfportal/contracts, and the
+/// migration's CHECK holds every writer to that, not only this repository.
+model ProjectMember {
+  projectId String   @map("project_id") @db.Uuid
+  userId    String   @map("user_id")
+  role      String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  /// Who granted it. SET NULL rather than CASCADE: a membership outlives the
+  /// person who granted it.
+  addedBy   String?  @map("added_by")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User    @relation("ProjectMemberUser", fields: [userId], references: [id], onDelete: Cascade)
+  adder   User?   @relation("ProjectMemberAddedBy", fields: [addedBy], references: [id], onDelete: SetNull)
+
+  @@id([projectId, userId])
+  @@index([userId])
+  @@map("project_member")
+}
+
 model Session {
-  id        String   @id
-  expiresAt DateTime
-  token     String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  ipAddress String?
-  userAgent String?
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id             String   @id
+  expiresAt      DateTime
+  token          String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  ipAddress      String?
+  userAgent      String?
+  userId         String
+  /// The admin plugin's: the admin acting as this session's user, if any.
+  impersonatedBy String?
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([token])
   @@index([userId])

@@ -325,7 +325,7 @@ export async function seedAdmin(): Promise<{ email: string; password: string; or
   const email = `${unique('admin')}@example.test`;
   const signUp = await auth.api.signUpEmail({ body: { email, password: PASSWORD, name: 'Admin' } });
   const { orgId } = await createOrgAndProject();
-  await orgMembers.add(signUp.user.id, orgId, 'admin');
+  await orgMembers.add(signUp.user.id, orgId);
   return { email, password: PASSWORD, orgId };
 }
 
@@ -345,7 +345,7 @@ export async function seedAdminForEmptyOrg(): Promise<{ email: string; password:
     body: { email, password: PASSWORD, name: 'Empty Org Admin' },
   });
   const { orgId } = await createOrgAndProject();
-  await orgMembers.add(signUp.user.id, orgId, 'admin');
+  await orgMembers.add(signUp.user.id, orgId);
   return { email, password: PASSWORD };
 }
 
