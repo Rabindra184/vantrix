@@ -601,6 +601,46 @@ jobs:
           fi
           echo "chosen password honoured, no default warning"
 
+      # A MIXED-CASE ADDRESS HAS TO BE FOUND AGAIN. Better Auth stores the
+      # address lowercased, so a lookup by the address as written finds
+      # nothing on the second run, tries to create the account again, and
+      # every later `compose up` fails on "user already exists".
+      - name: A mixed-case admin email is reused on the next run, not recreated
+        env:
+          PERFPORTAL_ORG_SLUG: ci-org-3
+          PERFPORTAL_PROJECT_SLUG: ci-project-3
+          PERFPORTAL_ADMIN_EMAIL: CI-Mixed@perfportal.local
+        run: |
+          pnpm --filter @perfportal/persistence run bootstrap > /tmp/b4.txt 2>&1 || {
+            echo "::error::the first run failed"; cat /tmp/b4.txt; exit 1; }
+          pnpm --filter @perfportal/persistence run bootstrap > /tmp/b5.txt 2>&1 || {
+            echo "::error::the second run failed — the lookup does not match the address Better Auth stored"; cat /tmp/b5.txt; exit 1; }
+          grep -q 'already present, left untouched' /tmp/b5.txt || {
+            echo "::error::the second run did not report reusing the account"; exit 1; }
+          echo "mixed-case address reused"
+
+      # A PASSWORD OUTSIDE BETTER AUTH'S BOUNDS IS REFUSED, AND MAKES NOTHING.
+      # The admin plugin's create skips the bounds sign-up applied, so
+      # bootstrap checks them itself. The failure is required to be THAT
+      # refusal: a run that died for any other reason would also exit
+      # non-zero and leave no account, and pass a check on those two alone.
+      - name: An admin password outside Better Auth's bounds is refused, and creates nothing
+        env:
+          PERFPORTAL_ORG_SLUG: ci-org-4
+          PERFPORTAL_PROJECT_SLUG: ci-project-4
+          PERFPORTAL_ADMIN_EMAIL: short-password@perfportal.local
+          PERFPORTAL_ADMIN_PASSWORD: short
+        run: |
+          if pnpm --filter @perfportal/persistence run bootstrap > /tmp/b6.txt 2>&1; then
+            echo "::error::a 5-character admin password was accepted"; cat /tmp/b6.txt; exit 1
+          fi
+          grep -q 'The admin password must be' /tmp/b6.txt || {
+            echo "::error::the run failed, but not on the password bounds"; cat /tmp/b6.txt; exit 1; }
+          users="$($PSQL -At -c "select count(*) from \"user\" where email = 'short-password@perfportal.local';")"
+          test "$users" = "0" || {
+            echo "::error::a refused password still created the account ($users rows)"; exit 1; }
+          echo "out-of-bounds password refused, no account created"
+
       # The default is published in THREE places — DEPLOYMENT.md, the README
       # and .env.example — and a guide that names a password the product no
       # longer sets is worse than one that says nothing: the reader tries it,

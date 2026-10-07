@@ -215,8 +215,8 @@ async function main(): Promise<void> {
     // with its plaintext already gone (stdout, the only place it's ever
     // printed, is reached further down, after both of these succeed) and no
     // way to recover it. Every retry against the same taken email minted
-    // another orphaned token. Sign-up first means a duplicate-email failure
-    // here happens before any token exists to orphan.
+    // another orphaned token. Account creation first means a duplicate-email
+    // failure here happens before any token exists to orphan.
     const wanted = resolveAdmin(adminEmail);
 
     /* ═══ IDEMPOTENT NOW, BECAUSE `docker compose up` RUNS IT EVERY TIME ═══
