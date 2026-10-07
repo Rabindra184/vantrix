@@ -9,9 +9,9 @@ import type { AccessAction } from '@perfportal/contracts';
  * health probes). The route walk in `access-routes.integration.test.ts` reads
  * these keys off Nest's metadata, the way `openapi.integration.test.ts` reads
  * `PATH_METADATA`, and fails any route carrying none of the four, or more
- * than one — so a route cannot ship without saying who it is for. Only `@Requires` changes what a
- * request gets back; the other two are statements for that walk, and
- * `AccessGuard` does not read them.
+ * than one — so a route cannot ship without saying who it is for. Only
+ * `@Requires` changes what a request gets back; the other two are statements
+ * for that walk, and `AccessGuard` does not read them.
  */
 
 export const REQUIRES_KEY = 'perfportal:requires';
