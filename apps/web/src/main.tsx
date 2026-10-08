@@ -1,23 +1,14 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter } from 'react-router-dom';
 import App from './App';
+import { createQueryClient } from './queryClient';
 import './styles/tokens.css';
 
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      // TanStack Query retries a failed query three times by default, with
-      // backoff. Every rejection this shell acts on is a deliberate verdict
-      // the server will repeat — a 401 with no cookie, a 403 with no
-      // organisation — so retrying only delays the redirect by seconds
-      // while the user looks at a loading state. A route that genuinely
-      // wants retries (polling a pending run, Task 7) can ask per-query.
-      retry: false,
-    },
-  },
-});
+// The client's defaults, and the rule that a 401 from any query or mutation
+// ends the session, live in `queryClient.ts`.
+const queryClient = createQueryClient();
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
