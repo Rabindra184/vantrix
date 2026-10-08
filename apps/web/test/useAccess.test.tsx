@@ -1,4 +1,9 @@
-import { ACCESS_ACTIONS, type AccessAction } from '@perfportal/contracts';
+import {
+  ACCESS_ACTIONS,
+  ProjectListResponseSchema,
+  type AccessAction,
+  type ProjectListResponse,
+} from '@perfportal/contracts';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
@@ -191,6 +196,38 @@ describe('useProjectAccess — unknown is not refused', () => {
     expect(result.current.list.data).toBeDefined();
     expect(result.current.access.known).toBe(true);
     expect(result.current.access.can('rules:edit')).toBe(true);
+  });
+
+  it("knows nothing for a non-admin whose project carries no role field (an API older than it)", () => {
+    // Present in the list, so this person holds SOME role here — a non-admin
+    // sees only projects they hold one in — but the response does not say
+    // which. Built through the real schema with the key omitted, as an API
+    // that predates the field sends it.
+    client.setQueryData(sessionQueryKey, sessionBody(false));
+    client.setQueryData(
+      projectsQueryKey,
+      ProjectListResponseSchema.parse({
+        items: [{ id: 'c0000000-0000-4000-8000-000000000001', slug: 'checkout', name: 'Checkout', latestRun: null }],
+      }),
+    );
+
+    const { result } = renderHook(() => useProjectAccess('checkout'), { wrapper });
+
+    expect(client.getQueryData<ProjectListResponse>(projectsQueryKey)?.items[0]).not.toHaveProperty('role');
+    expect(result.current.known).toBe(false);
+    expect(allowed(result.current)).toEqual([]);
+  });
+
+  it('still knows, and refuses, a non-admin whose project says role null', () => {
+    // `null` is an answer — the API says this person holds no role here —
+    // where an absent field is no answer at all.
+    seedAccess(client, { isAdmin: false, roles: {} });
+    client.setQueryData(projectsQueryKey, projectListBody({ checkout: null }));
+
+    const { result } = renderHook(() => useProjectAccess('checkout'), { wrapper });
+
+    expect(result.current.known).toBe(true);
+    expect(allowed(result.current)).toEqual([]);
   });
 
   it('knows nothing without a project, even for an admin', () => {

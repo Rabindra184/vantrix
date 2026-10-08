@@ -36,10 +36,10 @@ import { getSession, sessionQueryKey } from '../api/session';
  *
  * Not known, so neither drawn nor refused: the session still pending; for a
  * non-admin, the project list still pending, or failed with no data (a
- * failure is not an answer about anyone's role); and no project at all. Data
- * KEPT from a failed refetch is still an answer — TanStack holds the last
- * good list across the failure — so access stays known on it, as the rail
- * keeps drawing it.
+ * failure is not an answer about anyone's role), or listing the project with
+ * no `role` field (below); and no project at all. Data KEPT from a failed
+ * refetch is still an answer — TanStack holds the last good list across the
+ * failure — so access stays known on it, as the rail keeps drawing it.
  *
  * ADMIN FIRST. An admin may do everything, whatever `role` says — `GET
  * /v1/projects` gives an admin their own membership row's role, or `null`,
@@ -47,11 +47,23 @@ import { getSession, sessionQueryKey } from '../api/session';
  * session is, without waiting for the list, and `canPerform` reads the flag
  * before it ever looks at the role.
  *
- * A ROLE OF `undefined` IS A RESPONSE WITH NO `role` FIELD — an API older
+ * ═══ A PROJECT WITH NO `role` FIELD IS UNKNOWN; `role: null` IS NOT ═══
+ *
+ * A role of `undefined` is a response with no `role` field — an API older
  * than the field (`ProjectSummarySchema.role` is optional for that rolling
- * deploy) — not a list that has not loaded: "not loaded" lives in `known`
- * here, and is never read off the role. `canPerform` treats it as no role, so
- * nothing is drawn. The list HAS loaded, though, so it counts as known.
+ * deploy) — not a list that has not loaded: "not loaded" lives in `known`,
+ * and is never read off the role. For a non-admin it is still NOT KNOWN. A
+ * non-admin's list holds only projects they hold a role in, so the project's
+ * presence says they hold one; the response just does not say which. Reading
+ * that as refused would put "needs the Member role" in front of somebody who
+ * may well be a Manager — the false refusal the `known`/`can` split exists to
+ * prevent. So nothing is drawn and no `NoAccess` is either — `canPerform`
+ * alone would have hidden the controls, but only `known` keeps the sentence
+ * away. An admin is unaffected: the flag decides, and the role is not read.
+ *
+ * Two answers that look alike stay KNOWN and refused, because each is the API
+ * saying something: `role: null` (it holds no role in this project) and a
+ * project missing from a list that has loaded (no role, and not visible).
  */
 
 /** What a gated control asks: is access known, and does it allow `action`? */
@@ -101,7 +113,13 @@ export function useProjectAccess(slug: string | undefined): ProjectAccess {
   const project = slug === undefined ? undefined : projects.data?.items.find((p) => p.slug === slug);
   const role: ProjectRole | null | undefined = project === undefined ? null : project.role;
 
-  const known = slug !== undefined && isAdmin !== undefined && (isAdmin || projects.data !== undefined);
+  /* For a non-admin: a list has answered, AND it did not leave the role out.
+     `role !== undefined` is what makes a field-less item unknown rather than
+     refused; `null` and a missing project both pass it, and stay known. */
+  const known =
+    slug !== undefined &&
+    isAdmin !== undefined &&
+    (isAdmin || (projects.data !== undefined && role !== undefined));
 
   /* Memoised on the three values the answer depends on, so a control that
      puts `access` in an effect's dependencies is not re-run by every render

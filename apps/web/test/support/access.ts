@@ -103,23 +103,26 @@ export function projectListBody(roles: Readonly<Record<string, ProjectRole | nul
 }
 
 /**
- * Writes who is looking into `client`'s cache: the session, and the project
- * list the API would give that person, each with `staleTime: Infinity` so no
- * mount or focus refetches them over the seed. (An explicit invalidation or
- * `refetchQueries` still runs the real fetcher, as it would in the app.)
+ * Writes who is looking into `client`'s cache: the session and, except in the
+ * one case below, the project list the API would give that person — each
+ * written with `staleTime: Infinity` so no mount or focus refetches it over
+ * the seed. (An explicit invalidation or `refetchQueries` still runs the real
+ * fetcher, as it would in the app.)
  *
  * `roles` maps a project slug to the role this person holds there.
  *
- * ═══ AN ADMIN WITH NO `roles` LEAVES THE PROJECT LIST ALONE ═══
+ * ═══ AN ADMIN WITHOUT `roles` LEAVES THE PROJECT LIST UNCACHED ═══
  *
- * An admin's access is known from the session alone, so for
- * `{ isAdmin: true }` the project list is neither written nor given a
- * default. That is deliberate: the tests that seed an admin are mostly
- * existing tests of a page that serves its OWN `GET /v1/projects` fixture —
- * a project's name, its latest run — and an empty list written over it would
- * not merely lose the name: `ProjectShell` reads a project missing from a
- * list that has loaded as "Project not found". Pass `roles` (even `{}`) when
- * the list is part of what the test is about.
+ * `{ isAdmin: true }` with no `roles` writes the session only. The project
+ * list is not touched — no data, no `staleTime` default — so it stays
+ * uncached and the page's own fetcher answers it. Passing `roles`, even
+ * `{}`, writes the list; do that when the list is part of what the test is
+ * about. An admin's access is known from the session alone, so nothing is
+ * lost by leaving it out, and that is deliberate: the tests that seed an
+ * admin are mostly existing tests of a page that serves its OWN
+ * `GET /v1/projects` fixture — a project's name, its latest run — and an
+ * empty list written over it would not merely lose the name: `ProjectShell`
+ * reads a project missing from a list that has loaded as "Project not found".
  *
  * A non-admin always gets a list — `{}` when no `roles` are given, which is
  * the person on no project at all — because for them the list IS the access.
