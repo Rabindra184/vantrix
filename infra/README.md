@@ -104,9 +104,8 @@ raw artefacts behind them.
 
 ## Getting a credential
 
-There is no admin API and no seed data — nothing outside the test harness
-creates an org, a project, or an API token. `packages/persistence/scripts/bootstrap.ts`
-closes that gap: it creates (or, on re-run, reuses) an org and a project by
+There is no seed data, and nothing creates the first org, project, API token
+or account but `packages/persistence/scripts/bootstrap.ts`: it creates (or, on re-run, reuses) an org and a project by
 slug and mints a fresh API token scoped for both `ingest` and `read`. It
 requires the packages to be built (`pnpm build`) and `DATABASE_URL` to point
 at a migrated database:
@@ -131,11 +130,19 @@ left alone, never silently invalidated.
 Pass `--admin-email` to also create a session-authenticated admin account, a
 member of the same org, via Better Auth's admin plugin (never raw SQL, so the
 password hash is one Better Auth's own login path can verify). Sign-up is
-closed, and in this release bootstrap is the only way an account is made —
-always an admin; per-project roles and an admin screen for accounts come in a
-later release:
+closed: bootstrap makes the FIRST admin, and every account after it is made by
+an admin, under Administration › Users in the web app or with
+`POST /v1/admin/users` (see the Accounts section of
+[`docs/api.md`](../docs/api.md#accounts-passwords-and-roles)):
 
     pnpm bootstrap --admin-email you@example.test
+
+The password bootstrap generates here is FLAGGED: nobody chose it, and it has
+been printed to a terminal, so the account must choose its own before anything
+else. The web app shows a *Choose a new password* step; over HTTP, every `/v1`
+route but `PUT /v1/me/password` answers `403 PASSWORD_CHANGE_REQUIRED` until it
+is changed, and bootstrap's output says so. (`PERFPORTAL_ADMIN_PASSWORD`, when
+set, is the operator's own choice and is not flagged.)
 
 With `--admin-email`, bootstrap **refuses** an address that already has an
 account: it fails loudly, before minting a token, rather than handing you a
@@ -148,15 +155,20 @@ to stdout exactly once, the same way the API token is; copy it immediately.
 Log in with it against `/auth/*` (Better Auth's own error/response shapes,
 not this API's RFC 9457 `problem+json` — see the Authentication section of
 [`docs/api.md`](../docs/api.md#authentication)), and use the returned session
-cookie on `/v1`. A session names no project, so `POST /v1/runs` refuses it,
-but an admin's session can list every run across the whole org via
-`GET /v1/runs` (same section), no run id needed up front — any other session
-sees only the projects it holds a role in:
+cookie on `/v1`, after choosing a password of your own. A session names no
+project, so `POST /v1/runs` refuses it, but an admin's session can list every
+run across the whole org via `GET /v1/runs` (same section), no run id needed
+up front — any other session sees only the projects it holds a role in:
 
     curl -sS -c /tmp/cookies.txt -X POST http://localhost:3000/auth/sign-in/email \
       -H 'Content-Type: application/json' \
       -d '{"email":"you@example.test","password":"<printed password>"}'
+    curl -sS -b /tmp/cookies.txt -X PUT http://localhost:3000/v1/me/password \
+      -H 'Content-Type: application/json' \
+      -d '{"currentPassword":"<printed password>","newPassword":"<one of your own>"}'
     curl -sS -b /tmp/cookies.txt http://localhost:3000/v1/runs
+
+The change answers `204` and keeps this cookie signed in.
 
 On `http://localhost` the cookie is minted WITHOUT `Secure` — see the
 Authentication section of `docs/api.md` for why that exemption is loopback-only
@@ -248,9 +260,9 @@ every variable this file reads, with the same reasoning attached:
 ### Then create the first org, project and login — nothing else will
 
 **A fresh `onprem` stack has no org, no project, no API token and no account
-that can sign in.** The migrations create the schema and nothing else: there is
-no admin API and no seed data, so the login page rejects every address until
-this step has run. The section above ("Getting a credential") documents
+that can sign in.** The migrations create the schema and nothing else, and
+there is no seed data, so the login page rejects every address until this step
+has run. The section above ("Getting a credential") documents
 `pnpm bootstrap`, and that is a HOST command needing `pnpm install` and
 `pnpm build` on the machine — which a deployer who has only ever run
 `docker compose` does not have.
