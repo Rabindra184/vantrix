@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import type { ActivityResponse } from '@perfportal/contracts';
+import type { ActivityResponse, ProjectSummary } from '@perfportal/contracts';
+import { projectAccess } from '../access/useAccess';
 import Badge from '../components/Badge';
 import { linkButtonClasses } from '../components/Button';
 import Card from '../components/Card';
@@ -75,16 +76,39 @@ const LINK =
 export default function AttentionCard({
   activity,
   projects,
+  isAdmin,
   now,
 }: {
   readonly activity: ActivityResponse;
-  /** The org's projects, for the empty state's "Add results". Order is the caller's. */
-  readonly projects: readonly { readonly slug: string; readonly name: string }[];
+  /**
+   * The reader's projects as `GET /v1/projects` answers them, `role` included,
+   * or `undefined` while that list has no data. Two jobs: the empty state
+   * offers "Add results" to the first of them the reader may add results to,
+   * and each "Add results" link asks `projectAccess` about its own project.
+   * Order is the caller's.
+   */
+  readonly projects: readonly Pick<ProjectSummary, 'slug' | 'name' | 'role'>[] | undefined;
+  /**
+   * The session's admin flag (`useIsAdmin`): `undefined` while the session is
+   * pending. The other input `projectAccess` reads — an admin may add results
+   * to any project, whatever its `role` says. REQUIRED: a default would
+   * decide, in silence, who is offered a link.
+   */
+  readonly isAdmin: boolean | undefined;
   /** Passed in, so "51 days ago" is a function of the inputs and not of the clock. */
   readonly now: Date;
 }) {
   const compact = useIsCompact();
   const state = attentionState(activity);
+  /* ═══ "ADD RESULTS" IS DRAWN ONLY WHERE THE READER MAY ADD THEM ═══
+   * Gate by destination: the page exists to upload a run, which is
+   * `run:upload`. There is no single project here — the gap's link goes to the
+   * last run's, the empty org's to a first one — so each asks the pure
+   * `projectAccess` about its own, from the two inputs the hook reads, rather
+   * than mounting a hook per link. Not known (the flag pending, or a
+   * non-admin's list not yet answered) draws nothing. */
+  const mayAddResults = (slug: string): boolean =>
+    projectAccess(isAdmin, projects, slug).can('run:upload');
 
   return (
     <Card
@@ -117,9 +141,18 @@ export default function AttentionCard({
         </WithGlance>
       )}
       {state === 'gap' && activity.lastRun !== null && (
-        <Gap lastRun={activity.lastRun} now={now} tz={activity.window.tz} />
+        <Gap
+          lastRun={activity.lastRun}
+          now={now}
+          tz={activity.window.tz}
+          addResults={mayAddResults(activity.lastRun.project.slug)}
+        />
       )}
-      {state === 'empty' && <Empty firstProject={projects[0]} />}
+      {/* The FIRST PROJECT THE READER MAY ADD RESULTS TO, not the first
+          listed: for a non-admin who only reads the first, a link there is an
+          offer they cannot accept, while a later project of theirs is one
+          they can. An admin may add to any, so it is the first listed. */}
+      {state === 'empty' && <Empty firstProject={(projects ?? []).find((p) => mayAddResults(p.slug))} />}
     </Card>
   );
 }
@@ -255,11 +288,14 @@ function Gap({
   lastRun,
   now,
   tz,
+  addResults,
 }: {
   readonly lastRun: NonNullable<ActivityResponse['lastRun']>;
   readonly now: Date;
   /** The zone the window's days were counted in, `window.tz`. */
   readonly tz: string;
+  /** Whether the reader may add results to the last run's project — the link is drawn only then. */
+  readonly addResults: boolean;
 }) {
   const parts = [
     lastRun.test?.name ?? lastRun.project.name,
@@ -276,15 +312,18 @@ function Gap({
       >
         {parts.join(' · ')}
       </p>
-      <Link to={projectSetupPath(lastRun.project.slug)} className={linkButtonClasses}>
-        Add results
-      </Link>
+      {addResults && (
+        <Link to={projectSetupPath(lastRun.project.slug)} className={linkButtonClasses}>
+          Add results
+        </Link>
+      )}
     </div>
   );
 }
 
-/** Nothing has ever run: the two ways to start. With no project there is
- *  nowhere to add results to, so only the way that makes one is offered. */
+/** Nothing has ever run: the two ways to start. With no project the reader
+ *  may add results to there is nowhere to add them, so only the way that
+ *  makes one is offered. */
 function Empty({ firstProject }: { readonly firstProject: { readonly slug: string } | undefined }) {
   return (
     <EmptyState

@@ -556,6 +556,26 @@ describe('ProjectAccess', () => {
       expect(screen.queryByText(/needs the Manager role/)).toBeNull();
     });
 
+    /**
+     * GATE BY DESTINATION, AS EVERY LINK TO ADD RESULTS IS. The minted token's
+     * "use it to add results" opens a page that exists to upload a run, so it
+     * is drawn only with `run:upload`. A reader here holds `tokens:manage`,
+     * which asks for Manager, above `run:upload`'s Member — so no role reaching
+     * this link is refused it today, and the case pins the half that can be
+     * seen: a Manager, not only an admin, is offered it.
+     */
+    it('points a manager’s freshly-minted token at Add results', async () => {
+      renderSetup(MANAGER);
+
+      expect(await ready()).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: /create token/i }));
+      expect(await screen.findByText('pp_abc123_secret456')).toBeInTheDocument();
+      expect(within(mintCard()).getByRole('link', { name: /add results/i })).toHaveAttribute(
+        'href',
+        '/projects/alpha/setup',
+      );
+    });
+
     /** Review Focus 2: unknown is not refused. The session is held, so who is looking is not known. */
     it('draws neither the page nor a refusal while access is pending', async () => {
       vi.stubGlobal('fetch', () => new Promise<Response>(() => {}));

@@ -1,7 +1,8 @@
-import type { ReactNode } from 'react';
+import type { ComponentProps, ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import type { ActivityResponse } from '@perfportal/contracts';
+import { useIsAdmin } from '../access/useAccess';
 import { activityQueryOptions, activityRefetchInterval, browserTimeZone } from '../api/activity';
 import { ProblemError } from '../api/fetch';
 import { fetchProjects, projectsQueryKey } from '../api/projects';
@@ -65,6 +66,10 @@ export default function Home() {
   const compact = useIsCompact();
   const session = useQuery({ queryKey: sessionQueryKey, queryFn: getSession });
   const projects = useQuery({ queryKey: projectsQueryKey, queryFn: fetchProjects });
+  /* The admin flag, by the web's one definition of it — handed with the
+     project list to the attention card, whose "Add results" links each ask
+     `projectAccess` about their own project. */
+  const isAdmin = useIsAdmin();
   // The same zone and options `AuthGate` uses, so the two name one query and
   // agree about how long its answer stays fresh.
   const tz = browserTimeZone();
@@ -125,7 +130,7 @@ export default function Home() {
           }
         >
           <div data-testid="home-attention" className="min-w-0">
-            <AttentionSlot activity={activity} projects={projects.data?.items ?? []} />
+            <AttentionSlot activity={activity} projects={projects.data?.items} isAdmin={isAdmin} />
           </div>
           <div className="flex min-w-0 flex-col gap-6">
             <RunningNow activity={activity} />
@@ -189,15 +194,19 @@ type Activity = UseQueryResult<ActivityResponse>;
 function AttentionSlot({
   activity,
   projects,
+  isAdmin,
 }: {
   readonly activity: Activity;
-  readonly projects: readonly { readonly slug: string; readonly name: string }[];
+  /** `undefined` while the list has no data — "not answered" is not "no projects". */
+  readonly projects: ComponentProps<typeof AttentionCard>['projects'];
+  readonly isAdmin: boolean | undefined;
 }) {
   if (activity.data !== undefined) {
     return (
       <AttentionCard
         activity={activity.data}
         projects={projects}
+        isAdmin={isAdmin}
         now={new Date(activity.data.window.to)}
       />
     );

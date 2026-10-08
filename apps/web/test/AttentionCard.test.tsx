@@ -1,4 +1,5 @@
 import '@testing-library/jest-dom/vitest';
+import type { ComponentProps } from 'react';
 import { cleanup, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -105,12 +106,32 @@ const FILLED = activity({ attention: [BOTH, STUCK, UNNAMED], attentionTotal: 3 }
 const NOW = new Date('2026-10-06T12:00:00.000Z');
 const PROJECTS = [SEARCH, CHECKOUT];
 
-function mount(a: ActivityResponse, projects = PROJECTS) {
+/**
+ * The card as `isAdmin` sees it over `projects` — the two inputs
+ * `projectAccess` reads (a project's `role` is read only for a non-admin).
+ * NO DEFAULTS: `undefined` means something for both — the flag still pending,
+ * the list not yet answered — and a default parameter would swallow an
+ * explicit `undefined` and test the default instead.
+ */
+function mountAs(
+  a: ActivityResponse,
+  projects: ComponentProps<typeof AttentionCard>['projects'],
+  isAdmin: boolean | undefined,
+) {
   return render(
     <MemoryRouter>
-      <AttentionCard activity={a} projects={projects} now={NOW} />
+      <AttentionCard activity={a} projects={projects} isAdmin={isAdmin} now={NOW} />
     </MemoryRouter>,
   );
+}
+
+/**
+ * An ADMIN: every claim before the role cases at the foot is about the card a
+ * reader who may add results everywhere sees — and "Add results" is drawn only
+ * where the reader may upload (`run:upload`).
+ */
+function mount(a: ActivityResponse, projects: readonly { slug: string; name: string }[] = PROJECTS) {
+  return mountAs(a, projects, true);
 }
 
 describe('AttentionCard, filled', () => {
@@ -386,6 +407,66 @@ describe('AttentionCard, no runs yet', () => {
     mount(NONE);
     expect(screen.getByRole('heading', { level: 2, name: 'Tests that need attention' })).toBeInTheDocument();
     expect(screen.queryByRole('figure')).toBeNull();
+  });
+});
+
+/**
+ * ═══ "ADD RESULTS" FOLLOWS THE READER'S ROLE (project access, PR 3) ═══
+ *
+ * Gate by destination: Add results exists to upload a run, which is
+ * `run:upload`, so each of the card's two links to it — the gap's, to the
+ * last run's project, and the empty org's — is drawn only for a reader who may
+ * upload THERE. The empty org's goes to the first project the reader may add
+ * results to, which for a non-admin need not be the first listed: a link to a
+ * project they can only read would be an offer they cannot accept. Hidden
+ * until known — while the admin flag is pending, or a non-admin's list has not
+ * answered, no link is drawn.
+ */
+describe('AttentionCard — Add results follows the reader’s role', () => {
+  const GAP = activity({ runCount: 0, passRate: null, days: DAYS.map((d) => ({ ...d, total: 0, successful: 0, needsAttention: 0 })) });
+  const NONE = activity({ runCount: 0, passRate: null, lastRun: null });
+  const addResults = () => screen.queryByRole('link', { name: 'Add results' });
+
+  it('offers a member of the last run’s project Add results in a coverage gap', () => {
+    mountAs(GAP, [{ ...SEARCH, role: 'viewer' }, { ...CHECKOUT, role: 'member' }], false);
+    expect(LAST_RUN.project.slug).toBe(CHECKOUT.slug);
+    expect(addResults()).toHaveAttribute('href', projectSetupPath(CHECKOUT.slug));
+  });
+
+  it('offers a viewer of that project none, and keeps the rest of the gap', () => {
+    mountAs(GAP, [{ ...SEARCH, role: 'member' }, { ...CHECKOUT, role: 'viewer' }], false);
+    expect(screen.getByText('No runs in the last 7 days')).toBeInTheDocument();
+    expect(screen.getByTestId('attention-last-run')).toBeInTheDocument();
+    expect(addResults()).toBeNull();
+  });
+
+  it('sends a first run to the first project the reader may add results to, not the first listed', () => {
+    mountAs(NONE, [{ ...SEARCH, role: 'viewer' }, { ...CHECKOUT, role: 'member' }], false);
+    expect(addResults()).toHaveAttribute('href', projectSetupPath(CHECKOUT.slug));
+  });
+
+  it('offers no first-run Add results to a reader who may add to no project', () => {
+    mountAs(NONE, [{ ...SEARCH, role: 'viewer' }, { ...CHECKOUT, role: 'viewer' }], false);
+    expect(screen.getByText('No runs yet')).toBeInTheDocument();
+    expect(addResults()).toBeNull();
+  });
+
+  /** Review Focus 1: an admin may add results everywhere, whatever role their own row holds. */
+  it('offers an admin holding only a Viewer row Add results', () => {
+    mountAs(GAP, [{ ...CHECKOUT, role: 'viewer' }], true);
+    expect(addResults()).toHaveAttribute('href', projectSetupPath(CHECKOUT.slug));
+  });
+
+  /** Review Focus 2: nothing is drawn before access is known. */
+  it('offers none while the admin flag is pending, or before a non-admin’s projects have answered', () => {
+    mountAs(GAP, [{ ...CHECKOUT, role: 'member' }], undefined);
+    expect(addResults()).toBeNull();
+    cleanup();
+    mountAs(NONE, [{ ...CHECKOUT, role: 'member' }], undefined);
+    expect(addResults()).toBeNull();
+    cleanup();
+    mountAs(GAP, undefined, false);
+    expect(addResults()).toBeNull();
   });
 });
 

@@ -14,6 +14,7 @@ import { ACTIVITY_POLL_MS, activityQueryKey, browserTimeZone } from '../src/api/
 import Home from '../src/routes/Home';
 import { ALL_RUNS_ROUTE, projectPath } from '../src/routes/paths';
 import useIsCompact from '../src/useIsCompact';
+import { projectListBody, sessionBody } from './support/access';
 
 /**
  * ═══ THE HOME PAGE, COMPOSED ═══
@@ -542,5 +543,68 @@ describe('Home — the probe’s answer', () => {
     expect(asked('/v1/activity')).toBeLessThanOrEqual(4);
     expect(screen.queryByText('Checking your session…')).toBeNull();
     expect(within(attention()).getByRole('alert')).toHaveTextContent(refusal.detail);
+  });
+});
+
+/**
+ * ═══ THE CARD IS HANDED WHO IS LOOKING (project access, PR 3) ═══
+ *
+ * `AttentionCard.test.tsx` hands the card its admin flag and its projects, so
+ * it can only prove the card reads what it is given. This is the other side of
+ * that join: the page passes the SESSION's admin flag and the PROJECT LIST's
+ * roles, read off the real fetchers, so a gap's "Add results" is drawn for a
+ * reader who may upload to that project and for nobody else.
+ */
+describe('Home — Add results follows the reader’s role', () => {
+  const GAP = activity({
+    runCount: 0,
+    passRate: null,
+    attention: [],
+    attentionTotal: 0,
+    days: DAYS.map((d) => ({ ...d, total: 0, successful: 0, needsAttention: 0 })),
+  });
+
+  async function gapDrawn() {
+    expect(await within(attention()).findByText('No runs in the last 7 days')).toBeInTheDocument();
+  }
+
+  it('offers a member of the last run’s project Add results', async () => {
+    renderHome({
+      activity: () => json(GAP),
+      session: () => json(sessionBody(false)),
+      projects: () => json(projectListBody({ checkout: 'member', search: 'viewer' })),
+    });
+    await gapDrawn();
+    expect(
+      await within(attention()).findByRole('link', { name: 'Add results' }),
+    ).toHaveAttribute('href', '/projects/checkout/setup');
+  });
+
+  it('offers a viewer of that project none', async () => {
+    renderHome({
+      activity: () => json(GAP),
+      session: () => json(sessionBody(false)),
+      projects: () => json(projectListBody({ checkout: 'viewer', search: 'member' })),
+    });
+    await gapDrawn();
+    // Settled: the list has answered, so the absence is the role's, not a load.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(asked('/v1/projects')).toBeGreaterThan(0);
+    expect(within(attention()).queryByRole('link', { name: 'Add results' })).toBeNull();
+  });
+
+  /** Review Focus 1: the admin flag comes from the session, and an admin needs no role. */
+  it('offers an admin Add results, whatever the list says of their own role', async () => {
+    renderHome({
+      activity: () => json(GAP),
+      session: () => json(sessionBody(true)),
+      projects: () => json(projectListBody({ checkout: null, search: null })),
+    });
+    await gapDrawn();
+    expect(
+      await within(attention()).findByRole('link', { name: 'Add results' }),
+    ).toHaveAttribute('href', '/projects/checkout/setup');
   });
 });

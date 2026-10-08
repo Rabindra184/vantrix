@@ -313,14 +313,22 @@ function AccessLoaded({ slug, access }: { readonly slug: string; readonly access
              * This link is the convenience without the coupling: the reader
              * who came here to get started is pointed at the thing they came
              * to do, and the reader who came only to rotate a credential can
-             * ignore it. */}
-            <p className="mt-3 text-[0.75rem] leading-snug text-muted">
-              Next:{' '}
-              <Link to={projectSetupPath(slug)} className="text-accent underline underline-offset-2">
-                use it to add results
-              </Link>
-              .
-            </p>
+             * ignore it.
+             *
+             * Drawn only with `run:upload`, the action Add results exists to
+             * take (gate by destination), like every other link there. Every
+             * reader who reaches this block holds `tokens:manage`, a higher
+             * role, so today nobody here is refused it — the gate keeps the
+             * rule one rule rather than a list of exceptions. */}
+            {access.can('run:upload') && (
+              <p className="mt-3 text-[0.75rem] leading-snug text-muted">
+                Next:{' '}
+                <Link to={projectSetupPath(slug)} className="text-accent underline underline-offset-2">
+                  use it to add results
+                </Link>
+                .
+              </p>
+            )}
           </div>
         )}
       </Card>
