@@ -56,9 +56,8 @@ describe('the password gate', () => {
    * One route of each kind: a `@Requires` project route, a run route (whose
    * project comes from the run), a `@NotProjectScoped` list, and an admin
    * action. The caller is an ADMIN, who passes AccessGuard on every one of
-   * them, so the only thing left to refuse them is the gate. `POST
-   * /v1/projects` stands in for the admin action until `GET /v1/admin/users`
-   * exists.
+   * them, so the only thing left to refuse them is the gate. The admin
+   * actions are `POST /v1/projects` and `GET /v1/admin/users`.
    */
   it('refuses a flagged session 403 PASSWORD_CHANGE_REQUIRED on every kind of route, and an unflagged one nowhere', async () => {
     ctx = await createTestApp();
@@ -70,6 +69,7 @@ describe('the password gate', () => {
       // An empty body, so the unflagged pass creates nothing: the admin passes
       // AccessGuard and meets the handler's own 400.
       ['post', '/v1/projects', {}],
+      ['get', '/v1/admin/users'],
     ];
 
     // Unflagged first: none of these is refused by the gate, so the refusal

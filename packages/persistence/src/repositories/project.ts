@@ -39,6 +39,14 @@ interface RawProjectRow {
   latestRunVerdict: string | null;
 }
 
+/** A project as the admin's Projects list reads it: no latest run, and its creation time. */
+export interface AdminProjectRow {
+  id: string;
+  slug: string;
+  name: string;
+  createdAt: Date;
+}
+
 export interface ProjectListRow {
   id: string;
   slug: string;
@@ -134,6 +142,22 @@ export class ProjectRepository {
       name: row.name,
       settings: (row.settings ?? {}) as Record<string, unknown>,
     };
+  }
+
+  /**
+   * Every project in an org, by name, for an ADMIN's Projects list — the
+   * whole org whoever asks, so the caller must be an admin
+   * (`/v1/admin/projects` is `users:manage`). Read through Prisma rather
+   * than beside `listForOrg`'s raw SQL: `project.created_at` is a bare
+   * `timestamp`, which Prisma decodes as UTC and the raw pool would decode in
+   * this process's own zone.
+   */
+  async listForAdmin(orgId: string): Promise<AdminProjectRow[]> {
+    return this.prisma.project.findMany({
+      where: { orgId },
+      orderBy: [{ name: 'asc' }, { slug: 'asc' }],
+      select: { id: true, slug: true, name: true, createdAt: true },
+    });
   }
 
   async byId(projectId: string): Promise<ProjectRecord | null> {

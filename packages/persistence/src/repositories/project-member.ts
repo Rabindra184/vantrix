@@ -1,13 +1,17 @@
 import { PROJECT_ROLES, type ProjectRole } from '@perfportal/contracts';
-import type { PrismaClient } from '@prisma/client';
+import type { Prisma, PrismaClient } from '@prisma/client';
 
 /**
  * A person's role in each project they may see. An admin needs no row here:
  * the admin flag is `user.role`, and an admin sees every project whether or
  * not they hold one.
+ *
+ * Takes a transaction client as readily as the root one (see
+ * `OrgMemberRepository`): a create writes a person's roles in the same
+ * transaction as their membership of the install.
  */
 export class ProjectMemberRepository {
-  constructor(private readonly prisma: PrismaClient) {}
+  constructor(private readonly prisma: PrismaClient | Prisma.TransactionClient) {}
 
   /**
    * Every project the user holds a role in, keyed by project id. Meant to be

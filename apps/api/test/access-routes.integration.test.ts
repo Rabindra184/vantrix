@@ -233,6 +233,13 @@ const ACCESS_BY_ROUTE: Readonly<Record<string, Access>> = {
   'DELETE /v1/projects/:slug/tokens/:prefix': 'tokens:manage',
 
   'PUT /v1/me/password': 'own-account',
+
+  'GET /v1/admin/users': 'users:manage',
+  'POST /v1/admin/users': 'users:manage',
+  'PATCH /v1/admin/users/:userId': 'users:manage',
+  'PUT /v1/admin/users/:userId/password': 'users:manage',
+  'DELETE /v1/admin/users/:userId': 'users:manage',
+  'GET /v1/admin/projects': 'users:manage',
 };
 
 /** Where the run routes live. A run names its project through the run row. */
@@ -498,6 +505,7 @@ const PROBES: readonly Probe[] = [
   { action: 'tests:manage', role: 'manager', route: 'PATCH /v1/projects/:slug/tests/:testSlug', body: {} },
   { action: 'tokens:manage', role: 'manager', route: 'GET /v1/projects/:slug/tokens' },
   { action: 'projects:create', role: 'admin', route: 'POST /v1/projects', body: {} },
+  { action: 'users:manage', role: 'admin', route: 'GET /v1/admin/users' },
 ];
 
 /** What a request's path parameters are filled with: project A and its run, or targets that do not exist. */
@@ -508,6 +516,8 @@ interface Target {
 
 /** A package id no project holds: a well-formed uuid, so it reaches past `uuidParam` to the lookup. */
 const NO_PACKAGE = randomUUID();
+/** An account id nobody holds. Better Auth's ids are not uuids, so neither is this; nothing pipes it. */
+const NO_USER = `no-such-user-${randomUUID()}`;
 
 function fill(route: string, target: Target): { verb: Verb; url: string } {
   const [verb, template] = route.split(' ') as [Verb, string];
@@ -515,7 +525,8 @@ function fill(route: string, target: Target): { verb: Verb; url: string } {
     .replace(':slug', target.slug)
     .replace(':id', target.runId)
     .replace(':packageId', NO_PACKAGE)
-    .replace(':testSlug', 'missing');
+    .replace(':testSlug', 'missing')
+    .replace(':userId', NO_USER);
   return { verb, url };
 }
 

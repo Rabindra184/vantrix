@@ -6,6 +6,7 @@ import {
   HttpStatus,
   NotFoundException,
   ParseUUIDPipe,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { MAX_OFFSET_MS } from '@perfportal/persistence';
 import { z } from 'zod';
@@ -80,6 +81,19 @@ export function forbidden(message: string, remediation: string): ForbiddenExcept
   return Object.assign(new ForbiddenException(message), { remediation });
 }
 
+/**
+ * A session that ended WHILE its request was being handled — after the
+ * middleware accepted it, before a server-side Better Auth call that reads it
+ * again. Removing or disabling an account ends its sessions, so an admin
+ * request in flight at that moment meets this, and it is a 401 like any
+ * other ended session rather than the 500 an unknown failure would be.
+ */
+export function sessionEnded(): UnauthorizedException {
+  return Object.assign(new UnauthorizedException('This session ended while the request was being handled.'), {
+    remediation: 'Sign in at POST /auth/sign-in/email and retry.',
+  });
+}
+
 /*
  * ═══ ONE 404 FOR "NOT THERE" AND "NOT YOURS" ═══
  *
@@ -115,6 +129,16 @@ export function runNotFound(id: string): NotFoundException {
     'Check the run id. GET /v1/runs lists the runs a signed-in user can reach; '
       + 'GET /v1/projects/{slug}/runs lists those a project token can.',
   );
+}
+
+/**
+ * An account the caller's org does not hold — one in another org, one in no
+ * org at all, or one that does not exist — on `/v1/admin/users/:userId` and
+ * the members routes. One answer for all three, so an admin of one install
+ * cannot learn which accounts another holds by naming their ids.
+ */
+export function userNotFound(userId: string): NotFoundException {
+  return notFound(`No user ${userId} in this organisation.`, 'List the users with GET /v1/admin/users.');
 }
 
 /**

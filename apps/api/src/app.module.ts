@@ -1,5 +1,6 @@
 import { MiddlewareConsumer, Module, type NestModule } from '@nestjs/common';
 import { ActivityModule } from './activity/activity.module.js';
+import { AdminModule } from './admin/admin.module.js';
 import { AuthMiddleware } from './auth/auth.middleware.js';
 import { AuthModule } from './auth/auth.module.js';
 import { HealthController } from './health.controller.js';
@@ -17,7 +18,7 @@ import { TokensModule } from './tokens/tokens.module.js';
 
 @Module({
   imports: [AuthModule, RunsModule, IngestModule, LiveModule, MetricsModule, ProjectsModule, RulesModule,
-    TestsModule, ActivityModule, RunnerModule, TelemetryModule, TokensModule, MeModule],
+    TestsModule, ActivityModule, RunnerModule, TelemetryModule, TokensModule, MeModule, AdminModule],
   controllers: [HealthController],
 })
 export class AppModule implements NestModule {

@@ -88,9 +88,19 @@ export class UserRepository {
     return rows.map(toOrgUserRow);
   }
 
-  /** `userId`, if it has an `org_member` row in `orgId`; otherwise null. */
-  async findInOrg(orgId: string, userId: string): Promise<OrgUserRow | null> {
-    const row = await this.prisma.user.findFirst({
+  /**
+   * `userId`, if it has an `org_member` row in `orgId`; otherwise null.
+   *
+   * `db` is the client to read on, as for `countActiveAdmins`: inside
+   * `withAdminLock`, pass the lock's own transaction client, so a re-read of
+   * the person being changed holds no second pool connection.
+   */
+  async findInOrg(
+    orgId: string,
+    userId: string,
+    db: Prisma.TransactionClient | PrismaClient = this.prisma,
+  ): Promise<OrgUserRow | null> {
+    const row = await db.user.findFirst({
       where: { id: userId, orgMembers: { some: { orgId } } },
       select: ORG_USER_SELECT(orgId),
     });

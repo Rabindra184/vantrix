@@ -82,8 +82,20 @@ export function cookiesAreSecure(baseUrl: string, allowInsecure = false): boolea
   return !(host === 'localhost' || host === '127.0.0.1' || host === '[::1]');
 }
 
-/** The admin plugin's options, written once: the call and the type below both read them. */
-const ADMIN_OPTIONS = { defaultRole: 'user', adminRoles: ['admin'] } satisfies AdminOptions;
+/**
+ * The admin plugin's options, written once: the call and the type below both read them.
+ *
+ * `bannedUserMessage` is what a disabled person reads when they try to sign
+ * in (403 BANNED_USER). The plugin's own default — "You have been banned from
+ * this application. Please contact support…" — is the wrong word and the
+ * wrong door: the product calls a ban "disabled", and the person to ask is an
+ * admin of this install, not a support desk.
+ */
+const ADMIN_OPTIONS = {
+  defaultRole: 'user',
+  adminRoles: ['admin'],
+  bannedUserMessage: 'This account is disabled. Ask an admin to enable it.',
+} satisfies AdminOptions;
 
 /**
  * The admin plugin exactly as `createAuth` configures it, as an INTERFACE so

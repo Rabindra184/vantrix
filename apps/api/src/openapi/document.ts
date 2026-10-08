@@ -503,6 +503,17 @@ const parameters: Record<string, ParameterObject> = {
       'taken as the package\'s kind.',
     schema: { type: 'string' },
   },
+  AdminUserId: {
+    name: 'userId',
+    in: 'path',
+    required: true,
+    description:
+      'An account id, as GET /v1/admin/users lists it. Resolved within the caller\'s own ' +
+      'organisation before anything else is read: an account of another organisation, one that ' +
+      'belongs to no organisation, and an id naming nobody all answer the same 404, so an admin ' +
+      'can neither change nor probe another install\'s accounts.',
+    schema: { type: 'string' },
+  },
   StreamOffset: {
     name: 'X-Stream-Offset',
     in: 'header',
@@ -2357,6 +2368,210 @@ const paths: Record<string, PathItemObject> = {
           },
           content: problem(),
         },
+      },
+    },
+  },
+
+  // ═══ ADMINISTRATION ═══
+  //
+  // Every operation below is `users:manage`, an admin's action: a session
+  // whose account is not an admin is refused 403 ADMIN_REQUIRED, and a bearer
+  // token 403 by SessionOnlyGuard, both described by SessionRequired. Session-
+  // only for the reason the token operations are: an account is a person's to
+  // manage, and a CI credential must not be able to make itself an admin.
+  '/v1/admin/users': {
+    get: {
+      operationId: 'listAdminUsers',
+      summary: 'Every account in this organisation',
+      tags: ['admin'],
+      security: [{ cookieAuth: [] }],
+      description:
+        'Requires a signed-in session whose account is an admin. Every account with a membership ' +
+        'of this organisation, by name: whether it is an admin, whether it is disabled, whether ' +
+        'its owner must still choose a new password, and the projects it holds a role in. ' +
+        'Not paginated: an install has a team, not a page of people.',
+      responses: {
+        '200': {
+          description: 'Every account in this organisation, ordered by name.',
+          content: json(schemaRef('AdminUserListResponse')),
+        },
+        '401': ref('Unauthorized'),
+        '403': ref('SessionRequired'),
+      },
+    },
+    post: {
+      operationId: 'createAdminUser',
+      summary: 'Create an account',
+      tags: ['admin'],
+      security: [{ cookieAuth: [] }],
+      description:
+        'Requires a signed-in session whose account is an admin. Creates the account with the ' +
+        'temporary password given, joins it to this organisation, and grants it a role in each ' +
+        'project listed — the membership and the roles in one transaction. Its owner must choose a ' +
+        'new password at first sign-in: until then every other operation answers them 403 ' +
+        'PASSWORD_CHANGE_REQUIRED. If a step after the account exists fails, the account is ' +
+        'removed again, so a retry with the same email succeeds.',
+      requestBody: {
+        required: true,
+        description:
+          'An email (trimmed and lowercased), a name, a temporary password of 8 to 128 characters, ' +
+          'and optionally "isAdmin" (default false) and the project roles to grant (default none).',
+        content: json(schemaRef('CreateUserRequest')),
+      },
+      responses: {
+        '201': {
+          description:
+            'Created. The account as it now stands, its membership and project roles included — ' +
+            'all written before this response is sent, and listed at once.',
+          content: json(schemaRef('AdminUser')),
+        },
+        '400': {
+          description:
+            'Refused before anything was written. Code INVALID_USER_REQUEST when the body failed ' +
+            'CreateUserRequestSchema — a field missing or out of bounds, a project listed twice, or a ' +
+            'field the schema does not know (it is `.strict()`); code UNKNOWN_PROJECT when a ' +
+            '"projectSlug" names no project of this organisation, the slug in "detail". ' +
+            'application/problem+json with a required "remediation".',
+          content: problem(),
+        },
+        '401': ref('Unauthorized'),
+        '403': ref('SessionRequired'),
+        '409': {
+          description:
+            'An account with this email already exists, in any letter case and in any organisation ' +
+            '(code EMAIL_TAKEN). application/problem+json with a required "remediation".',
+          content: problem(),
+        },
+      },
+    },
+  },
+
+  '/v1/admin/users/{userId}': {
+    patch: {
+      operationId: 'updateAdminUser',
+      summary: 'Rename, make or unmake an admin, disable or enable an account',
+      tags: ['admin'],
+      security: [{ cookieAuth: [] }],
+      description:
+        'Requires a signed-in session whose account is an admin. Disabling an account ends every ' +
+        'session it holds and refuses its sign-in until it is enabled again. Changes to who is an ' +
+        'active admin are made one at a time per organisation, so the last active admin can never ' +
+        'be demoted or disabled — not even by two admins demoting each other at once: one ' +
+        'succeeds and the other is refused 409 LAST_ADMIN. A disabled admin does not count as ' +
+        'active.',
+      parameters: [parameters['AdminUserId']!],
+      requestBody: {
+        required: true,
+        description: 'At least one of "name", "isAdmin" or "disabled". Unmentioned fields keep their values.',
+        content: json(schemaRef('UpdateUserRequest')),
+      },
+      responses: {
+        '200': {
+          description: 'Updated. The account as it now stands.',
+          content: json(schemaRef('AdminUser')),
+        },
+        '400': {
+          description:
+            'Refused before anything changed. Code INVALID_USER_UPDATE when the body failed ' +
+            'UpdateUserRequestSchema — empty, a value out of bounds, or a field the schema does not ' +
+            'know (it is `.strict()`); code CANNOT_DISABLE_SELF when the account is the caller\'s ' +
+            'own. application/problem+json with a required "remediation".',
+          content: problem(),
+        },
+        '401': ref('Unauthorized'),
+        '403': ref('SessionRequired'),
+        '404': ref('NotFound'),
+        '409': {
+          description:
+            'The change would leave this organisation with no active admin (code LAST_ADMIN). ' +
+            'Nothing changed. application/problem+json with a required "remediation".',
+          content: problem(),
+        },
+      },
+    },
+    delete: {
+      operationId: 'deleteAdminUser',
+      summary: 'Remove an account',
+      tags: ['admin'],
+      security: [{ cookieAuth: [] }],
+      description:
+        'Requires a signed-in session whose account is an admin. Removes the account, its sessions ' +
+        'and its memberships. Run notes it wrote keep their text and lose their author. Refused for ' +
+        'the caller\'s own account, and for the last active admin.',
+      parameters: [parameters['AdminUserId']!],
+      responses: {
+        '204': { description: 'Removed. No body.' },
+        '400': {
+          description:
+            'The account is the caller\'s own (code CANNOT_REMOVE_SELF). Nothing changed. ' +
+            'application/problem+json with a required "remediation".',
+          content: problem(),
+        },
+        '401': ref('Unauthorized'),
+        '403': ref('SessionRequired'),
+        '404': ref('NotFound'),
+        '409': {
+          description:
+            'The account is the last active admin of this organisation (code LAST_ADMIN). Nothing ' +
+            'changed. application/problem+json with a required "remediation".',
+          content: problem(),
+        },
+      },
+    },
+  },
+
+  '/v1/admin/users/{userId}/password': {
+    put: {
+      operationId: 'resetAdminUserPassword',
+      summary: "Reset someone's password to a temporary one",
+      tags: ['admin'],
+      security: [{ cookieAuth: [] }],
+      description:
+        'Requires a signed-in session whose account is an admin. Sets the temporary password given, ' +
+        'requires its owner to choose a new one at their next sign-in, and ends every session they ' +
+        'hold — a cookie they had answers 401 on its next request. Refused for the caller\'s own ' +
+        'account: one\'s own password is changed with the current one, at PUT /v1/me/password.',
+      parameters: [parameters['AdminUserId']!],
+      requestBody: {
+        required: true,
+        description: 'The temporary password, 8 to 128 characters.',
+        content: json(schemaRef('SetPasswordRequest')),
+      },
+      responses: {
+        '204': { description: 'Reset, and every session of the account has ended. No body.' },
+        '400': {
+          description:
+            'Refused before anything changed. Code CANNOT_RESET_OWN_PASSWORD when the account is the ' +
+            'caller\'s own; code INVALID_PASSWORD_RESET when the body failed SetPasswordRequestSchema ' +
+            '— "password" missing or outside 8 to 128 characters, or a field the schema does not ' +
+            'know (it is `.strict()`). application/problem+json with a required "remediation".',
+          content: problem(),
+        },
+        '401': ref('Unauthorized'),
+        '403': ref('SessionRequired'),
+        '404': ref('NotFound'),
+      },
+    },
+  },
+
+  '/v1/admin/projects': {
+    get: {
+      operationId: 'listAdminProjects',
+      summary: 'Every project in this organisation, with its member count',
+      tags: ['admin'],
+      security: [{ cookieAuth: [] }],
+      description:
+        'Requires a signed-in session whose account is an admin. Every project in this ' +
+        'organisation by name — what GET /v1/projects shows an admin too — with how many people ' +
+        'hold a role in each. An admin needs no role to see a project, so is counted only where ' +
+        'they hold one.',
+      responses: {
+        '200': {
+          description: 'Every project in this organisation, ordered by name.',
+          content: json(schemaRef('AdminProjectListResponse')),
+        },
+        '401': ref('Unauthorized'),
+        '403': ref('SessionRequired'),
       },
     },
   },
