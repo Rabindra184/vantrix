@@ -514,6 +514,31 @@ const parameters: Record<string, ParameterObject> = {
       'can neither change nor probe another install\'s accounts.',
     schema: { type: 'string' },
   },
+  MemberProjectSlug: {
+    name: 'slug',
+    in: 'path',
+    required: true,
+    description:
+      'A project slug within the caller\'s own organisation. Like the token and rule routes, this ' +
+      'route accepts no bearer credential at all (see SessionOnlyGuard). A slug outside the ' +
+      'caller\'s org, or one they hold no role in, 404s rather than 403 when listing, so the ' +
+      'response never confirms that the project exists; a change by anyone but an admin is refused ' +
+      'ADMIN_REQUIRED before the slug is looked up at all, so a missing project and a real one ' +
+      'answer alike.',
+    schema: { type: 'string' },
+  },
+  MemberUserId: {
+    name: 'userId',
+    in: 'path',
+    required: true,
+    description:
+      'An account id, as GET /v1/admin/users and GET /v1/projects/{slug}/members list it. ' +
+      'Resolved within the caller\'s own organisation first: an account of another organisation, ' +
+      'one that belongs to no organisation, and an id naming nobody all answer the same 404, and ' +
+      'nothing changes. Someone in the organisation who holds no role in this project gets a 404 ' +
+      'of its own, naming the project.',
+    schema: { type: 'string' },
+  },
   StreamOffset: {
     name: 'X-Stream-Offset',
     in: 'header',
@@ -1656,6 +1681,156 @@ const paths: Record<string, PathItemObject> = {
         '401': ref('Unauthorized'),
         '403': ref('SessionRequired'),
         '404': ref('NotFound'),
+      },
+    },
+  },
+
+  // ═══ PROJECT MEMBERS ═══
+  //
+  // Who holds a role in a project. Listing is `members:read`, which every role
+  // in the project has; adding, changing and removing are `members:manage`,
+  // an admin's action, refused to anyone else 403 ADMIN_REQUIRED before the
+  // project is looked up. Session-only, as /v1/admin is: a membership is a
+  // person's access, and a bearer token names no person — so a bearer token
+  // is refused 403 by SessionOnlyGuard, which SessionRequired describes with
+  // the role and admin refusals.
+  '/v1/projects/{slug}/members': {
+    get: {
+      operationId: 'listProjectMembers',
+      summary: "List a project's members",
+      tags: ['members'],
+      security: [{ cookieAuth: [] }],
+      description:
+        'Requires a signed-in session holding any role in the project, or an admin\'s — refused ' +
+        'for ANY bearer token regardless of scopes. Everyone holding a role in the project, by ' +
+        'name, with their email, their role and when it was granted. An admin needs no role to ' +
+        'see a project, so is listed only where they hold one.',
+      parameters: [parameters['MemberProjectSlug']!],
+      responses: {
+        '200': {
+          description: 'Everyone holding a role in the project, ordered by name.',
+          content: json(schemaRef('MemberListResponse')),
+        },
+        '401': ref('Unauthorized'),
+        '403': ref('SessionRequired'),
+        '404': ref('NotFound'),
+      },
+    },
+    post: {
+      operationId: 'addProjectMember',
+      summary: 'Give someone a role in a project',
+      tags: ['members'],
+      security: [{ cookieAuth: [] }],
+      description:
+        'Requires a signed-in session whose account is an admin. Gives an account of this ' +
+        'organisation the role named, in force on that person\'s next request: the project appears ' +
+        'in their GET /v1/projects with that role, and every operation is judged by it. Someone ' +
+        'who already holds a role here is refused 409 MEMBER_EXISTS rather than having it changed ' +
+        '— a role is changed with PATCH.',
+      parameters: [parameters['MemberProjectSlug']!],
+      requestBody: {
+        required: true,
+        description: 'The account\'s "userId", as GET /v1/admin/users lists it, and the "role" to give it.',
+        content: json(schemaRef('AddMemberRequest')),
+      },
+      responses: {
+        '201': {
+          description:
+            'Added. The membership as it now stands — written before this response is sent, and ' +
+            'listed at once.',
+          content: json(schemaRef('ProjectMember')),
+        },
+        '400': {
+          description:
+            'Refused before anything was written. Code INVALID_MEMBER_REQUEST when the body failed ' +
+            'AddMemberRequestSchema — "userId" or "role" missing, a role that is not "viewer", ' +
+            '"member" or "manager", or a field the schema does not know (it is `.strict()`). ' +
+            'application/problem+json with a required "remediation".',
+          content: problem(),
+        },
+        '401': ref('Unauthorized'),
+        '403': ref('SessionRequired'),
+        '404': {
+          description:
+            'No project with this slug in this organisation; or "userId" names no account of this ' +
+            'organisation — one of another organisation, one in none, and an id naming nobody all ' +
+            'answer alike. Nothing was written. application/problem+json with a required ' +
+            '"remediation".',
+          content: problem(),
+        },
+        '409': {
+          description:
+            'The account already holds a role in this project (code MEMBER_EXISTS) — including ' +
+            'one given by a request racing this one, which loses. Nothing changed. ' +
+            'application/problem+json with a required "remediation".',
+          content: problem(),
+        },
+      },
+    },
+  },
+
+  '/v1/projects/{slug}/members/{userId}': {
+    patch: {
+      operationId: 'updateProjectMember',
+      summary: "Change someone's role in a project",
+      tags: ['members'],
+      security: [{ cookieAuth: [] }],
+      description:
+        'Requires a signed-in session whose account is an admin. Changes the role of someone who ' +
+        'holds one here, in force on their next request. Never adds: someone without a role in ' +
+        'the project is a 404.',
+      parameters: [parameters['MemberProjectSlug']!, parameters['MemberUserId']!],
+      requestBody: {
+        required: true,
+        description: 'The new "role".',
+        content: json(schemaRef('UpdateMemberRequest')),
+      },
+      responses: {
+        '200': {
+          description: 'Changed. The membership as it now stands.',
+          content: json(schemaRef('ProjectMember')),
+        },
+        '400': {
+          description:
+            'Refused before anything changed. Code INVALID_MEMBER_UPDATE when the body failed ' +
+            'UpdateMemberRequestSchema — "role" missing or not "viewer", "member" or "manager", or a ' +
+            'field the schema does not know (it is `.strict()`). application/problem+json with a ' +
+            'required "remediation".',
+          content: problem(),
+        },
+        '401': ref('Unauthorized'),
+        '403': ref('SessionRequired'),
+        '404': {
+          description:
+            'No project with this slug in this organisation; "userId" names no account of this ' +
+            'organisation; or the account holds no role in this project. Nothing changed. ' +
+            'application/problem+json with a required "remediation".',
+          content: problem(),
+        },
+      },
+    },
+    delete: {
+      operationId: 'removeProjectMember',
+      summary: "Take someone's role in a project away",
+      tags: ['members'],
+      security: [{ cookieAuth: [] }],
+      description:
+        'Requires a signed-in session whose account is an admin. Takes away the role someone ' +
+        'holds here, in force on their next request: the project leaves their GET /v1/projects, ' +
+        'and naming it answers them the 404 a project that does not exist gets. Their account, ' +
+        'their place in the organisation and their roles in other projects stay.',
+      parameters: [parameters['MemberProjectSlug']!, parameters['MemberUserId']!],
+      responses: {
+        '204': { description: 'Removed. No body.' },
+        '401': ref('Unauthorized'),
+        '403': ref('SessionRequired'),
+        '404': {
+          description:
+            'No project with this slug in this organisation; "userId" names no account of this ' +
+            'organisation; or the account holds no role in this project. Nothing changed. ' +
+            'application/problem+json with a required "remediation".',
+          content: problem(),
+        },
       },
     },
   },

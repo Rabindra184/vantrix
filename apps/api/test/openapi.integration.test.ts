@@ -158,6 +158,12 @@ describe('OpenAPI document', () => {
       // /v1/admin/users lists it at once, and PATCH, PUT and DELETE work on the
       // id in that very response — admin.integration.test.ts drives both.
       { path: '/v1/admin/users', method: 'post' },
+      // The membership is the resource created, and it is complete and
+      // addressable the moment the response is sent: the handler awaits the
+      // INSERT, then READS THE ROW BACK and answers it. GET .../members lists
+      // it at once, and PATCH and DELETE work on the person in that very
+      // response — members.integration.test.ts drives all three.
+      { path: '/v1/projects/{slug}/members', method: 'post' },
     ];
     for (const { path, method, op } of operations(doc)) {
       if (CREATES_SYNCHRONOUSLY.some((c) => c.path === path && c.method === method)) {

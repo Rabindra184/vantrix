@@ -232,6 +232,11 @@ const ACCESS_BY_ROUTE: Readonly<Record<string, Access>> = {
   'POST /v1/projects/:slug/tokens': 'tokens:manage',
   'DELETE /v1/projects/:slug/tokens/:prefix': 'tokens:manage',
 
+  'GET /v1/projects/:slug/members': 'members:read',
+  'POST /v1/projects/:slug/members': 'members:manage',
+  'PATCH /v1/projects/:slug/members/:userId': 'members:manage',
+  'DELETE /v1/projects/:slug/members/:userId': 'members:manage',
+
   'PUT /v1/me/password': 'own-account',
 
   'GET /v1/admin/users': 'users:manage',
@@ -504,6 +509,8 @@ const PROBES: readonly Probe[] = [
   { action: 'rules:edit', role: 'member', route: 'POST /v1/projects/:slug/rules', body: {} },
   { action: 'tests:manage', role: 'manager', route: 'PATCH /v1/projects/:slug/tests/:testSlug', body: {} },
   { action: 'tokens:manage', role: 'manager', route: 'GET /v1/projects/:slug/tokens' },
+  { action: 'members:read', role: 'viewer', route: 'GET /v1/projects/:slug/members' },
+  { action: 'members:manage', role: 'admin', route: 'POST /v1/projects/:slug/members', body: {} },
   { action: 'projects:create', role: 'admin', route: 'POST /v1/projects', body: {} },
   { action: 'users:manage', role: 'admin', route: 'GET /v1/admin/users' },
 ];
@@ -664,10 +671,21 @@ describe('the role matrix', () => {
           expect([res.status, res.body.code, res.body.detail]).toStrictEqual([403, 'ADMIN_REQUIRED', `${label} needs an admin.`]);
         });
 
+        // On a :slug route the refusal comes before any lookup (PR 1 Ruling
+        // 2), so a project that does not exist gets the very answer a real
+        // one the caller cannot see gets, and neither names the project.
+        const namesProject = p.route.split(' ')[1]!.split('/').includes(':slug');
         for (const { key, who } of OUTSIDERS) {
-          it(`refuses a ${who} ADMIN_REQUIRED`, async () => {
+          it(`refuses a ${who} ADMIN_REQUIRED${namesProject ? ', for a missing project as for a real one' : ''}`, async () => {
             const res = await probe(p, A, cookies[key]);
             expect([res.status, res.body.code]).toStrictEqual([403, 'ADMIN_REQUIRED']);
+            if (namesProject) {
+              const missing = await probe(p, MISSING, cookies[key]);
+              expect(
+                masked(missing.body, MISSING.slug),
+                'a missing project answered differently from an invisible one',
+              ).toStrictEqual(masked(res.body, A.slug));
+            }
           });
         }
       } else {

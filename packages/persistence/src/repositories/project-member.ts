@@ -41,25 +41,23 @@ export class ProjectMemberRepository {
     });
   }
 
-  /**
-   * Everyone holding a role in the project, by name. `addedAt` is the row's
-   * `created_at`, a timestamptz, so it is the same instant whoever reads it.
-   */
-  async listForProject(
-    projectId: string,
-  ): Promise<{ userId: string; name: string; email: string; role: ProjectRole; addedAt: Date }[]> {
+  /** Everyone holding a role in the project, by name. */
+  async listForProject(projectId: string): Promise<ProjectMemberRow[]> {
     const rows = await this.prisma.projectMember.findMany({
       where: { projectId },
       orderBy: [{ user: { name: 'asc' } }, { userId: 'asc' }],
-      select: { userId: true, role: true, createdAt: true, user: { select: { name: true, email: true } } },
+      select: MEMBER_SELECT,
     });
-    return rows.map((r) => ({
-      userId: r.userId,
-      name: r.user.name,
-      email: r.user.email,
-      role: asProjectRole(r.role),
-      addedAt: r.createdAt,
-    }));
+    return rows.map(toMemberRow);
+  }
+
+  /** One person's membership of the project, in `listForProject`'s shape; null when they hold none. */
+  async find(projectId: string, userId: string): Promise<ProjectMemberRow | null> {
+    const row = await this.prisma.projectMember.findUnique({
+      where: { projectId_userId: { projectId, userId } },
+      select: MEMBER_SELECT,
+    });
+    return row ? toMemberRow(row) : null;
   }
 
   /** Changes an existing membership's role. False when there is none: this never creates one. */
@@ -81,10 +79,44 @@ export class ProjectMemberRepository {
     return counts;
   }
 
-  /** A no-op for a membership that does not exist. */
-  async remove(projectId: string, userId: string): Promise<void> {
-    await this.prisma.projectMember.deleteMany({ where: { projectId, userId } });
+  /**
+   * Ends a membership. False when there was none, and then nothing changed:
+   * the delete itself says whether it found a row, so a caller answering
+   * "not a member" needs no read before it that a concurrent removal could
+   * make stale.
+   */
+  async remove(projectId: string, userId: string): Promise<boolean> {
+    const { count } = await this.prisma.projectMember.deleteMany({ where: { projectId, userId } });
+    return count > 0;
   }
+}
+
+/**
+ * A membership as the members routes answer it. `addedAt` is the row's
+ * `created_at`, a timestamptz, so it is the same instant whoever reads it.
+ */
+export interface ProjectMemberRow {
+  userId: string;
+  name: string;
+  email: string;
+  role: ProjectRole;
+  addedAt: Date;
+}
+
+const MEMBER_SELECT = {
+  userId: true,
+  role: true,
+  createdAt: true,
+  user: { select: { name: true, email: true } },
+} as const;
+
+function toMemberRow(r: {
+  userId: string;
+  role: string;
+  createdAt: Date;
+  user: { name: string; email: string };
+}): ProjectMemberRow {
+  return { userId: r.userId, name: r.user.name, email: r.user.email, role: asProjectRole(r.role), addedAt: r.createdAt };
 }
 
 /**

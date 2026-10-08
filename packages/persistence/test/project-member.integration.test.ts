@@ -57,12 +57,29 @@ describe('ProjectMemberRepository', () => {
     expect(await repo.rolesForUser('u1')).toEqual(new Map([[projectId, 'member']]));
   });
 
-  it('removes a membership, and only that one', async () => {
+  it('removes a membership, and only that one, and says when there was none', async () => {
     const repo = new ProjectMemberRepository(prisma);
     await repo.add({ projectId, userId: 'u1', role: 'member', addedBy: null });
     await repo.add({ projectId: otherProjectId, userId: 'u1', role: 'viewer', addedBy: null });
-    await repo.remove(projectId, 'u1');
+    expect(await repo.remove(projectId, 'u1')).toBe(true);
     expect(await repo.rolesForUser('u1')).toEqual(new Map([[otherProjectId, 'viewer']]));
+    // Gone now, and never there for u2: nothing to remove, and nothing else moved.
+    expect(await repo.remove(projectId, 'u1')).toBe(false);
+    expect(await repo.remove(projectId, 'u2')).toBe(false);
+    expect(await repo.rolesForUser('u1')).toEqual(new Map([[otherProjectId, 'viewer']]));
+  });
+
+  it('finds one person’s membership of one project, as the list shows it, and null where there is none', async () => {
+    const repo = new ProjectMemberRepository(prisma);
+    await repo.add({ projectId, userId: 'u1', role: 'manager', addedBy: 'u2' });
+    await repo.add({ projectId: otherProjectId, userId: 'u2', role: 'viewer', addedBy: null });
+
+    const found = await repo.find(projectId, 'u1');
+    expect(found).toEqual((await repo.listForProject(projectId))[0]);
+    expect(found).toMatchObject({ userId: 'u1', name: 'U1', email: 'u1@example.test', role: 'manager' });
+    // u2 holds a role, but in the other project; nobody holds none at all.
+    expect(await repo.find(projectId, 'u2')).toBeNull();
+    expect(await repo.find(projectId, 'nobody')).toBeNull();
   });
 
   it("goes with the project when the project is deleted", async () => {
