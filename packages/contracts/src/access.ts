@@ -107,6 +107,15 @@ export function canPerform(
   return roleSatisfies(who.role, required);
 }
 
+/**
+ * A project role as a sentence names it: the enum's own word, capitalised
+ * (`member` reads "Member"). `accessRefusal` and the API document's role
+ * sentences both spell a role through this, so the two cannot disagree.
+ */
+export function roleName(role: ProjectRole): string {
+  return `${role.charAt(0).toUpperCase()}${role.slice(1)}`;
+}
+
 /** The words a refused action is answered with: a 403's code, detail and remediation. */
 export type AccessRefusal = {
   code: 'ROLE_REQUIRED' | 'ADMIN_REQUIRED';
@@ -128,7 +137,7 @@ export function accessRefusal(action: AccessAction): AccessRefusal {
   }
   return {
     code: 'ROLE_REQUIRED',
-    detail: `${label} needs the ${role.charAt(0).toUpperCase()}${role.slice(1)} role in this project.`,
+    detail: `${label} needs the ${roleName(role)} role in this project.`,
     remediation: 'Ask an admin to change your role.',
   };
 }

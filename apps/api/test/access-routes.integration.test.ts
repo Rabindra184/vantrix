@@ -28,6 +28,7 @@ import {
 import { IS_PUBLIC_KEY, SCOPES_KEY } from '../src/auth/scopes.decorator.js';
 import { SessionOnlyGuard } from '../src/auth/session-only.guard.js';
 import { projectNotFound, runNotFound } from '../src/common/validation.js';
+import { sessionAccessSentence } from '../src/openapi/access-sentence.js';
 import { buildOpenApiDocument } from '../src/openapi/document.js';
 import { createTestApp, type TestContext } from './support/app.js';
 import { signInAsAdmin, signInAsProjectMember } from './support/session.js';
@@ -412,6 +413,23 @@ describe('a project action sits on a route that names its project', () => {
 });
 
 describe('the document names the refusals the guard sends', () => {
+  type Op = {
+    operationId?: string;
+    description?: string;
+    responses?: Record<string, { $ref?: string; description?: string }>;
+  };
+  const doc = buildOpenApiDocument() as unknown as {
+    paths: Record<string, Record<string, Op>>;
+    components: { responses: Record<string, { description?: string }> };
+  };
+  /** Every operation, keyed `VERB /path` with each parameter written `{}`, so a walked `:slug` meets a documented `{slug}`. */
+  const ops = new Map<string, Op>();
+  for (const [path, item] of Object.entries(doc.paths)) {
+    for (const [verb, op] of Object.entries(item)) ops.set(`${verb.toUpperCase()} ${path.replace(/\{[^}]+\}/g, '{}')}`, op);
+  }
+  const operationOf = (r: WalkedRoute): Op | undefined =>
+    ops.get(`${r.label.split(' ')[0]} ${r.path.replace(/:[A-Za-z0-9_]+/g, '{}')}`);
+
   /**
    * A generated client branches on the documented 403 and 404. Every
    * `@Requires` route can now send ROLE_REQUIRED or ADMIN_REQUIRED, and every
@@ -421,16 +439,6 @@ describe('the document names the refusals the guard sends', () => {
    * later is held to it by existing.
    */
   it('gives every @Requires operation a 403 naming both codes, and every project action a 404', () => {
-    type Op = { responses?: Record<string, { $ref?: string; description?: string }> };
-    const doc = buildOpenApiDocument() as unknown as {
-      paths: Record<string, Record<string, Op>>;
-      components: { responses: Record<string, { description?: string }> };
-    };
-    const shape = (path: string) => path.replace(/:[A-Za-z0-9_]+/g, '{}');
-    const ops = new Map<string, Op>();
-    for (const [path, item] of Object.entries(doc.paths)) {
-      for (const [verb, op] of Object.entries(item)) ops.set(`${verb.toUpperCase()} ${path.replace(/\{[^}]+\}/g, '{}')}`, op);
-    }
     const describeResponse = (r: { $ref?: string; description?: string } | undefined): string =>
       r?.$ref ? (doc.components.responses[r.$ref.replace('#/components/responses/', '')]?.description ?? '') : (r?.description ?? '');
 
@@ -438,8 +446,7 @@ describe('the document names the refusals the guard sends', () => {
     expect(declared.length).toBeGreaterThan(20);
     const gaps: string[] = [];
     for (const r of declared) {
-      const [verb] = r.label.split(' ');
-      const op = ops.get(`${verb} ${shape(r.path)}`);
+      const op = operationOf(r);
       if (op === undefined) {
         gaps.push(`${r.label}: no operation`);
         continue;
@@ -453,6 +460,63 @@ describe('the document names the refusals the guard sends', () => {
       }
     }
     expect(gaps, gaps.join('\n')).toEqual([]);
+  });
+
+  /**
+   * ═══ THE ROLE A SESSION NEEDS IS THE DESCRIPTION'S FIRST SENTENCE ═══
+   *
+   * The 403 says a refusal CAN come; only the description can say which role
+   * avoids it. Each `@Requires` operation opens with `sessionAccessSentence`
+   * for the action its route declares, so the document is read off the same
+   * row the guard judges by and a hand-written role sentence cannot drift
+   * from it. Exactly once: the same sentence written in again further on, by
+   * hand or by a second call, says one thing twice.
+   *
+   * The floor counts routes FOUND with `@Requires`, never the ones that
+   * matched, and is derived rather than chosen: it must equal the actions
+   * ACCESS_BY_ROUTE writes down, so a walk that has rotted to fewer routes
+   * fails here instead of checking nothing.
+   */
+  it('opens every @Requires operation with the role a signed-in session needs, once', () => {
+    const declared = ROUTES.filter((r) => r.requires !== undefined);
+    const written = Object.values(ACCESS_BY_ROUTE).filter((a): a is AccessAction => Object.hasOwn(ACCESS_ACTIONS, a));
+    expect(written.length).toBeGreaterThan(0);
+    expect(declared.length, 'routes walked with @Requires against the actions ACCESS_BY_ROUTE writes down').toBe(
+      written.length,
+    );
+
+    const gaps: string[] = [];
+    for (const r of declared) {
+      const op = operationOf(r);
+      const sentence = sessionAccessSentence(r.requires!);
+      const description = op?.description ?? '';
+      const times = description.split(sentence).length - 1;
+      if (op === undefined) gaps.push(`${r.label}: no operation`);
+      else if (!description.startsWith(sentence)) {
+        gaps.push(`${r.label} (${op.operationId}, ${r.requires}): opens "${description.slice(0, 70)}…", not "${sentence}"`);
+      } else if (times !== 1) gaps.push(`${r.label} (${op.operationId}): says "${sentence}" ${times} times`);
+    }
+    expect(gaps, `operations that do not open with their role sentence:\n${gaps.join('\n')}`).toEqual([]);
+  });
+
+  /**
+   * The case above takes each sentence from `sessionAccessSentence`, so it
+   * proves the document USES the function, not what the function says. These
+   * are its three shapes written out, one action per shape and both ranked
+   * roles, so a role spelled in lower case or a lost "or an admin account"
+   * fails here.
+   */
+  it('words the three kinds of requirement', () => {
+    expect(sessionAccessSentence('projects:create')).toBe('A signed-in session needs an admin account.');
+    expect(sessionAccessSentence('project:read')).toBe(
+      'A signed-in session needs any role in this project, or an admin account.',
+    );
+    expect(sessionAccessSentence('run:upload')).toBe(
+      'A signed-in session needs the Member role or above in this project, or an admin account.',
+    );
+    expect(sessionAccessSentence('tokens:manage')).toBe(
+      'A signed-in session needs the Manager role or above in this project, or an admin account.',
+    );
   });
 });
 

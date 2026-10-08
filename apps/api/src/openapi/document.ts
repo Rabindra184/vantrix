@@ -1,3 +1,4 @@
+import { sessionAccessSentence } from './access-sentence.js';
 import { schemaComponents, schemaRef, type JsonSchema } from './schemas.js';
 
 // A deliberately loose, hand-rolled OpenAPI 3.1 shape rather than
@@ -923,6 +924,12 @@ const authFailureResponses = { '401': ref('Unauthorized'), '403': ref('Forbidden
 // Paths
 // ---------------------------------------------------------------------------
 
+// An operation whose route declares `@Requires` opens its description with
+// `sessionAccessSentence(<that action>)`: the role a signed-in session needs,
+// read from ACCESS_ACTIONS rather than written here. The action is named by
+// hand at each call, so access-routes.integration.test.ts checks that each
+// operation's sentence is the one its route's declared action produces.
+
 const paths: Record<string, PathItemObject> = {
   '/v1/runs': {
     get: {
@@ -1016,6 +1023,7 @@ const paths: Record<string, PathItemObject> = {
       summary: "Get a run by id — the ingest response's status URL",
       tags: ['runs'],
       description:
+        sessionAccessSentence('project:read') + ' ' +
         'Requires the "read" scope. Returns the exact same status code that ' +
         'POST /v1/runs returned (or would have returned, had it not been waiting) for this ' +
         'run\'s current state — see that operation\'s description for the shared state machine. ' +
@@ -1140,6 +1148,7 @@ const paths: Record<string, PathItemObject> = {
       // names nobody to attribute them to.
       security: [{ cookieAuth: [] }],
       description:
+        sessionAccessSentence('run:note') + ' ' +
         'Requires a signed-in session — refused for ANY bearer token regardless of scopes (see ' +
         'SessionOnlyGuard and the 403 below). A note is a short text a person keeps on a run ' +
         '("baseline after the cache change"); it is NOT the run\'s "description", which is the ' +
@@ -1172,6 +1181,7 @@ const paths: Record<string, PathItemObject> = {
       summary: 'Per-scope statistics table for a run',
       tags: ['metrics'],
       description:
+        sessionAccessSentence('project:read') + ' ' +
         'Requires the "read" scope. Indicator bands ("indicators" on each row, and the ' +
         'top-level "indicators") are folded from the run\'s stored histogram at the project\'s ' +
         'current "indicators" bounds — see "configurable" and "bounds" on the response.',
@@ -1198,6 +1208,7 @@ const paths: Record<string, PathItemObject> = {
       summary: 'This run in the context of its cohort',
       tags: ['metrics'],
       description:
+        sessionAccessSentence('project:read') + ' ' +
         'Requires the "read" scope. The cohort is every complete run of the SAME SIMULATION ' +
         'in the same project, newest first — with a null simulation forming its own cohort ' +
         'rather than matching every run. "cohortSize" is the whole cohort and may exceed the ' +
@@ -1223,6 +1234,7 @@ const paths: Record<string, PathItemObject> = {
       summary: 'The lifecycle events of a run the on-prem runner executed',
       tags: ['runs'],
       description:
+        sessionAccessSentence('project:read') + ' ' +
         'Requires the "read" scope. What the Logs tab shows: the events the platform and the ' +
         'on-prem runner recorded for this run\'s runner job, oldest first — the job queued, ' +
         'claimed, the Deploying, Injecting and Ending phases, and how the run ended. Each event ' +
@@ -1248,7 +1260,9 @@ const paths: Record<string, PathItemObject> = {
       operationId: 'getRunSeries',
       summary: 'Time-series buckets for one scope/name within a run',
       tags: ['metrics'],
-      description: 'Requires the "read" scope.',
+      description:
+        sessionAccessSentence('project:read') + ' ' +
+        'Requires the "read" scope.',
       parameters: [
         parameters['RunId']!,
         parameters['SeriesScope']!,
@@ -1271,7 +1285,9 @@ const paths: Record<string, PathItemObject> = {
       operationId: 'getRunErrors',
       summary: 'Aggregated error table for a run',
       tags: ['metrics'],
-      description: 'Requires the "read" scope. See "scope" below for the default-scope behavior.',
+      description:
+        sessionAccessSentence('project:read') + ' ' +
+        'Requires the "read" scope. See "scope" below for the default-scope behavior.',
       parameters: [parameters['RunId']!, parameters['ErrorsScope']!, parameters['ErrorsName']!],
       responses: {
         '200': { description: 'Distinct error messages and counts, most frequent first.', content: json(schemaRef('ErrorsResponse')) },
@@ -1303,6 +1319,7 @@ const paths: Record<string, PathItemObject> = {
       summary: 'Failed-request counts over time for a run',
       tags: ['metrics'],
       description:
+        sessionAccessSentence('project:read') + ' ' +
         'Requires the "read" scope. Buckets are on the same elapsed-ms axis as ' +
         'GET /v1/runs/{id}/series, so the two line up point for point. Unlike ' +
         'GET /v1/runs/{id}/errors — which aggregates the whole run and takes no window — ' +
@@ -1330,6 +1347,7 @@ const paths: Record<string, PathItemObject> = {
       summary: 'Response-time histogram (Gatling-style bucketed distribution) for a run',
       tags: ['metrics'],
       description:
+        sessionAccessSentence('project:read') + ' ' +
         'Requires the "read" scope. Folds the run\'s stored histogram for the given ' +
         'scope/name/family into Gatling-parity buckets. Unlike /series, an unmatched ' +
         'scope/name/family combination 404s rather than returning an empty result — see ' +
@@ -1357,6 +1375,7 @@ const paths: Record<string, PathItemObject> = {
       summary: 'Active-users-over-time series, per scenario and summed across scenarios',
       tags: ['metrics'],
       description:
+        sessionAccessSentence('project:read') + ' ' +
         'Requires the "read" scope. Returns every scenario in the run; "from"/"to" narrow ' +
         'the offsets, they never drop a scenario. "total" is the per-scenario SUM at each ' +
         'offset (not a true max-of-sums) — this is what Gatling\'s own "All users" series is, ' +
@@ -1377,6 +1396,7 @@ const paths: Record<string, PathItemObject> = {
       summary: 'Response-time-vs-throughput scatter plot for one request',
       tags: ['metrics'],
       description:
+        sessionAccessSentence('project:read') + ' ' +
         'Requires the "read" scope. For each bucket where a status-filtered p95 digest exists ' +
         'for the named request, plots that (truncated, not rounded) p95 against the run-level ' +
         'requests/sec rate in the same bucket — one point per status per bucket, so a bucket ' +
@@ -1402,6 +1422,7 @@ const paths: Record<string, PathItemObject> = {
       summary: "Host telemetry for this run, on the run's own elapsed axis",
       tags: ['metrics'],
       description:
+        sessionAccessSentence('project:read') + ' ' +
         'Requires the "read" scope. Every point\'s "startOffsetMs" is elapsed ms from this ' +
         'run\'s own "toolStartedAt", bucketed at this run\'s own "bucketWidthMs" — the same ' +
         'axis GET /v1/runs/{id}/series uses, which is what lets "from"/"to" here mean exactly ' +
@@ -1453,11 +1474,11 @@ const paths: Record<string, PathItemObject> = {
       tags: ['projects'],
       security: [{ cookieAuth: [] }],
       description:
-        'Requires a signed-in session whose account is an admin: any other session is refused ' +
-        '403 ADMIN_REQUIRED, whatever role it holds in any project. A project is the application ' +
-        'or service boundary that tokens, on-prem runner jobs, and performance runs are attached ' +
-        'to. Bearer tokens are refused here because they are already project-scoped and must not ' +
-        'create siblings.',
+        sessionAccessSentence('projects:create') + ' ' +
+        'Any other session is refused 403 ADMIN_REQUIRED, whatever role it holds in any project. ' +
+        'A project is the application or service boundary that tokens, on-prem runner jobs, and ' +
+        'performance runs are attached to. Bearer tokens are refused here because they are ' +
+        'already project-scoped and must not create siblings.',
       requestBody: {
         required: true,
         description: 'A display name and URL slug for the new project.',
@@ -1519,6 +1540,7 @@ const paths: Record<string, PathItemObject> = {
       // the handler always refuses.
       security: [{ cookieAuth: [] }],
       description:
+        sessionAccessSentence('run:upload') + ' ' +
         'Requires a signed-in session — refused for ANY bearer token regardless of scopes ' +
         '(SessionOnlyGuard, the same refusal the token and SLA-rule operations carry). This is ' +
         'the session-reachable ingest route: POST /v1/runs reads the project off a ' +
@@ -1591,6 +1613,7 @@ const paths: Record<string, PathItemObject> = {
       // handler always rejects.
       security: [{ cookieAuth: [] }],
       description:
+        sessionAccessSentence('tokens:manage') + ' ' +
         'Requires a signed-in session — refused for ANY bearer token regardless of scopes (see ' +
         'SessionOnlyGuard and the 403 response below). "token" in the 201 response is the ONLY ' +
         'moment the plaintext credential is ever returned: only its hash is persisted, so it ' +
@@ -1633,6 +1656,7 @@ const paths: Record<string, PathItemObject> = {
       // handler always rejects.
       security: [{ cookieAuth: [] }],
       description:
+        sessionAccessSentence('tokens:manage') + ' ' +
         'Requires a signed-in session — refused for ANY bearer token regardless of scopes (see ' +
         'SessionOnlyGuard and the 403 response below). Newest first. Each entry is a ' +
         'TokenSummary: "token" and the stored hash never appear here — the plaintext existed ' +
@@ -1664,6 +1688,7 @@ const paths: Record<string, PathItemObject> = {
       // scopes — SessionOnlyGuard refuses it before the handler runs.
       security: [{ cookieAuth: [] }],
       description:
+        sessionAccessSentence('tokens:manage') + ' ' +
         'Requires a signed-in session — refused for ANY bearer token regardless of scopes (see ' +
         'SessionOnlyGuard and the 403 response below). Sets "revokedAt"; every subsequent ' +
         'authentication attempt with this token then fails with 401 (see cookieAuth and ' +
@@ -1701,10 +1726,10 @@ const paths: Record<string, PathItemObject> = {
       tags: ['members'],
       security: [{ cookieAuth: [] }],
       description:
-        'Requires a signed-in session holding any role in the project, or an admin\'s — refused ' +
-        'for ANY bearer token regardless of scopes. Everyone holding a role in the project, by ' +
-        'name, with their email, their role and when it was granted. An admin needs no role to ' +
-        'see a project, so is listed only where they hold one.',
+        sessionAccessSentence('members:read') + ' ' +
+        'Refused for ANY bearer token regardless of scopes. Everyone holding a role in the ' +
+        'project, by name, with their email, their role and when it was granted. An admin needs ' +
+        'no role to see a project, so is listed only where they hold one.',
       parameters: [parameters['MemberProjectSlug']!],
       responses: {
         '200': {
@@ -1722,11 +1747,11 @@ const paths: Record<string, PathItemObject> = {
       tags: ['members'],
       security: [{ cookieAuth: [] }],
       description:
-        'Requires a signed-in session whose account is an admin. Gives an account of this ' +
-        'organisation the role named, in force on that person\'s next request: the project appears ' +
-        'in their GET /v1/projects with that role, and every operation is judged by it. Someone ' +
-        'who already holds a role here is refused 409 MEMBER_EXISTS rather than having it changed ' +
-        '— a role is changed with PATCH.',
+        sessionAccessSentence('members:manage') + ' ' +
+        'Gives an account of this organisation the role named, in force on that person\'s next ' +
+        'request: the project appears in their GET /v1/projects with that role, and every ' +
+        'operation is judged by it. Someone who already holds a role here is refused 409 ' +
+        'MEMBER_EXISTS rather than having it changed — a role is changed with PATCH.',
       parameters: [parameters['MemberProjectSlug']!],
       requestBody: {
         required: true,
@@ -1776,9 +1801,9 @@ const paths: Record<string, PathItemObject> = {
       tags: ['members'],
       security: [{ cookieAuth: [] }],
       description:
-        'Requires a signed-in session whose account is an admin. Changes the role of someone who ' +
-        'holds one here, in force on their next request. Never adds: someone without a role in ' +
-        'the project is a 404.',
+        sessionAccessSentence('members:manage') + ' ' +
+        'Changes the role of someone who holds one here, in force on their next request. Never ' +
+        'adds: someone without a role in the project is a 404.',
       parameters: [parameters['MemberProjectSlug']!, parameters['MemberUserId']!],
       requestBody: {
         required: true,
@@ -1815,10 +1840,11 @@ const paths: Record<string, PathItemObject> = {
       tags: ['members'],
       security: [{ cookieAuth: [] }],
       description:
-        'Requires a signed-in session whose account is an admin. Takes away the role someone ' +
-        'holds here, in force on their next request: the project leaves their GET /v1/projects, ' +
-        'and naming it answers them the 404 a project that does not exist gets. Their account, ' +
-        'their place in the organisation and their roles in other projects stay.',
+        sessionAccessSentence('members:manage') + ' ' +
+        'Takes away the role someone holds here, in force on their next request: the project ' +
+        'leaves their GET /v1/projects, and naming it answers them the 404 a project that does ' +
+        'not exist gets. Their account, their place in the organisation and their roles in other ' +
+        'projects stay.',
       parameters: [parameters['MemberProjectSlug']!, parameters['MemberUserId']!],
       responses: {
         '204': { description: 'Removed. No body.' },
@@ -1920,6 +1946,7 @@ const paths: Record<string, PathItemObject> = {
       summary: "List a project's tests",
       tags: ['tests'],
       description:
+        sessionAccessSentence('project:read') + ' ' +
         'The tests this project runs — the layer between a project and its runs. A test is the ' +
         'thing "Trends" has always compared: runs of one simulation, in one project, over time. ' +
         'Newest first. EITHER CREDENTIAL, unlike the SLA rule routes beside it: reading which ' +
@@ -1948,6 +1975,7 @@ const paths: Record<string, PathItemObject> = {
       summary: 'Read one test',
       tags: ['tests'],
       description:
+        sessionAccessSentence('project:read') + ' ' +
         'One test, with its run count and latest run. 404 (code NOT_FOUND) when "testSlug" ' +
         'names no test in this project — including one belonging to a different project or ' +
         'organisation, which answers the same 404 rather than confirming it exists elsewhere.',
@@ -1970,6 +1998,7 @@ const paths: Record<string, PathItemObject> = {
       // that could rename a test would rename it on every run.
       security: [{ cookieAuth: [] }],
       description:
+        sessionAccessSentence('tests:manage') + ' ' +
         'Requires a signed-in session — refused for ANY bearer token regardless of scopes (see ' +
         'SessionOnlyGuard and the 403 response below). ONLY "name" AND "description" MAY CHANGE. ' +
         'A test\'s simulation class is fixed: it is the key the worker matches a parsed run on, ' +
@@ -2009,6 +2038,7 @@ const paths: Record<string, PathItemObject> = {
       // on a typo'd slug.
       security: [{ cookieAuth: [] }],
       description:
+        sessionAccessSentence('tests:manage') + ' ' +
         'Requires a signed-in session — refused for ANY bearer token regardless of scopes. ' +
         'THE RUNS SURVIVE: they lose their grouping and move to the project\'s own run list, ' +
         'and nothing measured is discarded. The test\'s own SLA rules go with it, because ' +
@@ -2041,6 +2071,7 @@ const paths: Record<string, PathItemObject> = {
       tags: ['runner'],
       security: [{ bearerAuth: [] }],
       description:
+        sessionAccessSentence('runner:run') + ' ' +
         'Requires the "runner" scope. Queues a job an on-prem runner node claims by polling — ' +
         'the platform never reaches out to the node. TWO BODIES, ONE ROUTE: an application/json ' +
         'body starts from a package\'s CURRENT version and uploads nothing (404 when "packageId" ' +
@@ -2096,6 +2127,7 @@ const paths: Record<string, PathItemObject> = {
       summary: 'List this project\'s on-prem runner jobs',
       tags: ['runner'],
       description:
+        sessionAccessSentence('project:read') + ' ' +
         'Requires the "read" scope. Newest first. A job carries the run it produced once it has ' +
         'one, so a caller can follow a queued job through to the run it becomes.',
       parameters: [parameters['RunnerProjectSlug']!],
@@ -2118,6 +2150,7 @@ const paths: Record<string, PathItemObject> = {
       tags: ['runner'],
       security: [{ bearerAuth: [] }],
       description:
+        sessionAccessSentence('runner:run') + ' ' +
         'Requires the "runner" scope. ONLY A QUEUED OR RUNNING JOB CAN BE CANCELLED: any other ' +
         'state answers 404 rather than a conflict, because from the caller\'s side there is no ' +
         'cancellable job by that id — which is also the answer a job in another project gets.',
@@ -2141,6 +2174,7 @@ const paths: Record<string, PathItemObject> = {
       summary: 'Tail an on-prem job\'s runner log',
       tags: ['runner'],
       description:
+        sessionAccessSentence('project:read') + ' ' +
         'Requires the "read" scope. The TAIL of the log the runner node wrote while executing ' +
         'this job — bounded, so a job that logged megabytes returns its end rather than all of ' +
         'it. This is the runner\'s own output (the JVM, Gatling\'s console), not the run\'s ' +
@@ -2166,6 +2200,7 @@ const paths: Record<string, PathItemObject> = {
       tags: ['runner'],
       security: [{ bearerAuth: [] }],
       description:
+        sessionAccessSentence('runner:run') + ' ' +
         'Requires the "runner" scope. Queues a NEW job carrying everything the operator chose ' +
         'for the original — the same package version (never whatever the package holds now, so a ' +
         'retry runs byte for byte what failed), run name, simulation class, environment, branch, ' +
@@ -2205,6 +2240,7 @@ const paths: Record<string, PathItemObject> = {
       summary: 'List a project\'s packages',
       tags: ['packages'],
       description:
+        sessionAccessSentence('project:read') + ' ' +
         'Requires the "read" scope. Most recently uploaded first. Each package carries its ' +
         'current version (null until a file has been uploaded) and its usage: the distinct tests ' +
         'and the runs that used any version, and the jobs still queued or running on one — the ' +
@@ -2226,6 +2262,7 @@ const paths: Record<string, PathItemObject> = {
       summary: 'Create a package, optionally with its first version',
       tags: ['packages'],
       description:
+        sessionAccessSentence('packages:manage') + ' ' +
         'Requires the "runner" scope. A package\'s kind is fixed at creation — a jar package ' +
         'cannot later hold a bundle. The "artifact" part is optional: without it the package is ' +
         'created empty and given its first version with PUT .../content. With one, the file is ' +
@@ -2274,6 +2311,7 @@ const paths: Record<string, PathItemObject> = {
       summary: 'Upload a new version of a package',
       tags: ['packages'],
       description:
+        sessionAccessSentence('packages:manage') + ' ' +
         'Requires the "runner" scope. The raw file is the request body, streamed to disk and ' +
         'hashed as it arrives — it is never buffered, so a 500 MB package costs no memory. The ' +
         'new version becomes the current one. IDENTICAL BYTES STORE NOTHING NEW: when the ' +
@@ -2314,6 +2352,7 @@ const paths: Record<string, PathItemObject> = {
       summary: 'Rename a package',
       tags: ['packages'],
       description:
+        sessionAccessSentence('packages:manage') + ' ' +
         'Requires the "runner" scope. Only the name can change — a package\'s kind is fixed. ' +
         'The new name is unique per project ignoring case, so renaming "Soak" to "SOAK" while ' +
         'another package is called "soak" is a 409.',
@@ -2345,6 +2384,7 @@ const paths: Record<string, PathItemObject> = {
       // always rejects.
       security: [{ cookieAuth: [] }],
       description:
+        sessionAccessSentence('packages:delete') + ' ' +
         'Requires a signed-in session — refused for ANY bearer token regardless of scopes (see ' +
         'SessionOnlyGuard and the 403 response below): a delete removes the files every job ' +
         'history on this package points at, and a leaked CI credential must not be able to. ' +
@@ -2377,6 +2417,7 @@ const paths: Record<string, PathItemObject> = {
       // document an authentication the handler always rejects.
       security: [{ cookieAuth: [] }],
       description:
+        sessionAccessSentence('rules:edit') + ' ' +
         'Requires a signed-in session — refused for ANY bearer token regardless of scopes (see ' +
         'SessionOnlyGuard and the 403 response below). A rule is evaluated against every ' +
         'SUBSEQUENT run of this project; it never re-judges runs already recorded, and the ' +
@@ -2413,6 +2454,7 @@ const paths: Record<string, PathItemObject> = {
       // Same override and the same reason as the POST above.
       security: [{ cookieAuth: [] }],
       description:
+        sessionAccessSentence('rules:read') + ' ' +
         'Requires a signed-in session — refused for ANY bearer token regardless of scopes (see ' +
         'SessionOnlyGuard and the 403 response below). Newest first. DISABLED RULES ARE ' +
         'INCLUDED: "disabled" is a state an operator put a rule in and has to be able to see ' +
@@ -2439,6 +2481,7 @@ const paths: Record<string, PathItemObject> = {
       // Same override and the same reason as POST /v1/projects/{slug}/rules.
       security: [{ cookieAuth: [] }],
       description:
+        sessionAccessSentence('rules:edit') + ' ' +
         'Requires a signed-in session — refused for ANY bearer token regardless of scopes (see ' +
         'SessionOnlyGuard and the 403 response below). What may change is deliberately narrow: ' +
         '"name", "threshold" and "enabled" only. Setting "enabled" to false is how a gate is ' +
@@ -2469,6 +2512,7 @@ const paths: Record<string, PathItemObject> = {
       // Same override and the same reason as POST /v1/projects/{slug}/rules.
       security: [{ cookieAuth: [] }],
       description:
+        sessionAccessSentence('rules:edit') + ' ' +
         'Requires a signed-in session — refused for ANY bearer token regardless of scopes (see ' +
         'SessionOnlyGuard and the 403 response below). PERMANENT, AND NOT RETROACTIVE: the rule ' +
         'stops being evaluated from the next run onward, while every assertion already recorded ' +
@@ -2561,7 +2605,8 @@ const paths: Record<string, PathItemObject> = {
       tags: ['admin'],
       security: [{ cookieAuth: [] }],
       description:
-        'Requires a signed-in session whose account is an admin. Every account with a membership ' +
+        sessionAccessSentence('users:manage') + ' ' +
+        'Every account with a membership ' +
         'of this organisation, by name: whether it is an admin, whether it is disabled, whether ' +
         'its owner must still choose a new password, and the projects it holds a role in. ' +
         'Not paginated: an install has a team, not a page of people.',
@@ -2580,7 +2625,8 @@ const paths: Record<string, PathItemObject> = {
       tags: ['admin'],
       security: [{ cookieAuth: [] }],
       description:
-        'Requires a signed-in session whose account is an admin. Creates the account with the ' +
+        sessionAccessSentence('users:manage') + ' ' +
+        'Creates the account with the ' +
         'temporary password given, joins it to this organisation, and grants it a role in each ' +
         'project listed — the membership and the roles in one transaction. Its owner must choose a ' +
         'new password at first sign-in: until then every other operation answers them 403 ' +
@@ -2631,7 +2677,8 @@ const paths: Record<string, PathItemObject> = {
       tags: ['admin'],
       security: [{ cookieAuth: [] }],
       description:
-        'Requires a signed-in session whose account is an admin. Disabling an account ends every ' +
+        sessionAccessSentence('users:manage') + ' ' +
+        'Disabling an account ends every ' +
         'session it holds and refuses its sign-in until it is enabled again. Changes to who is an ' +
         'active admin are made one at a time per organisation, so the last active admin can never ' +
         'be demoted or disabled — not even by two admins demoting each other at once: one ' +
@@ -2673,7 +2720,8 @@ const paths: Record<string, PathItemObject> = {
       tags: ['admin'],
       security: [{ cookieAuth: [] }],
       description:
-        'Requires a signed-in session whose account is an admin. Removes the account, its sessions ' +
+        sessionAccessSentence('users:manage') + ' ' +
+        'Removes the account, its sessions ' +
         'and its memberships. Run notes it wrote keep their text and lose their author. Refused for ' +
         'the caller\'s own account, and for the last active admin.',
       parameters: [parameters['AdminUserId']!],
@@ -2705,7 +2753,8 @@ const paths: Record<string, PathItemObject> = {
       tags: ['admin'],
       security: [{ cookieAuth: [] }],
       description:
-        'Requires a signed-in session whose account is an admin. Sets the temporary password given, ' +
+        sessionAccessSentence('users:manage') + ' ' +
+        'Sets the temporary password given, ' +
         'requires its owner to choose a new one at their next sign-in, and ends every session they ' +
         'hold — a cookie they had answers 401 on its next request. Refused for the caller\'s own ' +
         'account: one\'s own password is changed with the current one, at PUT /v1/me/password.',
@@ -2739,7 +2788,8 @@ const paths: Record<string, PathItemObject> = {
       tags: ['admin'],
       security: [{ cookieAuth: [] }],
       description:
-        'Requires a signed-in session whose account is an admin. Every project in this ' +
+        sessionAccessSentence('users:manage') + ' ' +
+        'Every project in this ' +
         'organisation by name — what GET /v1/projects shows an admin too — with how many people ' +
         'hold a role in each. An admin needs no role to see a project, so is counted only where ' +
         'they hold one.',

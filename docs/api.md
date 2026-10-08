@@ -37,7 +37,9 @@ An admin's session sees every project in its org. Any other session sees
 only the projects it holds a role in — Viewer, Member or Manager — and may do
 in each what that role allows; a project it holds no role in answers `404`,
 exactly as one that does not exist. A token sees exactly one project, and only
-what its scopes allow.
+what its scopes allow. In `/v1/docs`, every operation a role governs opens by
+saying which role a signed-in session needs, for example *A signed-in session
+needs the Member role or above in this project, or an admin account.*
 
 There is no public sign-up: `POST /auth/sign-up/email` is refused. An admin
 makes every account, under **Administration › Users** or with
@@ -87,7 +89,7 @@ be able to do exactly one thing.
 |---|---|---|
 | `POST /v1/runs` | token with `ingest` | CI's path. |
 | `POST /v1/runs/live` (+ `stream`, `close`) | token with `stream` | The Gradle plugin's path. |
-| `POST /v1/projects/{slug}/runs` | session only, Member role or above | The browser upload on **Add results**. |
+| `POST /v1/projects/{slug}/runs` | session only, Member role or above, or an admin | The browser upload on **Add results**. |
 
 A session names no project, so `POST /v1/runs` refuses it with
 `400 PROJECT_REQUIRED`; the live routes need the `stream` scope, which no
@@ -173,10 +175,10 @@ GET    /v1/admin/projects                   every project, with its member count
   that does not exist.
 
 **Project roles** — Viewer, Member and Manager — are read by anyone with a
-role in the project and changed by an admin:
+role in the project, or an admin, and changed by an admin:
 
 ```text
-GET    /v1/projects/{slug}/members              Viewer and above
+GET    /v1/projects/{slug}/members              any role, or an admin
 POST   /v1/projects/{slug}/members              { userId, role } → 201   (admin)
 PATCH  /v1/projects/{slug}/members/{userId}     { role } → 200           (admin)
 DELETE /v1/projects/{slug}/members/{userId}     → 204                    (admin)
