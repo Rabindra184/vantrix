@@ -99,10 +99,11 @@ hours.
 
 So the account it seeds is flagged: the first thing you see after signing in
 is **Choose a new password**, and nothing else works until you have. Until
-then every `/v1` route but `PUT /v1/me/password` answers
-`403 PASSWORD_CHANGE_REQUIRED`. Bootstrap never re-passwords an account that
-already exists, so your choice survives every later `up`. Change it again any
-time from the account menu (**Change password**).
+then every route a session could otherwise reach, except
+`PUT /v1/me/password`, answers `403 PASSWORD_CHANGE_REQUIRED`. Bootstrap never
+re-passwords an account that already exists, so your choice survives every
+later `up`. Change it again any time from the account menu
+(**Change password**).
 
 **Better: never seed it at all.** Set your own before the first deployment and
 the published default never touches your disk — and, because you chose it, you
@@ -307,6 +308,12 @@ not start at all: its `bootstrap` reads that column, fails, and `api` waits on
 it. Run directly, it answers every signed-in request with a 500. To go back
 past it, restore the backup you took before upgrading
 ([below](#backup-and-restore)).
+
+**An upgrade sends nobody to *Choose a new password*.** The release that adds
+that step adds its flag as `NOT NULL DEFAULT false`, so every account that
+already exists comes through unflagged — an admin still signing in with the
+published default included. If you never changed it, change it now from the
+account menu (**Change password**).
 
 ### Keep upgrading at least once a year — the metrics tables are partitioned
 

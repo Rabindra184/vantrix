@@ -45,8 +45,8 @@ makes every account, under **Administration › Users** or with
 [Accounts, passwords and roles](#accounts-passwords-and-roles) and
 [Adding a teammate](../DEPLOYMENT.md#adding-a-teammate). Better Auth's own
 `/auth/admin/*`, `/auth/change-password` and `/auth/verify-password` routes
-answer `404`: an account is managed through `/v1/admin`, and a password is
-changed only through `PUT /v1/me/password`.
+answer `404`: an account is managed through `/v1/admin`, and your own
+password is changed only through `PUT /v1/me/password`.
 
 ### Managing API tokens
 
@@ -128,9 +128,9 @@ FORBIDDEN`, whatever its scopes.
 **A new account must choose its own password first.** An account an admin
 creates, or whose password an admin resets, is flagged
 (`/auth/get-session` reports `user.mustChangePassword: true`). Until the
-person changes it, every `/v1` route but `PUT /v1/me/password` answers
-`403 PASSWORD_CHANGE_REQUIRED`, and the web app shows a full-screen
-*Choose a new password* step and nothing else.
+person changes it, every route a session could otherwise reach, except
+`PUT /v1/me/password`, answers `403 PASSWORD_CHANGE_REQUIRED`, and the web
+app shows a full-screen *Choose a new password* step and nothing else.
 
 ```text
 PUT /v1/me/password   { currentPassword, newPassword } → 204
@@ -350,7 +350,7 @@ report it.
 | `FORBIDDEN` | token or session | The credential lacks the scope the operation needs: a token minted without it, or a session on an operation no session holds the scope for (opening, streaming to and closing a live run; posting telemetry). Also a bearer token on an operation only a signed-in person may perform, such as managing tokens. |
 | `ROLE_REQUIRED` | session | The session's role in the project is below the one the operation needs. The `detail` names that role, e.g. *Uploading runs needs the Member role in this project.* |
 | `ADMIN_REQUIRED` | session | The operation is an admin's, such as creating a project or managing accounts, and the account is not an admin. |
-| `PASSWORD_CHANGE_REQUIRED` | session | The account must choose a new password first, with `PUT /v1/me/password`. Every other `/v1` route answers this, whatever it was asked. |
+| `PASSWORD_CHANGE_REQUIRED` | session | The account must choose a new password first, with `PUT /v1/me/password`. Every route a session could otherwise reach, except `PUT /v1/me/password`, answers this, whatever it was asked. |
 
 A session that holds **no** role in a project is never told so with a `403`:
 it gets the same `404` a project or run that does not exist gets, so a

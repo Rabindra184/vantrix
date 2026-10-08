@@ -88,9 +88,10 @@ pnpm build
 #    an existing org, which is what you want when adding a login to seeded
 #    data. Only --admin-email is non-idempotent; give a fresh address.
 #    The generated password is FLAGGED: the first sign-in shows "Choose a new
-#    password" and nothing else, and every /v1 call but PUT /v1/me/password
-#    answers 403 PASSWORD_CHANGE_REQUIRED until it is changed. More logins
-#    after this one: Administration › Users › Add user, in the app.
+#    password" and nothing else, and every route a session could otherwise
+#    reach, except PUT /v1/me/password, answers 403 PASSWORD_CHANGE_REQUIRED
+#    until it is changed. More logins after this one: Administration › Users
+#    › Add user, in the app.
 pnpm bootstrap checkout web-demo --admin-email you@example.test
 
 # 6. Both processes. The worker is not optional: without it an uploaded run

@@ -139,10 +139,11 @@ an admin, under Administration › Users in the web app or with
 
 The password bootstrap generates here is FLAGGED: nobody chose it, and it has
 been printed to a terminal, so the account must choose its own before anything
-else. The web app shows a *Choose a new password* step; over HTTP, every `/v1`
-route but `PUT /v1/me/password` answers `403 PASSWORD_CHANGE_REQUIRED` until it
-is changed, and bootstrap's output says so. (`PERFPORTAL_ADMIN_PASSWORD`, when
-set, is the operator's own choice and is not flagged.)
+else. The web app shows a *Choose a new password* step; over HTTP, every route
+a session could otherwise reach, except `PUT /v1/me/password`, answers
+`403 PASSWORD_CHANGE_REQUIRED` until it is changed, and bootstrap's output says
+so. (`PERFPORTAL_ADMIN_PASSWORD`, when set, is the operator's own choice and is
+not flagged.)
 
 With `--admin-email`, bootstrap **refuses** an address that already has an
 account: it fails loudly, before minting a token, rather than handing you a

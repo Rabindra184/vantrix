@@ -128,9 +128,9 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **231 files / 3600 tests**, it
+`nvm use` first, and if a run reports fewer than **231 files / 3601 tests**, it
 did not run everything — nor did an integration run reporting fewer than
-**215 files / 3260 tests**, an e2e run fewer than **198**, or a
+**215 files / 3261 tests**, an e2e run fewer than **198**, or a
 `pnpm test:e2e:cross` run fewer than **594** (198 on each of three engines).
 (Update those numbers when a sub-project adds suites, or the next reader
 calibrates against a stale floor and a silently-skipped run looks like a
@@ -156,14 +156,14 @@ of `docs/superpowers/specs/2026-10-07-project-access-design.md`, plan
 `docs/superpowers/plans/2026-10-07-project-access-pr2-administration.md`)
 added ELEVEN unit files — in `packages/contracts/test` `admin` (25), `me` (16)
 and `members` (9); in `apps/api/test` `password-attempts` (6) and
-`prisma-errors` (4); in `apps/web/test` `AdminUsers` (53), `AdminProjects` (8),
+`prisma-errors` (4); in `apps/web/test` `AdminUsers` (54), `AdminProjects` (8),
 `ChoosePassword` (6), `PasswordChangeForm` (9), `adminApi` (11) and
 `formIssues` (11) — and 22 cases elsewhere (`AuthGate`, `AccountMenu`, `fetch`,
-`paths`, `auth-cookies` among them): **220 / 3420 to 231 / 3600**. Integration
+`paths`, `auth-cookies` among them): **220 / 3420 to 231 / 3601**. Integration
 gains the seven new `.ts` unit files (82) and FIVE integration files
 (`apps/api/test/admin`, `me`, `members`, `password-gate`, and
 `packages/persistence/test/user`) plus route-walk, matrix and OpenAPI rows:
-**203 / 3058 to 215 / 3260**. **e2e rises to 198**
+**203 / 3058 to 215 / 3261**. **e2e rises to 198**
 (`apps/web/e2e/administration.spec.ts`), **594** on three engines. Tasks 1-5
 (API) and 6-8 (web) ran as two lanes on two branches, merged at `3e00fe0`.
 
@@ -173,12 +173,12 @@ add, change and remove for an admin) and `PUT /v1/me/password`.
 `user.mustChangePassword` (migration `20261008120000_must_change_password`) is
 set by every admin create and reset, and by bootstrap whenever nobody chose the
 password; while it is set `PasswordChangeGuard`, an `APP_GUARD` between
-`AuthGuard` and `AccessGuard`, answers every `/v1` route but
-`PUT /v1/me/password` **403 `PASSWORD_CHANGE_REQUIRED`**, and the live
-WebSocket refuses the session. The web draws **Choose a new password** in place
-of the app, **Change password** in the account menu, and **Administration ›
-Users / Projects** with a row menu per account. Nothing hides a control by role
-yet: that is PR 3.
+`AuthGuard` and `AccessGuard`, answers every route a session could otherwise
+reach, except `PUT /v1/me/password`, **403 `PASSWORD_CHANGE_REQUIRED`**, and
+the live WebSocket refuses the session. The web draws **Choose a new password**
+in place of the app, **Change password** in the account menu, and
+**Administration › Users / Projects** with a row menu per account. Nothing hides
+a control by role yet: that is PR 3.
 
 **BETTER AUTH'S LIMITER RUNS IN ITS ROUTER, SO IT DOES NOT GUARD `auth.api.*`.**
 `PUT /v1/me/password` calls `auth.api.changePassword` server-side and skipped
@@ -200,8 +200,9 @@ Both are refused where PR 1's admin refusal lives:
 Better Auth's own `onRequest` — after, 404 for the plain request, five path
 spellings and three `Host` / `X-Forwarded-Proto` smugglings, beside
 `get-session` answering 200 through the same helper. `PUT /v1/me/password` is
-the only way a password changes; `/auth/change-email` and `/auth/delete-user`
-stay off only because `createAuth` leaves them unconfigured.
+the only way one's own password changes; `/auth/change-email` and
+`/auth/delete-user` stay off only because `createAuth` leaves them
+unconfigured.
 
 **A LOCK THAT HOLDS A CONNECTION AND THEN ASKS FOR A SECOND STARVES THE POOL.**
 The last-admin rule takes `pg_advisory_xact_lock` per org (`adminLockKey`, one
@@ -233,14 +234,18 @@ refused the enable. It is ONE `auth.api.adminUpdateUser` inside the lock, its
 `data` built by assignment (Better Auth tests keys with `hasOwnProperty`, so
 `role: undefined` is refused).
 
-**THE JOURNEY'S LAST STEP IS WHAT ONLY A BROWSER AGAINST THE REAL API
-DECIDES.** After a reset the person's open page's next request must be 401; a
-session that survived would get 403 `PASSWORD_CHANGE_REQUIRED`, which reads as
-"change it again" rather than "signed out everywhere". A second project with a
-run of its own is seeded, because "the rail lists only Checkout" and "the run
-list is one row" are true of a product that filters nothing. And the journey
-cannot tell AuthGate's two routes to the step apart — the session flag, and a
-probe 403 carrying the code (W1) — so each is pinned by AuthGate's own cases.
+**WHAT ONLY A BROWSER AGAINST THE REAL API DECIDES IS THE OPEN PAGE.** That a
+reset ends the session — a 401, where a surviving session would get 403
+`PASSWORD_CHANGE_REQUIRED` and read "change it again" rather than "signed out
+everywhere" — `admin.integration` already decides at the API. What only the
+journey decides is that the person's OPEN page carries that 401 on its next
+request, and shows it (its presence, never its words: those are the API's). A
+second project with a run of its own is seeded, because "the rail lists only
+Checkout" and "the run list is one row" are true of a product that filters
+nothing. And AuthGate's two routes to the step — the session flag, and a probe
+403 carrying the code (W1) — draw the same screen, so the journey records every
+`/v1` request from sign-in to the step and requires none: forcing the flag
+false fails it with `['GET /v1/activity']`.
 
 **RED-VERIFIED** (the lanes' own, about forty, are in the SDD task reports):
 
@@ -253,8 +258,12 @@ probe 403 carrying the code (W1) — so each is pinned by AuthGate's own cases.
   web    `hidden sm:inline` on the drawn Sign out      both label cases (classless now)
   e2e    every session read as admin for lists         the rail: Payments, expected 0, received 1
          revokeUserSessions skipped on a reset         the next request: expected 401, received 403
-         AuthGate ignores the session's flag           PASSES: the probe's 403 draws the step (W1)
+         AuthGate ignores the session's flag           the step's /v1 requests: ['GET /v1/activity']
+                                                       (it PASSED before the final wave: the probe's
+                                                       403 draws the same step, W1)
          ...and the probe-403 branch removed too       the step's heading is never found
+  final  changePassword's 401 rethrown as-is           the mid-change case: 500 where 401 expected
+         own admin change re-reads the session alone   the rail's /v1/projects reads: expected 1 to be 2
   CI     bootstrap's "must choose" line never printed  the default and generated steps (replayed)
          ...always printed                             the chosen-password step
 ```
@@ -289,6 +298,39 @@ Redis db 12 and e2e port 3700, each total predicted first:
     on the chunk); alone, once the clock had caught up, **4 of 4**.
     `administration.spec.ts` passed on chromium, firefox and webkit, and
     `PERFPORTAL_E2E_BROWSERS=all --list` collects **594**.
+
+**AND AGAIN AFTER THE FINAL FIX WAVE**, at `e0fef0a` (every file a suite reads;
+the commit after it changes documents alone), same Node, stores and port, each
+total predicted first (one unit case and one integration case added). No sleep
+in any window (the last `Maintenance Sleep` was at 14:02) and the host and
+Docker clocks agreed; the machine was the problem instead, 84% of swap in use
+throughout:
+
+  - `pnpm build`, `typecheck` and `lint` exit 0 (load 11.5, 4,439 free
+    pages); `test:unit` **231 / 3601**, exit 0, zero `Errors` lines (load
+    16.1, 16,819 free).
+  - `test:integration` COLLECTED **215 / 3261** (load 19.4, 6,614 free — the
+    settle check had passed two minutes earlier and the load came back) and
+    exited 1 on two TIMEOUTS, no assertion about a value: `blobs.integration`'s
+    multi-megabyte upload (62.5 s against its 30 s budget) and `fold-owner`'s
+    "smaller than a single record" (60 s), the load reaching 47. Alone,
+    `fold-owner` passed **46 of 46**; `blobs` timed out twice more (75.3 s and
+    92.7 s, loads 28 to 168), the container-MinIO shape recorded above for it.
+    Neither file is reachable by this wave's diff.
+  - `pnpm test:e2e --workers=2` read back `Running 198 tests using 2 workers`
+    after a 30-minute settle wait that never met both bars (load fell to 4
+    while free pages stayed near 3,700). It started at load 5.7 with 3,933
+    free pages, the load reached 114, and it ended **186 passed, 12 failed**,
+    every one a timeout: an element not found within 5 s (pages still
+    "Loading run…", charts not yet drawn, the Create user request still in
+    flight) and one sign-in POST outstanding for 20 s; the API logged one
+    P1001. Each failing FILE alone (eight files, loads 30 to 120) passed ten
+    of the twelve and failed eight cases the same way — `run-logs`' uploaded
+    run and `time-window`'s Datetime case again, six others for the first
+    time; those eight then passed **8 of 8** at `--workers=1`, so every case
+    has passed on this tree and none failed on a value. `--list` collects
+    **198**, and **594** with `PERFPORTAL_E2E_BROWSERS=all`. A clean run on a
+    quiet machine, or CI's `build` job, is the arbiter.
 
 **THE REAL RUN, ON A COPY OF THE DEVELOPER DATABASE**, which was only read:
 `pg_dump perfportal` into `perfportal_admin_real` (28 runs, 5 users, 25
@@ -325,11 +367,16 @@ fingerprint and no `project_member` table.
   - A grant's `projectSlug` is `.trim().min(1)` with no grammar: bootstrap
     upserts any slug (`Checkout_API`), so the lookup decides, and a typo is 400
     `UNKNOWN_PROJECT` naming it.
-  - The admin lock is per org while `user.role` is install-wide. The four
-    routes needing a scope no session holds (live open, stream, close,
-    telemetry) answer a flagged session `FORBIDDEN`, as every session.
-  - The throttle counts every attempt, right or wrong. Ending the other
-    sessions and clearing the flag is one transaction.
+  - The admin lock is per org while `user.role` is install-wide, and so are
+    remove, disable, reset and make-admin: they act on the ACCOUNT, while an
+    admin sees only their own org's accounts. So org A's admin could disable
+    or remove a person who is org B's only admin, since `LAST_ADMIN` counts per
+    org. Unreachable in a one-org install. The four routes needing a scope no
+    session holds (live open, stream, close, telemetry) answer a flagged
+    session `FORBIDDEN`, as every session.
+  - The throttle counts every attempt, right or wrong, and its `Retry-After` is
+    never below 1 (`Math.max(ttl, 1)`: a TTL rounding to 0 said 10). Ending the
+    other sessions and clearing the flag is one transaction.
   - A PATCH re-reads its target UNDER the lock. Self disable, remove and reset
     are refused 400 (`CANNOT_*`); self demotion is allowed while another admin
     stays. A reset is `setUserPassword` → flag → `revokeUserSessions`, not
@@ -338,8 +385,10 @@ fingerprint and no `project_member` table.
   - Member PATCH and DELETE check the org before the membership;
     `MEMBER_EXISTS` is decided by the primary key alone.
   - The API parses every write response through the contract schema the web
-    parses it with (`toAdminUser`, `toMember`), so a drifted body is a server
-    500, never a `ZodError` after a write that succeeded.
+    parses it with (`toAdminUser`, `toMember`). That parse is not what keeps
+    the web from a `ZodError` after a write that succeeded — a drifted body
+    would be a 500 after the write, no better. Both ends parsing with one
+    `@perfportal/contracts`, built together and shipped within one deploy, is.
   - Web: a 204 goes through `apiFetchNoContent` (W2); Users status reads
     Disabled, then Must change password, then Active (W4); a new project row
     takes the first unchosen project as a Viewer (W5, W12); a per-row name
@@ -348,29 +397,63 @@ fingerprint and no `project_member` table.
     temporary passwords are plain text, autocomplete off (W11); one inline
     block open at a time (W15); a failed refetch keeps the table unless it is a
     401 or 403 (W14, W17); the edit panel stays open and says Close (W16).
+  - W3: a password-bound issue is one sentence built from
+    `PASSWORD_MIN_LENGTH`/`PASSWORD_MAX_LENGTH`, never zod's English;
+    `PASSWORD_UNCHANGED` is found by `params.code` (`formIssues.ts`).
+  - W8: the Projects table's Name is plain text; the rail already links every
+    project.
+  - W9: no bare `/admin` route; the menu links `/admin/users`, the catch-all
+    sends `/admin` home.
+  - W10: the Users table's Projects ⓘ lists each project with its role, drawn
+    only above zero.
+  - W17, second half: changing one's OWN admin flag re-reads the session — and,
+    since the final wave, every query, because an admin's rail, Home and run
+    lists span the org and a member's do not.
+  - `PASSWORD_CHANGE_REQUIRED` is one export of `@perfportal/contracts`
+    (Ruling 17): the API's gate sets it and `AuthGate` reads it, so the two
+    cannot drift. The test literals in `password-gate.integration` and
+    `AuthGate.test.tsx` stay literals on purpose: they pin the wire value.
+  - `PUT /v1/me/password` maps Better Auth's 401 — the session ended
+    mid-change, an admin reset or disabled the person — to `sessionEnded()`,
+    the 401 the admin routes answer, never a 500.
 
 **KNOWN AND LEFT, EACH A DECISION RATHER THAN AN OVERSIGHT:**
 
   - PR 3's: the Members section, role-aware controls (a Viewer still sees Add
     rule and meets 403 on submit; a Member's API tokens page GETs a
     manager-only route), the no-projects state, New project admin-only in the
-    UI, and per-operation role sentences in OpenAPI.
+    UI, and per-operation role sentences in OpenAPI. Recommended there: treat a
+    401 from ANY query as the end of the session (a `QueryCache` `onError`);
+    disable and reset make that the normal path now. `ProjectMember` carries
+    no admin or disabled marker, which that UI will want.
   - An open live socket is checked only at its handshake, so a person reset,
     disabled or removed keeps watching it until it closes (PR 1's ruling).
   - Better Auth routes a flagged session can still call (`update-user`,
-    `sign-out`, `list-sessions`) were not audited; none clears the flag.
+    `sign-out`, `list-sessions`) were not audited beyond `update-user`, which
+    `session-auth.integration` pins; none clears the flag.
   - Better Auth checks `role` only as a string (no `roles` configured).
     Admin-created ids are uuids beside bootstrap's 32-character ones. A failed
-    compensation is logged with the id, not surfaced.
+    compensation is logged with the id, not surfaced; its remedy is
+    `DELETE FROM "user" WHERE id = '<logged id>'` (every reference to `user`
+    cascades or is set null).
   - An account in no org cannot be managed through `/v1/admin` yet keeps its
     email. A caller demoted, disabled or removed while queued may get 409
     `LAST_ADMIN`. Disable leaves `banReason` empty.
   - A membership row for an account outside the org would be listed but not
     removable; no product path writes one. An admin holding a project role
     sees that role in `GET /v1/projects`. Disabled accounts can be added.
-  - `PASSWORD_CHANGE_REQUIRED` is a string literal in the API helper and in
-    `AuthGate`; drift sends W1 silently to the no-organisation page. One
-    export from `@perfportal/contracts` closes it.
+  - Project names are not unique, so "Role in X", "Remove from project X" and
+    the picker's options can read alike for two same-named projects.
+  - An upgraded install flags nobody: the migration's column is
+    `NOT NULL DEFAULT false`, so an admin still on the published default is
+    not sent to the step. `DEPLOYMENT.md`'s Upgrading says to change it from
+    the account menu's Change password.
+  - A reset racing the person's own change is not locked (Ruling 18). In the
+    interleave "person `changePassword`, admin `setUserPassword` + flag,
+    person `finishPasswordChange` clears the flag, admin revoke", the admin's
+    temporary password ends unflagged. It needs both actions within
+    milliseconds, a per-user lock across two routes is more machinery than
+    that warrants, and another reset fixes it.
   - Web minors: a window-focus refetch on W1's path drops typed passwords; a
     failed session refetch after a change leaves the form pressable; zod's
     English is reachable on Add user (a blank or 121-character name, `a@b`);
