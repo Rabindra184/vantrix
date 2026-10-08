@@ -4,7 +4,10 @@ import {
   PROJECT_ROLES,
   ProjectSummarySchema,
   TOKEN_SCOPES,
+  accessRefusal,
+  canPerform,
   roleSatisfies,
+  type AccessAction,
   type ProjectRole,
 } from '../src/index.js';
 
@@ -75,6 +78,83 @@ describe('ACCESS_ACTIONS', () => {
       ACCESS_ACTIONS['project:read'].role = 'manager';
     };
     expect(typeof assignToARow).toBe('function');
+  });
+});
+
+const EVERY_ACTION = Object.keys(ACCESS_ACTIONS) as AccessAction[];
+
+/** Every role a session can carry for one project: a row's role, an admin with no row (`null`), and not loaded yet. */
+const EVERY_HELD: ReadonlyArray<ProjectRole | null | undefined> = [...PROJECT_ROLES, null, undefined];
+
+/**
+ * ═══ ONE RULE, ASKED BY BOTH SIDES ═══
+ *
+ * The API's guard and the web's controls ask the same question of the same
+ * table, so a control is drawn exactly when the request behind it would be
+ * let through. The expectations are read off each row: the roles at or above
+ * its role meet it, an admin row is met by the admin flag alone, and the flag
+ * meets everything — whatever role the admin happens to hold in the project.
+ */
+describe('canPerform', () => {
+  for (const action of EVERY_ACTION) {
+    const { role: required } = ACCESS_ACTIONS[action];
+    const meets: ReadonlyArray<ProjectRole> =
+      required === 'admin' ? [] : PROJECT_ROLES.slice(PROJECT_ROLES.indexOf(required));
+
+    it(`${action}: an admin, holding any role or none`, () => {
+      for (const role of EVERY_HELD) {
+        expect(canPerform(action, { isAdmin: true, role }), String(role)).toBe(true);
+      }
+    });
+
+    it(`${action}: a non-admin meets it exactly with ${meets.length === 0 ? 'no role' : meets.join(', ')}`, () => {
+      for (const role of EVERY_HELD) {
+        const expected = role !== null && role !== undefined && meets.includes(role);
+        expect(canPerform(action, { isAdmin: false, role }), String(role)).toBe(expected);
+      }
+    });
+  }
+
+  /** Fails closed on a role read from somewhere the types do not reach, as `roleSatisfies` does. */
+  it('lets a non-admin holding a role it does not know do nothing', () => {
+    for (const action of EVERY_ACTION) {
+      expect(canPerform(action, { isAdmin: false, role: 'owner' as ProjectRole }), action).toBe(false);
+    }
+  });
+});
+
+/**
+ * ═══ THE REFUSAL IS THE API'S OWN SENTENCE ═══
+ *
+ * The guard's 403 and the web's "you cannot do this" state are built here,
+ * so a reader is told the same thing whichever side refuses them. Written out
+ * as literals, not rebuilt from the table: the words ARE the claim.
+ */
+describe('accessRefusal', () => {
+  it('names the project role an action needs', () => {
+    expect(accessRefusal('run:upload')).toStrictEqual({
+      code: 'ROLE_REQUIRED',
+      detail: 'Uploading runs needs the Member role in this project.',
+      remediation: 'Ask an admin to change your role.',
+    });
+    expect(accessRefusal('tokens:manage').detail).toBe('Managing API tokens needs the Manager role in this project.');
+    expect(accessRefusal('project:read').detail).toBe('Reading this project needs the Viewer role in this project.');
+  });
+
+  it('says an admin action needs an admin', () => {
+    expect(accessRefusal('projects:create')).toStrictEqual({
+      code: 'ADMIN_REQUIRED',
+      detail: 'Creating projects needs an admin.',
+      remediation: 'Ask an admin to do this.',
+    });
+  });
+
+  it('answers ADMIN_REQUIRED exactly for the actions whose row asks for an admin', () => {
+    for (const action of EVERY_ACTION) {
+      expect(accessRefusal(action).code, action).toBe(
+        ACCESS_ACTIONS[action].role === 'admin' ? 'ADMIN_REQUIRED' : 'ROLE_REQUIRED',
+      );
+    }
   });
 });
 

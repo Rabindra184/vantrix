@@ -82,3 +82,53 @@ export function roleSatisfies(held: ProjectRole, required: ProjectRole): boolean
   const requiredRank = PROJECT_ROLES.indexOf(required);
   return heldRank !== -1 && requiredRank !== -1 && heldRank >= requiredRank;
 }
+
+/**
+ * Whether someone may perform `action` in one project: the API's rule, asked
+ * where the API is not. `AccessGuard` decides with `accessDecision`, which
+ * also tells a missing role (a 404) from a low one (a 403); the web only
+ * needs yes or no, to draw a control exactly when the request behind it
+ * would be let through. `apps/api/test/access.test.ts` pins the two to the
+ * same answer for every action and every caller.
+ *
+ * In order: the admin flag passes everything, whatever role its holder has
+ * in this project. An admin action refuses everyone else. No role — `null`
+ * for a project the person holds none in, `undefined` for one not loaded
+ * yet — refuses. Otherwise the role is ranked against the action's.
+ */
+export function canPerform(
+  action: AccessAction,
+  who: { isAdmin: boolean; role: ProjectRole | null | undefined },
+): boolean {
+  if (who.isAdmin === true) return true;
+  const required = ACCESS_ACTIONS[action].role;
+  if (required === 'admin') return false;
+  if (who.role === null || who.role === undefined) return false;
+  return roleSatisfies(who.role, required);
+}
+
+/** The words a refused action is answered with: a 403's code, detail and remediation. */
+export type AccessRefusal = {
+  code: 'ROLE_REQUIRED' | 'ADMIN_REQUIRED';
+  detail: string;
+  remediation: string;
+};
+
+/**
+ * How a refusal of `action` is worded — the ONE place, so `AccessGuard`'s
+ * 403 and the web's own "you cannot do this" say the same thing. An admin
+ * action names no role, since no project role can grant it; any other names
+ * the role it needs, capitalised ("needs the Member role in this project").
+ * The sentence depends on the action alone, never on who was refused.
+ */
+export function accessRefusal(action: AccessAction): AccessRefusal {
+  const { role, label } = ACCESS_ACTIONS[action];
+  if (role === 'admin') {
+    return { code: 'ADMIN_REQUIRED', detail: `${label} needs an admin.`, remediation: 'Ask an admin to do this.' };
+  }
+  return {
+    code: 'ROLE_REQUIRED',
+    detail: `${label} needs the ${role.charAt(0).toUpperCase()}${role.slice(1)} role in this project.`,
+    remediation: 'Ask an admin to change your role.',
+  };
+}
