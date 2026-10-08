@@ -181,12 +181,19 @@ people in the app: open the account menu, choose **Administration**, then
   makes or removes an admin, and removes the account. The last active admin
   cannot be demoted, disabled or removed.
 - **Administration › Projects** lists every project with its member count.
+- Each project's **Members** section lists everyone with a role in it. An
+  admin adds a person there, changes a role (pick it, then **Save**) and
+  removes someone from the project; everybody else reads the list.
 
 The same operations are `/v1/admin/users` and `/v1/projects/{slug}/members`
 in the [API](docs/api.md#accounts-passwords-and-roles).
 
-The app does not yet hide controls a role cannot use: a Viewer still sees an
-**Add rule** button, and is refused when they press it.
+The app shows each person what their role lets them do: a Viewer is offered
+no **Add rule**, **New on-prem run** or package actions, a Member no **API
+tokens**, and only an admin sees **New project**. Someone on no project yet is
+told so, and to ask an admin. A role you change takes effect on the person's
+next page load. When an admin resets, disables or removes someone, the
+person's open page goes to sign-in on its next request.
 
 ### Serving it somewhere other than localhost
 

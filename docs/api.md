@@ -83,6 +83,11 @@ DELETE /v1/projects/{slug}/tokens/{prefix}  revoke (idempotent)
 that lives on a load generator, often a shared and disposable host, should
 be able to do exactly one thing.
 
+The on-prem runner's job routes (`/v1/projects/{slug}/runner/…`) take either
+credential: a token with `runner`, or a signed-in session with the Member role
+or above in the project, or an admin's. The **New on-prem run** page queues,
+cancels and retries a job with the session.
+
 ### Which credential can send a run
 
 | Route | Credential | Why |
@@ -185,6 +190,22 @@ DELETE /v1/projects/{slug}/members/{userId}     → 204                    (admi
 ```
 
 A role takes effect on the person's next request; nothing is cached.
+
+**The web app draws what a role allows.** A Viewer is offered no Add rule,
+no New on-prem run, no package actions and no Add a note; a Member no API
+tokens and no test Rename or Delete; the project's **Members** section lists
+everyone with a role, and an admin adds, changes (pick a role, then **Save**)
+and removes them there. A page reached by its address for an action the role
+cannot take says so in the API's own words, e.g. *Managing API tokens needs
+the Manager role in this project. Ask an admin to change your role.* Hiding is
+for clarity only: the API refuses the request whatever the page draws. An open
+page follows a role change on its next read of `GET /v1/projects`.
+
+**A `401` from any request ends the session in the app.** A reset, a disable,
+a removal or an expired session answers `401` on the person's next request,
+and the open page goes to sign-in, with `?next=` keeping where they were. The
+one exception is the bundle upload on **Add results**, a bare upload request
+outside the app's query layer: its `401` is shown in place.
 
 ---
 
