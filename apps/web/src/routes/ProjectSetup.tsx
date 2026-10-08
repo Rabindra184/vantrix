@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
+import { NoAccess } from '../access/NoAccess';
 import type { ProjectAccess } from '../access/useAccess';
 import { linkButtonClasses } from '../components/Button';
 import Card from '../components/Card';
@@ -85,9 +86,28 @@ export default function ProjectSetup() {
  * tell them no. The PREREQUISITE stays named either way — a command that
  * needs `PERFPORTAL_TOKEN` still says so — and only the way there goes. Until
  * access is known none of the three is drawn.
+ *
+ * ═══ THE TWO CONTROLS THAT ADD A RUN, AND THE READER WHO MAY USE NEITHER ═══
+ *
+ * The Import card's picker uploads a run, which is `run:upload`; the Run a
+ * test card's "New on-prem run" opens a form whose one job is to start one,
+ * which is `runner:run` (gate by destination). Each is drawn only when the
+ * reader may take it — and, like everything gated, only once access is known:
+ * until then the cards and their documentation are drawn without either.
+ *
+ * A reader KNOWN to be able to do neither — a Viewer who typed the URL, since
+ * every link to this page is drawn only for `run:upload` — is told so in
+ * place of the cards, in the API's own words. The
+ * cards are three ways in, and drawing them for somebody every one of them
+ * refuses would be the refusal said three times, as instructions. The
+ * sentence is `run:upload`'s because uploading results is what this page is
+ * named for.
  */
 function AddResults({ slug, access }: { readonly slug: string; readonly access: ProjectAccess }) {
   const canManageTokens = access.can('tokens:manage');
+  const canUpload = access.can('run:upload');
+  const canStartRuns = access.can('runner:run');
+  const refused = access.known && !canUpload && !canStartRuns;
   /* The instance the reader is already talking to. A hard-coded localhost
      would be wrong for every real deployment, and a relative path is not
      runnable at all: this ended in a bare `/v1/runs` once, so the one command
@@ -100,12 +120,16 @@ function AddResults({ slug, access }: { readonly slug: string; readonly access: 
   /* The SAME query the launch form runs, so the status quoted here and the
      panel over there cannot disagree. Polled only while something is in
      flight — a page nobody is launching from should not hold a two-second
-     timer open forever. */
+     timer open forever. Not asked at all for a reader refused the page: the
+     Run a test card is its only reader, and it is not drawn. */
   const jobs = useQuery({
     queryKey: runnerJobsQueryKey(slug),
     queryFn: () => fetchRunnerJobs(slug),
     refetchInterval: 15_000,
+    enabled: !refused,
   });
+
+  if (refused) return <NoAccess action="run:upload" />;
 
   /* ONE COLUMN, NOT `xl:grid-cols-2`. Review M04 objects to "the third card
      below the first two" — a 2-up grid leaves the CI path orphaned in a row of
@@ -179,8 +203,9 @@ function AddResults({ slug, access }: { readonly slug: string; readonly access: 
         }}
       >
         {/* The picker is the card's action, so it is ON the card rather than
-            behind a disclosure (clean UI PR 4). */}
-        <BundleUpload slug={slug} />
+            behind a disclosure (clean UI PR 4) — and drawn only for a reader
+            who may upload a run. */}
+        {canUpload && <BundleUpload slug={slug} />}
       </EntryCard>
 
       <EntryCard title="Run a test" icon={<PlayIcon className="h-4 w-4" />}>
@@ -209,12 +234,17 @@ function AddResults({ slug, access }: { readonly slug: string; readonly access: 
             Create a runner token
           </Link>
         )}
-        <div>
-          <Link to={projectNewRunnerRunPath(slug)} className={linkButtonClasses}>
-            <PlayIcon className="h-3.5 w-3.5" />
-            New on-prem run
-          </Link>
-        </div>
+        {/* The form exists to start a run, so the way to it is `runner:run`'s
+            (gate by destination) — the same rule the shell's own launch
+            beside the heading follows. */}
+        {canStartRuns && (
+          <div>
+            <Link to={projectNewRunnerRunPath(slug)} className={linkButtonClasses}>
+              <PlayIcon className="h-3.5 w-3.5" />
+              New on-prem run
+            </Link>
+          </div>
+        )}
       </EntryCard>
 
       <EntryCard

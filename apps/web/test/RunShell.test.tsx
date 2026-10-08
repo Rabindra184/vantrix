@@ -902,6 +902,10 @@ describe('RunShell — an open note editor does not survive a change of run', ()
 
   it('shows the new run’s own note, with no leftover editor or draft from the old one', async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    // An admin, so Edit note is offered at all: the shell draws it only for a
+    // reader whose access is known and allows `run:note`. `roles: {}` writes
+    // the project list too, so the shell's lookup asks the network nothing.
+    seedAccess(client, { isAdmin: true, roles: {} });
     const { rerender } = render(shellTree(RUN_A, client));
 
     await userEvent.click(await screen.findByRole('button', { name: 'Edit note' }));
@@ -1016,5 +1020,99 @@ describe('RunShell — the run’s project access', () => {
     const probe = screen.getByTestId('access-probe');
     expect(probe).toHaveAttribute('data-known', 'false');
     expect(probe).toHaveAttribute('data-tokens', 'false');
+  });
+});
+
+/**
+ * ═══ THE RUN'S NOTE IS EDITABLE ONLY BY A ROLE THAT MAY (project access, PR 3) ═══
+ *
+ * The shell hands `RunNote` `canEdit` from the access it already asked for the
+ * run's own project (ruling P13) — `run:note`, which asks for Member. The note
+ * itself is the run's, so a reader who may not edit it still reads it.
+ */
+describe('RunShell — the run’s note follows the reader’s role in its project', () => {
+  const NOTE: RunNoteValue = { text: 'flaky environment, ignore', updatedAt: null, updatedBy: null };
+
+  function renderNoteShell(
+    identity: ComponentProps<typeof RunShell>['identity'],
+    who: { isAdmin: boolean; roles?: Readonly<Record<string, ProjectRole>> } | null,
+  ) {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    if (who !== null) seedAccess(client, who);
+    return render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={[`/runs/${RUN.id}`]}>
+          <Routes>
+            <Route
+              path="/runs/:runId"
+              element={
+                <RunShell
+                  identity={identity}
+                  status={RUN.status}
+                  verdict={RUN.verdict}
+                  windowable={RUN.windowable}
+                  terminal
+                  live={null}
+                  capReached={false}
+                  onRetry={() => {}}
+                />
+              }
+            >
+              <Route index element={<div />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  }
+
+  it('shows a viewer the note read-only, with no Edit note', () => {
+    renderNoteShell({ ...RUN, note: NOTE }, { isAdmin: false, roles: { checkout: 'viewer' } });
+    expect(screen.getByTestId('run-note-text')).toHaveTextContent(NOTE.text);
+    expect(screen.queryByRole('button', { name: 'Edit note' })).toBeNull();
+  });
+
+  it('offers a viewer no Add a note on a run with none', () => {
+    renderNoteShell({ ...RUN, note: null }, { isAdmin: false, roles: { checkout: 'viewer' } });
+    expect(screen.queryByRole('button', { name: 'Add a note' })).toBeNull();
+  });
+
+  it('offers a member Edit note, and Add a note on a run with none', () => {
+    renderNoteShell({ ...RUN, note: NOTE }, { isAdmin: false, roles: { checkout: 'member' } });
+    expect(screen.getByRole('button', { name: 'Edit note' })).toBeInTheDocument();
+    cleanup();
+    renderNoteShell({ ...RUN, note: null }, { isAdmin: false, roles: { checkout: 'member' } });
+    expect(screen.getByRole('button', { name: 'Add a note' })).toBeInTheDocument();
+  });
+
+  /** The answer is the RUN'S project's: a member elsewhere is still a viewer here. */
+  it('asks about the run’s own project, not another one the reader may edit in', () => {
+    renderNoteShell({ ...RUN, note: NOTE }, { isAdmin: false, roles: { checkout: 'viewer', search: 'member' } });
+    expect(screen.getByTestId('run-note-text')).toHaveTextContent(NOTE.text);
+    expect(screen.queryByRole('button', { name: 'Edit note' })).toBeNull();
+  });
+
+  /** Review Focus 1: an admin holding only a Viewer row may do everything. */
+  it('offers an admin holding only a Viewer row Edit note', () => {
+    renderNoteShell({ ...RUN, note: NOTE }, { isAdmin: true, roles: { checkout: 'viewer' } });
+    expect(screen.getByRole('button', { name: 'Edit note' })).toBeInTheDocument();
+  });
+
+  /** A run whose identity names no project asks about none, which is known for nobody — an admin included. */
+  it('shows the note of a run with no project read-only, even to an admin', () => {
+    renderNoteShell({ ...RUN, project: undefined, note: NOTE }, { isAdmin: true, roles: {} });
+    expect(screen.getByTestId('run-note-text')).toHaveTextContent(NOTE.text);
+    expect(screen.queryByRole('button', { name: 'Edit note' })).toBeNull();
+  });
+
+  /** Review Focus 2: while the session is held nothing is known, so nothing is offered. */
+  it('offers neither Add a note nor Edit note while access is pending', () => {
+    vi.stubGlobal('fetch', () => new Promise<Response>(() => {}));
+    renderNoteShell({ ...RUN, note: NOTE }, null);
+    expect(screen.getByTestId('run-note-text')).toHaveTextContent(NOTE.text);
+    expect(screen.queryByRole('button', { name: 'Edit note' })).toBeNull();
+    cleanup();
+    renderNoteShell({ ...RUN, note: null }, null);
+    expect(screen.queryByRole('button', { name: 'Add a note' })).toBeNull();
   });
 });

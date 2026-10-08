@@ -136,9 +136,11 @@ export default function RunShell({
   /* ═══ WHAT THE READER MAY DO IN THIS RUN'S PROJECT, ASKED ONCE ═══
      For the run's own project, and handed to every section through the
      outlet context rather than asked again in each: one observer on the
-     session and the project list per page. A run with no project in its
-     identity yet asks about none, which is not known for anyone — so a
-     control gated on it stays hidden, and nobody is told they were refused. */
+     session and the project list per page. The shell's own chrome reads it
+     too: the run's note below is editable only with `run:note`. A run with
+     no project in its identity yet asks about none, which is not known for
+     anyone — so a control gated on it stays hidden, and nobody is told they
+     were refused. */
   const projectAccess = useProjectAccess(identity.project?.slug);
   // §22.6's one JS breakpoint, read here because the brush below is a drag
   // control and a class could only hide it — leaving a phone to build a
@@ -249,7 +251,18 @@ export default function RunShell({
            clear the draft but cannot re-point a save already in flight;
            the key forces a fresh instance instead, so a stale save's
            `onSuccess` writes into a component that is no longer mounted. */
-        note={<RunNote key={identity.id} runId={identity.id} note={identity.note} />}
+        note={
+          /* `canEdit` from the access asked once above, for the run's own
+             project (ruling P13): `run:note` asks for Member, and a reader
+             below it — or anyone while it is not known, or on a run with no
+             project — reads the note and is offered no way to change it. */
+          <RunNote
+            key={identity.id}
+            runId={identity.id}
+            note={identity.note}
+            canEdit={projectAccess.can('run:note')}
+          />
+        }
       />
       <RunTabs
         runId={identity.id}

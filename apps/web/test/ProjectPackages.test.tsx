@@ -5,11 +5,13 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Package } from '@perfportal/contracts';
+import type { Package, ProjectRole } from '@perfportal/contracts';
 import { ProblemError } from '../src/api/fetch.js';
+import { projectsQueryKey } from '../src/api/projects.js';
 import { formatBytes } from '../src/api/uploadBundle.js';
 import { formatInstant } from '../src/routes/format.js';
 import { projectNewRunnerRunPath } from '../src/routes/paths.js';
+import { projectListBody, seedAccess } from './support/access';
 
 // `vitest.config.ts` sets no `globals`, so Testing Library's automatic cleanup
 // never registers and every `render` here would otherwise stack in the same
@@ -107,11 +109,21 @@ const EMPTY: Package = {
 
 const { default: ProjectPackages } = await import('../src/routes/ProjectPackages');
 
-function renderPage() {
+/**
+ * An admin by default: every claim before the role cases at the foot is about
+ * the page a reader who MAY change packages sees — and New package, Upload and
+ * the row menu are drawn only once access is known and allows them. Seeded
+ * with no `roles`, so the shell's project list is this file's own
+ * `fetchProjects` mock ("Checkout Flow"), as before. `null` seeds nothing.
+ */
+function renderPage(
+  who: { isAdmin: boolean; roles?: Readonly<Record<string, ProjectRole>> } | null = { isAdmin: true },
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  return render(
+  if (who !== null) seedAccess(client, who);
+  const view = render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={['/projects/checkout/packages']}>
         <Routes>
@@ -120,6 +132,7 @@ function renderPage() {
       </MemoryRouter>
     </QueryClientProvider>,
   );
+  return { ...view, client };
 }
 
 const rows = () => screen.getAllByTestId('package-row');
@@ -921,5 +934,138 @@ describe('Packages — below 768px', () => {
     expect(row.getByText(FILENAME)).toBeInTheDocument();
     expect(row.getByRole('button', { name: `Copy package id ${CHECKOUT.id}` })).toBeInTheDocument();
     expect(within(await openMenu(user, 'Checkout')).getByRole('menuitem', { name: 'Rename' })).toBeInTheDocument();
+  });
+});
+
+/**
+ * ═══ WHAT A ROLE MAY CHANGE (project access, PR 3) ═══
+ *
+ * Every role reads packages; changing one is gated, each control by the
+ * action the API asks of it:
+ *
+ *   New package, Upload, Rename   `packages:manage`
+ *   Delete                        `packages:delete`
+ *   New run from this package     `runner:run` (gate by destination: the form exists to start a run)
+ *
+ * All three ask for Member today, so a Viewer is offered none of them — and a
+ * row menu with nothing left in it is not drawn at all, nor the Actions column
+ * that would hold nothing. Hidden until known: while access is pending none is
+ * drawn, and this page has nothing to refuse — a Viewer is SHOWN the
+ * packages, so no `NoAccess` sentence belongs here.
+ */
+describe('Packages — what a role may change', () => {
+  const viewer = { isAdmin: false, roles: { checkout: 'viewer' } } as const;
+  const member = { isAdmin: false, roles: { checkout: 'member' } } as const;
+
+  /** Every control this page changes a package with — the New package disclosure, an Upload, a row menu. */
+  function changeControls() {
+    return {
+      newPackage: screen.queryByText('New package'),
+      uploads: screen.queryAllByRole('button', { name: /^Upload a file to / }),
+      menus: screen.queryAllByRole('button', { name: /: package actions$/ }),
+    };
+  }
+
+  it('shows a viewer the packages with nothing to change them by, and no Actions column', async () => {
+    renderPage(viewer);
+    await screen.findAllByTestId('package-row');
+
+    expect(rows()).toHaveLength(2);
+    expect(changeControls()).toEqual({ newPackage: null, uploads: [], menus: [] });
+    expect(screen.getAllByRole('columnheader').map((h) => h.textContent)).toEqual([
+      'Name',
+      'Format',
+      'Used by',
+      'File',
+      'Last upload',
+    ]);
+    // Reading is a Viewer's, and nothing here was refused.
+    expect(screen.queryByText(/needs the .* role/)).toBeNull();
+  });
+
+  it('tells a viewer with no packages only that there are none — not to create one above', async () => {
+    fetchPackages.mockResolvedValue({ items: [] });
+    renderPage(viewer);
+
+    expect(await screen.findByText('No packages yet')).toBeInTheDocument();
+    expect(screen.queryByText(/Create one above/)).toBeNull();
+    expect(screen.queryByText('New package')).toBeNull();
+  });
+
+  it('offers a member every control: New package, Upload, and a menu of Rename, New run and Delete', async () => {
+    const user = userEvent.setup();
+    renderPage(member);
+    await screen.findAllByTestId('package-row');
+
+    const controls = changeControls();
+    expect(controls.newPackage).not.toBeNull();
+    expect(controls.uploads).toHaveLength(2);
+    expect(controls.menus).toHaveLength(2);
+    expect(screen.getAllByRole('columnheader').at(-1)?.textContent).toBe('Actions');
+
+    const menu = await openMenu(user, 'Checkout');
+    expect(within(menu).getAllByRole('menuitem').map((i) => i.textContent)).toEqual([
+      'Rename',
+      'New run from this package',
+      'Delete',
+    ]);
+    expect(within(menu).getByRole('menuitem', { name: 'New run from this package' })).toHaveAttribute(
+      'href',
+      projectNewRunnerRunPath('checkout', CHECKOUT.id),
+    );
+  });
+
+  /** Review Focus 1: an admin may do everything, whatever role their own row holds. */
+  it('offers an admin holding only a Viewer row every control', async () => {
+    renderPage({ isAdmin: true, roles: { checkout: 'viewer' } });
+    await screen.findAllByTestId('package-row');
+
+    const controls = changeControls();
+    expect(controls.newPackage).not.toBeNull();
+    expect(controls.uploads).toHaveLength(2);
+    expect(controls.menus).toHaveLength(2);
+  });
+
+  /** Review Focus 2: while the session is held nothing is known — so nothing is offered, and nobody refused. */
+  it('offers no control while access is pending, and still lists the packages', async () => {
+    vi.stubGlobal('fetch', () => new Promise<Response>(() => {}));
+    renderPage(null);
+    await screen.findAllByTestId('package-row');
+
+    expect(rows()).toHaveLength(2);
+    expect(changeControls()).toEqual({ newPackage: null, uploads: [], menus: [] });
+    expect(screen.queryByText(/needs the .* role/)).toBeNull();
+  });
+
+  /** The phone's cards share the row's actions — gated once, so a viewer's card carries none either. */
+  it('gives a viewer’s phone cards no Upload and no menu', async () => {
+    vi.stubGlobal('matchMedia', () => ({
+      matches: true,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+    renderPage(viewer);
+    await screen.findAllByTestId('package-row');
+
+    expect(screen.queryByRole('table')).toBeNull();
+    expect(changeControls()).toEqual({ newPackage: null, uploads: [], menus: [] });
+  });
+
+  /** Review Focus 3: a role that drops under an open page takes the controls, and an armed rename, with it. */
+  it('takes every control, and an armed rename, away when the role drops', async () => {
+    const user = userEvent.setup();
+    const { client } = renderPage(member);
+    await screen.findAllByTestId('package-row');
+
+    await user.click(within(await openMenu(user, 'Checkout')).getByRole('menuitem', { name: 'Rename' }));
+    expect(await screen.findByRole('textbox', { name: 'New name for Checkout' })).toBeInTheDocument();
+
+    act(() => {
+      client.setQueryData(projectsQueryKey, projectListBody({ checkout: 'viewer' }));
+    });
+
+    await waitFor(() => expect(changeControls()).toEqual({ newPackage: null, uploads: [], menus: [] }));
+    expect(screen.queryByRole('textbox', { name: 'New name for Checkout' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
   });
 });
