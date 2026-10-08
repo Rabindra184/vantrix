@@ -2069,7 +2069,6 @@ const paths: Record<string, PathItemObject> = {
       operationId: 'startRunnerRun',
       summary: 'Start a run on an on-prem runner, from a package or an uploaded artifact',
       tags: ['runner'],
-      security: [{ bearerAuth: [] }],
       description:
         sessionAccessSentence('runner:run') + ' ' +
         'Requires the "runner" scope. Queues a job an on-prem runner node claims by polling — ' +
@@ -2148,7 +2147,6 @@ const paths: Record<string, PathItemObject> = {
       operationId: 'cancelRunnerRun',
       summary: 'Cancel a queued or running on-prem job',
       tags: ['runner'],
-      security: [{ bearerAuth: [] }],
       description:
         sessionAccessSentence('runner:run') + ' ' +
         'Requires the "runner" scope. ONLY A QUEUED OR RUNNING JOB CAN BE CANCELLED: any other ' +
@@ -2198,7 +2196,6 @@ const paths: Record<string, PathItemObject> = {
       operationId: 'retryRunnerRun',
       summary: 'Queue a failed or cancelled job again',
       tags: ['runner'],
-      security: [{ bearerAuth: [] }],
       description:
         sessionAccessSentence('runner:run') + ' ' +
         'Requires the "runner" scope. Queues a NEW job carrying everything the operator chose ' +
