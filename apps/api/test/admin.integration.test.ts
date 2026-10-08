@@ -261,6 +261,7 @@ describe('POST /v1/admin/users', () => {
     const admin = await signInAsAdmin(ctx, email('admin'));
     const address = email('New.Person');
     const typed = `  ${address.toUpperCase()} `;
+    const createUser = vi.spyOn(auth.api, 'createUser');
 
     const res = await api('post', '/v1/admin/users', admin.cookie, {
       email: typed,
@@ -270,6 +271,14 @@ describe('POST /v1/admin/users', () => {
     });
     expect(res.status, JSON.stringify(res.body)).toBe(201);
     const created = AdminUserSchema.parse(res.body);
+    // The id is chosen before Better Auth writes anything, so a compensation
+    // can delete exactly it. Better Auth must keep it: an upgrade that stops
+    // doing so fails here, by name, rather than in a compensation aimed at an
+    // id nothing holds.
+    expect(createUser).toHaveBeenCalledTimes(1);
+    const supplied = (createUser.mock.calls[0]?.[0] as { body: { data?: { id?: unknown } } }).body.data?.id;
+    expect(typeof supplied).toBe('string');
+    expect(created.id).toBe(supplied);
     expect(created).toMatchObject({
       email: address.toLowerCase(),
       name: 'New Person',
@@ -363,7 +372,7 @@ describe('POST /v1/admin/users', () => {
         expect.objectContaining({
           code: 'EMAIL_TAKEN',
           detail: `An account with ${address.toLowerCase()} already exists.`,
-          remediation: 'Use another email, or find the account with GET /v1/admin/users.',
+          remediation: 'Use another email.',
         }),
       ]);
       expect(await usersWithEmail(address)).toBe(1);
@@ -386,6 +395,56 @@ describe('POST /v1/admin/users', () => {
     const res = await api('post', '/v1/admin/users', admin.cookie, { email: address, name: 'Raced', password: TEMPORARY });
     expect([res.status, res.body.code], JSON.stringify(res.body)).toEqual([409, 'EMAIL_TAKEN']);
     expect(await usersWithEmail(address)).toBe(1);
+  });
+
+  /**
+   * Two creates of one address at the same moment both pass both checks —
+   * ours and Better Auth's read before its INSERT — and the unique index on
+   * `user.email` is what decides. The other create is a raw transaction here,
+   * its INSERT made and held uncommitted: this request's INSERT is OBSERVED
+   * waiting on it, and when it commits, this one is refused by the index.
+   * That refusal is the same 409 as any taken address, never a 500.
+   */
+  it('answers a create that loses the race for an address 409 EMAIL_TAKEN', async () => {
+    ctx = await createTestApp();
+    const admin = await signInAsAdmin(ctx, email('admin'));
+    const address = email('raced-insert');
+    const holder = await ctx.pool.connect();
+    let pending: Promise<request.Response> | undefined;
+    try {
+      const { rows } = await holder.query<{ pid: number }>('SELECT pg_backend_pid() AS pid');
+      const holderPid = rows[0]!.pid;
+      await holder.query('BEGIN');
+      await holder.query('INSERT INTO "user" (id, name, email, "updatedAt") VALUES ($1, $2, $3, now())', [
+        `other-${randomUUID()}`,
+        'The Other Create',
+        address,
+      ]);
+
+      let settled = false;
+      pending = api('post', '/v1/admin/users', admin.cookie, { email: address, name: 'Raced', password: TEMPORARY }).then(
+        (res) => {
+          settled = true;
+          return res;
+        },
+      );
+      await waitUntil('the create’s INSERT to wait on the uncommitted one', async () => {
+        if (settled) throw new Error('the create finished while another INSERT of its address was uncommitted');
+        return (await queuedBehind(holderPid)) === 1;
+      });
+      await holder.query('COMMIT');
+
+      const res = await pending;
+      expect([res.status, res.body], JSON.stringify(res.body)).toEqual([
+        409,
+        expect.objectContaining({ code: 'EMAIL_TAKEN', detail: `An account with ${address} already exists.` }),
+      ]);
+      expect(await usersWithEmail(address)).toBe(1);
+    } finally {
+      await holder.query('ROLLBACK').catch(() => undefined);
+      holder.release();
+      if (pending) await Promise.allSettled([pending]);
+    }
   });
 
   it('refuses a project the org does not hold 400 UNKNOWN_PROJECT, naming it, and leaves no account', async () => {
@@ -468,6 +527,56 @@ describe('POST /v1/admin/users', () => {
   });
 });
 
+/**
+ * Review Focus 4, the other place a create can fail: INSIDE Better Auth's
+ * `createUser`, after it has written the user and before its credential
+ * account. A trigger refuses that account INSERT, for this address alone and
+ * once. The create must leave no user behind — the id it supplied is the one
+ * deleted — and the admin's retry, the address upper-cased, must succeed.
+ */
+describe('a create that fails inside Better Auth', () => {
+  it('removes the half-written account, so a retry with the same email succeeds', async () => {
+    ctx = await createTestApp();
+    const admin = await signInAsAdmin(ctx, email('admin'));
+    const address = email('half-written');
+    const trigger = `refuse_account_${randomUUID().replaceAll('-', '')}`;
+    let failed: request.Response;
+    try {
+      // The address is test-made ([a-z-] and hex), so it is safe to write into the function body.
+      await ctx.pool.query(`
+        CREATE FUNCTION ${trigger}() RETURNS trigger LANGUAGE plpgsql AS $fn$
+        BEGIN
+          IF EXISTS (SELECT 1 FROM "user" WHERE id = NEW."userId" AND email = '${address}') THEN
+            RAISE EXCEPTION 'account insert refused for the test';
+          END IF;
+          RETURN NEW;
+        END
+        $fn$`);
+      await ctx.pool.query(`CREATE TRIGGER ${trigger} BEFORE INSERT ON account FOR EACH ROW EXECUTE FUNCTION ${trigger}()`);
+
+      failed = await api('post', '/v1/admin/users', admin.cookie, {
+        email: address,
+        name: 'Half Written',
+        password: TEMPORARY,
+        projects: [{ projectSlug: 'checkout', role: 'viewer' }],
+      });
+    } finally {
+      await ctx.pool.query(`DROP TRIGGER IF EXISTS ${trigger} ON account`);
+      await ctx.pool.query(`DROP FUNCTION IF EXISTS ${trigger}()`);
+    }
+    expect(failed.status, JSON.stringify(failed.body)).toBe(500);
+    const leftover = await usersWithEmail(address);
+
+    const retry = await api('post', '/v1/admin/users', admin.cookie, {
+      email: address.toUpperCase(),
+      name: 'Half Written',
+      password: TEMPORARY,
+      projects: [{ projectSlug: 'checkout', role: 'viewer' }],
+    });
+    expect({ leftover, retry: [retry.status, retry.body.code] }).toEqual({ leftover: 0, retry: [201, undefined] });
+  });
+});
+
 describe('PATCH /v1/admin/users/:userId', () => {
   it('renames an account', async () => {
     ctx = await createTestApp();
@@ -521,6 +630,24 @@ describe('PATCH /v1/admin/users/:userId', () => {
     expect(AdminUserSchema.parse(on.body).disabled).toBe(false);
     const again = await signIn(ctx.app, address);
     await api('get', '/v1/projects', again).expect(200);
+  });
+
+  /**
+   * All or nothing. Applied as separate calls, the demotion landed and the
+   * enable was then refused 403 — Better Auth re-checking a caller who had
+   * just stopped being an admin — leaving half the change made under a
+   * refusal. One call applies both.
+   */
+  it('applies a self PATCH that drops your own admin and enables you, whole', async () => {
+    ctx = await createTestApp();
+    const admin = await signInAsAdmin(ctx, email('admin'));
+    await signInAsAdmin(ctx, email('other-admin'));
+
+    const res = await api('patch', `/v1/admin/users/${admin.userId}`, admin.cookie, { isAdmin: false, disabled: false });
+    expect([res.status, res.body.code], JSON.stringify(res.body)).toEqual([200, undefined]);
+    expect(AdminUserSchema.parse(res.body)).toMatchObject({ isAdmin: false, disabled: false });
+    const row = await ctx.prisma.user.findUniqueOrThrow({ where: { id: admin.userId } });
+    expect([row.role, row.banned]).toEqual(['user', false]);
   });
 
   it('refuses disabling yourself 400 CANNOT_DISABLE_SELF, and changes nothing', async () => {
@@ -578,6 +705,27 @@ describe('PATCH /v1/admin/users/:userId', () => {
    * admin: a demote or a disable of them must now be refused, though the
    * count read before the wait would have allowed it.
    */
+  /**
+   * The person is re-read UNDER the lock. Here the change queued ahead
+   * disables the target, so they are no longer an active admin and a
+   * demotion of them takes nobody out: it must go through. A read taken
+   * before the wait still sees an active last admin and answers a false 409.
+   */
+  it('judges the target as they are once the lock is held, not as they were before it', async () => {
+    ctx = await createTestApp();
+    const caller = await signInAsAdmin(ctx, email('caller'));
+    const target = await signInAsAdmin(ctx, email('target'));
+
+    const res = await whileQueued(
+      () => api('patch', `/v1/admin/users/${target.userId}`, caller.cookie, { isAdmin: false }),
+      async () => {
+        await ctx.prisma.user.update({ where: { id: target.userId }, data: { banned: true } });
+      },
+    );
+    expect([res.status, res.body.code], JSON.stringify(res.body)).toEqual([200, undefined]);
+    expect(AdminUserSchema.parse(res.body)).toMatchObject({ isAdmin: false, disabled: true });
+  });
+
   for (const [what, body] of [
     ['demote', { isAdmin: false }],
     ['disable', { disabled: true }],
@@ -695,6 +843,31 @@ describe('PUT /v1/admin/users/:userId/password', () => {
       }),
     ]);
     expect(await snapshot(admin.userId)).toEqual(before);
+  });
+
+  /**
+   * The account is removed after its password is set and before the flag is
+   * raised — forced by removing it as the flag's write begins. The reset
+   * answers the 404 a missing account gets, not a 500.
+   */
+  it('answers a reset that races a removal 404', async () => {
+    ctx = await createTestApp();
+    const admin = await signInAsAdmin(ctx, email('admin'));
+    const target = await signInAsProjectMember(ctx, email('leaving'), []);
+    const setFlag = UserRepository.prototype.setMustChangePassword;
+    vi.spyOn(UserRepository.prototype, 'setMustChangePassword').mockImplementationOnce(async function (
+      this: UserRepository,
+      ...args: Parameters<UserRepository['setMustChangePassword']>
+    ) {
+      await ctx.prisma.user.delete({ where: { id: target.userId } });
+      return setFlag.apply(this, args);
+    });
+
+    const res = await api('put', `/v1/admin/users/${target.userId}/password`, admin.cookie, { password: TEMPORARY });
+    expect([res.status, res.body], JSON.stringify(res.body)).toEqual([
+      404,
+      expect.objectContaining({ detail: `No user ${target.userId} in this organisation.` }),
+    ]);
   });
 
   it('refuses a body the schema refuses 400 INVALID_PASSWORD_RESET, and changes nothing', async () => {

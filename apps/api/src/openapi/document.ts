@@ -2409,8 +2409,10 @@ const paths: Record<string, PathItemObject> = {
         'temporary password given, joins it to this organisation, and grants it a role in each ' +
         'project listed — the membership and the roles in one transaction. Its owner must choose a ' +
         'new password at first sign-in: until then every other operation answers them 403 ' +
-        'PASSWORD_CHANGE_REQUIRED. If a step after the account exists fails, the account is ' +
-        'removed again, so a retry with the same email succeeds.',
+        'PASSWORD_CHANGE_REQUIRED. If creating the account or granting its roles fails part-way, ' +
+        'what was written of the account is removed before the error is answered, so a retry ' +
+        'with the same email is not refused EMAIL_TAKEN by it (should that removal fail too, ' +
+        'the server logs it).',
       requestBody: {
         required: true,
         description:
@@ -2439,7 +2441,8 @@ const paths: Record<string, PathItemObject> = {
         '409': {
           description:
             'An account with this email already exists, in any letter case and in any organisation ' +
-            '(code EMAIL_TAKEN). application/problem+json with a required "remediation".',
+            '(code EMAIL_TAKEN) — including one created by a request racing this one, which loses. ' +
+            'application/problem+json with a required "remediation".',
           content: problem(),
         },
       },

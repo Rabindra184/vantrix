@@ -516,7 +516,7 @@ interface Target {
 
 /** A package id no project holds: a well-formed uuid, so it reaches past `uuidParam` to the lookup. */
 const NO_PACKAGE = randomUUID();
-/** An account id nobody holds. Better Auth's ids are not uuids, so neither is this; nothing pipes it. */
+/** An account id nobody holds. Account ids are opaque strings (Better Auth's own, or a uuid an admin's create chose); nothing pipes them. */
 const NO_USER = `no-such-user-${randomUUID()}`;
 
 function fill(route: string, target: Target): { verb: Verb; url: string } {
