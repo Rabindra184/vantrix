@@ -1,6 +1,7 @@
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { useEffect, type ReactNode } from 'react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ActivityResponseSchema } from '@perfportal/contracts';
@@ -29,25 +30,34 @@ afterEach(cleanup);
  * would go on passing whichever endpoint the gate asked.
  */
 let requests: URL[] = [];
+/** The method of each request, beside `requests` and in the same order. */
+let methods: string[] = [];
 
 function renderGate({
   session,
   probe,
   child = <p>page content stand-in</p>,
+  other = {},
 }: {
   session: () => unknown;
   probe?: () => unknown;
   /** What the gate lets through. A stand-in by default; see the latch cases for one that asks too. */
   child?: ReactNode;
+  /** Any further endpoint a case needs answered, by path; everything else still 404s. */
+  other?: Record<string, () => Promise<Response>>;
 }) {
   requests = [];
-  vi.stubGlobal('fetch', (input: RequestInfo | URL) => {
+  methods = [];
+  vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input), 'http://localhost');
     requests.push(url);
+    methods.push(init?.method ?? 'GET');
     if (url.pathname === '/auth/get-session') return session() as Promise<Response>;
     if (url.pathname === '/v1/activity') {
       return (probe?.() ?? new Promise<Response>(() => {})) as Promise<Response>;
     }
+    const answer = other[url.pathname];
+    if (answer !== undefined) return answer();
     return Promise.resolve(
       new Response(JSON.stringify({ code: 'NOT_FOUND', detail: 'No such route.', remediation: 'None.' }), {
         status: 404,
@@ -591,5 +601,148 @@ describe('AuthGate — the gate latches once it has its answer', () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+/**
+ * ═══ A SESSION THAT MUST CHANGE ITS PASSWORD REACHES NOTHING ELSE ═══
+ *
+ * At first sign-in, and after an admin resets a password, every `/v1` route
+ * but `PUT /v1/me/password` answers 403 `PASSWORD_CHANGE_REQUIRED`. The probe
+ * is one of those routes, and the gate reads ANY other 403 as "a member of no
+ * organisation" — so a gate that asked it would send this person to a page
+ * telling them they belong nowhere. The session carries the flag, so the gate
+ * reads it first and does not ask.
+ */
+const sessionWith = (user: Record<string, unknown>) => () =>
+  Promise.resolve(
+    new Response(JSON.stringify({ session: { id: 's1' }, user: { id: 'u1', name: 'Ada', ...user } }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }),
+  );
+const mustChange = sessionWith({ mustChangePassword: true });
+const changed = sessionWith({ mustChangePassword: false });
+
+/** What the API's gate answers every other `/v1` route while the flag is set. */
+const passwordChangeRequired = problem(403, {
+  code: 'PASSWORD_CHANGE_REQUIRED',
+  detail: 'Choose a new password before doing anything else.',
+  remediation: 'Change it with PUT /v1/me/password.',
+});
+
+/** `PUT /v1/me/password`'s success: 204, and no body to read. */
+const passwordSet = () => Promise.resolve(new Response(null, { status: 204 }));
+
+const STEP = { level: 1, name: 'Choose a new password' } as const;
+const probeCount = () => requests.filter((u) => u.pathname === '/v1/activity').length;
+
+async function choosePassword() {
+  const user = userEvent.setup();
+  await user.type(screen.getByLabelText('Current password'), 'temporary-pass');
+  await user.type(screen.getByLabelText('New password'), 'chosen-password');
+  await user.type(screen.getByLabelText('Repeat new password'), 'chosen-password');
+  await user.click(screen.getByRole('button', { name: 'Change password' }));
+}
+
+describe('AuthGate — a password that must be changed', () => {
+  it('shows the password step and nothing behind it, and never asks the probe', async () => {
+    renderGate({ session: mustChange, probe: passwordChangeRequired });
+    expect(await screen.findByRole('heading', STEP)).toBeInTheDocument();
+    expect(screen.queryByText('page content stand-in')).toBeNull();
+    // Long enough for a probe to have been asked and answered.
+    await ticks(3);
+    expect(probeCount()).toBe(0);
+    expect(screen.queryByText('no organisation stand-in')).toBeNull();
+  });
+
+  it('asks for the session again once the password is changed, and lets the reader through', async () => {
+    let sessionCalls = 0;
+    renderGate({
+      session: () => {
+        sessionCalls += 1;
+        return sessionCalls === 1 ? mustChange() : changed();
+      },
+      probe: () => Promise.resolve(json(ACTIVITY)),
+      other: { '/v1/me/password': passwordSet },
+    });
+    await screen.findByRole('heading', STEP);
+    await choosePassword();
+
+    expect(await screen.findByText('page content stand-in')).toBeInTheDocument();
+    expect(sessionCalls).toBe(2);
+    const put = requests.findIndex((u) => u.pathname === '/v1/me/password');
+    expect(methods[put]).toBe('PUT');
+    // The probe was asked only once the flag had gone.
+    expect(probeCount()).toBe(1);
+  });
+
+  it('offers Sign out', async () => {
+    renderGate({
+      session: mustChange,
+      other: {
+        '/auth/sign-out': () =>
+          Promise.resolve(new Response('{"success":true}', { status: 200, headers: { 'Content-Type': 'application/json' } })),
+      },
+    });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: 'Sign out' }));
+    expect(await screen.findByText('login stand-in')).toBeInTheDocument();
+  });
+
+  /**
+   * THE FLAG OUTRANKS A GATE THAT HAS ALREADY PASSED. The latch keeps the app
+   * on screen through a failed READ; it is not a licence to show it to a
+   * session that must change its password first.
+   */
+  it('takes the app away when the session comes to carry the flag after the gate passed', async () => {
+    const { client } = renderGate({ session: signedIn, probe: () => Promise.resolve(json(ACTIVITY)) });
+    expect(await screen.findByText('page content stand-in')).toBeInTheDocument();
+
+    act(() => {
+      client.setQueryData(sessionQueryKey, {
+        session: { id: 's1' },
+        user: { id: 'u1', name: 'Ada', mustChangePassword: true },
+      });
+    });
+    expect(await screen.findByRole('heading', STEP)).toBeInTheDocument();
+    expect(screen.queryByText('page content stand-in')).toBeNull();
+  });
+});
+
+/**
+ * ═══ AND A SESSION THAT HAS NOT SEEN THE FLAG IS SENT THERE TOO ═══
+ *
+ * The flag is optional on the session: an API pod older than it omits the
+ * field, and a cached session can predate the reset that set it. Then the
+ * probe IS asked, and answers the gate's own 403 — which the gate tells apart
+ * from "no organisation" by its code, the one place it reads a code at all.
+ */
+describe('AuthGate — the probe’s own PASSWORD_CHANGE_REQUIRED', () => {
+  it('shows the password step rather than the no-organisation page', async () => {
+    renderGate({ session: signedIn, probe: passwordChangeRequired });
+    expect(await screen.findByRole('heading', STEP)).toBeInTheDocument();
+    expect(screen.queryByText('no organisation stand-in')).toBeNull();
+    expect(screen.queryByText('page content stand-in')).toBeNull();
+  });
+
+  /** The probe's answer is an error now, and an errored query is not asked
+   *  again by itself: the step has to make it ask, or the reader stays here. */
+  it('asks the probe again once the password is changed, and lets the reader through', async () => {
+    let probeCalls = 0;
+    renderGate({
+      session: signedIn,
+      probe: () => {
+        probeCalls += 1;
+        return probeCalls === 1 ? passwordChangeRequired() : Promise.resolve(json(ACTIVITY));
+      },
+      other: { '/v1/me/password': passwordSet },
+    });
+    await screen.findByRole('heading', STEP);
+    await choosePassword();
+
+    expect(await screen.findByText('page content stand-in')).toBeInTheDocument();
+    expect(probeCalls).toBe(2);
+    expect(screen.queryByText('no organisation stand-in')).toBeNull();
   });
 });

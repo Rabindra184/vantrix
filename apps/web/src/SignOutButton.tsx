@@ -26,11 +26,22 @@ import { signOut } from './api/session';
  * (`getByRole('button', { name: 'Sign out', exact: true })`). `hidden
  * sm:inline` would be wrong here: it removes the name below `sm`.
  *
+ * THAT IS THE DEFAULT, written for the header slot this button once filled
+ * (the account menu signs out itself now), and every caller that passes
+ * nothing keeps it. A caller where this is the reader's only way out passes
+ * `alwaysShowLabel` and the word is drawn at every width (the password step:
+ * an unlabelled icon is too little to leave a screen by). The name is
+ * "Sign out" either way.
+ *
+ * It hands back the button and, after a failure, its alert as SIBLINGS (a
+ * fragment), so the caller's container decides whether the alert sits beside
+ * the button or beneath it.
+ *
  * `submitting` guards the double-click. Two sign-out posts race, the second
  * one 401s against the cookie the first already cleared, and this component
  * would show its failure message to a user whose sign-out actually worked.
  */
-export default function SignOutButton() {
+export default function SignOutButton({ alwaysShowLabel = false }: { readonly alwaysShowLabel?: boolean } = {}) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [failed, setFailed] = useState(false);
@@ -57,7 +68,7 @@ export default function SignOutButton() {
             "Sign out" beside it is the name, and an icon that contributed its
             own would append to it. */}
         {!submitting && <SignOutIcon className="h-3.5 w-3.5" />}
-        <span className="sr-only sm:not-sr-only">Sign out</span>
+        <span className={alwaysShowLabel ? undefined : 'sr-only sm:not-sr-only'}>Sign out</span>
       </Button>
       {failed && (
         // `role="alert"` is announced the moment it appears. The icon is

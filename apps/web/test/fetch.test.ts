@@ -1,6 +1,6 @@
 import { RunListResponseSchema } from '@perfportal/contracts';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { apiFetch, ProblemError } from '../src/api/fetch.js';
+import { apiFetch, apiFetchNoContent, ProblemError } from '../src/api/fetch.js';
 
 /**
  * Returns the rejection as a genuinely-typed ProblemError.
@@ -114,5 +114,61 @@ describe('apiFetch', () => {
     const error = await rejectionOf(rejection);
     expect(error.remediation).toEqual(expect.any(String));
     expect(error.remediation.length).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * ═══ A 204 HAS NO BODY, AND `apiFetch` READS ONE ═══
+ *
+ * `apiFetch` ends in `res.json()`, so a success with no content — every
+ * `PUT /v1/me/password` — would reject with a `SyntaxError` over a change that
+ * had succeeded. The helper keeps `apiFetch`'s two guarantees (credentials
+ * forced, every non-2xx a `ProblemError`) and drops the third: it never reads
+ * a success's body at all.
+ */
+describe('apiFetchNoContent', () => {
+  it('resolves on a 204 with no body', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 204 })));
+    await expect(apiFetchNoContent('/v1/me/password', { method: 'PUT' })).resolves.toBeUndefined();
+  });
+
+  /** NOT READ, not merely tolerated: a helper that parsed the body and threw
+   *  the result away would still reject a 2xx that is not JSON. */
+  it('never reads the body of a success', async () => {
+    const res = new Response('not json at all', { status: 200 });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(res));
+    await apiFetchNoContent('/v1/me/password', { method: 'PUT' });
+    expect(res.bodyUsed).toBe(false);
+  });
+
+  it('rejects a non-2xx as a ProblemError carrying the server’s detail and remediation', async () => {
+    stubFetch(
+      400,
+      {
+        code: 'INVALID_CURRENT_PASSWORD',
+        detail: 'The current password is not correct.',
+        remediation: 'Type the password you signed in with.',
+      },
+      'application/problem+json',
+    );
+    const error = await rejectionOf(apiFetchNoContent('/v1/me/password', { method: 'PUT' }));
+    expect(error).toMatchObject({
+      status: 400,
+      code: 'INVALID_CURRENT_PASSWORD',
+      detail: 'The current password is not correct.',
+      remediation: 'Type the password you signed in with.',
+    });
+  });
+
+  /** After `init`, as `apiFetch` does: a caller passing its own `credentials`
+   *  cannot drop the session cookie by accident. */
+  it('forces credentials: same-origin over whatever the caller passed', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await apiFetchNoContent('/v1/me/password', { method: 'PUT', credentials: 'omit' });
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/v1/me/password',
+      expect.objectContaining({ method: 'PUT', credentials: 'same-origin' }),
+    );
   });
 });

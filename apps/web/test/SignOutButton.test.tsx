@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -14,13 +14,13 @@ afterEach(() => {
   signOut.mockReset();
 });
 
-function renderButton() {
+function renderButton(props: { alwaysShowLabel?: boolean } = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const clear = vi.spyOn(client, 'clear');
   const view = render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={['/runs']}>
-        <SignOutButton />
+        <SignOutButton {...props} />
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -55,6 +55,27 @@ describe('SignOutButton — what it is called', () => {
    */
   it('is named by its word alone, with the icon adding nothing', () => {
     renderButton();
+    expect(button()).toHaveAccessibleName('Sign out');
+  });
+
+  /**
+   * THE DEFAULT IS THE HEADER'S, and the classes are what can be read here: the
+   * word is accessibly hidden below `sm` and drawn from `sm` up, so every caller
+   * that passes nothing keeps that (the no-organisation page among them).
+   */
+  it('hides its word below sm by default, keeping it in the name', () => {
+    renderButton();
+    expect(within(button()).getByText('Sign out')).toHaveClass('sr-only', 'sm:not-sr-only');
+  });
+
+  /**
+   * A caller with room — the password step, where Sign out is the only way out —
+   * keeps the word drawn at every width, so a phone is not left with an
+   * unlabelled icon. The name is the same either way.
+   */
+  it('draws its word at every width when asked to', () => {
+    renderButton({ alwaysShowLabel: true });
+    expect(within(button()).getByText('Sign out')).not.toHaveClass('sr-only');
     expect(button()).toHaveAccessibleName('Sign out');
   });
 });

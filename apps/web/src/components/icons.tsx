@@ -21,6 +21,7 @@ import {
   KeyRound,
   Layers,
   LoaderCircle,
+  LockKeyhole,
   LogOut,
   Maximize2,
   Minimize2,
@@ -35,6 +36,7 @@ import {
   Repeat,
   Search,
   Settings,
+  ShieldUser,
   Square,
   Sun,
   Table2,
@@ -128,6 +130,11 @@ export const MoonIcon = icon(Moon);
 export const MonitorIcon = icon(Monitor);
 
 export const SignOutIcon = icon(LogOut);
+/** The account menu's Change password — a lock, not `TokenIcon`'s key, which
+ *  already means API tokens. */
+export const PasswordIcon = icon(LockKeyhole);
+/** The account menu's Administration. */
+export const AdminIcon = icon(ShieldUser);
 export const ChevronRightIcon = icon(ChevronRight);
 export const ChevronLeftIcon = icon(ChevronLeft);
 
