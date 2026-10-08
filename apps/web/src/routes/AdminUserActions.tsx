@@ -23,7 +23,7 @@ import { ProblemError } from '../api/fetch';
 import { adminProjectsQueryKey, adminUsersQueryKey, removeUser, resetUserPassword, updateUser } from '../api/admin';
 import { addMember, removeMember, updateMember } from '../api/members';
 import { fieldMessages } from '../formIssues';
-import { ROLE_LABEL, RowField } from './AdminFields';
+import { ROLE_LABEL, RoleChange, RowField } from './AdminFields';
 
 /**
  * Administration › Users: what each row can do — its menu, and the one inline
@@ -31,8 +31,9 @@ import { ROLE_LABEL, RowField } from './AdminFields';
  *
  * ═══ ONE BLOCK AT A TIME, ACROSS THE WHOLE TABLE (ruling W15) ═══
  *
- * A Disable or Remove confirm, the Reset password block, or the Edit projects
- * and roles panel. `UsersTable` owns the single `Armed` value — `ProjectRules`'
+ * A Disable or Remove confirm, the confirm before removing your own admin
+ * rights, the Reset password block, or the Edit projects and roles panel.
+ * `UsersTable` owns the single `Armed` value — `ProjectRules`'
  * `confirming`, and `ProjectPackages`' `armed` — so arming a block on one row
  * closes whatever was open on any other, and two destructive confirmations, or
  * two sets of the same controls, are never on screen together.
@@ -53,7 +54,8 @@ import { ROLE_LABEL, RowField } from './AdminFields';
  * that block is open, and otherwise on the row's own line under it.
  */
 
-export type ArmedMode = 'disable' | 'remove' | 'reset' | 'edit';
+/** `demote` is the signed-in admin removing their own admin rights. */
+export type ArmedMode = 'disable' | 'remove' | 'demote' | 'reset' | 'edit';
 
 /** The one row with a block open, and which block. */
 export interface Armed {
@@ -218,8 +220,9 @@ export function UserActions({
           setNextFocus({ targets: [triggerId], from: resume });
           return;
         case 'role':
-          // The select it was chosen in, which was disabled while it saved.
-          if (resume !== null) setNextFocus({ targets: [resume], from: resume });
+          // The role's own select. The Save it was sent from goes once the
+          // re-read list holds the role it set, leaving nothing to save.
+          setNextFocus({ targets: [roleId(action.slug)], from: resume });
           return;
         case 'leave':
           // The pressed button left with its line; what can add it back is next.
@@ -330,9 +333,16 @@ export function UserActions({
             </DropdownMenuItem>
           )
         )}
-        {/* Applied at once, either way: the last-admin rule is the API's, and
-            its 409 comes back to this row in its own words. */}
-        <DropdownMenuItem disabled={busy} onSelect={() => run({ kind: 'update', body: { isAdmin: !user.isAdmin } }, null)}>
+        {/* Applied at once — the last-admin rule is the API's, and its 409
+            comes back to this row in its own words — except your own Remove
+            admin, which asks first: it takes Administration away from the
+            reader at once, and nothing on this page can give it back. */}
+        <DropdownMenuItem
+          disabled={busy}
+          onSelect={() =>
+            own && user.isAdmin ? arm('demote') : run({ kind: 'update', body: { isAdmin: !user.isAdmin } }, null)
+          }
+        >
           {user.isAdmin ? 'Remove admin' : 'Make admin'}
         </DropdownMenuItem>
         {!own && (
@@ -382,6 +392,18 @@ export function UserActions({
         loading={loading}
         error={blockError}
         onConfirm={() => run({ kind: 'remove' }, 'remove')}
+        onCancel={close}
+      />
+    );
+  } else if (mode === 'demote') {
+    block = (
+      <Confirm
+        question="Remove your admin rights? You lose Administration at once."
+        confirm="Remove admin"
+        busy={busy}
+        loading={loading}
+        error={blockError}
+        onConfirm={() => run({ kind: 'update', body: { isAdmin: false } }, 'demote')}
         onCancel={close}
       />
     );
@@ -582,17 +604,19 @@ function ResetPassword({
 }
 
 /**
- * Edit projects and roles: the projects a person holds a role in, each saved
- * as it is changed, and a way to add one more.
+ * Edit projects and roles: the projects a person holds a role in, and a way to
+ * add one more.
  *
- * AN EDITOR, NOT A CONFIRM. Each change is sent as it is made, so a role moved
- * by mistake is moved back the same way; the panel stays open for the next
- * change and Close leaves it.
+ * AN EDITOR, NOT A CONFIRM. A role is picked and then saved (`RoleChange`);
+ * Remove from project and Add are sent as they are pressed. A change made by
+ * mistake is undone the same way, the panel stays open for the next one, and
+ * Close leaves it.
  *
  * ═══ A NAME EACH, HOWEVER MANY PROJECTS ═══
- * Every line has a Role select and a Remove from project button, so the
- * project's name joins each one's accessible name ("Role in Checkout") for a
- * screen reader, after the visible word — the qualifier Add user's rows use.
+ * Every line has a Role select, its Save while a choice is staged, and a
+ * Remove from project button, so the project's name joins each one's
+ * accessible name ("Role in Checkout", "Save role in Checkout") for a screen
+ * reader, after the visible word — the qualifier Add user's rows use.
  */
 function ProjectsPanel({
   user,
@@ -647,11 +671,6 @@ function ProjectsPanel({
     panel.current?.querySelector<HTMLElement>('select:not(:disabled), button:not(:disabled)')?.focus();
   }, []);
 
-  const roleOf = (slug: string, stored: ProjectRole): ProjectRole =>
-    // The choice in flight is shown until the refetch confirms it, rather
-    // than the select snapping back to the stored role while it is saved.
-    pending?.kind === 'role' && pending.slug === slug ? pending.role : stored;
-
   return (
     <div ref={panel} role="group" aria-label={`${who}: projects and roles`} className="flex flex-col gap-4">
       {user.memberships.length === 0 ? (
@@ -663,23 +682,13 @@ function ProjectsPanel({
               <span className="min-w-[8rem] pb-2 text-[0.8125rem] font-medium text-primary">
                 {membership.projectName}
               </span>
-              <RowField label="Role" qualifier={`in ${membership.projectName}`} id={roleId(membership.projectSlug)}>
-                <select
-                  id={roleId(membership.projectSlug)}
-                  className={INPUT}
-                  value={roleOf(membership.projectSlug, membership.role)}
-                  disabled={busy}
-                  onChange={(event) =>
-                    run({ kind: 'role', slug: membership.projectSlug, role: event.target.value as ProjectRole })
-                  }
-                >
-                  {PROJECT_ROLES.map((role) => (
-                    <option key={role} value={role}>
-                      {ROLE_LABEL[role]}
-                    </option>
-                  ))}
-                </select>
-              </RowField>
+              <RoleChange
+                id={roleId(membership.projectSlug)}
+                qualifier={`in ${membership.projectName}`}
+                current={membership.role}
+                pending={busy}
+                onSave={(role) => run({ kind: 'role', slug: membership.projectSlug, role })}
+              />
               <Button
                 size="sm"
                 variant="ghost"
