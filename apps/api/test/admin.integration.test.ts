@@ -620,6 +620,11 @@ describe('PATCH /v1/admin/users/:userId', () => {
 
     const off = await api('patch', `/v1/admin/users/${target.userId}`, admin.cookie, { disabled: true }).expect(200);
     expect(AdminUserSchema.parse(off.body).disabled).toBe(true);
+    // Counted BEFORE the cookie is used again: the 401 below is also what the
+    // middleware answers for a banned user whose session row survived, so on
+    // its own it cannot tell a disable that ended the sessions from one that
+    // only set the flag.
+    expect(await ctx.prisma.session.count({ where: { userId: target.userId } })).toBe(0);
     await api('get', '/v1/projects', target.cookie).expect(401);
     const refused = await signInStatus(address, TEST_PASSWORD);
     expect([refused.status, refused.body.code]).toEqual([403, 'BANNED_USER']);
