@@ -18,19 +18,18 @@ import { signOut } from './api/session';
  * and sending the user to /login while they are in fact still signed in
  * tells them the opposite of the truth.
  *
- * THE LABEL IS VISIBLE FROM `sm` UP, and accessibly hidden below it. The
- * smallest phone width cannot hold the brand, three-way theme control and the
- * full "Sign out" label without pushing the page sideways; the icon is enough
- * visually in that one cramped slot, while the `sr-only sm:not-sr-only` text
- * preserves the exact accessible name the e2e suite resolves by
- * (`getByRole('button', { name: 'Sign out', exact: true })`). `hidden
- * sm:inline` would be wrong here: it removes the name below `sm`.
+ * THE LABEL IS VISIBLE FROM `sm` UP, and accessibly hidden below it, by
+ * default. That default was written for the header slot this button once
+ * filled, where the smallest phone could not hold the brand, the theme control
+ * and the word; the `sr-only sm:not-sr-only` text keeps the accessible name
+ * "Sign out" below `sm`, which `hidden sm:inline` would remove. The header's
+ * Sign out is the account menu's own `menuitem` now, and that is what the e2e
+ * suite resolves; this button is drawn only by the no-organisation page, which
+ * keeps the default, and the password step.
  *
- * THAT IS THE DEFAULT, written for the header slot this button once filled
- * (the account menu signs out itself now), and every caller that passes
- * nothing keeps it. A caller where this is the reader's only way out passes
- * `alwaysShowLabel` and the word is drawn at every width (the password step:
- * an unlabelled icon is too little to leave a screen by). The name is
+ * A caller where this is the reader's only way out passes `alwaysShowLabel`,
+ * and the word is drawn at every width with no class at all (the password
+ * step: an unlabelled icon is too little to leave a screen by). The name is
  * "Sign out" either way.
  *
  * It hands back the button and, after a failure, its alert as SIBLINGS (a

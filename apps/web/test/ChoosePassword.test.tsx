@@ -91,12 +91,14 @@ describe('ChoosePassword', () => {
   /** Sign out is this screen's only way out, so it keeps its word at every
    *  width. `SignOutButton` hides the word below `sm` by default, for the
    *  cramped header slot; this step has room, and an icon alone is not enough
-   *  to leave by. jsdom applies no stylesheet, so the case reads the class
-   *  that would hide it — `SignOutButton.test.tsx` pins the default. */
+   *  to leave by. jsdom applies no stylesheet, so the case reads the classes
+   *  that would hide it — none at all, because "not `sr-only`" alone is
+   *  satisfied by `hidden sm:inline`. `SignOutButton.test.tsx` pins the
+   *  default. */
   it('labels Sign out in words at every width', () => {
     renderStep();
     const label = within(screen.getByRole('button', { name: 'Sign out' })).getByText('Sign out');
-    expect(label).not.toHaveClass('sr-only');
+    expect(label).not.toHaveAttribute('class');
   });
 
   /** `SignOutButton` hands back the button and, on a failure, its alert as
