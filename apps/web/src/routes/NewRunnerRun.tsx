@@ -283,10 +283,10 @@ export default function NewRunnerRun() {
  * status, and the project's jobs with their logs.
  *
  * Hidden until known: while access is pending there is no form and no
- * refusal (never a spinner either — ruling P8(b): "not known" also covers a
- * project list that failed, which no wait would end), and the jobs are listed
- * with Logs alone. A role that drops under an open form takes it away and
- * puts the refusal in its place (Review Focus 3).
+ * refusal (never a spinner either — ruling P8(b): "not known" is also the
+ * answer for a project listed with no `role` field, which no wait would end),
+ * and the jobs are listed with Logs alone. A role that drops under an open
+ * form takes it away and puts the refusal in its place (Review Focus 3).
  */
 function NewRunnerRunProject({
   slug,
