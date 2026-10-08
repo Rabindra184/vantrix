@@ -651,10 +651,6 @@ function PackageActions({
     rename.mutate(next);
   };
 
-  /* A row menu with no item left in it is not drawn — a trigger that opens
-     onto nothing is a control that does nothing. */
-  const menu = may.manage || may.startRun || may.delete;
-
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-2">
@@ -689,87 +685,90 @@ function PackageActions({
           </>
         )}
 
-        {menu && (
-          <DropdownMenu modal={false}>
-            <DropdownMenuTrigger asChild>
-              {/* NAMED AFTER ITS ROW — `ChartActions` and `ProjectRules` name
-                  theirs the same way, for the same reason. */}
-              <button
-                ref={trigger}
-                type="button"
-                aria-label={`${pkg.name}: package actions`}
-                className="transition-ui inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted hover:bg-sunken hover:text-primary data-[state=open]:bg-sunken data-[state=open]:text-primary [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"
-              >
-                <MoreIcon className="h-4 w-4" aria-hidden="true" />
-              </button>
-            </DropdownMenuTrigger>
-            {/* NO `onCloseAutoFocus` OPT-OUT, and that is deliberate. Selecting
-                Rename or Delete swaps in a block whose own control takes focus
-                (`autoFocus`), and the worry is Radix handing focus back to the
-                trigger AFTER that and stealing it. Its dropdown does not when the
-                menu is non-modal: focus moving outside the content while it
-                closes counts as an interaction outside it, and the return is
-                skipped (`hasInteractedOutsideRef`, in `react-dropdown-menu`). The
-                cases that wait the menu out, and a macrotask more, would notice
-                Radix changing its mind; a guard written here was measured and
-                was unwitnessed — removing it failed nothing. */}
-            {/* Each item only with its own action (see `May`); the separator
-                only between two groups that are both there. */}
-            <DropdownMenuContent align="end" className="w-[17rem]">
-              {may.manage && <DropdownMenuItem onSelect={() => arm('rename')}>Rename</DropdownMenuItem>}
-              {/* ═══ NO NEW RUN FROM A PACKAGE WITH NOTHING TO RUN ═══
-                  The form only offers packages that have a file, and a link
-                  naming one without falls back to the first that does — so this
-                  item, on an empty package, opened a form ready to queue a load
-                  test of a package the reader did not choose. Disabled instead,
-                  with its reason in text tied to it: the Delete item's pattern
-                  below, for the same reason. Not a link while disabled — a
-                  disabled item that still carried an `href` would still go
-                  somewhere for anything that follows it.
+        {/* NEVER A MENU WITH NO ITEM LEFT IN IT — a trigger that opens onto
+            nothing is a control that does nothing. Each action `anyAction`
+            counts puts an item in this menu, and this component is drawn only
+            when `anyAction` holds (the row's cell and the card both ask it),
+            so a menu drawn here always holds at least one. */}
+        <DropdownMenu modal={false}>
+          <DropdownMenuTrigger asChild>
+            {/* NAMED AFTER ITS ROW — `ChartActions` and `ProjectRules` name
+                theirs the same way, for the same reason. */}
+            <button
+              ref={trigger}
+              type="button"
+              aria-label={`${pkg.name}: package actions`}
+              className="transition-ui inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted hover:bg-sunken hover:text-primary data-[state=open]:bg-sunken data-[state=open]:text-primary [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"
+            >
+              <MoreIcon className="h-4 w-4" aria-hidden="true" />
+            </button>
+          </DropdownMenuTrigger>
+          {/* NO `onCloseAutoFocus` OPT-OUT, and that is deliberate. Selecting
+              Rename or Delete swaps in a block whose own control takes focus
+              (`autoFocus`), and the worry is Radix handing focus back to the
+              trigger AFTER that and stealing it. Its dropdown does not when the
+              menu is non-modal: focus moving outside the content while it
+              closes counts as an interaction outside it, and the return is
+              skipped (`hasInteractedOutsideRef`, in `react-dropdown-menu`). The
+              cases that wait the menu out, and a macrotask more, would notice
+              Radix changing its mind; a guard written here was measured and
+              was unwitnessed — removing it failed nothing. */}
+          {/* Each item only with its own action (see `May`); the separator
+              only between two groups that are both there. */}
+          <DropdownMenuContent align="end" className="w-[17rem]">
+            {may.manage && <DropdownMenuItem onSelect={() => arm('rename')}>Rename</DropdownMenuItem>}
+            {/* ═══ NO NEW RUN FROM A PACKAGE WITH NOTHING TO RUN ═══
+                The form only offers packages that have a file, and a link
+                naming one without falls back to the first that does — so this
+                item, on an empty package, opened a form ready to queue a load
+                test of a package the reader did not choose. Disabled instead,
+                with its reason in text tied to it: the Delete item's pattern
+                below, for the same reason. Not a link while disabled — a
+                disabled item that still carried an `href` would still go
+                somewhere for anything that follows it.
 
-                  And not at all for a reader who may not start a run: the form
-                  it opens exists to start one (gate by destination). */}
-              {may.startRun &&
-                (pkg.current === null ? (
-                  <>
-                    <p id={newRunReasonId} className="px-2 pb-1 text-[0.75rem] leading-snug text-muted">
-                      Upload a file to it first.
-                    </p>
-                    <DropdownMenuItem disabled aria-describedby={newRunReasonId}>
-                      New run from this package
-                    </DropdownMenuItem>
-                  </>
-                ) : (
-                  <DropdownMenuItem asChild>
-                    <Link to={projectNewRunnerRunPath(slug, pkg.id)}>New run from this package</Link>
-                  </DropdownMenuItem>
-                ))}
-              {(may.manage || may.startRun) && may.delete && <DropdownMenuSeparator />}
-              {/* ═══ THE REASON IS TEXT, NOT A TOOLTIP ═══
-                  `ChartActions`' rule for a disabled item. A `title` is invisible
-                  on touch and unreachable by keyboard, and a menu hides the item
-                  until it is opened, so a refusal that cannot be read is not an
-                  explanation. `aria-describedby` ties the line to the item it is
-                  about, which a bare paragraph inside a menu does not. */}
-              {may.delete && (
+                And not at all for a reader who may not start a run: the form
+                it opens exists to start one (gate by destination). */}
+            {may.startRun &&
+              (pkg.current === null ? (
                 <>
-                  {active > 0 && (
-                    <p id={reasonId} className="px-2 pb-1 text-[0.75rem] leading-snug text-muted">
-                      {`${plural(active, 'run')} of it ${active === 1 ? 'is' : 'are'} queued or running`}
-                    </p>
-                  )}
-                  <DropdownMenuItem
-                    disabled={active > 0}
-                    aria-describedby={active > 0 ? reasonId : undefined}
-                    onSelect={() => arm('delete')}
-                  >
-                    Delete
+                  <p id={newRunReasonId} className="px-2 pb-1 text-[0.75rem] leading-snug text-muted">
+                    Upload a file to it first.
+                  </p>
+                  <DropdownMenuItem disabled aria-describedby={newRunReasonId}>
+                    New run from this package
                   </DropdownMenuItem>
                 </>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
+              ) : (
+                <DropdownMenuItem asChild>
+                  <Link to={projectNewRunnerRunPath(slug, pkg.id)}>New run from this package</Link>
+                </DropdownMenuItem>
+              ))}
+            {(may.manage || may.startRun) && may.delete && <DropdownMenuSeparator />}
+            {/* ═══ THE REASON IS TEXT, NOT A TOOLTIP ═══
+                `ChartActions`' rule for a disabled item. A `title` is invisible
+                on touch and unreachable by keyboard, and a menu hides the item
+                until it is opened, so a refusal that cannot be read is not an
+                explanation. `aria-describedby` ties the line to the item it is
+                about, which a bare paragraph inside a menu does not. */}
+            {may.delete && (
+              <>
+                {active > 0 && (
+                  <p id={reasonId} className="px-2 pb-1 text-[0.75rem] leading-snug text-muted">
+                    {`${plural(active, 'run')} of it ${active === 1 ? 'is' : 'are'} queued or running`}
+                  </p>
+                )}
+                <DropdownMenuItem
+                  disabled={active > 0}
+                  aria-describedby={active > 0 ? reasonId : undefined}
+                  onSelect={() => arm('delete')}
+                >
+                  Delete
+                </DropdownMenuItem>
+              </>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       {/* A status exists ONLY while there is one. A page of a dozen packages
