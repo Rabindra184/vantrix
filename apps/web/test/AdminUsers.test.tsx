@@ -1,13 +1,15 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { ReactNode } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AdminProject, AdminUser } from '@perfportal/contracts';
 import AdminUsers from '../src/routes/AdminUsers';
 import { adminProjectsQueryKey, adminUsersQueryKey } from '../src/api/admin';
+import { fetchProjects, projectsQueryKey } from '../src/api/projects';
 import { ADMIN_PROJECTS_ROUTE, ADMIN_USERS_ROUTE } from '../src/routes/paths';
 import { PASSWORD_LENGTH_MESSAGE } from '../src/formIssues';
 
@@ -109,6 +111,9 @@ interface Answers {
   users?: () => Promise<Response>;
   projects?: () => Promise<Response>;
   create?: (body: unknown) => Promise<Response>;
+  /** Any other GET — a read another part of the app makes beside this page.
+   *  `undefined` falls through to the 404 every unknown read gets. */
+  read?: (url: string) => Promise<Response> | undefined;
   /** Any other write — the row menu's PATCH, PUT and DELETE, and the members
    *  routes. `undefined` falls through to `answerWrite`'s ordinary success. */
   write?: (sent: Sent) => Promise<Response> | undefined;
@@ -163,18 +168,19 @@ function stubApi(answers: Answers = {}): Sent[] {
     if (url === '/v1/admin/users' && method === 'POST') {
       return answers.create?.(body) ?? Promise.resolve(json(500, {}));
     }
-    if (method === 'GET') return Promise.resolve(json(404, {}));
+    if (method === 'GET') return answers.read?.(url) ?? Promise.resolve(json(404, {}));
     return answers.write?.({ url, method, body }) ?? Promise.resolve(answerWrite({ url, method, body }));
   });
   return sent;
 }
 
-function renderPage() {
+function renderPage(beside?: ReactNode) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   const view = render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[ADMIN_USERS_ROUTE]}>
         <AdminUsers />
+        {beside}
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -1191,6 +1197,30 @@ describe('AdminUsers — the row menu', () => {
     expect(alert).toHaveTextContent('Ask an admin to make you one.');
     expect(screen.queryByRole('table')).toBeNull();
     expect(screen.queryByText('This list could not be refreshed, so it may be out of date.')).toBeNull();
+  });
+
+  /* W17's second half, and what the rail and Home read: an admin's org-wide
+     reads span the whole org, a member's only their own projects. A
+     self-demoting admin whose projects query is not re-read keeps a rail
+     listing projects they can no longer open. The observer stands in for the
+     rail, which asks the same key from the shell beside this page. */
+  it('re-reads the org-wide project list after the signed-in admin removes their own admin', async () => {
+    function ProjectsObserver() {
+      useQuery({ queryKey: projectsQueryKey, queryFn: fetchProjects });
+      return null;
+    }
+    const sent = stubApi({
+      users: () => Promise.resolve(json(200, { users: ROWS })),
+      read: (url) => (url === '/v1/projects' ? Promise.resolve(json(200, { items: [] })) : undefined),
+    });
+    renderPage(<ProjectsObserver />);
+    await table();
+    await waitFor(() => expect(readsOf(sent, '/v1/projects')).toBe(1));
+    const clicker = userEvent.setup();
+
+    await choose(clicker, 'Ada Admin', 'Remove admin');
+
+    await waitFor(() => expect(readsOf(sent, '/v1/projects')).toBe(2));
   });
 
   it('leaves the session alone when the admin flag changed is someone else’s', async () => {

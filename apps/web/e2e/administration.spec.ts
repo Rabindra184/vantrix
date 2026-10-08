@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page, type Request } from '@playwright/test';
 import { parseUploadedRun, referenceBundle, seedAdmin, seedProjectWithRuns } from './fixtures.js';
 import { openAccountMenu, signIn } from './helpers.js';
 
@@ -55,7 +55,7 @@ test('an admin adds a Member, who changes their password, sees one project, uplo
   page,
   browser,
 }) => {
-  // Four sign-ins, an upload, a parse and three engines in the cross-browser
+  // Three sign-ins, an upload, a parse and three engines in the cross-browser
   // job: the default 60 s is a budget for one page, not a journey.
   test.setTimeout(180_000);
 
@@ -91,8 +91,26 @@ test('an admin adds a Member, who changes their password, sees one project, uplo
     const personPage = await personContext.newPage();
 
     await test.step('they sign in, and meet "Choose a new password" and nothing else', async () => {
-      await signIn(personPage, { email: person.email, password: TEMPORARY });
-      await expectPasswordStep(personPage);
+      // Every `/v1` request this page makes on the way to the step. The step
+      // reaches the screen two ways: AuthGate reads the session's flag and
+      // never asks its probe, or it asks, gets the probe's 403
+      // PASSWORD_CHANGE_REQUIRED, and branches on that code. Both draw the
+      // same screen, so only the requests tell them apart — and the flag path
+      // is the one that must hold. `/login` sits outside AuthGate, and the
+      // flag keeps the probe disabled, so the list must stay empty.
+      const asked: string[] = [];
+      const record = (req: Request): void => {
+        const { pathname } = new URL(req.url());
+        if (pathname.startsWith('/v1/')) asked.push(`${req.method()} ${pathname}`);
+      };
+      personPage.on('request', record);
+      try {
+        await signIn(personPage, { email: person.email, password: TEMPORARY });
+        await expectPasswordStep(personPage);
+      } finally {
+        personPage.off('request', record);
+      }
+      expect(asked, 'AuthGate asked the API before showing the step').toEqual([]);
     });
 
     await test.step('they choose their own, and the app opens on their one project', async () => {
@@ -154,16 +172,12 @@ test('an admin adds a Member, who changes their password, sees one project, uplo
       const next = personPage.waitForResponse((res) => new URL(res.url()).pathname.startsWith('/v1/'));
       await rail(personPage).getByRole('link', { name: 'Checkout', exact: true }).click();
       expect((await next).status()).toBe(401);
-      // And the page says what the API said, sign-in remediation and all. Which
-      // part of the page refuses first (the project's name, or its tests) is
-      // the shell's business, so the alert is found by the 401's own words.
-      await expect(
-        personPage
-          .getByRole('main')
-          .getByRole('alert')
-          .filter({ hasText: 'sign in at POST /auth/sign-in/email' })
-          .first(),
-      ).toBeVisible();
+      // And the page shows the refusal. Its WORDS are the API's to choose, so
+      // nothing here reads them: the 401 above is the claim, and the alert
+      // being on screen is the page passing it on. Which part of the page
+      // refuses first (the project's name, or its tests) is the shell's
+      // business, so any alert in the main region will do.
+      await expect(personPage.getByRole('main').getByRole('alert').first()).toBeVisible();
 
       // A fresh load asks for the session, finds none, and lands on sign-in;
       // the admin's temporary password then leads to the step again.

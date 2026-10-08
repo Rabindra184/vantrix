@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { UserRepository } from '@perfportal/persistence';
 import request from 'supertest';
-import { afterEach, describe, expect, it } from 'vitest';
+import { APIError } from 'better-auth/api';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { auth } from '../src/auth/better-auth.instance.js';
 import { RedisCommands } from '../src/common/redis-commands.js';
 import {
   DEFAULT_PASSWORD_ATTEMPT_POLICY,
@@ -29,6 +31,7 @@ import { signIn, signInAsProjectMember, TEST_PASSWORD } from './support/session.
 let ctx: TestContext;
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await ctx?.close();
 });
 
@@ -111,6 +114,34 @@ describe('PUT /v1/me/password', () => {
         code: 'INVALID_CURRENT_PASSWORD',
         detail: 'The current password is not correct.',
         remediation: 'Type the password you signed in with.',
+      }),
+    ]);
+    expect(await flagOf(userId)).toBe(true);
+    expect(await signsIn(email, TEST_PASSWORD)).toBe(true);
+  });
+
+  /**
+   * Better Auth's `changePassword` reads the session again, authoritatively.
+   * An admin who resets or disables the person while their change is in
+   * flight ends that session in between, and Better Auth answers 401 — which
+   * is the 401 an ended session gets, the one the admin routes answer, never
+   * the 500 an unknown failure is. Thrown once by a spy: the interleave itself
+   * needs both requests within the same few milliseconds.
+   */
+  it('answers a session that ended mid-change 401, not 500, and changes nothing', async () => {
+    ctx = await createTestApp();
+    const { cookie, userId, email } = await member();
+    await new UserRepository(ctx.prisma).setMustChangePassword(userId, true);
+    vi.spyOn(auth.api, 'changePassword').mockRejectedValueOnce(
+      new APIError('UNAUTHORIZED', { message: 'Unauthorized', code: 'UNAUTHORIZED' }),
+    );
+
+    const res = await change(cookie, { currentPassword: TEST_PASSWORD, newPassword: NEW_PASSWORD });
+    expect([res.status, res.body], JSON.stringify(res.body)).toEqual([
+      401,
+      expect.objectContaining({
+        detail: 'This session ended while the request was being handled.',
+        remediation: 'Sign in at POST /auth/sign-in/email and retry.',
       }),
     ]);
     expect(await flagOf(userId)).toBe(true);
