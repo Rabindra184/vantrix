@@ -17,19 +17,13 @@ import {
   type ProjectRecord,
 } from '@perfportal/persistence';
 import type { Request } from 'express';
-import type { ZodError } from 'zod';
 import { Requires } from '../auth/access.decorator.js';
 import { SessionOnlyGuard } from '../auth/session-only.guard.js';
-import { badRequest, conflict, notFound, projectNotFound, userNotFound } from '../common/validation.js';
+import { isUniqueViolationOn, prismaCode, prismaMeta } from '../common/prisma-errors.js';
+import { badRequest, conflict, firstIssue, notFound, projectNotFound, userNotFound } from '../common/validation.js';
 
 /** The three roles as a reader writes them in a sentence, lowest first: "viewer", "member" or "manager". */
 const ROLES_IN_WORDS = `${PROJECT_ROLES.slice(0, -1).map((r) => `"${r}"`).join(', ')} or "${PROJECT_ROLES.at(-1)}"`;
-
-/** The first issue zod reports, with where it is, for a 400's detail. */
-function firstIssue(error: ZodError): string {
-  const issue = error.issues[0];
-  return issue ? `${issue.path.join('.') || 'body'}: ${issue.message}` : 'unknown';
-}
 
 /**
  * Someone in the org who holds no role in this project. The remediation keeps
@@ -52,17 +46,12 @@ function memberExists(name: string) {
 }
 
 /**
- * Prisma's error code and meta read off an unknown throw, duck-typed as the
- * admin service reads them.
+ * The membership's primary key, (project_id, user_id), as Prisma names it in a
+ * P2002's `meta.target` (measured: `['project_id', 'user_id']`). Matched as a
+ * set of exactly those two, so a unique index added to the table later, which
+ * would refuse for some other reason, is never reported as "already a member".
  */
-function prismaError(err: unknown): { code?: string; meta?: Record<string, unknown> } {
-  if (typeof err !== 'object' || err === null) return {};
-  const { code, meta } = err as { code?: unknown; meta?: unknown };
-  return {
-    code: typeof code === 'string' ? code : undefined,
-    meta: typeof meta === 'object' && meta !== null ? (meta as Record<string, unknown>) : undefined,
-  };
-}
+const MEMBERSHIP_KEY = ['project_id', 'user_id'] as const;
 
 /** The membership's foreign key to the person it is for, `project_member_user_id_fkey`. */
 function isUserForeignKey(meta: Record<string, unknown> | undefined): boolean {
@@ -144,23 +133,23 @@ export class MembersController {
     const person = await this.inOrg(tenant.orgId, userId);
 
     // ONE judge of "already a member": the primary key, (project_id,
-    // user_id), the table's only unique index. A read of the person's
-    // memberships first would agree with it on every reachable state but one
-    // — an add that commits between that read and this INSERT — so the read
-    // could only ever mask the key, never replace it. The key answers the
-    // plain case and the race alike, with the same 409.
+    // user_id). A read of the person's memberships first would agree with it
+    // on every reachable state but one — an add that commits between that
+    // read and this INSERT — so the read could only ever mask the key, never
+    // replace it. The key answers the plain case and the race alike, with the
+    // same 409; a unique violation on any OTHER index is not this, and stays
+    // an error.
     try {
-      await this.members.add({ projectId: project.id, userId, role, addedBy: tenant.userId ?? null });
+      await this.members.add({ projectId: project.id, userId, role, addedBy: tenant.userId! });
     } catch (err) {
-      const { code, meta } = prismaError(err);
-      if (code === 'P2002') throw memberExists(person.name);
+      if (isUniqueViolationOn(err, MEMBERSHIP_KEY)) throw memberExists(person.name);
       // The person's account removed after the org check above, before this
       // INSERT's foreign-key check: the 404 any account outside the org gets.
       // Prisma 6 names the constraint in `meta.constraint` (measured:
       // project_member_user_id_fkey); `field_name` is the older spelling. Any
       // other key — the adder's own account gone — is not this, and stays an
       // error.
-      if (code === 'P2003' && isUserForeignKey(meta)) throw userNotFound(userId);
+      if (prismaCode(err) === 'P2003' && isUserForeignKey(prismaMeta(err))) throw userNotFound(userId);
       throw err;
     }
     return this.answer(slug, project.id, userId);

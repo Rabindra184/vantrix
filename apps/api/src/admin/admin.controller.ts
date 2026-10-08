@@ -15,17 +15,10 @@ import {
 import { ProjectMemberRepository, ProjectRepository, UserRepository, type OrgUserRow } from '@perfportal/persistence';
 import { fromNodeHeaders } from 'better-auth/node';
 import type { Request } from 'express';
-import type { ZodError } from 'zod';
 import { Requires } from '../auth/access.decorator.js';
 import { SessionOnlyGuard } from '../auth/session-only.guard.js';
-import { badRequest, userNotFound } from '../common/validation.js';
+import { badRequest, firstIssue, userNotFound } from '../common/validation.js';
 import { AdminUsersService } from './admin-users.service.js';
-
-/** The first issue zod reports, with where it is, for a 400's detail. */
-function firstIssue(error: ZodError): string {
-  const issue = error.issues[0];
-  return issue ? `${issue.path.join('.') || 'body'}: ${issue.message}` : 'unknown';
-}
 
 function toAdminUser(row: OrgUserRow): AdminUser {
   return AdminUserSchema.parse({

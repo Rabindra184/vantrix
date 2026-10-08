@@ -12,6 +12,7 @@ import { PrismaClient } from '@prisma/client';
 import { APIError } from 'better-auth/api';
 import { auth } from '../auth/better-auth.instance.js';
 import { accessDenied, badRequest, conflict, sessionEnded, userNotFound } from '../common/validation.js';
+import { prismaCode, prismaMeta } from '../common/prisma-errors.js';
 
 /** The admin flag and the ban, as `countActiveAdmins` counts them: an admin who is not disabled. */
 function isActiveAdmin(user: OrgUserRow): boolean {
@@ -27,24 +28,13 @@ function emailTaken(email: string) {
 }
 
 /**
- * Prisma's error code read off an unknown throw, duck-typed: Better Auth runs
- * its writes on its own Prisma client, whose error classes need not be the
- * ones this app imports.
- */
-function prismaCode(err: unknown): string | undefined {
-  if (typeof err !== 'object' || err === null) return undefined;
-  const code = (err as { code?: unknown }).code;
-  return typeof code === 'string' ? code : undefined;
-}
-
-/**
  * The unique index on `user.email` refusing an INSERT: a create of the same
  * address that committed between both checks and this INSERT (Prisma P2002,
  * its target naming the column).
  */
 function isEmailUniqueViolation(err: unknown): boolean {
   if (prismaCode(err) !== 'P2002') return false;
-  const target = (err as { meta?: { target?: unknown } }).meta?.target;
+  const target = prismaMeta(err)?.['target'];
   return Array.isArray(target) ? target.map(String).includes('email') : String(target).includes('email');
 }
 

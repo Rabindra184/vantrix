@@ -493,12 +493,22 @@ describe('an admin manages a project’s members', () => {
  * PATCH or DELETE that skipped the org check would find a row to change.
  * Without it, "not a member" would answer them 404 anyway, and the case could
  * not tell an org check from no check at all.
+ *
+ * And the other way round: the other org's ADMIN, who passes AccessGuard on
+ * every route here, naming this org's project. Its slug is resolved within
+ * the caller's own org, so each of the four answers the project 404 a slug
+ * that does not exist gets — never this org's member list (names and
+ * emails), and never a membership written into, changed in or taken out of
+ * a project of an org that is not theirs. The other org holds no project of
+ * that slug, so a lookup by slug alone would find this org's.
  */
 describe('an account outside the org', () => {
-  it('answers POST, PATCH and DELETE 404, the same as an id naming nobody, and changes nothing', async () => {
+  it('answers its account 404 on POST, PATCH and DELETE, and its admin the project 404 on all four routes, changing nothing', async () => {
     ctx = await createTestApp();
     const admin = await signInAsAdmin(ctx, email('admin'));
-    const outsider = await signInAsAdmin({ ...ctx, orgId: await otherOrg() }, email('outsider'));
+    const otherOrgId = await otherOrg();
+    const outsider = await signInAsAdmin({ ...ctx, orgId: otherOrgId }, email('outsider'));
+    const outsiderMate = await account(email('outsider-mate'), otherOrgId);
     const orphan = await account(email('orphan'), null);
     const nobody = `no-such-user-${randomUUID()}`;
     const ACCOUNTS = [
@@ -530,6 +540,29 @@ describe('an account outside the org', () => {
       await expectNotInOrg(who, 'delete', member(id), id);
       expect(await rowsOf(id), who).toEqual(before);
     }
+
+    // The other org's admin, naming this org's project: the project 404 on
+    // every route, and no membership of it read, written, changed or removed.
+    const everyRow = () =>
+      ctx.prisma.projectMember.findMany({
+        orderBy: [{ projectId: 'asc' }, { userId: 'asc' }],
+        select: { projectId: true, userId: true, role: true, addedBy: true },
+      });
+    const rowsBefore = await everyRow();
+    for (const [verb, path, body] of [
+      ['get', MEMBERS],
+      ['post', MEMBERS, { userId: outsiderMate, role: 'manager' }],
+      ['patch', member(outsider.userId), { role: 'manager' }],
+      ['delete', member(outsider.userId)],
+    ] as const) {
+      const res = await api(verb, path, outsider.cookie, body);
+      expect([res.status, res.body.detail], `the other org's admin: ${verb.toUpperCase()} ${path}`).toEqual([
+        404,
+        projectNotFound('checkout').message,
+      ]);
+    }
+    expect(await everyRow()).toEqual(rowsBefore);
+
     // The outsider's own session survived it all.
     await api('get', '/v1/admin/users', outsider.cookie).expect(200);
   });

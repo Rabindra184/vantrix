@@ -9,7 +9,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { MAX_OFFSET_MS } from '@perfportal/persistence';
-import { z } from 'zod';
+import { z, type ZodError } from 'zod';
 
 const UUID_EXAMPLE = '3fa85f64-5717-4562-b3fc-2c963f66afa6';
 
@@ -22,6 +22,15 @@ const UUID_EXAMPLE = '3fa85f64-5717-4562-b3fc-2c963f66afa6';
  */
 export function badRequest(code: string, message: string, remediation: string): BadRequestException {
   return Object.assign(new BadRequestException(message), { code, remediation });
+}
+
+/**
+ * The first issue zod reports, with where it is — `role: Invalid option…`,
+ * or `body: …` for the body itself — for a 400's detail.
+ */
+export function firstIssue(error: ZodError): string {
+  const issue = error.issues[0];
+  return issue ? `${issue.path.join('.') || 'body'}: ${issue.message}` : 'unknown';
 }
 
 /**
