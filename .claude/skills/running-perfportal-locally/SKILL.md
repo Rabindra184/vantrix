@@ -87,6 +87,11 @@ pnpm build
 #    Org and project ARE reused if they already exist — safe to re-run against
 #    an existing org, which is what you want when adding a login to seeded
 #    data. Only --admin-email is non-idempotent; give a fresh address.
+#    The generated password is FLAGGED: the first sign-in shows "Choose a new
+#    password" and nothing else, and every route a session could otherwise
+#    reach, except PUT /v1/me/password, answers 403 PASSWORD_CHANGE_REQUIRED
+#    until it is changed. More logins after this one: Administration › Users
+#    › Add user, in the app.
 pnpm bootstrap checkout web-demo --admin-email you@example.test
 
 # 6. Both processes. The worker is not optional: without it an uploaded run
@@ -95,7 +100,9 @@ pnpm --filter @perfportal/api start &
 pnpm --filter @perfportal/worker start &
 ```
 
-Then open **`http://localhost:3000`** and sign in with the printed credentials.
+Then open **`http://localhost:3000`**, sign in with the printed credentials,
+and choose a password of your own when asked. A script that signs in with
+curl must `PUT /v1/me/password` (`{ currentPassword, newPassword }`) first.
 
 ## Getting real data on screen
 
@@ -169,6 +176,8 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST \
 | `GET /` returns Nest's 404 | No `apps/web/dist` | `pnpm build` |
 | Port 5173 in use | A dev server is already up, possibly someone else's | Do not kill it. Either browse `:3000` (if the API trusts it) or point `BETTER_AUTH_URL` at 5173 and use that server |
 | Bootstrap fails on re-run | `--admin-email` is deliberately non-idempotent | Use a new address. Org/project reuse is fine |
+| Signed in, but only a "Choose a new password" screen; curl gets `403 PASSWORD_CHANGE_REQUIRED` | Bootstrap (or an admin's create or reset) flagged the account | Choose one in the app, or `PUT /v1/me/password` |
+| Changing a password answers `500` | Redis is down; the password throttle fails closed | Bring Redis back |
 | Everything worked, now the DB is empty | `pnpm test:integration` truncates every table | Re-run steps 5–6 |
 
 ## Verifying it actually works

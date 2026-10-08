@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -14,13 +14,13 @@ afterEach(() => {
   signOut.mockReset();
 });
 
-function renderButton() {
+function renderButton(props: { alwaysShowLabel?: boolean } = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const clear = vi.spyOn(client, 'clear');
   const view = render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={['/runs']}>
-        <SignOutButton />
+        <SignOutButton {...props} />
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -41,20 +41,44 @@ const button = () => screen.getByRole('button', { name: 'Sign out' });
 
 describe('SignOutButton — what it is called', () => {
   /**
-   * THE NAME IS THE CONTRACT. Three e2e specs resolve this control by
-   * `getByRole('button', { name: 'Sign out', exact: true })`, and the label is
-   * `sr-only sm:not-sr-only` precisely so that name survives the one cramped
-   * phone slot where the word is not drawn.
+   * THE NAME IS "Sign out" AT EVERY WIDTH, and the label is `sr-only
+   * sm:not-sr-only` by default precisely so the name survives where the word
+   * is not drawn.
    *
    * WHAT THIS CANNOT SEE, stated rather than implied: jsdom applies no
    * stylesheet, so it cannot tell `sr-only` from the `hidden sm:inline` the
-   * docstring rejects — both leave the text in the DOM here. The browser-level
-   * guard is the e2e suite resolving this button by name at a phone viewport.
-   * What this CAN prove is the other half, which no stylesheet affects: the
-   * icon contributes nothing to the name.
+   * docstring rejects — both leave the text in the DOM here — and no e2e case
+   * resolves this button at a phone viewport (the header's Sign out is the
+   * account menu's `menuitem` now). The classes below are what guard it. What
+   * this case proves is the half no stylesheet affects: the icon contributes
+   * nothing to the name.
    */
   it('is named by its word alone, with the icon adding nothing', () => {
     renderButton();
+    expect(button()).toHaveAccessibleName('Sign out');
+  });
+
+  /**
+   * THE DEFAULT IS THE HEADER'S, and the classes are what can be read here: the
+   * word is accessibly hidden below `sm` and drawn from `sm` up, so every caller
+   * that passes nothing keeps that (the no-organisation page among them).
+   */
+  it('hides its word below sm by default, keeping it in the name', () => {
+    renderButton();
+    expect(within(button()).getByText('Sign out')).toHaveClass('sr-only', 'sm:not-sr-only');
+  });
+
+  /**
+   * A caller with room — the password step, where Sign out is the only way out —
+   * keeps the word drawn at every width, so a phone is not left with an
+   * unlabelled icon. The name is the same either way.
+   *
+   * NO CLASS AT ALL, not merely no `sr-only`: "not sr-only" is satisfied by
+   * `hidden sm:inline`, which takes the word off a phone and the name with it.
+   */
+  it('draws its word at every width when asked to', () => {
+    renderButton({ alwaysShowLabel: true });
+    expect(within(button()).getByText('Sign out')).not.toHaveAttribute('class');
     expect(button()).toHaveAccessibleName('Sign out');
   });
 });

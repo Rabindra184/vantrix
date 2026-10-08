@@ -39,10 +39,14 @@ in each what that role allows; a project it holds no role in answers `404`,
 exactly as one that does not exist. A token sees exactly one project, and only
 what its scopes allow.
 
-There is no public sign-up: `POST /auth/sign-up/email` is refused, and so are
-Better Auth's own `/auth/admin/*` routes. In this release every account is
-made by the bootstrap script and is an admin — see
-[Adding a teammate](../DEPLOYMENT.md#adding-a-teammate).
+There is no public sign-up: `POST /auth/sign-up/email` is refused. An admin
+makes every account, under **Administration › Users** or with
+`POST /v1/admin/users` (the first one is made by the bootstrap script) — see
+[Accounts, passwords and roles](#accounts-passwords-and-roles) and
+[Adding a teammate](../DEPLOYMENT.md#adding-a-teammate). Better Auth's own
+`/auth/admin/*`, `/auth/change-password` and `/auth/verify-password` routes
+answer `404`: an account is managed through `/v1/admin`, and your own
+password is changed only through `PUT /v1/me/password`.
 
 ### Managing API tokens
 
@@ -115,6 +119,70 @@ other session the runs of the projects it holds a role in. Both support
   nobody could sign in to a local instance in Safari.
 - **API tokens are unaffected by any of this.** A bearer header works over
   plain HTTP, so CI can talk to an internal instance without TLS.
+
+### Accounts, passwords and roles
+
+Every route below is **session-only**: a bearer token is refused `403
+FORBIDDEN`, whatever its scopes.
+
+**A new account must choose its own password first.** An account an admin
+creates, or whose password an admin resets, is flagged
+(`/auth/get-session` reports `user.mustChangePassword: true`). Until the
+person changes it, every route a session could otherwise reach, except
+`PUT /v1/me/password`, answers `403 PASSWORD_CHANGE_REQUIRED`, and the web
+app shows a full-screen *Choose a new password* step and nothing else.
+
+```text
+PUT /v1/me/password   { currentPassword, newPassword } → 204
+```
+
+- It keeps the session that asked, ends every other session the person
+  holds, and clears the flag. The new password must differ from the current
+  one (`400 PASSWORD_UNCHANGED`) and be 8 to 128 characters.
+- **Throttled per account:** 3 attempts per 10 seconds, right or wrong; the
+  4th answers `429 RATE_LIMITED` with a `Retry-After` header.
+- **The throttle fails closed.** It counts in Redis; while Redis is
+  unreachable this route answers `500`, and nobody can change a password or
+  clear the flag until it is back.
+
+**Administering accounts** is an install-wide admin's (`403 ADMIN_REQUIRED`
+otherwise), and covers the accounts of the admin's own organisation:
+
+```text
+GET    /v1/admin/users                      the accounts, their projects and roles, and their state
+POST   /v1/admin/users                      { email, name, password, isAdmin?, projects?: [{ projectSlug, role }] } → 201
+PATCH  /v1/admin/users/{userId}             { name?, isAdmin?, disabled? } → 200
+PUT    /v1/admin/users/{userId}/password    { password } → 204   (a temporary password)
+DELETE /v1/admin/users/{userId}             → 204
+GET    /v1/admin/projects                   every project, with its member count
+```
+
+- **Create** sets the flag. If creating the account or granting its roles
+  fails part-way, what was written is removed before the error is answered,
+  so a retry with the same email works.
+- **Reset** sets a temporary password, sets the flag again and ends every
+  session the person holds: their cookies answer `401` on the next request.
+- **Disable** refuses sign-in and ends their sessions; `disabled: false`
+  enables them again. **Remove** deletes the account and its memberships;
+  run notes they wrote keep their text and lose the name.
+- **The last active admin cannot be demoted, disabled or removed**
+  (`409 LAST_ADMIN`), even by two admins acting at the same moment; a
+  disabled admin does not count as active. Nobody can disable, remove or
+  reset themselves here.
+- An account outside the admin's organisation answers `404`, the same as one
+  that does not exist.
+
+**Project roles** — Viewer, Member and Manager — are read by anyone with a
+role in the project and changed by an admin:
+
+```text
+GET    /v1/projects/{slug}/members              Viewer and above
+POST   /v1/projects/{slug}/members              { userId, role } → 201   (admin)
+PATCH  /v1/projects/{slug}/members/{userId}     { role } → 200           (admin)
+DELETE /v1/projects/{slug}/members/{userId}     → 204                    (admin)
+```
+
+A role takes effect on the person's next request; nothing is cached.
 
 ---
 
@@ -240,6 +308,9 @@ response shapes.
 | `/v1/runs/{id}/stats`, `series`, `errors`, `errors/series`, `distribution`, `users`, `scatter` | The statistics and chart data behind the run page. Most accept a `from`/`to` time window in ms. |
 | `/v1/runs/{id}/telemetry`, `trends`, `events` | Load-generator samples, run-over-run trends for the run's test, and the runner's lifecycle log. |
 | `/v1/projects` | List projects; create one (admins only). |
+| `/v1/projects/{slug}/members` | A project's members and roles; an admin adds, changes and removes them. |
+| `/v1/admin/users`, `/v1/admin/projects` | Accounts and projects, for an admin. |
+| `/v1/me/password` | Change your own password. |
 | `/v1/projects/{slug}/runs` | A project's runs (`GET`, token); browser upload (`POST`, session). |
 | `/v1/projects/{slug}/tests` | Tests in a project; rename or delete one. |
 | `/v1/projects/{slug}/rules` | SLA rules: project-wide or for one test. |
@@ -278,11 +349,29 @@ report it.
 |---|---|---|
 | `FORBIDDEN` | token or session | The credential lacks the scope the operation needs: a token minted without it, or a session on an operation no session holds the scope for (opening, streaming to and closing a live run; posting telemetry). Also a bearer token on an operation only a signed-in person may perform, such as managing tokens. |
 | `ROLE_REQUIRED` | session | The session's role in the project is below the one the operation needs. The `detail` names that role, e.g. *Uploading runs needs the Member role in this project.* |
-| `ADMIN_REQUIRED` | session | The operation is an admin's, such as creating a project, and the account is not an admin. |
+| `ADMIN_REQUIRED` | session | The operation is an admin's, such as creating a project or managing accounts, and the account is not an admin. |
+| `PASSWORD_CHANGE_REQUIRED` | session | The account must choose a new password first, with `PUT /v1/me/password`. Every route a session could otherwise reach, except `PUT /v1/me/password`, answers this, whatever it was asked. |
 
 A session that holds **no** role in a project is never told so with a `403`:
 it gets the same `404` a project or run that does not exist gets, so a
 refusal cannot reveal which projects exist.
+
+### Account and membership codes
+
+| Status | Code | Meaning |
+|---|---|---|
+| `400` | `INVALID_USER_REQUEST`, `INVALID_USER_UPDATE`, `INVALID_PASSWORD_RESET`, `INVALID_MEMBER_REQUEST`, `INVALID_MEMBER_UPDATE`, `INVALID_PASSWORD_REQUEST` | The body of a create, an account change, a reset, a member add, a role change or an own-password change is not valid. The `detail` names the field. |
+| `400` | `UNKNOWN_PROJECT` | A create names a project slug the organisation does not have. |
+| `400` | `CANNOT_DISABLE_SELF`, `CANNOT_REMOVE_SELF`, `CANNOT_RESET_OWN_PASSWORD` | An admin aimed one of these at their own account. Another admin can; your own password is changed with `PUT /v1/me/password`. |
+| `400` | `INVALID_CURRENT_PASSWORD` | `PUT /v1/me/password` was sent the wrong current password. |
+| `400` | `PASSWORD_UNCHANGED` | The new password equals the current one. |
+| `409` | `EMAIL_TAKEN` | An account with that email already exists (in any organisation). |
+| `409` | `LAST_ADMIN` | The change would leave the install with no active admin. |
+| `409` | `MEMBER_EXISTS` | The person already holds a role in the project; change it with `PATCH`. |
+| `429` | `RATE_LIMITED` | Too many password attempts by this account. Wait for `Retry-After` seconds. |
+
+A disabled account's sign-in is refused by Better Auth itself (`403
+BANNED_USER`, in this API's words: *This account is disabled.*).
 
 `/auth/*` is Better Auth's own surface and keeps Better Auth's native error
 shapes, so an `/auth/*` error has no `remediation` field.

@@ -2,6 +2,9 @@ import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PROJECT_SLUG_PATTERN } from '@perfportal/contracts';
 import {
+  ACCOUNT_PASSWORD_ROUTE,
+  ADMIN_PROJECTS_ROUTE,
+  ADMIN_USERS_ROUTE,
   ALL_RUNS_ROUTE,
   DEFAULT_ROUTE,
   HOME_ROUTE,
@@ -259,6 +262,35 @@ describe('static routes cannot shadow a project slug', () => {
     expect(APP).not.toMatch(/<Route\s+path="\/"\s+element=\{<Navigate/);
     const shell = APP.slice(APP.indexOf('<Route element={<AppShell />}>'));
     expect(shell).toMatch(/<Route\s+path=\{HOME_ROUTE\}\s+element=\{<Home\s*\/>\}/);
+  });
+
+  /**
+   * CHANGE PASSWORD IS A PAGE OF THE APP, inside the gate and the shell like
+   * every other — the account menu links to it from every authenticated page,
+   * and without the route that link would land on the catch-all and be sent
+   * home. Declared from its constant, which the menu reads too, so the two
+   * cannot drift; read out of `App.tsx` for the reason the cases around it are.
+   */
+  it('declares the Change password page, inside the shell, from its constant', () => {
+    expect(ACCOUNT_PASSWORD_ROUTE).toBe('/account/password');
+    const shell = APP.slice(APP.indexOf('<Route element={<AppShell />}>'));
+    expect(shell).toMatch(/<Route\s+path=\{ACCOUNT_PASSWORD_ROUTE\}\s+element=\{<AccountPassword\s*\/>\}/);
+  });
+
+  /**
+   * ADMINISTRATION'S TWO PAGES, declared from their constants inside the shell
+   * — the account menu links the first, and the Users and Projects tabs link
+   * each other, all through those constants. And NO BARE `/admin`: there is
+   * no page there, and a route that only redirected would be a third URL for
+   * one of these two (ruling W9).
+   */
+  it('declares the Administration pages, inside the shell, from their constants, and no bare /admin', () => {
+    expect(ADMIN_USERS_ROUTE).toBe('/admin/users');
+    expect(ADMIN_PROJECTS_ROUTE).toBe('/admin/projects');
+    const shell = APP.slice(APP.indexOf('<Route element={<AppShell />}>'));
+    expect(shell).toMatch(/<Route\s+path=\{ADMIN_USERS_ROUTE\}\s+element=\{<AdminUsers\s*\/>\}/);
+    expect(shell).toMatch(/<Route\s+path=\{ADMIN_PROJECTS_ROUTE\}\s+element=\{<AdminProjects\s*\/>\}/);
+    expect(APP).not.toMatch(/path="\/admin\/?"/);
   });
 
   it('declares at least one project route, so the scan below is not vacuous', () => {

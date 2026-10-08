@@ -129,3 +129,25 @@ export async function apiFetch<T>(schema: ZodSchema<T>, path: string, init?: Req
 
   return schema.parse(await res.json());
 }
+
+/**
+ * `apiFetch` for a route that answers success with NO BODY — a 204, such as
+ * `PUT /v1/me/password`.
+ *
+ * `apiFetch` cannot serve one: it ends in `res.json()`, which throws on an
+ * empty body, so a change that succeeded would reject as a `SyntaxError`. This
+ * keeps `apiFetch`'s other two guarantees and drops that one: `credentials:
+ * 'same-origin'` is forced after `init`, every non-2xx rejects as a
+ * `ProblemError` through `problemFrom`, and a success's body is never read.
+ * It resolves to nothing, because there is nothing to resolve to.
+ *
+ * `deletePackage` (`./packages.ts`) predates this and spells the same three
+ * lines by hand.
+ */
+export async function apiFetchNoContent(path: string, init?: RequestInit): Promise<void> {
+  const res = await fetch(path, { ...init, credentials: 'same-origin' });
+
+  if (!res.ok) {
+    throw await problemFrom(res);
+  }
+}

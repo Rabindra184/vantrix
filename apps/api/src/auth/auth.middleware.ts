@@ -26,6 +26,13 @@ import { internalProblem, logInternalError, problem } from '../common/problem.js
  * expired session; that maps to 401, exactly as an unrecognised bearer token
  * does. A valid session with no org membership is a DIFFERENT failure —
  * authentication succeeded, so that one is a 403 (spec §7), not a 401.
+ *
+ * A DISABLED ACCOUNT'S SESSION IS A 401 TOO. `user.banned` is the admin
+ * plugin's column and what the product calls "disabled". The plugin's own ban
+ * deletes the person's sessions, but `getSession` does not read `banned`: a
+ * ban written any other way, or a session row that outlived one, would go on
+ * working. Refused before the org lookup, so a disabled account learns
+ * nothing about its membership either.
  */
 async function authenticateSession(
   req: Request,
@@ -34,6 +41,7 @@ async function authenticateSession(
 ): Promise<Tenant> {
   const session = await auth.api.getSession({ headers: fromNodeHeaders(req.headers) });
   if (!session) throw new UnauthorizedException('No valid session cookie.');
+  if (session.user.banned === true) throw new UnauthorizedException('This account is disabled.');
 
   const membership = await members.findOrgForUser(session.user.id);
   if (!membership) throw new ForbiddenException('This user belongs to no organization.');
@@ -53,6 +61,10 @@ async function authenticateSession(
     // live bytes from a generator.
     scopes: ['read', 'ingest', 'runner'],
     ...access,
+    // Read by `PasswordChangeGuard`. A Better Auth additional field, so it
+    // rides on every `getSession().user`; session-auth.integration.test.ts
+    // pins that it is there at all.
+    mustChangePassword: session.user.mustChangePassword === true,
   };
 }
 

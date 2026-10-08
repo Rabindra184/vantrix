@@ -1,10 +1,13 @@
 import { MiddlewareConsumer, Module, type NestModule } from '@nestjs/common';
 import { ActivityModule } from './activity/activity.module.js';
+import { AdminModule } from './admin/admin.module.js';
 import { AuthMiddleware } from './auth/auth.middleware.js';
 import { AuthModule } from './auth/auth.module.js';
 import { HealthController } from './health.controller.js';
 import { IngestModule } from './ingest/ingest.module.js';
 import { LiveModule } from './live/live.module.js';
+import { MeModule } from './me/me.module.js';
+import { MembersModule } from './members/members.module.js';
 import { MetricsModule } from './metrics/metrics.module.js';
 import { ProjectsModule } from './projects/projects.module.js';
 import { RunsModule } from './runs/runs.module.js';
@@ -16,7 +19,7 @@ import { TokensModule } from './tokens/tokens.module.js';
 
 @Module({
   imports: [AuthModule, RunsModule, IngestModule, LiveModule, MetricsModule, ProjectsModule, RulesModule,
-    TestsModule, ActivityModule, RunnerModule, TelemetryModule, TokensModule],
+    TestsModule, ActivityModule, RunnerModule, TelemetryModule, TokensModule, MeModule, AdminModule, MembersModule],
   controllers: [HealthController],
 })
 export class AppModule implements NestModule {

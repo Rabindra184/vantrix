@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { connect as tcpConnect, type AddressInfo } from 'node:net';
 import type { LiveDelta } from '@perfportal/contracts';
+import { UserRepository } from '@perfportal/persistence';
 import { Redis } from 'ioredis';
 import request from 'supertest';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -453,6 +454,42 @@ describe('the live gateway rejects what it should', () => {
     expect(await outcome(conn)).toBe('accepted');
     expect(conn.frames[0]!.type).toBe('snapshot');
     expect(conn.frames[0]!.delta.runId).toBe(runId);
+  });
+
+  /**
+   * THE PASSWORD GATE AND A DISABLED ACCOUNT REACH THE UPGRADE TOO. Nest's
+   * guards never run here, so `PasswordChangeGuard` refusing every HTTP route
+   * would leave a session that has not chosen its password free to watch a
+   * live run — and a disabled account's surviving session likewise, since
+   * Better Auth's `getSession` does not read `banned`. The gateway refuses
+   * both as it refuses an unknown run: 4401, the same reason, no frame.
+   *
+   * The caller is an admin, who may watch every run, and the same socket path
+   * is ACCEPTED for the same session before the account changes — so the
+   * refusal is the flag's, or the ban's, and nothing else's.
+   */
+  it.each([
+    ['must change its password', (users: UserRepository, id: string) => users.setMustChangePassword(id, true)],
+    ['is disabled', async (_users: UserRepository, id: string) => {
+      await ctx.prisma.user.update({ where: { id }, data: { banned: true } });
+    }],
+  ])('closes a session whose account %s as it closes an unknown run', async (_label, change) => {
+    const port = await start();
+    const runId = await openLiveRun();
+    const { cookie, userId } = await signInAsAdmin(ctx, `gated-${randomUUID()}@example.com`);
+
+    const before = connect(port, `/v1/runs/${runId}/live`, cookie);
+    expect(await outcome(before)).toBe('accepted');
+
+    await change(new UserRepository(ctx.prisma), userId);
+
+    const watched = connect(port, `/v1/runs/${runId}/live`, cookie);
+    const missing = connect(port, `/v1/runs/${randomUUID()}/live`, cookie);
+    expect(await outcome(watched)).toBe(CLOSE_UNAUTHORIZED);
+    expect(await outcome(missing)).toBe(CLOSE_UNAUTHORIZED);
+    expect(watched.reason).toBe(missing.reason);
+    expect(watched.frames).toHaveLength(0);
+    expect(missing.frames).toHaveLength(0);
   });
 
   /**

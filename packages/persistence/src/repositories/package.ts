@@ -1,4 +1,5 @@
 import { Prisma, type PrismaClient } from '@prisma/client';
+import { LOCK_WAITING_TX } from './transactions.js';
 
 export interface PackageVersionRecord {
   artifactId: string;
@@ -43,20 +44,6 @@ export interface NewPackageVersion {
 export class PackageNameTakenError extends Error {}
 
 const ACTIVE_JOB_STATUSES = ['queued', 'starting', 'running', 'closing'] as const;
-
-/**
- * Prisma's budget for the two transactions that BEGIN by taking a package row
- * lock that is meant to queue: `addVersion` behind another upload or a delete,
- * `delete` behind a start holding the row FOR SHARE. The budget runs from BEGIN,
- * so every second parked on that lock is spent from it, and the defaults (5 s to
- * run, 2 s to get a connection) turn a queue behind a slow holder into P2028
- * "transaction already closed" for a caller that did nothing wrong. No
- * `lock_timeout` is configured anywhere, so this 30 s is the only ceiling there
- * is: a wait that long means a holder is stuck, and failing at 30 s is the
- * intended outcome — not a reason for the defaults to abandon, after five
- * seconds, a queue that would have cleared.
- */
-const LOCK_WAITING_TX = { maxWait: 10_000, timeout: 30_000 } as const;
 
 interface PackageRow {
   id: string;

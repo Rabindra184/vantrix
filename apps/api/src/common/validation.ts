@@ -2,11 +2,15 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpException,
+  HttpStatus,
   NotFoundException,
   ParseUUIDPipe,
+  UnauthorizedException,
 } from '@nestjs/common';
+import { PASSWORD_CHANGE_REQUIRED } from '@perfportal/contracts';
 import { MAX_OFFSET_MS } from '@perfportal/persistence';
-import { z } from 'zod';
+import { z, type ZodError } from 'zod';
 
 const UUID_EXAMPLE = '3fa85f64-5717-4562-b3fc-2c963f66afa6';
 
@@ -19,6 +23,15 @@ const UUID_EXAMPLE = '3fa85f64-5717-4562-b3fc-2c963f66afa6';
  */
 export function badRequest(code: string, message: string, remediation: string): BadRequestException {
   return Object.assign(new BadRequestException(message), { code, remediation });
+}
+
+/**
+ * The first issue zod reports, with where it is — `role: Invalid option…`,
+ * or `body: …` for the body itself — for a 400's detail.
+ */
+export function firstIssue(error: ZodError): string {
+  const issue = error.issues[0];
+  return issue ? `${issue.path.join('.') || 'body'}: ${issue.message}` : 'unknown';
 }
 
 /**
@@ -78,6 +91,19 @@ export function forbidden(message: string, remediation: string): ForbiddenExcept
   return Object.assign(new ForbiddenException(message), { remediation });
 }
 
+/**
+ * A session that ended WHILE its request was being handled — after the
+ * middleware accepted it, before a server-side Better Auth call that reads it
+ * again. Removing or disabling an account ends its sessions, so an admin
+ * request in flight at that moment meets this, and it is a 401 like any
+ * other ended session rather than the 500 an unknown failure would be.
+ */
+export function sessionEnded(): UnauthorizedException {
+  return Object.assign(new UnauthorizedException('This session ended while the request was being handled.'), {
+    remediation: 'Sign in at POST /auth/sign-in/email and retry.',
+  });
+}
+
 /*
  * ═══ ONE 404 FOR "NOT THERE" AND "NOT YOURS" ═══
  *
@@ -116,6 +142,16 @@ export function runNotFound(id: string): NotFoundException {
 }
 
 /**
+ * An account the caller's org does not hold — one in another org, one in no
+ * org at all, or one that does not exist — on `/v1/admin/users/:userId` and
+ * the members routes. One answer for all three, so an admin of one install
+ * cannot learn which accounts another holds by naming their ids.
+ */
+export function userNotFound(userId: string): NotFoundException {
+  return notFound(`No user ${userId} in this organisation.`, 'List the users with GET /v1/admin/users.');
+}
+
+/**
  * A refusal the caller CAN see the reason for: the project is visible to
  * them, and their standing is not enough. Unlike `forbidden`, it carries its
  * own `code`, because a client tells "ask for a role" from "ask an admin"
@@ -127,6 +163,30 @@ export function accessDenied(
   remediation: string,
 ): ForbiddenException {
   return Object.assign(new ForbiddenException(message), { code, remediation });
+}
+
+/**
+ * The password gate's refusal (`PasswordChangeGuard`): this session's account
+ * must choose a new password before anything else. One body for every route
+ * it guards, so the refusal says nothing about the route it was asked of.
+ */
+export function passwordChangeRequired(): ForbiddenException {
+  return Object.assign(new ForbiddenException('Choose a new password before doing anything else.'), {
+    code: PASSWORD_CHANGE_REQUIRED,
+    remediation: 'Change it with PUT /v1/me/password.',
+  });
+}
+
+/**
+ * A 429 with its own code, RATE_LIMITED: `ProblemFilter` derives no code for
+ * this status, and a client tells "wait" from "fix the request" by it. The
+ * caller sets `Retry-After` on the response itself.
+ */
+export function rateLimited(message: string, remediation: string): HttpException {
+  return Object.assign(new HttpException(message, HttpStatus.TOO_MANY_REQUESTS), {
+    code: 'RATE_LIMITED',
+    remediation,
+  });
 }
 
 /**

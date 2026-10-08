@@ -66,7 +66,7 @@ function renderTrigger() {
       <MemoryRouter>
         {/* Somewhere a reader is already typing — the run list's own box. */}
         <input aria-label="Search runs" defaultValue="" />
-        <AccountMenu identity="qa@perfportal.test" />
+        <AccountMenu identity="qa@perfportal.test" isAdmin={false} />
         <SearchTrigger />
       </MemoryRouter>
     </QueryClientProvider>,

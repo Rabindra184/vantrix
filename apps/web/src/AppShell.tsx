@@ -232,6 +232,10 @@ export default function AppShell() {
      it takes every page down with it. `AppShell.test.tsx`'s "renders the page
      even when the rail cannot load its projects" caught exactly that. */
   const identity = session.data?.user?.name || session.data?.user?.email || null;
+  /* The admin plugin's role, optional at every hop for the reason above — and
+     because an API older than the plugin sends no `role` at all, which reads as
+     "not an admin", the safe way round. */
+  const isAdmin = session.data?.user?.role === 'admin';
 
   const { pathname, hash } = useLocation();
   /* `null` until the first render has run, which is also how the first render
@@ -383,7 +387,7 @@ export default function AppShell() {
          * it IS, grep for whoever says what it is.
          */}
         <div className="ml-auto flex items-center gap-2">
-          <AccountMenu identity={identity} />
+          <AccountMenu identity={identity} isAdmin={isAdmin} />
         </div>
       </header>
 

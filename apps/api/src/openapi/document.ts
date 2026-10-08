@@ -503,6 +503,42 @@ const parameters: Record<string, ParameterObject> = {
       'taken as the package\'s kind.',
     schema: { type: 'string' },
   },
+  AdminUserId: {
+    name: 'userId',
+    in: 'path',
+    required: true,
+    description:
+      'An account id, as GET /v1/admin/users lists it. Resolved within the caller\'s own ' +
+      'organisation before anything else is read: an account of another organisation, one that ' +
+      'belongs to no organisation, and an id naming nobody all answer the same 404, so an admin ' +
+      'can neither change nor probe another install\'s accounts.',
+    schema: { type: 'string' },
+  },
+  MemberProjectSlug: {
+    name: 'slug',
+    in: 'path',
+    required: true,
+    description:
+      'A project slug within the caller\'s own organisation. Like the token and rule routes, this ' +
+      'route accepts no bearer credential at all (see SessionOnlyGuard). A slug outside the ' +
+      'caller\'s org, or one they hold no role in, 404s rather than 403 when listing, so the ' +
+      'response never confirms that the project exists; a change by anyone but an admin is refused ' +
+      'ADMIN_REQUIRED before the slug is looked up at all, so a missing project and a real one ' +
+      'answer alike.',
+    schema: { type: 'string' },
+  },
+  MemberUserId: {
+    name: 'userId',
+    in: 'path',
+    required: true,
+    description:
+      'An account id, as GET /v1/admin/users and GET /v1/projects/{slug}/members list it. ' +
+      'Resolved within the caller\'s own organisation first: an account of another organisation, ' +
+      'one that belongs to no organisation, and an id naming nobody all answer the same 404, and ' +
+      'nothing changes. Someone in the organisation who holds no role in this project gets a 404 ' +
+      'of its own, naming the project.',
+    schema: { type: 'string' },
+  },
   StreamOffset: {
     name: 'X-Stream-Offset',
     in: 'header',
@@ -716,7 +752,9 @@ const responses: Record<string, ResponseObject> = {
     content: problem(),
   },
   Unauthorized: {
-    description: 'The bearer token is missing, malformed, unknown, or revoked.',
+    description:
+      'The bearer token is missing, malformed, unknown, or revoked; or, for a browser, the session ' +
+      'cookie is missing or expired, or its account is disabled ("This account is disabled.").',
     content: problem(),
   },
   Forbidden: {
@@ -729,7 +767,10 @@ const responses: Record<string, ResponseObject> = {
       'project is below the one the operation needs (the detail naming that role), or ' +
       'ADMIN_REQUIRED when the operation is an admin\'s and the account is not one. A session ' +
       'that holds no role in the project is never told so with a 403: it gets the 404 a project ' +
-      'or run that does not exist gets. application/problem+json with a required "remediation".',
+      'or run that does not exist gets. A session whose account must choose a new password gets ' +
+      'code PASSWORD_CHANGE_REQUIRED on every operation a session can otherwise reach, except ' +
+      'PUT /v1/me/password — after the scope check, before the role check. ' +
+      'application/problem+json with a required "remediation".',
     content: problem(),
   },
   NotFound: {
@@ -748,7 +789,9 @@ const responses: Record<string, ResponseObject> = {
       'broader one. Sign in at POST /auth/sign-in/email and retry with the session cookie. ' +
       'A signed-in session can be refused here too, by role rather than by credential type: ' +
       'code ROLE_REQUIRED when its role in the project is below the one the operation needs, or ' +
-      'ADMIN_REQUIRED when the operation is an admin\'s.',
+      'ADMIN_REQUIRED when the operation is an admin\'s. And a session whose account must choose ' +
+      'a new password is refused code PASSWORD_CHANGE_REQUIRED on every operation but ' +
+      'PUT /v1/me/password, before its role is checked.',
     content: problem(),
   },
   InvalidTokenRequest: {
@@ -1642,6 +1685,156 @@ const paths: Record<string, PathItemObject> = {
     },
   },
 
+  // ═══ PROJECT MEMBERS ═══
+  //
+  // Who holds a role in a project. Listing is `members:read`, which every role
+  // in the project has; adding, changing and removing are `members:manage`,
+  // an admin's action, refused to anyone else 403 ADMIN_REQUIRED before the
+  // project is looked up. Session-only, as /v1/admin is: a membership is a
+  // person's access, and a bearer token names no person — so a bearer token
+  // is refused 403 by SessionOnlyGuard, which SessionRequired describes with
+  // the role and admin refusals.
+  '/v1/projects/{slug}/members': {
+    get: {
+      operationId: 'listProjectMembers',
+      summary: "List a project's members",
+      tags: ['members'],
+      security: [{ cookieAuth: [] }],
+      description:
+        'Requires a signed-in session holding any role in the project, or an admin\'s — refused ' +
+        'for ANY bearer token regardless of scopes. Everyone holding a role in the project, by ' +
+        'name, with their email, their role and when it was granted. An admin needs no role to ' +
+        'see a project, so is listed only where they hold one.',
+      parameters: [parameters['MemberProjectSlug']!],
+      responses: {
+        '200': {
+          description: 'Everyone holding a role in the project, ordered by name.',
+          content: json(schemaRef('MemberListResponse')),
+        },
+        '401': ref('Unauthorized'),
+        '403': ref('SessionRequired'),
+        '404': ref('NotFound'),
+      },
+    },
+    post: {
+      operationId: 'addProjectMember',
+      summary: 'Give someone a role in a project',
+      tags: ['members'],
+      security: [{ cookieAuth: [] }],
+      description:
+        'Requires a signed-in session whose account is an admin. Gives an account of this ' +
+        'organisation the role named, in force on that person\'s next request: the project appears ' +
+        'in their GET /v1/projects with that role, and every operation is judged by it. Someone ' +
+        'who already holds a role here is refused 409 MEMBER_EXISTS rather than having it changed ' +
+        '— a role is changed with PATCH.',
+      parameters: [parameters['MemberProjectSlug']!],
+      requestBody: {
+        required: true,
+        description: 'The account\'s "userId", as GET /v1/admin/users lists it, and the "role" to give it.',
+        content: json(schemaRef('AddMemberRequest')),
+      },
+      responses: {
+        '201': {
+          description:
+            'Added. The membership as it now stands — written before this response is sent, and ' +
+            'listed at once.',
+          content: json(schemaRef('ProjectMember')),
+        },
+        '400': {
+          description:
+            'Refused before anything was written. Code INVALID_MEMBER_REQUEST when the body failed ' +
+            'AddMemberRequestSchema — "userId" or "role" missing, a role that is not "viewer", ' +
+            '"member" or "manager", or a field the schema does not know (it is `.strict()`). ' +
+            'application/problem+json with a required "remediation".',
+          content: problem(),
+        },
+        '401': ref('Unauthorized'),
+        '403': ref('SessionRequired'),
+        '404': {
+          description:
+            'No project with this slug in this organisation; or "userId" names no account of this ' +
+            'organisation — one of another organisation, one in none, and an id naming nobody all ' +
+            'answer alike. Nothing was written. application/problem+json with a required ' +
+            '"remediation".',
+          content: problem(),
+        },
+        '409': {
+          description:
+            'The account already holds a role in this project (code MEMBER_EXISTS) — including ' +
+            'one given by a request racing this one, which loses. Nothing changed. ' +
+            'application/problem+json with a required "remediation".',
+          content: problem(),
+        },
+      },
+    },
+  },
+
+  '/v1/projects/{slug}/members/{userId}': {
+    patch: {
+      operationId: 'updateProjectMember',
+      summary: "Change someone's role in a project",
+      tags: ['members'],
+      security: [{ cookieAuth: [] }],
+      description:
+        'Requires a signed-in session whose account is an admin. Changes the role of someone who ' +
+        'holds one here, in force on their next request. Never adds: someone without a role in ' +
+        'the project is a 404.',
+      parameters: [parameters['MemberProjectSlug']!, parameters['MemberUserId']!],
+      requestBody: {
+        required: true,
+        description: 'The new "role".',
+        content: json(schemaRef('UpdateMemberRequest')),
+      },
+      responses: {
+        '200': {
+          description: 'Changed. The membership as it now stands.',
+          content: json(schemaRef('ProjectMember')),
+        },
+        '400': {
+          description:
+            'Refused before anything changed. Code INVALID_MEMBER_UPDATE when the body failed ' +
+            'UpdateMemberRequestSchema — "role" missing or not "viewer", "member" or "manager", or a ' +
+            'field the schema does not know (it is `.strict()`). application/problem+json with a ' +
+            'required "remediation".',
+          content: problem(),
+        },
+        '401': ref('Unauthorized'),
+        '403': ref('SessionRequired'),
+        '404': {
+          description:
+            'No project with this slug in this organisation; "userId" names no account of this ' +
+            'organisation; or the account holds no role in this project. Nothing changed. ' +
+            'application/problem+json with a required "remediation".',
+          content: problem(),
+        },
+      },
+    },
+    delete: {
+      operationId: 'removeProjectMember',
+      summary: "Take someone's role in a project away",
+      tags: ['members'],
+      security: [{ cookieAuth: [] }],
+      description:
+        'Requires a signed-in session whose account is an admin. Takes away the role someone ' +
+        'holds here, in force on their next request: the project leaves their GET /v1/projects, ' +
+        'and naming it answers them the 404 a project that does not exist gets. Their account, ' +
+        'their place in the organisation and their roles in other projects stay.',
+      parameters: [parameters['MemberProjectSlug']!, parameters['MemberUserId']!],
+      responses: {
+        '204': { description: 'Removed. No body.' },
+        '401': ref('Unauthorized'),
+        '403': ref('SessionRequired'),
+        '404': {
+          description:
+            'No project with this slug in this organisation; "userId" names no account of this ' +
+            'organisation; or the account holds no role in this project. Nothing changed. ' +
+            'application/problem+json with a required "remediation".',
+          content: problem(),
+        },
+      },
+    },
+  },
+
   '/v1/tests': {
     get: {
       operationId: 'listTests',
@@ -2297,6 +2490,266 @@ const paths: Record<string, PathItemObject> = {
         '401': ref('Unauthorized'),
         '403': ref('SessionRequired'),
         '404': ref('NotFound'),
+      },
+    },
+  },
+
+  '/v1/me/password': {
+    put: {
+      operationId: 'setOwnPassword',
+      summary: 'Change your own password',
+      tags: ['me'],
+      // SESSION-ONLY: a bearer token names nobody, so it has no own password.
+      security: [{ cookieAuth: [] }],
+      description:
+        'Requires a signed-in session — refused for ANY bearer token regardless of scopes. Changes ' +
+        'the signed-in person\'s password after checking the current one, ends every OTHER session ' +
+        'they hold (this one stays signed in), and clears the requirement to choose a new password. ' +
+        'Throttled per account: 3 calls per 10 seconds. The throttle fails closed: while its store ' +
+        'is unreachable this answers 500 rather than let an attempt through uncounted. The only way ' +
+        'to change one\'s own password — Better Auth\'s own /auth/change-password answers 404, and so ' +
+        'does /auth/verify-password, which would check a password with no throttle. ' +
+        'The one operation a session whose account must choose a new password may call: every ' +
+        'other answers it 403 PASSWORD_CHANGE_REQUIRED.',
+      requestBody: {
+        required: true,
+        description: 'The current password, and a new one of 8 to 128 characters that differs from it.',
+        content: json(schemaRef('ChangePasswordRequest')),
+      },
+      responses: {
+        '204': { description: 'Changed. Every other session of this account has ended. No body.' },
+        '400': {
+          description:
+            'Refused before anything changed. Code INVALID_PASSWORD_REQUEST when the body failed ' +
+            'ChangePasswordRequestSchema — a field missing, "newPassword" outside 8 to 128 ' +
+            'characters, or a field the schema does not know (it is `.strict()`); code ' +
+            'PASSWORD_UNCHANGED when the new password is the same as the current one; code ' +
+            'INVALID_CURRENT_PASSWORD when the current password is not correct. ' +
+            'application/problem+json with a required "remediation".',
+          content: problem(),
+        },
+        '401': ref('Unauthorized'),
+        '403': ref('SessionRequired'),
+        '429': {
+          description:
+            'Too many attempts by this account (code RATE_LIMITED): every call counts, right or ' +
+            'wrong, and the 4th within 10 seconds is refused before any password is checked. ' +
+            'application/problem+json with a required "remediation".',
+          headers: {
+            'Retry-After': {
+              description: 'Seconds until the window ends and an attempt is counted again.',
+              schema: { type: 'integer', minimum: 1 },
+            },
+          },
+          content: problem(),
+        },
+      },
+    },
+  },
+
+  // ═══ ADMINISTRATION ═══
+  //
+  // Every operation below is `users:manage`, an admin's action: a session
+  // whose account is not an admin is refused 403 ADMIN_REQUIRED, and a bearer
+  // token 403 by SessionOnlyGuard, both described by SessionRequired. Session-
+  // only for the reason the token operations are: an account is a person's to
+  // manage, and a CI credential must not be able to make itself an admin.
+  '/v1/admin/users': {
+    get: {
+      operationId: 'listAdminUsers',
+      summary: 'Every account in this organisation',
+      tags: ['admin'],
+      security: [{ cookieAuth: [] }],
+      description:
+        'Requires a signed-in session whose account is an admin. Every account with a membership ' +
+        'of this organisation, by name: whether it is an admin, whether it is disabled, whether ' +
+        'its owner must still choose a new password, and the projects it holds a role in. ' +
+        'Not paginated: an install has a team, not a page of people.',
+      responses: {
+        '200': {
+          description: 'Every account in this organisation, ordered by name.',
+          content: json(schemaRef('AdminUserListResponse')),
+        },
+        '401': ref('Unauthorized'),
+        '403': ref('SessionRequired'),
+      },
+    },
+    post: {
+      operationId: 'createAdminUser',
+      summary: 'Create an account',
+      tags: ['admin'],
+      security: [{ cookieAuth: [] }],
+      description:
+        'Requires a signed-in session whose account is an admin. Creates the account with the ' +
+        'temporary password given, joins it to this organisation, and grants it a role in each ' +
+        'project listed — the membership and the roles in one transaction. Its owner must choose a ' +
+        'new password at first sign-in: until then every other operation answers them 403 ' +
+        'PASSWORD_CHANGE_REQUIRED. If creating the account or granting its roles fails part-way, ' +
+        'what was written of the account is removed before the error is answered, so a retry ' +
+        'with the same email is not refused EMAIL_TAKEN by it (should that removal fail too, ' +
+        'the server logs it).',
+      requestBody: {
+        required: true,
+        description:
+          'An email (trimmed and lowercased), a name, a temporary password of 8 to 128 characters, ' +
+          'and optionally "isAdmin" (default false) and the project roles to grant (default none).',
+        content: json(schemaRef('CreateUserRequest')),
+      },
+      responses: {
+        '201': {
+          description:
+            'Created. The account as it now stands, its membership and project roles included — ' +
+            'all written before this response is sent, and listed at once.',
+          content: json(schemaRef('AdminUser')),
+        },
+        '400': {
+          description:
+            'Refused before anything was written. Code INVALID_USER_REQUEST when the body failed ' +
+            'CreateUserRequestSchema — a field missing or out of bounds, a project listed twice, or a ' +
+            'field the schema does not know (it is `.strict()`); code UNKNOWN_PROJECT when a ' +
+            '"projectSlug" names no project of this organisation, the slug in "detail". ' +
+            'application/problem+json with a required "remediation".',
+          content: problem(),
+        },
+        '401': ref('Unauthorized'),
+        '403': ref('SessionRequired'),
+        '409': {
+          description:
+            'An account with this email already exists, in any letter case and in any organisation ' +
+            '(code EMAIL_TAKEN) — including one created by a request racing this one, which loses. ' +
+            'application/problem+json with a required "remediation".',
+          content: problem(),
+        },
+      },
+    },
+  },
+
+  '/v1/admin/users/{userId}': {
+    patch: {
+      operationId: 'updateAdminUser',
+      summary: 'Rename, make or unmake an admin, disable or enable an account',
+      tags: ['admin'],
+      security: [{ cookieAuth: [] }],
+      description:
+        'Requires a signed-in session whose account is an admin. Disabling an account ends every ' +
+        'session it holds and refuses its sign-in until it is enabled again. Changes to who is an ' +
+        'active admin are made one at a time per organisation, so the last active admin can never ' +
+        'be demoted or disabled — not even by two admins demoting each other at once: one ' +
+        'succeeds and the other is refused 409 LAST_ADMIN. A disabled admin does not count as ' +
+        'active.',
+      parameters: [parameters['AdminUserId']!],
+      requestBody: {
+        required: true,
+        description: 'At least one of "name", "isAdmin" or "disabled". Unmentioned fields keep their values.',
+        content: json(schemaRef('UpdateUserRequest')),
+      },
+      responses: {
+        '200': {
+          description: 'Updated. The account as it now stands.',
+          content: json(schemaRef('AdminUser')),
+        },
+        '400': {
+          description:
+            'Refused before anything changed. Code INVALID_USER_UPDATE when the body failed ' +
+            'UpdateUserRequestSchema — empty, a value out of bounds, or a field the schema does not ' +
+            'know (it is `.strict()`); code CANNOT_DISABLE_SELF when the account is the caller\'s ' +
+            'own. application/problem+json with a required "remediation".',
+          content: problem(),
+        },
+        '401': ref('Unauthorized'),
+        '403': ref('SessionRequired'),
+        '404': ref('NotFound'),
+        '409': {
+          description:
+            'The change would leave this organisation with no active admin (code LAST_ADMIN). ' +
+            'Nothing changed. application/problem+json with a required "remediation".',
+          content: problem(),
+        },
+      },
+    },
+    delete: {
+      operationId: 'deleteAdminUser',
+      summary: 'Remove an account',
+      tags: ['admin'],
+      security: [{ cookieAuth: [] }],
+      description:
+        'Requires a signed-in session whose account is an admin. Removes the account, its sessions ' +
+        'and its memberships. Run notes it wrote keep their text and lose their author. Refused for ' +
+        'the caller\'s own account, and for the last active admin.',
+      parameters: [parameters['AdminUserId']!],
+      responses: {
+        '204': { description: 'Removed. No body.' },
+        '400': {
+          description:
+            'The account is the caller\'s own (code CANNOT_REMOVE_SELF). Nothing changed. ' +
+            'application/problem+json with a required "remediation".',
+          content: problem(),
+        },
+        '401': ref('Unauthorized'),
+        '403': ref('SessionRequired'),
+        '404': ref('NotFound'),
+        '409': {
+          description:
+            'The account is the last active admin of this organisation (code LAST_ADMIN). Nothing ' +
+            'changed. application/problem+json with a required "remediation".',
+          content: problem(),
+        },
+      },
+    },
+  },
+
+  '/v1/admin/users/{userId}/password': {
+    put: {
+      operationId: 'resetAdminUserPassword',
+      summary: "Reset someone's password to a temporary one",
+      tags: ['admin'],
+      security: [{ cookieAuth: [] }],
+      description:
+        'Requires a signed-in session whose account is an admin. Sets the temporary password given, ' +
+        'requires its owner to choose a new one at their next sign-in, and ends every session they ' +
+        'hold — a cookie they had answers 401 on its next request. Refused for the caller\'s own ' +
+        'account: one\'s own password is changed with the current one, at PUT /v1/me/password.',
+      parameters: [parameters['AdminUserId']!],
+      requestBody: {
+        required: true,
+        description: 'The temporary password, 8 to 128 characters.',
+        content: json(schemaRef('SetPasswordRequest')),
+      },
+      responses: {
+        '204': { description: 'Reset, and every session of the account has ended. No body.' },
+        '400': {
+          description:
+            'Refused before anything changed. Code CANNOT_RESET_OWN_PASSWORD when the account is the ' +
+            'caller\'s own; code INVALID_PASSWORD_RESET when the body failed SetPasswordRequestSchema ' +
+            '— "password" missing or outside 8 to 128 characters, or a field the schema does not ' +
+            'know (it is `.strict()`). application/problem+json with a required "remediation".',
+          content: problem(),
+        },
+        '401': ref('Unauthorized'),
+        '403': ref('SessionRequired'),
+        '404': ref('NotFound'),
+      },
+    },
+  },
+
+  '/v1/admin/projects': {
+    get: {
+      operationId: 'listAdminProjects',
+      summary: 'Every project in this organisation, with its member count',
+      tags: ['admin'],
+      security: [{ cookieAuth: [] }],
+      description:
+        'Requires a signed-in session whose account is an admin. Every project in this ' +
+        'organisation by name — what GET /v1/projects shows an admin too — with how many people ' +
+        'hold a role in each. An admin needs no role to see a project, so is counted only where ' +
+        'they hold one.',
+      responses: {
+        '200': {
+          description: 'Every project in this organisation, ordered by name.',
+          content: json(schemaRef('AdminProjectListResponse')),
+        },
+        '401': ref('Unauthorized'),
+        '403': ref('SessionRequired'),
       },
     },
   },

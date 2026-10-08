@@ -5,10 +5,11 @@ import type { HttpAdapterHost } from '@nestjs/core';
 import type { LiveDelta } from '@perfportal/contracts';
 import { isUuid, type OrgMemberRepository, type ProjectMemberRepository, type RunRepository } from '@perfportal/persistence';
 import { fromNodeHeaders } from 'better-auth/node';
-import { Redis } from 'ioredis';
+import type { Redis } from 'ioredis';
 import { WebSocket, WebSocketServer } from 'ws';
 import { canSeeProject, loadSessionAccess } from '../auth/access.js';
 import { auth } from '../auth/better-auth.instance.js';
+import type { RedisCommands } from '../common/redis-commands.js';
 import { LiveHub, type LiveSink } from './live-hub.js';
 
 /**
@@ -174,17 +175,19 @@ export class LiveGateway implements OnApplicationBootstrap, OnModuleDestroy {
   /**
    * A SECOND Redis client, beside {@link LiveHub}'s. Not an oversight: ioredis
    * in subscriber mode refuses ordinary commands, so the hub's connection
-   * cannot serve the `GET`/`XRANGE` the seed is made of.
+   * cannot serve the `GET`/`XRANGE` the seed is made of. It is the API's shared
+   * ordinary-command connection (`RedisCommands`), which owns its lifetime —
+   * so `onModuleDestroy` below does not quit it.
    */
   constructor(
-    redisUrl: string,
+    commands: RedisCommands,
     private readonly hub: LiveHub,
     private readonly runs: RunRepository,
     private readonly members: OrgMemberRepository,
     private readonly projectMembers: ProjectMemberRepository,
     private readonly adapterHost: HttpAdapterHost,
   ) {
-    this.#redis = new Redis(redisUrl);
+    this.#redis = commands.client;
   }
 
   onApplicationBootstrap(): void {
@@ -198,9 +201,8 @@ export class LiveGateway implements OnApplicationBootstrap, OnModuleDestroy {
     server.on('upgrade', this.onUpgrade);
   }
 
-  async onModuleDestroy(): Promise<void> {
+  onModuleDestroy(): void {
     this.#wss.close();
-    await this.#redis.quit();
   }
 
   /**
@@ -226,6 +228,12 @@ export class LiveGateway implements OnApplicationBootstrap, OnModuleDestroy {
 
     const session = await auth.api.getSession({ headers: fromNodeHeaders(req.headers) });
     if (!session) return null;
+    // The two refusals `authenticateSession` and `PasswordChangeGuard` make on
+    // the HTTP path, neither of which runs here: a disabled account (Better
+    // Auth's `getSession` does not read `banned`), and a session that must
+    // still choose its password. Refused as an unknown run is, and before any
+    // query about the org or the run, so it learns nothing about either.
+    if (session.user.banned === true || session.user.mustChangePassword === true) return null;
 
     const membership = await this.members.findOrgForUser(session.user.id);
     if (!membership) return null;

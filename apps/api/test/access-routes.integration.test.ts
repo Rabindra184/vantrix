@@ -14,10 +14,17 @@ import {
   type AccessRole,
   type ProjectRole,
 } from '@perfportal/contracts';
+import { UserRepository } from '@perfportal/persistence';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AppModule } from '../src/app.module.js';
-import { BEARER_ONLY_KEY, NOT_PROJECT_SCOPED_KEY, REQUIRES_KEY } from '../src/auth/access.decorator.js';
+import {
+  ALLOWED_BEFORE_PASSWORD_CHANGE_KEY,
+  BEARER_ONLY_KEY,
+  NOT_PROJECT_SCOPED_KEY,
+  OWN_ACCOUNT_KEY,
+  REQUIRES_KEY,
+} from '../src/auth/access.decorator.js';
 import { IS_PUBLIC_KEY, SCOPES_KEY } from '../src/auth/scopes.decorator.js';
 import { SessionOnlyGuard } from '../src/auth/session-only.guard.js';
 import { projectNotFound, runNotFound } from '../src/common/validation.js';
@@ -53,7 +60,12 @@ interface WalkedRoute {
   readonly requires: AccessAction | undefined;
   readonly bearerOnly: boolean;
   readonly notProjectScoped: boolean;
+  readonly ownAccount: boolean;
   readonly isPublic: boolean;
+  /** `@AllowedBeforePasswordChange` on the HANDLER: reachable by a session that must still choose its password. */
+  readonly allowedBeforePasswordChange: boolean;
+  /** `@AllowedBeforePasswordChange` on the route's CONTROLLER CLASS, which the guard does not read. */
+  readonly allowedBeforePasswordChangeOnClass: boolean;
   /** `@Scopes` as `AuthGuard` reads it: the handler's, else the class's. */
   readonly scopes: readonly string[] | undefined;
   /** `SessionOnlyGuard` on the handler or its class. */
@@ -111,7 +123,12 @@ function walkRoutes(): WalkedRoute[] {
           requires: meta<AccessAction>(REQUIRES_KEY),
           bearerOnly: meta<boolean>(BEARER_ONLY_KEY) === true,
           notProjectScoped: meta<boolean>(NOT_PROJECT_SCOPED_KEY) === true,
+          ownAccount: meta<boolean>(OWN_ACCOUNT_KEY) === true,
           isPublic: meta<boolean>(IS_PUBLIC_KEY) === true,
+          // The HANDLER's alone, as `PasswordChangeGuard` reads it: on a class
+          // it opens nothing, so it must not be counted as opening anything.
+          allowedBeforePasswordChange: Reflect.getMetadata(ALLOWED_BEFORE_PASSWORD_CHANGE_KEY, fn) === true,
+          allowedBeforePasswordChangeOnClass: Reflect.getMetadata(ALLOWED_BEFORE_PASSWORD_CHANGE_KEY, cls) === true,
           scopes: meta<string[]>(SCOPES_KEY),
           sessionOnly: guardedBySessionOnly(cls) || guardedBySessionOnly(fn),
           uuidParams,
@@ -127,8 +144,8 @@ function walkRoutes(): WalkedRoute[] {
 
 const ROUTES = walkRoutes();
 
-/** How a route is reached: the action it `@Requires`, or one of the three statements. */
-type Access = AccessAction | 'bearer-only' | 'not-project-scoped' | 'public';
+/** How a route is reached: the action it `@Requires`, or one of the four statements. */
+type Access = AccessAction | 'bearer-only' | 'not-project-scoped' | 'own-account' | 'public';
 
 /** Every marker a walked route carries, as `Access` values — one, if it is declared right. */
 function markers(r: WalkedRoute): Access[] {
@@ -136,6 +153,7 @@ function markers(r: WalkedRoute): Access[] {
     r.requires ?? null,
     r.bearerOnly ? 'bearer-only' : null,
     r.notProjectScoped ? 'not-project-scoped' : null,
+    r.ownAccount ? 'own-account' : null,
     r.isPublic ? 'public' : null,
   ].filter((m): m is Access => m !== null);
 }
@@ -213,6 +231,20 @@ const ACCESS_BY_ROUTE: Readonly<Record<string, Access>> = {
   'GET /v1/projects/:slug/tokens': 'tokens:manage',
   'POST /v1/projects/:slug/tokens': 'tokens:manage',
   'DELETE /v1/projects/:slug/tokens/:prefix': 'tokens:manage',
+
+  'GET /v1/projects/:slug/members': 'members:read',
+  'POST /v1/projects/:slug/members': 'members:manage',
+  'PATCH /v1/projects/:slug/members/:userId': 'members:manage',
+  'DELETE /v1/projects/:slug/members/:userId': 'members:manage',
+
+  'PUT /v1/me/password': 'own-account',
+
+  'GET /v1/admin/users': 'users:manage',
+  'POST /v1/admin/users': 'users:manage',
+  'PATCH /v1/admin/users/:userId': 'users:manage',
+  'PUT /v1/admin/users/:userId/password': 'users:manage',
+  'DELETE /v1/admin/users/:userId': 'users:manage',
+  'GET /v1/admin/projects': 'users:manage',
 };
 
 /** Where the run routes live. A run names its project through the run row. */
@@ -228,7 +260,7 @@ describe('every route declares how it is reached', () => {
     expect(ROUTES.length, 'the route walk found too few routes — it has rotted').toBeGreaterThan(40);
   });
 
-  it('gives each route exactly one of @Requires, @BearerOnly, @NotProjectScoped and @Public', () => {
+  it('gives each route exactly one of @Requires, @BearerOnly, @NotProjectScoped, @OwnAccount and @Public', () => {
     const wrong = ROUTES.map((r) => ({ label: r.label, markers: markers(r) }))
       .filter((r) => r.markers.length !== 1)
       .map((r) => `${r.label}: ${r.markers.length === 0 ? 'none' : r.markers.join(' + ')}`)
@@ -247,6 +279,52 @@ describe('every route declares how it is reached', () => {
   it('lets no route carry both @Public and @Requires', () => {
     const both = ROUTES.filter((r) => r.isPublic && r.requires !== undefined).map((r) => r.label).sort();
     expect(both, `routes that are @Public AND @Requires — public in effect:\n${both.join('\n')}`).toEqual([]);
+  });
+
+  /**
+   * `@OwnAccount` acts on the caller's own account and takes no action, so
+   * `AccessGuard` judges nothing on it — what keeps it to a person is
+   * `SessionOnlyGuard`, and a bearer token, which names nobody, has no own
+   * account to act on. Like `@NotProjectScoped`, it is no way into a project
+   * either: a route naming one or a run would be open to every session in the
+   * org.
+   */
+  it('puts every @OwnAccount route behind SessionOnlyGuard, on a path that names no project or run', () => {
+    const own = ROUTES.filter((r) => r.ownAccount);
+    expect(own.length, 'no @OwnAccount route found — the walk has rotted').toBeGreaterThan(0);
+    const wrong = [
+      ...own.filter((r) => !r.sessionOnly).map((r) => `${r.label}: no SessionOnlyGuard on the route or its class`),
+      ...own
+        .filter((r) => r.path.split('/').includes(':slug') || isRunRoute(r.path))
+        .map((r) => `${r.label}: names a project or a run`),
+    ].sort();
+    expect(wrong, wrong.join('\n')).toEqual([]);
+  });
+
+  /**
+   * THE PASSWORD GATE'S ALLOW-LIST, PINNED. `PasswordChangeGuard` lets a
+   * session that must still choose its password through exactly the routes
+   * carrying `@AllowedBeforePasswordChange`; one more is one more thing such a
+   * session can do. The list is written here, apart from the controllers, so
+   * a route that gains the decorator fails until someone writes it down.
+   */
+  it('lets a session that must change its password reach PUT /v1/me/password and nothing else', () => {
+    const allowed = ROUTES.filter((r) => r.allowedBeforePasswordChange).map((r) => r.label).sort();
+    expect(allowed).toEqual(['PUT /v1/me/password']);
+  });
+
+  /**
+   * The guard reads the marker off the handler alone, and the pin above does
+   * too — so a marker on a CONTROLLER CLASS opens nothing today and is
+   * counted nowhere. The day the guard switches to `getAllAndOverride`, that
+   * marker would open every route of the class while the pin stayed green.
+   * So no class may carry it at all.
+   */
+  it('lets no controller class carry @AllowedBeforePasswordChange', () => {
+    const onClass = [
+      ...new Set(ROUTES.filter((r) => r.allowedBeforePasswordChangeOnClass).map((r) => r.label)),
+    ].sort();
+    expect(onClass, `routes whose controller class is marked:\n${onClass.join('\n')}`).toEqual([]);
   });
 
   it('declares, route by route, exactly the access written down for it', () => {
@@ -431,7 +509,10 @@ const PROBES: readonly Probe[] = [
   { action: 'rules:edit', role: 'member', route: 'POST /v1/projects/:slug/rules', body: {} },
   { action: 'tests:manage', role: 'manager', route: 'PATCH /v1/projects/:slug/tests/:testSlug', body: {} },
   { action: 'tokens:manage', role: 'manager', route: 'GET /v1/projects/:slug/tokens' },
+  { action: 'members:read', role: 'viewer', route: 'GET /v1/projects/:slug/members' },
+  { action: 'members:manage', role: 'admin', route: 'POST /v1/projects/:slug/members', body: {} },
   { action: 'projects:create', role: 'admin', route: 'POST /v1/projects', body: {} },
+  { action: 'users:manage', role: 'admin', route: 'GET /v1/admin/users' },
 ];
 
 /** What a request's path parameters are filled with: project A and its run, or targets that do not exist. */
@@ -442,6 +523,8 @@ interface Target {
 
 /** A package id no project holds: a well-formed uuid, so it reaches past `uuidParam` to the lookup. */
 const NO_PACKAGE = randomUUID();
+/** An account id nobody holds. Account ids are opaque strings (Better Auth's own, or a uuid an admin's create chose); nothing pipes them. */
+const NO_USER = `no-such-user-${randomUUID()}`;
 
 function fill(route: string, target: Target): { verb: Verb; url: string } {
   const [verb, template] = route.split(' ') as [Verb, string];
@@ -449,7 +532,8 @@ function fill(route: string, target: Target): { verb: Verb; url: string } {
     .replace(':slug', target.slug)
     .replace(':id', target.runId)
     .replace(':packageId', NO_PACKAGE)
-    .replace(':testSlug', 'missing');
+    .replace(':testSlug', 'missing')
+    .replace(':userId', NO_USER);
   return { verb, url };
 }
 
@@ -587,10 +671,21 @@ describe('the role matrix', () => {
           expect([res.status, res.body.code, res.body.detail]).toStrictEqual([403, 'ADMIN_REQUIRED', `${label} needs an admin.`]);
         });
 
+        // On a :slug route the refusal comes before any lookup (PR 1 Ruling
+        // 2), so a project that does not exist gets the very answer a real
+        // one the caller cannot see gets, and neither names the project.
+        const namesProject = p.route.split(' ')[1]!.split('/').includes(':slug');
         for (const { key, who } of OUTSIDERS) {
-          it(`refuses a ${who} ADMIN_REQUIRED`, async () => {
+          it(`refuses a ${who} ADMIN_REQUIRED${namesProject ? ', for a missing project as for a real one' : ''}`, async () => {
             const res = await probe(p, A, cookies[key]);
             expect([res.status, res.body.code]).toStrictEqual([403, 'ADMIN_REQUIRED']);
+            if (namesProject) {
+              const missing = await probe(p, MISSING, cookies[key]);
+              expect(
+                masked(missing.body, MISSING.slug),
+                'a missing project answered differently from an invisible one',
+              ).toStrictEqual(masked(res.body, A.slug));
+            }
           });
         }
       } else {
@@ -881,6 +976,60 @@ describe('the role matrix', () => {
         expect([res.status, res.body.code], `${label}: ${JSON.stringify(res.body)}`).toStrictEqual([...expected]);
       });
     }
+  });
+
+  /*
+   * ═══ A SESSION THAT MUST CHANGE ITS PASSWORD REACHES NOTHING ═══
+   * (Review Focus 1)
+   *
+   * Every route the walk finds, sent by an ADMIN of A — who passes
+   * `AccessGuard` everywhere — whose account must choose a new password. Each
+   * is refused 403 by the password gate, except:
+   *
+   *   - the gate's allow-list, `PUT /v1/me/password`, which answers its own
+   *     400 for the empty body sent;
+   *   - a route asking a scope no session holds (`stream`, `telemetry`):
+   *     `AuthGuard` runs before the gate and answers that scope refusal, the
+   *     same 403 FORBIDDEN every session gets there;
+   *   - `@Public` routes, which no session is needed for.
+   *
+   * Derived from the walk, so a route added later is held to it by existing.
+   * Path parameters are filled with A's slug, A's run, and fresh uuids: the
+   * gate runs before any pipe or lookup, so their values cannot matter.
+   */
+  describe('a session that must change its password', () => {
+    /** The scopes `authenticateSession` gives every session (auth.middleware.ts). */
+    const SESSION_SCOPES: readonly string[] = ['read', 'ingest', 'runner'];
+    let flagged: string;
+
+    beforeAll(async () => {
+      const { cookie, userId } = await signInAsAdmin(ctx, `flagged-${randomUUID()}@example.test`);
+      await new UserRepository(ctx.prisma).setMustChangePassword(userId, true);
+      flagged = cookie;
+    });
+
+    it('is refused on every route but PUT /v1/me/password', async () => {
+      const swept = ROUTES.filter((r) => !r.isPublic);
+      expect(swept.length, 'the walk found too few routes to sweep').toBeGreaterThan(40);
+      const wrong: string[] = [];
+      for (const r of swept) {
+        const [verb] = r.label.split(' ') as [Verb];
+        const url = r.path
+          .replace(':slug', A.slug)
+          .replace(':id', A.runId)
+          .replace(/:[A-Za-z]+/g, () => randomUUID());
+        const res = await send(verb, url, flagged);
+        const expected: readonly [number, string] = r.allowedBeforePasswordChange
+          ? [400, 'INVALID_PASSWORD_REQUEST']
+          : (r.scopes ?? []).some((scope) => !SESSION_SCOPES.includes(scope))
+            ? [403, 'FORBIDDEN']
+            : [403, 'PASSWORD_CHANGE_REQUIRED'];
+        if (res.status !== expected[0] || res.body.code !== expected[1]) {
+          wrong.push(`${r.label}: ${res.status} ${String(res.body.code)}, expected ${expected.join(' ')}`);
+        }
+      }
+      expect(wrong, wrong.join('\n')).toEqual([]);
+    });
   });
 
   /*

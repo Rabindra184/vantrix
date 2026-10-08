@@ -1,3 +1,4 @@
+import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from '@perfportal/contracts';
 import type { BetterAuthOptions } from 'better-auth';
 import { describe, expect, it } from 'vitest';
 import { cookiesAreSecure, createAuth } from '../src/auth.js';
@@ -142,5 +143,24 @@ describe('createAuth', () => {
     // Typed through Better Auth's own option type, which names `cookieCache`.
     const session: BetterAuthOptions['session'] = (await auth.$context).options.session;
     expect(session?.cookieCache?.enabled).toBeFalsy();
+  });
+
+  /**
+   * Our request schemas bound a password by `PASSWORD_MIN_LENGTH` and
+   * `PASSWORD_MAX_LENGTH`, because the admin plugin's create does not apply
+   * Better Auth's own bounds, while its change-password and reset-password
+   * routes read them from this config. Two definitions of one rule, so this
+   * pins them together: drifted apart, a password one side accepts is one
+   * the other refuses.
+   */
+  it("bounds a password exactly as the contracts' PasswordSchema does", async () => {
+    const auth = createAuth({
+      databaseUrl: 'postgresql://unused:unused@127.0.0.1:1/unused',
+      baseUrl: 'http://localhost:3000',
+    });
+    expect((await auth.$context).password.config).toEqual({
+      minPasswordLength: PASSWORD_MIN_LENGTH,
+      maxPasswordLength: PASSWORD_MAX_LENGTH,
+    });
   });
 });

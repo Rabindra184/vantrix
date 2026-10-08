@@ -8,19 +8,23 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { Requires } from '../src/auth/access.decorator.js';
 import { AccessGuard } from '../src/auth/access.guard.js';
 import { AuthGuard } from '../src/auth/auth.guard.js';
+import { PasswordChangeGuard } from '../src/auth/password-change.guard.js';
 import { badRequest, uuidParam } from '../src/common/validation.js';
 import { createTestApp, type TestContext } from './support/app.js';
 import { signInAsProjectMember } from './support/session.js';
 
 /**
- * ═══ AccessGuard RUNS SECOND ═══
+ * ═══ AccessGuard RUNS LAST, AFTER THE PASSWORD GATE ═══
  *
- * `auth.module.ts` lists `AccessGuard`'s APP_GUARD after `AuthGuard`'s and
- * says the list order is the run order. That is Nest's behaviour, not a
- * guarantee of this codebase's, so it is read back from the running app
- * rather than from the module's source: `getGlobalGuards()` is the array
- * `GuardsConsumer` walks, in order, for every route. A reordering — or a
- * second registration of either — fails here naming the actual list.
+ * `auth.module.ts` lists the APP_GUARDs AuthGuard, PasswordChangeGuard,
+ * AccessGuard, and says the list order is the run order. That is Nest's
+ * behaviour, not a guarantee of this codebase's, so it is read back from the
+ * running app rather than from the module's source: `getGlobalGuards()` is
+ * the array `GuardsConsumer` walks, in order, for every route. The gate has
+ * to come before AccessGuard, or a session that has not chosen its password
+ * is told by AccessGuard's 404s and ADMIN_REQUIRED which projects exist and
+ * what it may do. A reordering — or a second registration of any — fails here
+ * naming the actual list.
  *
  * `config` is NestApplication's own, private to TypeScript only.
  */
@@ -30,11 +34,15 @@ describe('the global guards', () => {
     await ctx?.close();
   });
 
-  it('run AuthGuard, then AccessGuard, and nothing else', async () => {
+  it('run AuthGuard, then PasswordChangeGuard, then AccessGuard, and nothing else', async () => {
     ctx = await createTestApp();
     const config = (ctx.app as unknown as { config: ApplicationConfig }).config;
 
-    expect(config.getGlobalGuards().map((g) => g.constructor)).toStrictEqual([AuthGuard, AccessGuard]);
+    expect(config.getGlobalGuards().map((g) => g.constructor)).toStrictEqual([
+      AuthGuard,
+      PasswordChangeGuard,
+      AccessGuard,
+    ]);
   });
 });
 
