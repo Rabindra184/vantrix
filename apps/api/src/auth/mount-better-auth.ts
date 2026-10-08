@@ -21,8 +21,9 @@ import { auth } from './better-auth.instance.js';
  * routed by Better Auth as `/auth/admin/list-users`. The admin plugin's HTTP
  * routes are therefore refused inside Better Auth's own pipeline — the
  * `refuseServerOnlyRoutes` plugin in `createAuth`, which also refuses
- * `/auth/change-password` — and not by a guard in front of this handler,
- * which is where two bypassable versions of it used to live.
+ * `/auth/change-password` and `/auth/verify-password` — and not by a guard in
+ * front of this handler, which is where two bypassable versions of it used to
+ * live.
  */
 export function mountBetterAuth(app: INestApplication): void {
   app.getHttpAdapter().getInstance().all('/auth/*splat', toNodeHandler(auth));

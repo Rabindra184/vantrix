@@ -115,7 +115,7 @@ export interface RefuseServerOnlyRoutesPlugin {
  * The Better Auth routes under the base path that answer 404 over HTTP, each
  * with everything beneath it. Server-side `auth.api.*` calls still reach them.
  */
-const SERVER_ONLY_ROUTES = ['/admin', '/change-password'] as const;
+const SERVER_ONLY_ROUTES = ['/admin', '/change-password', '/verify-password'] as const;
 
 /**
  * ═══ ROUTES THIS PRODUCT CALLS SERVER-SIDE ONLY, SO OVER HTTP THEY 404 ═══
@@ -134,6 +134,14 @@ const SERVER_ONLY_ROUTES = ['/admin', '/change-password'] as const;
  * left open a person told to replace an admin's temporary password could go
  * temporary → X here and X → temporary through `/v1`, and end unflagged on the
  * password the admin chose.
+ *
+ * `/auth/verify-password`. Better Auth marks it `metadata.scope: "server"`,
+ * which is NOT its `SERVER_ONLY` flag — better-call's router skips only the
+ * latter — so it is served over HTTP. It answers the signed-in person's right
+ * password 200 and a wrong one 400 INVALID_PASSWORD: a current-password oracle
+ * for anyone holding the cookie, a flagged session's included, with none of the
+ * per-account throttle `PUT /v1/me/password` carries. Measured before this
+ * line existed: exactly those two answers. Nothing in the product calls it.
  *
  * ═══ WHY HERE, AND NOT IN FRONT OF THE HANDLER ═══
  *
@@ -223,7 +231,8 @@ function refuseServerOnlyRoutes(): RefuseServerOnlyRoutesPlugin {
  * The plugin's own HTTP routes (`/auth/admin/*`) are a second admin API this
  * product does not offer; `refuseServerOnlyRoutes`, registered after it,
  * answers them 404 inside Better Auth's own pipeline, on the very request the
- * router routes — and `/auth/change-password` too, for `PUT /v1/me/password`. The plugin is here for its server-side calls and for the
+ * router routes — and `/auth/change-password` and `/auth/verify-password` too,
+ * for `PUT /v1/me/password` (see `SERVER_ONLY_ROUTES`). The plugin is here for its server-side calls and for the
  * columns it owns: `user.role` (the admin flag is exactly `'admin'`, every
  * other account `'user'`), `banned`/`banReason`/`banExpires`, and
  * `session.impersonatedBy`.

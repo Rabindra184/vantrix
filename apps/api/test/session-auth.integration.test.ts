@@ -351,6 +351,56 @@ describe('/auth/*', () => {
     expect(signIn.status).toBe(200);
     expect(await rawStatus(port, { method: 'GET', path: '/auth/get-session', headers: { Host: host, Cookie: cookie } })).toBe(200);
   });
+
+  /**
+   * `/auth/verify-password` is refused by the same plugin, the same way.
+   * Better Auth marks it `scope: "server"`, which its router still serves —
+   * only `SERVER_ONLY` is skipped — so any session could ask whether a
+   * password is its own: 200 for the right one, 400 INVALID_PASSWORD for a
+   * wrong one, with none of the throttle `PUT /v1/me/password` carries.
+   * Measured before the refusal: the plain path answered exactly that.
+   *
+   * The body carries a WRONG password, so an unrefused request answers
+   * Better Auth's 400 — distinct from the refusal's 404.
+   */
+  it('refuses /auth/verify-password however the path is spelled, and when a header names it', async () => {
+    ctx = await createTestApp();
+    const { cookie } = await signInAsAdmin(ctx, 'verify-password-spellings@example.test');
+    const { port } = ctx.app.getHttpServer().address() as AddressInfo;
+    const host = `127.0.0.1:${port}`;
+    const body = JSON.stringify({ password: 'not-the-password' });
+    const post = (path: string, headers: Record<string, string> = {}) =>
+      rawStatus(port, {
+        method: 'POST',
+        path,
+        headers: { Host: host, Cookie: cookie, 'Content-Type': 'application/json', ...headers },
+        body,
+      });
+
+    const spellings = [
+      '/auth/verify-password',
+      '/auth/./verify-password',
+      '/auth/foo/../verify-password',
+      '/auth/%2e/verify-password',
+      '/auth/VERIFY-PASSWORD',
+      '/auth/verify-password?x=1',
+    ];
+    const answered = await Promise.all(spellings.map(async (path) => `${path} ${await post(path)}`));
+    expect(answered).toEqual(spellings.map((p) => `${p} 404`));
+
+    const smuggled = {
+      'Host with ?': await post('/auth/sign-in/email', { Host: `${host}/auth/verify-password?` }),
+      'Host with #': await post('/auth/sign-in/email', { Host: `${host}/auth/verify-password#` }),
+      'X-Forwarded-Proto': await post('/auth/sign-in/email', {
+        'X-Forwarded-Proto': `http://${host}/auth/verify-password?x=`,
+      }),
+    };
+    expect(smuggled).toEqual({ 'Host with ?': 404, 'Host with #': 404, 'X-Forwarded-Proto': 404 });
+
+    // The control, through the same helper: an ordinary route still answers,
+    // so a refusal that 404s everything would fail here.
+    expect(await rawStatus(port, { method: 'GET', path: '/auth/get-session', headers: { Host: host, Cookie: cookie } })).toBe(200);
+  });
 });
 
 /** A 'complete', passing run in ctx's org — statusFor() only returns 200 for this. */

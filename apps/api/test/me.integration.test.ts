@@ -5,7 +5,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { RedisCommands } from '../src/common/redis-commands.js';
 import {
   PASSWORD_ATTEMPT_LIMIT,
+  PASSWORD_ATTEMPT_POLICY,
   PASSWORD_ATTEMPT_WINDOW_SECONDS,
+  PasswordAttempts,
   passwordAttemptKey,
 } from '../src/me/password-attempts.js';
 import { createTestApp, type TestContext } from './support/app.js';
@@ -179,10 +181,33 @@ describe('PUT /v1/me/password', () => {
  * Auth's own limiter does not cover it — `auth.api.*` skips the router it
  * runs in — so the route counts every call per account, and the 4th within a
  * window answers 429 before any password is hashed.
+ *
+ * The cases through the route run with a 60 s window rather than production's
+ * 10 s: four requests that each hash a password with scrypt have to land in
+ * ONE window, and on a loaded machine ten seconds is a race the test can lose.
+ * The limit is production's. That the DEFAULT is production's, window and all,
+ * is the last two cases' to say.
  */
+const TEST_WINDOW_SECONDS = 60;
+
+/** Starts `ctx` with the 60 s window, and checks the override is the one in force. */
+async function startThrottledApp(): Promise<void> {
+  ctx = await createTestApp({}, [], [
+    { provide: PASSWORD_ATTEMPT_POLICY, useValue: { limit: PASSWORD_ATTEMPT_LIMIT, windowSeconds: TEST_WINDOW_SECONDS } },
+  ]);
+  // It reached the instance the route uses: one attempt by a stranger arms a
+  // window longer than production's. Two Redis round trips apart, so this
+  // races nothing.
+  const probe = randomUUID();
+  await ctx.app.get(PasswordAttempts).take(probe);
+  expect(await ctx.app.get(RedisCommands).client.ttl(passwordAttemptKey(probe))).toBeGreaterThan(
+    PASSWORD_ATTEMPT_WINDOW_SECONDS,
+  );
+}
+
 describe('PUT /v1/me/password, throttled', () => {
   it('refuses the 4th attempt within the window 429 RATE_LIMITED with a Retry-After, even with the right password', async () => {
-    ctx = await createTestApp();
+    await startThrottledApp();
     const { cookie, userId, email } = await member();
 
     for (let i = 0; i < PASSWORD_ATTEMPT_LIMIT; i += 1) {
@@ -200,13 +225,13 @@ describe('PUT /v1/me/password, throttled', () => {
     ]);
     const retryAfter = Number(refused.headers['retry-after']);
     expect(retryAfter).toBeGreaterThanOrEqual(1);
-    expect(retryAfter).toBeLessThanOrEqual(PASSWORD_ATTEMPT_WINDOW_SECONDS);
+    expect(retryAfter).toBeLessThanOrEqual(TEST_WINDOW_SECONDS);
     // Refused before the password was checked: it is still the old one.
     expect(await signsIn(email, TEST_PASSWORD)).toBe(true);
     // And the window does end: the counter carries an expiry within it.
     const ttl = await ctx.app.get(RedisCommands).client.ttl(passwordAttemptKey(userId));
     expect(ttl).toBeGreaterThan(0);
-    expect(ttl).toBeLessThanOrEqual(PASSWORD_ATTEMPT_WINDOW_SECONDS);
+    expect(ttl).toBeLessThanOrEqual(TEST_WINDOW_SECONDS);
   });
 
   /**
@@ -214,7 +239,7 @@ describe('PUT /v1/me/password, throttled', () => {
    * forward here by deleting the key rather than by sleeping ten seconds.
    */
   it('counts afresh once the window ends, and the right password then succeeds', async () => {
-    ctx = await createTestApp();
+    await startThrottledApp();
     const { cookie, userId, email } = await member();
     for (let i = 0; i < PASSWORD_ATTEMPT_LIMIT; i += 1) {
       await change(cookie, { currentPassword: `wrong-guess-${i}`, newPassword: NEW_PASSWORD }).expect(400);
@@ -228,7 +253,7 @@ describe('PUT /v1/me/password, throttled', () => {
   });
 
   it('throttles one account without touching another', async () => {
-    ctx = await createTestApp();
+    await startThrottledApp();
     const one = await member();
     const other = await member();
     for (let i = 0; i < PASSWORD_ATTEMPT_LIMIT; i += 1) {
@@ -237,6 +262,48 @@ describe('PUT /v1/me/password, throttled', () => {
     await change(one.cookie, { currentPassword: TEST_PASSWORD, newPassword: NEW_PASSWORD }).expect(429);
 
     await change(other.cookie, { currentPassword: TEST_PASSWORD, newPassword: NEW_PASSWORD }).expect(204);
+  });
+
+  /**
+   * A FIXED window: the first attempt sets its end and a later one does not
+   * push it back (`EXPIRE … NX`). Driven on the class itself, against real
+   * Redis, with a 600 s window so nothing here races a clock: the first
+   * attempt's TTL is shortened by hand to 300 s, and a second attempt that
+   * re-armed the expiry would put it back near 600.
+   */
+  it('keeps the end the first attempt set: a later attempt does not push the window back', async () => {
+    ctx = await createTestApp();
+    const client = ctx.app.get(RedisCommands).client;
+    const attempts = new PasswordAttempts(ctx.app.get(RedisCommands), { limit: PASSWORD_ATTEMPT_LIMIT, windowSeconds: 600 });
+    const userId = randomUUID();
+    const key = passwordAttemptKey(userId);
+
+    expect(await attempts.take(userId)).toBeNull();
+    // The first attempt armed the 600 s window — so a TTL back above 300
+    // below can only be a later attempt re-arming it.
+    expect(await client.ttl(key)).toBeGreaterThan(300);
+    await client.expire(key, 300);
+
+    expect(await attempts.take(userId)).toBeNull();
+    expect(await client.ttl(key)).toBeLessThanOrEqual(300);
+  });
+
+  /**
+   * Production's policy is the one the app wires when nothing overrides it:
+   * 3 attempts, then a refusal whose wait is within a 10 s window. Driven on
+   * the wired instance, with no password hashed, so four calls land well
+   * inside ten seconds.
+   */
+  it('wires production’s policy by default: 3 attempts per 10 seconds', async () => {
+    ctx = await createTestApp();
+    const attempts = ctx.app.get(PasswordAttempts);
+    const userId = randomUUID();
+
+    for (let i = 0; i < PASSWORD_ATTEMPT_LIMIT; i += 1) expect(await attempts.take(userId), `attempt ${i + 1}`).toBeNull();
+    const retryAfter = await attempts.take(userId);
+    expect(retryAfter).toBeGreaterThanOrEqual(1);
+    expect(retryAfter).toBeLessThanOrEqual(PASSWORD_ATTEMPT_WINDOW_SECONDS);
+    expect([PASSWORD_ATTEMPT_LIMIT, PASSWORD_ATTEMPT_WINDOW_SECONDS]).toEqual([3, 10]);
   });
 });
 
@@ -266,5 +333,35 @@ describe('Better Auth’s own /auth/change-password', () => {
     await change(cookie, { currentPassword: TEST_PASSWORD, newPassword: NEW_PASSWORD }).expect(204);
     expect(await signsIn(email, NEW_PASSWORD)).toBe(true);
     expect(await flagOf(userId)).toBe(false);
+  });
+});
+
+/*
+ * ═══ AND BETTER AUTH'S /auth/verify-password, WHICH WOULD BE AN UNTHROTTLED
+ *     ORACLE FOR THE SAME PASSWORD ═══
+ *
+ * Better Auth registers `POST /verify-password` with `metadata.scope:
+ * "server"`, which is not its `SERVER_ONLY` flag: the router serves it. It
+ * answers 200 for the signed-in person's right password and 400
+ * INVALID_PASSWORD for a wrong one — the oracle `PUT /v1/me/password` is
+ * throttled to stop, with no throttle. Nothing in the product calls it, so it
+ * answers 404 over HTTP (`refuseServerOnlyRoutes` in createAuth), to a
+ * flagged session as to any other. session-auth.integration.test.ts drives
+ * the path spellings.
+ */
+describe('Better Auth’s own /auth/verify-password', () => {
+  it('answers 404 to a valid session, for the right password and a wrong one alike', async () => {
+    ctx = await createTestApp();
+    const { cookie, userId } = await member();
+    await new UserRepository(ctx.prisma).setMustChangePassword(userId, true);
+    const verify = (password: string) =>
+      request(ctx.app.getHttpServer()).post('/auth/verify-password').set('Cookie', cookie).send({ password });
+
+    const right = await verify(TEST_PASSWORD);
+    const wrong = await verify('not-the-password');
+    expect({ right: right.status, wrong: wrong.status }).toEqual({ right: 404, wrong: 404 });
+    // ...while the same cookie still reaches an ordinary Better Auth route: a
+    // refusal that 404s everything would pass the line above.
+    await request(ctx.app.getHttpServer()).get('/auth/get-session').set('Cookie', cookie).expect(200);
   });
 });

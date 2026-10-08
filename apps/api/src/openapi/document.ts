@@ -2319,8 +2319,10 @@ const paths: Record<string, PathItemObject> = {
         'Requires a signed-in session — refused for ANY bearer token regardless of scopes. Changes ' +
         'the signed-in person\'s password after checking the current one, ends every OTHER session ' +
         'they hold (this one stays signed in), and clears the requirement to choose a new password. ' +
-        'Throttled per account: 3 calls per 10 seconds. The only way to change one\'s own ' +
-        'password — Better Auth\'s own /auth/change-password answers 404. ' +
+        'Throttled per account: 3 calls per 10 seconds. The throttle fails closed: while its store ' +
+        'is unreachable this answers 500 rather than let an attempt through uncounted. The only way ' +
+        'to change one\'s own password — Better Auth\'s own /auth/change-password answers 404, and so ' +
+        'does /auth/verify-password, which would check a password with no throttle. ' +
         'The one operation a session whose account must choose a new password may call: every ' +
         'other answers it 403 PASSWORD_CHANGE_REQUIRED.',
       requestBody: {
