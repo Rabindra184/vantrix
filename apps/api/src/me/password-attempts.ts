@@ -19,11 +19,13 @@ export interface PasswordAttemptPolicy {
   readonly windowSeconds: number;
 }
 
-/** Production's policy: the two constants above. */
-export const DEFAULT_PASSWORD_ATTEMPT_POLICY: PasswordAttemptPolicy = {
+/** Production's policy: the two constants above. Frozen, because it is one
+ *  object shared by `MeModule` and the constructor default, and a caller that
+ *  wrote to it would change production's throttle for every account. */
+export const DEFAULT_PASSWORD_ATTEMPT_POLICY: PasswordAttemptPolicy = Object.freeze({
   limit: PASSWORD_ATTEMPT_LIMIT,
   windowSeconds: PASSWORD_ATTEMPT_WINDOW_SECONDS,
-};
+});
 
 /**
  * The injection token for the policy. `MeModule` provides it as

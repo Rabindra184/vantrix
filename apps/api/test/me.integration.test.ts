@@ -4,6 +4,7 @@ import request from 'supertest';
 import { afterEach, describe, expect, it } from 'vitest';
 import { RedisCommands } from '../src/common/redis-commands.js';
 import {
+  DEFAULT_PASSWORD_ATTEMPT_POLICY,
   PASSWORD_ATTEMPT_LIMIT,
   PASSWORD_ATTEMPT_POLICY,
   PASSWORD_ATTEMPT_WINDOW_SECONDS,
@@ -293,6 +294,13 @@ describe('PUT /v1/me/password, throttled', () => {
    * 3 attempts, then a refusal whose wait is within a 10 s window. Driven on
    * the wired instance, with no password hashed, so four calls land well
    * inside ten seconds.
+   *
+   * BOUNDED FROM BELOW AS WELL AS ABOVE. "At most 10" alone is satisfied by a
+   * 1 s window, which lets a stolen cookie guess three passwords a second; the
+   * wait has to be close to the whole window. Two seconds of slack, because
+   * Redis rounds a TTL to the nearest second and four calls take a moment on a
+   * loaded machine. The counter's own TTL is read too, so the bound is on the
+   * window Redis holds and not only on the header computed from it.
    */
   it('wires production’s policy by default: 3 attempts per 10 seconds', async () => {
     ctx = await createTestApp();
@@ -301,9 +309,13 @@ describe('PUT /v1/me/password, throttled', () => {
 
     for (let i = 0; i < PASSWORD_ATTEMPT_LIMIT; i += 1) expect(await attempts.take(userId), `attempt ${i + 1}`).toBeNull();
     const retryAfter = await attempts.take(userId);
-    expect(retryAfter).toBeGreaterThanOrEqual(1);
+    expect(retryAfter).toBeGreaterThanOrEqual(PASSWORD_ATTEMPT_WINDOW_SECONDS - 2);
     expect(retryAfter).toBeLessThanOrEqual(PASSWORD_ATTEMPT_WINDOW_SECONDS);
+    const ttl = await ctx.app.get(RedisCommands).client.ttl(passwordAttemptKey(userId));
+    expect(ttl).toBeGreaterThanOrEqual(PASSWORD_ATTEMPT_WINDOW_SECONDS - 2);
+    expect(ttl).toBeLessThanOrEqual(PASSWORD_ATTEMPT_WINDOW_SECONDS);
     expect([PASSWORD_ATTEMPT_LIMIT, PASSWORD_ATTEMPT_WINDOW_SECONDS]).toEqual([3, 10]);
+    expect(Object.isFrozen(DEFAULT_PASSWORD_ATTEMPT_POLICY)).toBe(true);
   });
 });
 
