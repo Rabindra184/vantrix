@@ -20,7 +20,8 @@ import { openAccountMenu, signIn } from './helpers.js';
  *   and that a reset really ends the person's session now: their open page's
  *   next request answers 401, not the 403 PASSWORD_CHANGE_REQUIRED a session
  *   that survived the reset would get. That one difference is what separates
- *   "signed out everywhere" from "asked to change it again".
+ *   "signed out everywhere" from "asked to change it again" — and since PR 3
+ *   the page acts on it at once, going to sign-in.
  *
  * TWO BROWSER CONTEXTS, because the admin and the person are two people with
  * two cookies, and step 5 needs the person's page still open while the admin
@@ -31,9 +32,9 @@ import { openAccountMenu, signIn } from './helpers.js';
  * nothing. The admin's rail lists it, which is what keeps its absence from the
  * person's meaningful.
  *
- * NOT HERE, and not this PR's: the spec's "a Viewer cannot edit rules" is about
- * HIDING controls by role, which PR 3 builds. The API's refusal of a Viewer is
- * PR 1's role matrix.
+ * NOT HERE: the spec's "a Viewer cannot edit rules" is about HIDING controls
+ * by role, which `project-roles.spec.ts` walks role by role (PR 3). The API's
+ * refusal of a Viewer is PR 1's role matrix.
  */
 
 const TEMPORARY = 'temporary-pass-1';
@@ -172,17 +173,13 @@ test('an admin adds a Member, who changes their password, sees one project, uplo
       const next = personPage.waitForResponse((res) => new URL(res.url()).pathname.startsWith('/v1/'));
       await rail(personPage).getByRole('link', { name: 'Checkout', exact: true }).click();
       expect((await next).status()).toBe(401);
-      // And the page shows the refusal. Its WORDS are the API's to choose, so
-      // nothing here reads them: the 401 above is the claim, and the alert
-      // being on screen is the page passing it on. Which part of the page
-      // refuses first (the project's name, or its tests) is the shell's
-      // business, so any alert in the main region will do.
-      await expect(personPage.getByRole('main').getByRole('alert').first()).toBeVisible();
+      // And the page acts on it. A 401 from any request ends the session in
+      // the app (PR 3's `createQueryClient`): the open page goes straight to
+      // sign-in, keeping where the reader was going in `?next=` — where PR 2's
+      // page drew the refusal in place and waited for a reload to notice.
+      await expect(personPage).toHaveURL(/\/login\?next=%2Fprojects%2Fcheckout/);
 
-      // A fresh load asks for the session, finds none, and lands on sign-in;
-      // the admin's temporary password then leads to the step again.
-      await personPage.reload();
-      await expect(personPage).toHaveURL(/\/login/);
+      // The admin's temporary password then leads to the step again.
       await signIn(personPage, { email: person.email, password: RESET_TO });
       await expectPasswordStep(personPage);
     });
