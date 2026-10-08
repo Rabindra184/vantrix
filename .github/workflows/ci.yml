@@ -555,6 +555,8 @@ jobs:
           pnpm --filter @perfportal/persistence run bootstrap > /tmp/b1.txt 2>&1
           grep -q 'PUBLISHED DEFAULT' /tmp/b1.txt || {
             echo "::error::seeding the default password printed no warning"; exit 1; }
+          grep -q 'must choose a new password before anything else' /tmp/b1.txt || {
+            echo "::error::a flagged admin was not told it must choose a new password at first sign-in"; exit 1; }
           before="$(FP)"
           test -n "$before" || { echo "::error::no credential stored — the fingerprint check would be vacuous"; exit 1; }
           must="$(MUST)"
@@ -618,6 +620,9 @@ jobs:
           if grep -q 'PUBLISHED DEFAULT' /tmp/b3.txt; then
             echo "::error::warned about a default that was never used"; exit 1
           fi
+          if grep -q 'must choose a new password' /tmp/b3.txt; then
+            echo "::error::told an operator-chosen password it must be changed, which it need not be"; exit 1
+          fi
           must="$($PSQL -At -c "select \"mustChangePassword\" from \"user\" where email='chosen@perfportal.local';")"
           test "$must" = "f" || {
             echo "::error::an operator-chosen password was flagged for a change (read: '$must')"; exit 1; }
@@ -638,6 +643,8 @@ jobs:
           if grep -q 'PUBLISHED DEFAULT' /tmp/b7.txt; then
             echo "::error::the --admin-email path seeded the published default instead of generating one"; exit 1
           fi
+          grep -q 'must choose a new password before anything else' /tmp/b7.txt || {
+            echo "::error::a generated, flagged password's owner was not told to choose a new one at first sign-in"; exit 1; }
           must="$($PSQL -At -c "select \"mustChangePassword\" from \"user\" where email='ci-gen@perfportal.local';")"
           test "$must" = "t" || {
             echo "::error::a generated password was not flagged for a change (read: '$must')"; exit 1; }

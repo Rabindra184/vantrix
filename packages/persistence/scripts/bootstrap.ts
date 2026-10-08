@@ -394,6 +394,20 @@ async function main(): Promise<void> {
               '',
               '  Only its hash is stored. Save the plaintext now, then log in via',
               '  POST /auth/sign-in/email.',
+              /* Said here because nobody chose this password (WantedAdmin), and
+                 the first thing the account meets is the step that replaces
+                 it: the web app shows "Choose a new password" and nothing else,
+                 and every /v1 route but PUT /v1/me/password answers 403
+                 PASSWORD_CHANGE_REQUIRED until it is done. An operator-chosen
+                 password is not flagged, so this line is not printed for it —
+                 ci.yml's bootstrap steps hold both halves. */
+              ...(admin.mustChangePassword
+                ? [
+                    '',
+                    '  At first sign-in it must choose a new password before anything else',
+                    '  (in the web app, or with PUT /v1/me/password).',
+                  ]
+                : []),
               ...(admin.usingDefaultPassword
                 ? [
                     '',
