@@ -28,7 +28,7 @@ import {
 import { getSession, sessionQueryKey } from '../api/session';
 import { fieldMessages } from '../formIssues';
 import AdminShell, { RefreshFailed, isRefusal } from './AdminShell';
-import { ROLE_LABEL, RowField } from './AdminFields';
+import { PersonMarker, ROLE_LABEL, RowField, nameWithEmailIfShared } from './AdminFields';
 import { UserActions, type Armed } from './AdminUserActions';
 
 /**
@@ -100,9 +100,6 @@ function statusOf(user: AdminUser): string {
   return 'Active';
 }
 
-/** Two display names a screen reader would read alike: case and spacing aside. */
-const spoken = (name: string): string => name.trim().replace(/\s+/g, ' ').toLocaleLowerCase();
-
 /**
  * The accounts, one row each: name (with an Admin badge), email, how many
  * projects they hold a role in, their status, and a menu of what can be done
@@ -126,16 +123,9 @@ export function UsersTable({
   const [armed, setArmed] = useState<Armed | null>(null);
   const tableRef = useRef<HTMLTableElement>(null);
 
-  /* ═══ ONE NAME PER ROW CONTROL (ruling W6) ═══
-     Display names are not unique and emails are. Every row's ⓘ and menu are
-     named after their person, so two people called Sam Lee would give the
-     table two buttons with one name — the duplicate-name defect this repo has
-     paid for three times. The email joins the name on those rows only;
-     everywhere else the name is the plain one. */
-  const seen = new Map<string, number>();
-  for (const user of users) seen.set(spoken(user.name), (seen.get(spoken(user.name)) ?? 0) + 1);
-  const whoOf = (user: AdminUser): string =>
-    (seen.get(spoken(user.name)) ?? 0) > 1 ? `${user.name} (${user.email})` : user.name;
+  /* ONE NAME PER ROW CONTROL (ruling W6): every row's ⓘ and menu are named
+     after their person, with the email where another row shares the name. */
+  const whoOf = (user: AdminUser): string => nameWithEmailIfShared(user, users);
 
   /* A removed account takes its row, and the menu the caret would return to,
      with it; the table's own scroll region is the nearest thing left. */
@@ -181,17 +171,7 @@ export function UsersTable({
                   <tr className={ROW}>
                     <td className={TD}>
                       {user.name}
-                      {/* A TEXT NODE between the two, not only the margin: a margin
-                          moves pixels, and a copy or a screen reader would read
-                          "Ada AdminAdmin". */}
-                      {user.isAdmin && (
-                        <>
-                          {' '}
-                          <span className="ml-1 rounded-md border border-default bg-sunken px-1.5 py-0.5 text-[0.75rem] text-muted">
-                            Admin
-                          </span>
-                        </>
-                      )}
+                      {user.isAdmin && <PersonMarker>Admin</PersonMarker>}
                     </td>
                     <td className={`${TD} break-all`}>{user.email}</td>
                     <td className={TD}>

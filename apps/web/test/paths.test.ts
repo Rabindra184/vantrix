@@ -175,9 +175,9 @@ describe('packages, as paths', () => {
 
 /**
  * A project's members, one segment under the project like every other
- * section. The SHAPE only: the route that serves it is declared by the
- * Members page itself, and the scan below learns about it from `App.tsx`
- * then.
+ * section. The SHAPE here; that `App.tsx` declares a route serving it is the
+ * scan's, below — without one, the Members tab would land on the catch-all
+ * and send the reader home.
  */
 describe('members, as paths', () => {
   it('puts the Members page one segment under the project, encoding the slug', () => {
@@ -340,6 +340,7 @@ describe('static routes cannot shadow a project slug', () => {
     ['the project run list', 'path="/projects/:slug/runs"'],
     ['a test’s run history', 'path="/projects/:slug/tests/:testSlug"'],
     ['a project’s packages', 'path="/projects/:slug/packages"'],
+    ['a project’s members', 'path="/projects/:slug/members"'],
   ])('declares a route for %s', (_what, declaration) => {
     expect(APP).toContain(declaration);
   });

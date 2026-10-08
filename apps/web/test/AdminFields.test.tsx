@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectRole } from '@perfportal/contracts';
-import { RoleChange } from '../src/routes/AdminFields';
+import { RoleChange, nameWithEmailIfShared } from '../src/routes/AdminFields';
 
 // No vitest globals here, so Testing Library's automatic cleanup never
 // registers; without this every render stacks in one `document.body`.
@@ -17,15 +17,24 @@ afterEach(cleanup);
  * and `Save` sends it. Driven through the DOM: the claims are about what the
  * reader can press and what reaches `onSave`.
  */
-function mount(current: ProjectRole, pending = false) {
+function mount(current: ProjectRole, pending = false, labelHidden?: boolean) {
   const onSave = vi.fn<(role: ProjectRole) => void>();
-  const view = render(
-    <RoleChange id="role-checkout" qualifier="in Checkout" current={current} pending={pending} onSave={onSave} />,
+  const element = (role: ProjectRole, busy: boolean) => (
+    <>
+      <RoleChange
+        id="role-checkout"
+        qualifier="in Checkout"
+        current={role}
+        pending={busy}
+        onSave={onSave}
+        labelHidden={labelHidden}
+      />
+      {/* Somewhere else on the page for a reader to take the caret. */}
+      <button type="button">Elsewhere</button>
+    </>
   );
-  const rerender = (next: ProjectRole, nextPending = false) =>
-    view.rerender(
-      <RoleChange id="role-checkout" qualifier="in Checkout" current={next} pending={nextPending} onSave={onSave} />,
-    );
+  const view = render(element(current, pending));
+  const rerender = (next: ProjectRole, nextPending = false) => view.rerender(element(next, nextPending));
   return { onSave, rerender };
 }
 
@@ -50,8 +59,9 @@ describe('RoleChange', () => {
       'Member',
       'Manager',
     ]);
-    // Nothing to save while the choice is the role already held.
-    expect(screen.queryByRole('button')).toBeNull();
+    // Nothing to save while the choice is the role already held: no button of
+    // its own at all (the one other button is the harness's "Elsewhere").
+    expect(screen.getAllByRole('button').map((button) => button.textContent)).toEqual(['Elsewhere']);
   });
 
   it('stages a choice without sending it, and offers a Save named after its line', async () => {
@@ -151,5 +161,142 @@ describe('RoleChange', () => {
 
     expect(select()).toHaveValue('manager');
     expect(save()).toBeInTheDocument();
+  });
+});
+
+/**
+ * ═══ THE CARET AFTER A SAVE, IN ONE PLACE (ruling P12) ═══
+ *
+ * The Save a reader pressed goes once the role it sent comes back as
+ * `current`, which would leave the caret on nothing. `RoleChange` puts it on
+ * its own select then — for every owner, so neither the Administration panel
+ * nor the Members table has to aim it.
+ */
+describe('RoleChange — the caret after a save', () => {
+  /** Drops the caret to the page, as a browser may when the control holding it
+   *  is disabled mid-request. jsdom never does that itself. */
+  function dropCaret() {
+    const elsewhere = screen.getByRole('button', { name: 'Elsewhere' });
+    act(() => {
+      elsewhere.focus();
+      elsewhere.blur();
+    });
+    expect(document.activeElement).toBe(document.body);
+  }
+
+  it('moves the caret to its select once the role it saved comes back, the Save having gone', async () => {
+    const { rerender } = mount('member');
+    const clicker = userEvent.setup();
+    await clicker.selectOptions(select(), 'Manager');
+    await clicker.click(save()!);
+    expect(save()).toHaveFocus();
+
+    rerender('member', true);
+    rerender('manager', true);
+    rerender('manager', false);
+
+    expect(save()).toBeNull();
+    expect(select()).toHaveFocus();
+  });
+
+  it('moves it there too when the caret was lost to the page while the save was in flight', async () => {
+    const { rerender } = mount('member');
+    const clicker = userEvent.setup();
+    await clicker.selectOptions(select(), 'Manager');
+    await clicker.click(save()!);
+    rerender('member', true);
+    dropCaret();
+
+    rerender('manager', false);
+
+    expect(select()).toHaveFocus();
+  });
+
+  /* The converse: a reader who has taken the caret somewhere else keeps it there. */
+  it('leaves the caret where the reader took it while the save was in flight', async () => {
+    const { rerender } = mount('member');
+    const clicker = userEvent.setup();
+    await clicker.selectOptions(select(), 'Manager');
+    await clicker.click(save()!);
+    rerender('member', true);
+    const elsewhere = screen.getByRole('button', { name: 'Elsewhere' });
+    act(() => elsewhere.focus());
+
+    rerender('manager', false);
+
+    expect(elsewhere).toHaveFocus();
+  });
+
+  /* A refused save leaves the role as it was: the Save stays, and so does the
+     caret — where it goes then is the owner's to decide. */
+  it('leaves the caret alone when the save is answered without the role moving', async () => {
+    const { rerender } = mount('member');
+    const clicker = userEvent.setup();
+    await clicker.selectOptions(select(), 'Manager');
+    await clicker.click(save()!);
+    rerender('member', true);
+
+    rerender('member', false);
+
+    expect(save()).toHaveFocus();
+  });
+
+  /* A role changed by somebody else, with no save of this line's in flight,
+     takes away a Save the reader had only staged — and not the caret. */
+  it('does not take the caret for a role somebody else changed', async () => {
+    const { rerender } = mount('member');
+    const clicker = userEvent.setup();
+    await clicker.selectOptions(select(), 'Manager');
+    const elsewhere = screen.getByRole('button', { name: 'Elsewhere' });
+    act(() => elsewhere.focus());
+
+    rerender('viewer');
+
+    expect(save()).toBeNull();
+    expect(elsewhere).toHaveFocus();
+  });
+});
+
+/**
+ * A table cell under a `Role` column header needs no visible "Role" over each
+ * select, and must still name it after its line for a screen reader.
+ */
+describe('RoleChange — labelHidden', () => {
+  it('hides the whole label, keeping both controls’ names', async () => {
+    mount('member', false, true);
+    const label = (select() as HTMLSelectElement).labels?.[0];
+    expect(label).toBeDefined();
+    expect(label!.className.split(' ')).toContain('sr-only');
+
+    await userEvent.setup().selectOptions(select(), 'Manager');
+    expect(save()).toBeInTheDocument();
+  });
+
+  it('draws the label by default, as the Administration panel has it', () => {
+    mount('member');
+    const label = (select() as HTMLSelectElement).labels?.[0];
+    expect(label).toBeDefined();
+    expect(label!.className.split(' ')).not.toContain('sr-only');
+  });
+});
+
+/**
+ * PR 2's ruling W6, as one function both tables call: a display name another
+ * person shares — case and spacing aside, as a screen reader reads them —
+ * brings its email along; every other name is the plain one.
+ */
+describe('nameWithEmailIfShared', () => {
+  const sam = { name: 'Sam Lee', email: 'sam.one@example.test' };
+  const twin = { name: 'sam  lee', email: 'sam.two@example.test' };
+  const bo = { name: 'Bo Member', email: 'bo@example.test' };
+
+  it('adds the email to a name somebody else shares, however it is cased or spaced', () => {
+    expect(nameWithEmailIfShared(sam, [sam, twin, bo])).toBe('Sam Lee (sam.one@example.test)');
+    expect(nameWithEmailIfShared(twin, [sam, twin, bo])).toBe('sam  lee (sam.two@example.test)');
+  });
+
+  it('keeps a name nobody else has as it is', () => {
+    expect(nameWithEmailIfShared(bo, [sam, twin, bo])).toBe('Bo Member');
+    expect(nameWithEmailIfShared(sam, [sam, bo])).toBe('Sam Lee');
   });
 });

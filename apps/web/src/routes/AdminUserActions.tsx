@@ -19,11 +19,10 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '../components/ui/dropdown-menu';
-import { ProblemError } from '../api/fetch';
 import { adminProjectsQueryKey, adminUsersQueryKey, removeUser, resetUserPassword, updateUser } from '../api/admin';
 import { addMember, removeMember, updateMember } from '../api/members';
 import { fieldMessages } from '../formIssues';
-import { ROLE_LABEL, RoleChange, RowField } from './AdminFields';
+import { Problem, ROLE_LABEL, RoleChange, RowField, caretIsFree } from './AdminFields';
 
 /**
  * Administration › Users: what each row can do — its menu, and the one inline
@@ -91,13 +90,6 @@ interface NextFocus {
    *  is still on it, or has been lost to the page — a reader who has taken it
    *  somewhere else since keeps it there. */
   readonly from: HTMLElement | null;
-}
-
-/** Whether the caret is where a settled request may move it from: on the
- *  control that sent it, or nowhere (the page itself). */
-function caretIsFree(from: HTMLElement | null): boolean {
-  const active = document.activeElement;
-  return active === null || active === document.body || active === from;
 }
 
 function send(userId: string, action: RowAction): Promise<unknown> {
@@ -220,9 +212,9 @@ export function UserActions({
           setNextFocus({ targets: [triggerId], from: resume });
           return;
         case 'role':
-          // The role's own select. The Save it was sent from goes once the
-          // re-read list holds the role it set, leaving nothing to save.
-          setNextFocus({ targets: [roleId(action.slug)], from: resume });
+          // Nothing to aim: the Save it was sent from goes once the re-read
+          // list holds the role it set, and `RoleChange` hands the caret to
+          // its own select then (ruling P12).
           return;
         case 'leave':
           // The pressed button left with its line; what can add it back is next.
@@ -444,17 +436,6 @@ export function UserActions({
     );
 
   return children(menu, details);
-}
-
-/** A refusal in the API's own words: its detail, then what to do about it. */
-function Problem({ error }: { readonly error: Error }) {
-  const problem = error instanceof ProblemError ? error : null;
-  return (
-    <div role="alert" className="rounded-lg border border-default bg-sunken p-3 text-[0.8125rem] text-primary">
-      {problem?.detail ?? error.message}
-      {problem !== null && problem.remediation !== '' && <p className="mt-1 text-muted">{problem.remediation}</p>}
-    </div>
-  );
 }
 
 /**
