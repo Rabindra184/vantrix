@@ -24,11 +24,16 @@ import ProjectRules from './ProjectRules';
  * half-typed rule form into a project it does not belong to. Prefixed,
  * because CLAUDE.md records two siblings keyed off the same params rendering
  * one of them four times behind a console warning nobody reads.
+ *
+ * `access` is the shell's own answer, handed down rather than asked again:
+ * which of the panel's controls a reader is offered is `rules:edit`'s.
  */
 export default function ProjectRulesPage() {
   return (
     <ProjectShell current="rules">
-      {({ slug }) => <ProjectRules key={`rules:${slug}`} slug={slug} showTitle={false} />}
+      {({ slug, access }) => (
+        <ProjectRules key={`rules:${slug}`} slug={slug} access={access} showTitle={false} />
+      )}
     </ProjectShell>
   );
 }

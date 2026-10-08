@@ -16,6 +16,7 @@ import {
   percentToFraction,
 } from '@perfportal/contracts';
 import { Link } from 'react-router-dom';
+import type { ProjectAccess } from '../access/useAccess';
 import Button from '../components/Button';
 import Card from '../components/Card';
 import FormField, { hintId } from '../components/FormField';
@@ -449,11 +450,36 @@ const METRIC_SUGGESTIONS = ['p50', 'p75', 'p95', 'p99', ...SLA_METRIC_SCALARS];
 
 export default function ProjectRules({
   slug,
+  access,
   testSlug = null,
   testName = null,
   showTitle = true,
 }: {
   readonly slug: string;
+  /**
+   * What the reader may do in this project, as the PAGE asked it —
+   * `ProjectShell` on the SLA rules page, `TestRuns` on a test's page — and
+   * not asked again here: a second `useProjectAccess` would mount another
+   * observer on the session and the project list, each refetching on mount,
+   * to learn what the page above already knows.
+   *
+   * REQUIRED, with no default. Either default would be silent: one that
+   * allowed would draw controls the API refuses, and one that refused would
+   * quietly take them from the readers who may use them.
+   *
+   * ═══ READING IS EVERYONE'S; CHANGING IS `rules:edit` ═══
+   *
+   * The tables are `rules:read`, which every role in the project holds, so
+   * they are drawn for every reader. Authoring, enabling, disabling and
+   * deleting are `rules:edit` (a Member's), and only with it does the panel
+   * draw the "New rule" disclosure, Enable/Disable, the row menu and the
+   * Actions column they sit in. `can` is false until access is KNOWN, so
+   * while the session or the project list is pending the list is drawn and
+   * none of the four is — and nothing says the reader was refused, because
+   * nobody has been. The API refuses a change either way; hiding is for
+   * clarity.
+   */
+  readonly access: ProjectAccess;
   /**
    * False on the project's own SLA rules PAGE, where `ProjectShell`'s nav
    * already names the section and carries `aria-current="page"` on it —
@@ -495,6 +521,7 @@ export default function ProjectRules({
   const queryClient = useQueryClient();
   const scopedToTest = testSlug !== null;
   const testLabel = testName ?? testSlug ?? '';
+  const canEdit = access.can('rules:edit');
 
   const rules = useQuery({
     queryKey: projectRulesQueryKey(slug, testSlug),
@@ -502,12 +529,14 @@ export default function ProjectRules({
   });
 
   // The project's tests, for the "Applies to" select — and ONLY in project
-  // mode, where that select exists. A test page has its answer already and
-  // must not pay for a list it will not draw.
+  // mode, where that select exists, for a reader who is offered the form it
+  // sits in. A test page has its answer already, and a reader who may not
+  // edit rules is never shown the select: neither pays for a list it will
+  // not draw.
   const tests = useQuery({
     queryKey: projectTestsQueryKey(slug),
     queryFn: () => fetchProjectTests(slug),
-    enabled: !scopedToTest,
+    enabled: !scopedToTest && canEdit,
   });
 
   /**
@@ -787,14 +816,21 @@ export default function ProjectRules({
         scopedToTest={scopedToTest}
         confirming={confirming}
         onConfirming={setConfirming}
+        canEdit={canEdit}
         togglingId={updateMutation.isPending ? updateMutation.variables?.ruleId : undefined}
         deletingId={deleteMutation.isPending ? deleteMutation.variables : undefined}
         onToggle={(ruleId, enabled) => updateMutation.mutate({ ruleId, enabled })}
         onDelete={(ruleId) => deleteMutation.mutate(ruleId)}
+        failedToggle={updateMutation.isError ? updateMutation.variables : undefined}
+        toggleError={updateMutation.error}
         failedDelete={deleteMutation.isError ? deleteMutation.variables : undefined}
         deleteError={deleteMutation.error}
       />
 
+      {/* ═══ THE FORM IS `rules:edit`'s, SO IT IS DRAWN ONLY WITH IT ═══
+          The whole card, title included: below that role it would be a
+          heading over nothing. The tables above carry their own names. */}
+      {canEdit && (
       <Card
         // `title={undefined}` rather than a conditional spread: CLAUDE.md
         // records that the excess-property check does not reach inside a
@@ -1189,6 +1225,7 @@ export default function ProjectRules({
           </form>
         </details>
       </Card>
+      )}
 
     </div>
   );
@@ -1213,10 +1250,13 @@ function RulesPanel({
   scopedToTest,
   confirming,
   onConfirming,
+  canEdit,
   togglingId,
   deletingId,
   onToggle,
   onDelete,
+  failedToggle,
+  toggleError,
   failedDelete,
   deleteError,
 }: {
@@ -1230,10 +1270,15 @@ function RulesPanel({
   readonly scopedToTest: boolean;
   readonly confirming: string | null;
   readonly onConfirming: (id: string | null) => void;
+  /** Whether the tables draw the row controls and their Actions column — `rules:edit`. */
+  readonly canEdit: boolean;
   readonly togglingId?: string;
   readonly deletingId?: string;
   readonly onToggle: (ruleId: string, enabled: boolean) => void;
   readonly onDelete: (ruleId: string) => void;
+  /** The toggle that failed, as it was asked for, or undefined. */
+  readonly failedToggle?: { readonly ruleId: string; readonly enabled: boolean };
+  readonly toggleError: unknown;
   readonly failedDelete?: string;
   readonly deleteError: unknown;
 }) {
@@ -1266,6 +1311,7 @@ function RulesPanel({
   }
 
   const problem = deleteError instanceof ProblemError ? deleteError : null;
+  const toggleProblem = toggleError instanceof ProblemError ? toggleError : null;
   const all = rules.data.rules;
   /* `test == null` is a project-wide rule. Nullable AND optional, and both
      read the same: null is a genuine project rule, undefined is a response
@@ -1290,6 +1336,26 @@ function RulesPanel({
         </div>
       )}
 
+      {/* ═══ A REFUSED ENABLE OR DISABLE SAYS SO ═══
+          This used to fail in silence: the button stopped loading and nothing
+          else moved. The likeliest refusal now is the API's 403 for a reader
+          whose role dropped while the page was open — the controls go once the
+          project list next answers, and until then a click on one is answered
+          here, in the API's own words. It claims nothing about the rule's
+          state, which a request that failed on the way back cannot know. */}
+      {failedToggle !== undefined && toggleError !== null && (
+        <div
+          role="alert"
+          className="rounded-lg border border-default bg-sunken p-3 text-[0.8125rem] text-primary"
+        >
+          {failedToggle.enabled ? 'Enabling' : 'Disabling'} that rule did not complete.
+          {toggleProblem?.detail !== undefined && <p className="mt-1">{toggleProblem.detail}</p>}
+          {toggleProblem?.remediation !== undefined && (
+            <p className="mt-1 text-muted">{toggleProblem.remediation}</p>
+          )}
+        </div>
+      )}
+
       {scopedToTest ? (
         <>
           <RulesTable
@@ -1299,6 +1365,7 @@ function RulesPanel({
             emptyNote="No rules for this test — the project-wide rules below apply."
             confirming={confirming}
             onConfirming={onConfirming}
+            canEdit={canEdit}
             togglingId={togglingId}
             deletingId={deletingId}
             onToggle={onToggle}
@@ -1311,6 +1378,7 @@ function RulesPanel({
             emptyNote="This project has no project-wide rules, so nothing is inherited."
             confirming={confirming}
             onConfirming={onConfirming}
+            canEdit={canEdit}
             togglingId={togglingId}
             deletingId={deletingId}
             onToggle={onToggle}
@@ -1325,6 +1393,7 @@ function RulesPanel({
           showAppliesTo
           confirming={confirming}
           onConfirming={onConfirming}
+          canEdit={canEdit}
           togglingId={togglingId}
           deletingId={deletingId}
           onToggle={onToggle}
@@ -1344,6 +1413,7 @@ function RulesTable({
   showAppliesTo = false,
   confirming,
   onConfirming,
+  canEdit,
   togglingId,
   deletingId,
   onToggle,
@@ -1362,6 +1432,8 @@ function RulesTable({
   readonly showAppliesTo?: boolean;
   readonly confirming: string | null;
   readonly onConfirming: (id: string | null) => void;
+  /** Without it the row has no control at all, so the Actions column goes with them. */
+  readonly canEdit: boolean;
   readonly togglingId?: string;
   readonly deletingId?: string;
   readonly onToggle: (ruleId: string, enabled: boolean) => void;
@@ -1414,7 +1486,7 @@ function RulesTable({
                 * and `ProjectRules.test.tsx`'s own case asserts that a
                 * disabled rule SAYS so, which is a claim about that word. */}
               <th className={TH}>Enabled</th>
-              <th className={TH}>Actions</th>
+              {canEdit && <th className={TH}>Actions</th>}
             </tr>
           </thead>
           <tbody>
@@ -1451,6 +1523,7 @@ function RulesTable({
                   {limitOf(rule)}
                 </td>
                 <td className={TD}>{rule.enabled ? 'Enabled' : 'Disabled'}</td>
+                {canEdit && (
                 <td className={TD}>
                   {confirming === rule.id ? (
                     <div className="flex flex-col gap-2">
@@ -1531,6 +1604,7 @@ function RulesTable({
                     </div>
                   )}
                 </td>
+                )}
               </tr>
             ))}
           </tbody>
