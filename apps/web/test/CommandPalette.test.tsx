@@ -2,7 +2,7 @@ import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { useRef, useState } from 'react';
+import { createRef, useRef, useState } from 'react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
@@ -12,6 +12,7 @@ import type {
   ProjectRole,
   RunListResponse,
 } from '@perfportal/contracts';
+import { useIsAdmin } from '../src/access/useAccess';
 import CommandPalette from '../src/palette/CommandPalette';
 import { orgTestsQueryKey } from '../src/api/tests';
 import { projectTestPath } from '../src/routes/paths';
@@ -194,6 +195,9 @@ function Harness({
 }) {
   const [open, setOpen] = useState(initialOpen);
   const opener = useRef<HTMLButtonElement>(null);
+  /* The flag the way `AppShell` reads it and hands it down — once, above the
+     palette — so who is looking is still decided by what the case seeds. */
+  const isAdmin = useIsAdmin();
   return (
     <>
       <button ref={opener} type="button" onClick={() => setOpen(true)}>
@@ -201,6 +205,7 @@ function Harness({
       </button>
       <CommandPalette
         open={open}
+        isAdmin={isAdmin}
         returnFocusFallback={opener}
         onOpenChange={(next) => {
           onOpenChange(next);
@@ -311,16 +316,47 @@ describe('CommandPalette', () => {
     renderPalette({ route: '/projects/checkout/rules', who: { isAdmin: false, roles: { checkout: 'viewer' } } });
 
     await screen.findByRole('option', { name: 'Tests · Checkout' });
+    // No New project either: creating one is an admin's alone.
     expect(optionNames(screen.getByRole('group', { name: 'Go to' }))).toEqual([
       'Home',
       'All runs',
-      'New project',
       'Tests · Checkout',
       'Runs · Checkout',
       'Packages · Checkout',
       'SLA rules · Checkout',
       'Members · Checkout',
     ]);
+  });
+
+  /**
+   * ═══ THE ADMIN FLAG IS HANDED IN, NOT ASKED FOR ═══
+   *
+   * `AppShell` reads the session once and hands the flag to the trigger and
+   * the palette. A palette that asked for it itself would mount another
+   * observer on the session every time it opened — and with no `staleTime`,
+   * every open would ask `/auth/get-session` again. So: with no session in the
+   * cache and the flag given as a prop, the palette offers what the flag
+   * allows and makes no session request of its own.
+   */
+  it.each([
+    [true, ['Home', 'All runs', 'New project']],
+    [undefined, ['Home', 'All runs']],
+  ] as const)('offers what the flag it is handed allows (%s), asking for no session', async (isAdmin, expected) => {
+    stubApi();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const opener = createRef<HTMLElement>();
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/runs']}>
+          <CommandPalette open isAdmin={isAdmin} onOpenChange={() => {}} returnFocusFallback={opener} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    const goTo = await screen.findByRole('group', { name: 'Go to' });
+    expect(optionNames(goTo)).toEqual(expected);
+    // Settled: the one request an empty query makes has been made.
+    await waitFor(() => expect(requestsTo('/v1/projects').length).toBeGreaterThan(0));
+    expect(requestsTo('/auth/get-session')).toHaveLength(0);
   });
 
   /* Outside any project, the Pages group belongs to the best match for the

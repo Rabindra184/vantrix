@@ -65,8 +65,14 @@ function storeCollapsed(collapsed: boolean): void {
  * claims rather than a test being fussy. The icons here are `<svg>` with no
  * `<title>`, whose `textContent` is the empty string, which is exactly why an
  * icon is the one thing that CAN be added.
+ *
+ * `isAdmin` is the session's admin flag as `AppShell` reads it once for the
+ * whole chrome (`useIsAdmin`'s answer, `undefined` while the session has not
+ * answered). It decides only what an EMPTY project list means — see the
+ * message below. Required, with no default: a default would decide that in
+ * silence.
  */
-export default function ProjectRail() {
+export default function ProjectRail({ isAdmin }: { readonly isAdmin: boolean | undefined }) {
   const projects = useQuery({ queryKey: projectsQueryKey, queryFn: fetchProjects });
   const items = projects.data?.items ?? [];
 
@@ -102,12 +108,24 @@ export default function ProjectRail() {
   // act on, so the rows stay and the message names what actually happened
   // rather than claiming nothing loaded (the same overclaim the D-14
   // sentence fix corrected on the run page, one level up in the tree).
+  //
+  // ═══ AN EMPTY LIST IS A FACT ABOUT THE ORG, OR ABOUT THE READER ═══
+  // An admin's `GET /v1/projects` lists every project in the org, so empty
+  // means the org has none. A non-admin's lists only the projects they hold a
+  // role in, so empty means THEY are on none — and "No projects yet." would be
+  // false of the org and leave them nothing to do, so they are told what is
+  // true and who can change it (the spec's own sentence). While the flag is
+  // pending neither is said: an empty list read for nobody yet means nothing.
   const message = projects.isError
     ? items.length > 0
       ? 'Projects may be out of date.'
       : 'Projects could not be loaded.'
     : projects.isSuccess && items.length === 0
-      ? 'No projects yet.'
+      ? isAdmin === true
+        ? 'No projects yet.'
+        : isAdmin === false
+          ? "You're not on any project yet. Ask an admin to add you."
+          : null
       : null;
 
   return (

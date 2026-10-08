@@ -91,8 +91,9 @@ export default function AttentionCard({
   /**
    * The session's admin flag (`useIsAdmin`): `undefined` while the session is
    * pending. The other input `projectAccess` reads — an admin may add results
-   * to any project, whatever its `role` says. REQUIRED: a default would
-   * decide, in silence, who is offered a link.
+   * to any project, whatever its `role` says — and, alone, whether the empty
+   * org's New project is offered. REQUIRED: a default would decide, in
+   * silence, who is offered a link.
    */
   readonly isAdmin: boolean | undefined;
   /** Passed in, so "51 days ago" is a function of the inputs and not of the clock. */
@@ -152,7 +153,12 @@ export default function AttentionCard({
           listed: for a non-admin who only reads the first, a link there is an
           offer they cannot accept, while a later project of theirs is one
           they can. An admin may add to any, so it is the first listed. */}
-      {state === 'empty' && <Empty firstProject={(projects ?? []).find((p) => mayAddResults(p.slug))} />}
+      {state === 'empty' && (
+        <Empty
+          firstProject={(projects ?? []).find((p) => mayAddResults(p.slug))}
+          newProject={isAdmin === true}
+        />
+      )}
     </Card>
   );
 }
@@ -321,24 +327,41 @@ function Gap({
   );
 }
 
-/** Nothing has ever run: the two ways to start. With no project the reader
- *  may add results to there is nowhere to add them, so only the way that
- *  makes one is offered. */
-function Empty({ firstProject }: { readonly firstProject: { readonly slug: string } | undefined }) {
+/**
+ * Nothing has ever run: the two ways to start, each offered only to a reader
+ * who may take it. Add results goes to the first project they may add results
+ * to; with none, there is nowhere to add them. New project is an admin's
+ * alone — gate by destination: the create page's one action is
+ * `projects:create` — and is not offered while the flag is pending. A reader
+ * offered neither still reads the title, which is true for everyone.
+ */
+function Empty({
+  firstProject,
+  newProject,
+}: {
+  readonly firstProject: { readonly slug: string } | undefined;
+  /** Whether the reader is KNOWN to be an admin: `isAdmin === true`, never a pending flag. */
+  readonly newProject: boolean;
+}) {
+  const ways = firstProject !== undefined || newProject;
   return (
     <EmptyState
       title="No runs yet"
       action={
-        <div className="flex flex-wrap justify-center gap-2">
-          {firstProject !== undefined && (
-            <Link to={projectSetupPath(firstProject.slug)} className={linkButtonClasses}>
-              Add results
-            </Link>
-          )}
-          <Link to={NEW_PROJECT_ROUTE} className={linkButtonClasses}>
-            New project
-          </Link>
-        </div>
+        ways ? (
+          <div className="flex flex-wrap justify-center gap-2">
+            {firstProject !== undefined && (
+              <Link to={projectSetupPath(firstProject.slug)} className={linkButtonClasses}>
+                Add results
+              </Link>
+            )}
+            {newProject && (
+              <Link to={NEW_PROJECT_ROUTE} className={linkButtonClasses}>
+                New project
+              </Link>
+            )}
+          </div>
+        ) : undefined
       }
     />
   );

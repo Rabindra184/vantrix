@@ -15,7 +15,8 @@ import { getSession, sessionQueryKey } from '../api/session';
  * against, and this module only gathers its two inputs:
  *
  *   the admin flag  — the session's `user.role === 'admin'` (Better Auth's
- *                     admin plugin), the same read `AppShell` makes;
+ *                     admin plugin), `useIsAdmin` below — which is also how
+ *                     `AppShell` reads it for the chrome;
  *   the role        — the caller's `role` on the matching project in
  *                     `GET /v1/projects`.
  *
@@ -76,10 +77,10 @@ export interface ProjectAccess {
  * The admin plugin's flag: `undefined` while the session has not answered,
  * then `true` for an install-wide admin and `false` for anyone else.
  *
- * Optional at every hop, as `AppShell` reads it: a body with no `user`, or an
- * API older than the plugin sending no `role`, reads as not an admin — the
- * safe way round for what gets drawn. A `null` session is AuthGate's signal
- * to send the reader to sign-in, which it does before any gated page renders.
+ * Optional at every hop: a body with no `user`, or an API older than the
+ * plugin sending no `role`, reads as not an admin — the safe way round for
+ * what gets drawn. A `null` session is AuthGate's signal to send the reader
+ * to sign-in, which it does before any gated page renders.
  */
 export function useIsAdmin(): boolean | undefined {
   const session = useQuery({ queryKey: sessionQueryKey, queryFn: getSession });

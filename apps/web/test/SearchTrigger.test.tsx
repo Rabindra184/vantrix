@@ -67,7 +67,7 @@ function renderTrigger() {
         {/* Somewhere a reader is already typing — the run list's own box. */}
         <input aria-label="Search runs" defaultValue="" />
         <AccountMenu identity="qa@perfportal.test" isAdmin={false} />
-        <SearchTrigger />
+        <SearchTrigger isAdmin={false} />
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -279,7 +279,7 @@ describe('SearchTrigger — opening', () => {
           <div onKeyDown={(event) => event.stopPropagation()}>
             <input aria-label="Swallows keys" />
           </div>
-          <SearchTrigger />
+          <SearchTrigger isAdmin={false} />
         </MemoryRouter>
       </QueryClientProvider>,
     );

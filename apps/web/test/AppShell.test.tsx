@@ -147,6 +147,86 @@ describe('AppShell — the account menu’s Administration item', () => {
   });
 });
 
+/**
+ * ═══ ONE READ OF THE FLAG, HANDED TO THE RAIL AND THE PALETTE ═══
+ *
+ * The shell reads the admin flag once (`useIsAdmin`, the web's one definition
+ * of it) and hands it to the rail and to the search palette. Their own tests
+ * HAND THEMSELVES the flag, so they prove each reads the prop and nothing
+ * about where the prop comes from; these read it off the session the shell is
+ * given, on an org whose project list answers empty — where the rail's
+ * sentence and the palette's New project both turn on it.
+ */
+describe('AppShell — the admin flag reaches the rail and the palette', () => {
+  const hadScrollIntoView = 'scrollIntoView' in Element.prototype;
+  beforeEach(() => {
+    // cmdk scrolls its highlighted row into view and measures its list:
+    // jsdom has neither, and either one missing throws inside an effect.
+    if (!hadScrollIntoView) Element.prototype.scrollIntoView = () => {};
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe(): void {}
+        unobserve(): void {}
+        disconnect(): void {}
+      },
+    );
+  });
+  afterEach(() => {
+    if (!hadScrollIntoView) delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+    vi.unstubAllGlobals();
+  });
+
+  function renderOnEmptyOrg(role: 'admin' | 'user') {
+    vi.stubGlobal('fetch', (input: RequestInfo) => {
+      const url = String(input);
+      const body = url.includes('/v1/projects')
+        ? { items: [] }
+        : url.includes('/auth/get-session')
+          ? { session: { id: 's1' }, user: { id: 'u1', name: 'Ada', email: 'ada@perfportal.test', role } }
+          : {};
+      return Promise.resolve(
+        new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+      );
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/runs']}>
+          <Routes>
+            <Route element={<AppShell />}>
+              <Route path="/runs" element={<p>page content stand-in</p>} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  }
+
+  async function goToOptions(): Promise<string[]> {
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+    const goTo = await screen.findByRole('group', { name: 'Go to' });
+    return within(goTo)
+      .getAllByRole('option')
+      .map((option) => option.textContent ?? '');
+  }
+
+  it('tells an admin the org has no projects, and offers them New project', async () => {
+    renderOnEmptyOrg('admin');
+    expect(await screen.findByText('No projects yet.')).toBeInTheDocument();
+    expect(await goToOptions()).toEqual(['Home', 'All runs', 'New project']);
+  });
+
+  it('tells a person on no project to ask an admin, and offers them no New project', async () => {
+    renderOnEmptyOrg('user');
+    expect(
+      await screen.findByText("You're not on any project yet. Ask an admin to add you."),
+    ).toBeInTheDocument();
+    expect(await goToOptions()).toEqual(['Home', 'All runs']);
+  });
+});
+
 /* ======================================================================== *
  * REVIEW 09-13 C04 — A FRAGMENT LINK THAT ONLY CHANGED THE URL
  * ======================================================================== */

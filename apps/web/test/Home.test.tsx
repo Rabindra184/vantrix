@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, cleanup, render, screen, within } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -12,7 +12,8 @@ import {
 import AuthGate from '../src/AuthGate';
 import { ACTIVITY_POLL_MS, activityQueryKey, browserTimeZone } from '../src/api/activity';
 import Home from '../src/routes/Home';
-import { ALL_RUNS_ROUTE, projectPath } from '../src/routes/paths';
+import { projectsQueryKey } from '../src/api/projects';
+import { ALL_RUNS_ROUTE, NEW_PROJECT_ROUTE, projectPath } from '../src/routes/paths';
 import useIsCompact from '../src/useIsCompact';
 import { projectListBody, sessionBody } from './support/access';
 
@@ -192,7 +193,7 @@ function renderHome(answers: Answers = {}, { seed, gated = false }: Setup = {}) 
   });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   if (seed !== undefined) client.setQueryData(activityQueryKey(browserTimeZone()), seed);
-  return render(
+  const utils = render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={['/']}>
         {gated ? (
@@ -207,6 +208,7 @@ function renderHome(answers: Answers = {}, { seed, gated = false }: Setup = {}) 
       </MemoryRouter>
     </QueryClientProvider>,
   );
+  return { ...utils, client };
 }
 
 const never = () => new Promise<Response>(() => {});
@@ -606,5 +608,93 @@ describe('Home — Add results follows the reader’s role', () => {
     expect(
       await within(attention()).findByRole('link', { name: 'Add results' }),
     ).toHaveAttribute('href', '/projects/checkout/setup');
+  });
+});
+
+/**
+ * ═══ A PERSON ON NO PROJECT SEES ONE SENTENCE, NOT AN EMPTY APP ═══
+ *
+ * A non-admin's `GET /v1/projects` lists only the projects they hold a role
+ * in, so an empty answer means they are on none — and every card on this page
+ * would then be an empty card about an org they cannot see into: a glance of
+ * seven blank days, "No runs yet" with nothing to do about it, an empty tests
+ * table. The page says what is true and who can change it, once, under the
+ * greeting. An admin's empty list is a fact about the ORG instead, and their
+ * page is unchanged: the attention card's empty state, with New project.
+ *
+ * Only a list that has ANSWERED empty counts. While it is pending — or after it
+ * failed with nothing to show — the page is as it always was: unknown is not
+ * "on no project".
+ */
+describe('Home — a person on no project', () => {
+  const EMPTY_ORG = activity({
+    runCount: 0,
+    passRate: null,
+    running: 0,
+    byProject: [],
+    attention: [],
+    attentionTotal: 0,
+    lastRun: null,
+    days: DAYS.map((d) => ({ ...d, total: 0, successful: 0, needsAttention: 0 })),
+  });
+  const NO_PROJECT = "You're not on any project yet";
+
+  it('greets a member of no project with one empty state, and nothing else', async () => {
+    renderHome(
+      { session: () => json(sessionBody(false)), projects: () => json(projectListBody({})) },
+      // The activity answer is already in the cache, so its line WOULD be
+      // drawn on the first render — its absence below is the page's choice.
+      { seed: EMPTY_ORG },
+    );
+    expect(await screen.findByRole('heading', { level: 2, name: NO_PROJECT })).toBeInTheDocument();
+    expect(screen.getByText('Ask an admin to add you.')).toBeInTheDocument();
+    // The greeting, then the one state: every heading on the page.
+    expect(screen.getAllByRole('heading').map((h) => h.textContent)).toEqual(['Hello, Pat', NO_PROJECT]);
+    expect(screen.queryByTestId('home-activity-line')).toBeNull();
+    expect(screen.queryByTestId('home-overview')).toBeNull();
+    expect(screen.queryByRole('figure', { name: 'Runs per day' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'New project' })).toBeNull();
+  });
+
+  it('keeps an admin’s empty org as it was: the attention card’s empty state, with New project', async () => {
+    renderHome({
+      activity: () => json(EMPTY_ORG),
+      session: () => json(sessionBody(true)),
+      projects: () => json(projectListBody({})),
+    });
+    expect(await within(attention()).findByText('No runs yet')).toBeInTheDocument();
+    expect(await within(attention()).findByRole('link', { name: 'New project' })).toHaveAttribute(
+      'href',
+      NEW_PROJECT_ROUTE,
+    );
+    expect(screen.getByRole('heading', { level: 2, name: 'Running now' })).toBeInTheDocument();
+    expect(screen.queryByText(NO_PROJECT)).toBeNull();
+  });
+
+  it.each([
+    ['pending', never, 'pending'],
+    ['failed with nothing to show', () => json(OUTAGE, 500), 'error'],
+  ] as const)('draws the page as it always was while a member’s list is %s', async (_, projects, status) => {
+    const { client } = renderHome({ session: () => json(sessionBody(false)), projects }, { seed: EMPTY_ORG });
+    // The greeting names the person only once the session has answered, so
+    // the flag is known to be false from here on...
+    expect(await screen.findByRole('heading', { level: 1, name: 'Hello, Pat' })).toBeInTheDocument();
+    // ...and the list has reached the state the case is about, so the
+    // absence below is that state's and not a request still on its way.
+    await waitFor(() => expect(client.getQueryState(projectsQueryKey)?.status).toBe(status));
+    expect(asked('/v1/projects')).toBeGreaterThan(0);
+    expect(screen.queryByText(NO_PROJECT)).toBeNull();
+    expect(within(attention()).getByText('No runs yet')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 2, name: 'Running now' })).toBeInTheDocument();
+  });
+
+  /** The other half of "hidden until known": an empty list, but nobody yet known to be reading it. */
+  it('draws the page as it always was while the session has not answered, though the list is empty', async () => {
+    const { client } = renderHome({ session: never, projects: () => json(projectListBody({})) }, { seed: EMPTY_ORG });
+    await waitFor(() => expect(client.getQueryState(projectsQueryKey)?.status).toBe('success'));
+    expect(within(attention()).getByText('No runs yet')).toBeInTheDocument();
+    expect(screen.queryByText(NO_PROJECT)).toBeNull();
+    // Nobody is known, so nobody is offered New project either.
+    expect(screen.queryByRole('link', { name: 'New project' })).toBeNull();
   });
 });

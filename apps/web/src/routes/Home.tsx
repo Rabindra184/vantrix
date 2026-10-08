@@ -9,7 +9,7 @@ import { fetchProjects, projectsQueryKey } from '../api/projects';
 import { getSession, sessionQueryKey } from '../api/session';
 import Card from '../components/Card';
 import { Skeleton, SkeletonTable } from '../components/Skeleton';
-import { ErrorState, LoadingState } from '../components/States';
+import { EmptyState, ErrorState, LoadingState } from '../components/States';
 import AttentionCard from '../home/AttentionCard';
 import HomeTests from '../home/HomeTests';
 import { greetingName } from '../home/homeFormat';
@@ -68,7 +68,9 @@ export default function Home() {
   const projects = useQuery({ queryKey: projectsQueryKey, queryFn: fetchProjects });
   /* The admin flag, by the web's one definition of it — handed with the
      project list to the attention card, whose "Add results" links each ask
-     `projectAccess` about their own project. */
+     `projectAccess` about their own project and whose New project is an
+     admin's; and read below to tell an empty org from a person on no
+     project. */
   const isAdmin = useIsAdmin();
   // The same zone and options `AuthGate` uses, so the two name one query and
   // agree about how long its answer stays fresh.
@@ -89,13 +91,41 @@ export default function Home() {
   const user = session.data?.user;
   const who =
     user === undefined ? '' : greetingName({ name: user.name ?? '', email: user.email ?? '' });
+  const greeting = (
+    <h1 className="text-xl font-semibold tracking-tight wrap-anywhere">
+      {who === '' ? 'Hello' : `Hello, ${who}`}
+    </h1>
+  );
+
+  /* ═══ A PERSON ON NO PROJECT GETS ONE SENTENCE, NOT AN EMPTY APP ═══
+   *
+   * A non-admin's `GET /v1/projects` lists only the projects they hold a role
+   * in, so an empty answer means they are on none. Every card below would then
+   * be an empty card about an org they cannot see into — seven blank days, "No
+   * runs yet" with nothing to do about it, an empty tests table — so the page
+   * says what is true and who can change it, once, under the greeting (the
+   * spec's own words). An admin's empty list is a fact about the ORG, and
+   * their page is unchanged: the attention card's empty state offers New
+   * project.
+   *
+   * Only a list that has ANSWERED empty counts, and only for a flag known to
+   * be false. While either is pending, or after the list failed with nothing
+   * to show, the page is drawn as always: unknown is not "on no project". The
+   * activity read `AuthGate` made is still asked above — hooks cannot be
+   * skipped — but nothing here draws it. */
+  if (isAdmin === false && projects.data?.items.length === 0) {
+    return (
+      <div className="flex flex-col gap-6">
+        {greeting}
+        <EmptyState titleAs="h2" title="You're not on any project yet" body="Ask an admin to add you." />
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-6">
       <div className="flex min-w-0 flex-col gap-1">
-        <h1 className="text-xl font-semibold tracking-tight wrap-anywhere">
-          {who === '' ? 'Hello' : `Hello, ${who}`}
-        </h1>
+        {greeting}
         {activity.data !== undefined ? (
           <p data-testid="home-activity-line" className="text-[0.8125rem] text-muted">
             {activityLine(activity.data.window)}

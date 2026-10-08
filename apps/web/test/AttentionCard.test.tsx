@@ -457,6 +457,30 @@ describe('AttentionCard — Add results follows the reader’s role', () => {
     expect(addResults()).toHaveAttribute('href', projectSetupPath(CHECKOUT.slug));
   });
 
+  /**
+   * ═══ NEW PROJECT IS AN ADMIN'S, AND ONLY AN ADMIN'S ═══
+   *
+   * Gate by destination: the page exists to create a project, which only an
+   * admin may do (`projects:create`). A non-admin in an org with no runs is
+   * offered Add results where they may add them, and nothing else; while the
+   * flag is pending, neither way is offered — the title still says what is
+   * true. The admin's half is the "both ways" case above.
+   */
+  it('offers New project to an admin only, and to nobody while the flag is pending', () => {
+    const newProject = () => screen.queryByRole('link', { name: 'New project' });
+    mountAs(NONE, [{ ...CHECKOUT, role: 'member' }], false);
+    expect(screen.getByText('No runs yet')).toBeInTheDocument();
+    expect(addResults()).toHaveAttribute('href', projectSetupPath(CHECKOUT.slug));
+    expect(newProject()).toBeNull();
+    cleanup();
+    mountAs(NONE, [], undefined);
+    expect(screen.getByText('No runs yet')).toBeInTheDocument();
+    expect(newProject()).toBeNull();
+    cleanup();
+    mountAs(NONE, [], true);
+    expect(newProject()).toHaveAttribute('href', NEW_PROJECT_ROUTE);
+  });
+
   /** Review Focus 2: nothing is drawn before access is known. */
   it('offers none while the admin flag is pending, or before a non-admin’s projects have answered', () => {
     mountAs(GAP, [{ ...CHECKOUT, role: 'member' }], undefined);

@@ -85,13 +85,26 @@ describe('goToDestinations', () => {
      the commonest trip from anywhere in the app — so it is also the row the
      palette highlights before anything is typed. */
   it('offers Home, All runs and New project when no project is current', () => {
-    const ds = goToDestinations(null);
+    const ds = goToDestinations(null, true);
     expect(labels(ds)).toEqual(['Home', 'All runs', 'New project']);
     expect(ds.map((d) => d.to)).toEqual([HOME_ROUTE, ALL_RUNS_ROUTE, NEW_PROJECT_ROUTE]);
   });
 
+  /* Gate by destination: the create page's one action is `projects:create`,
+     an admin's alone. A non-admin is not offered it, and neither is a reader
+     whose session has not answered — hidden until known. */
+  it.each([
+    ['a non-admin', false, MEMBER],
+    ['a reader whose session has not answered', undefined, UNKNOWN],
+  ] as const)('offers %s Home and All runs, and no New project', (_, isAdmin, access) => {
+    expect(labels(goToDestinations(null, isAdmin))).toEqual(['Home', 'All runs']);
+    expect(goToDestinations({ project: checkout, access }, isAdmin).map((d) => d.id)).not.toContain(
+      'go:new-project',
+    );
+  });
+
   it('adds the current project’s pages after them — all eight for an admin', () => {
-    const ds = goToDestinations({ project: checkout, access: ADMIN });
+    const ds = goToDestinations({ project: checkout, access: ADMIN }, true);
     expect(labels(ds)).toEqual([
       'Home',
       'All runs',
@@ -111,10 +124,9 @@ describe('goToDestinations', () => {
   });
 
   it('adds only the pages the reader may open', () => {
-    expect(labels(goToDestinations({ project: checkout, access: VIEWER }))).toEqual([
+    expect(labels(goToDestinations({ project: checkout, access: VIEWER }, false))).toEqual([
       'Home',
       'All runs',
-      'New project',
       'Tests · Checkout',
       'Runs · Checkout',
       'Packages · Checkout',
@@ -124,11 +136,11 @@ describe('goToDestinations', () => {
   });
 
   it('gives every destination its own stable id', () => {
-    const ids = goToDestinations({ project: checkout, access: ADMIN }).map((d) => d.id);
+    const ids = goToDestinations({ project: checkout, access: ADMIN }, true).map((d) => d.id);
     expect(new Set(ids).size).toBe(ids.length);
-    expect(goToDestinations({ project: checkout, access: ADMIN }).map((d) => d.id)).toEqual(ids);
+    expect(goToDestinations({ project: checkout, access: ADMIN }, true).map((d) => d.id)).toEqual(ids);
     // Two projects must not share an id either: cmdk keys items on it.
-    const other = goToDestinations({ project: billing, access: ADMIN }).map((d) => d.id);
+    const other = goToDestinations({ project: billing, access: ADMIN }, true).map((d) => d.id);
     expect(ids.filter((id) => other.includes(id))).toEqual(['go:home', 'go:all-runs', 'go:new-project']);
   });
 });
@@ -301,15 +313,21 @@ describe('matchPages', () => {
   });
 });
 
+/** A source file with its comments stripped: a scan has to read code, not the prose quoting it. */
+const codeOf = (path: string): string =>
+  readFileSync(new URL(path, import.meta.url), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '');
+
 /**
- * The palette offers a project's pages by `ProjectShell`'s own table and
- * filter, so the two cannot disagree while it does. What this guards is the
- * day it stops: a palette that grew its own list again — the copy this file
- * used to compare — or filtered by a rule of its own would offer a tab the
- * strip hides, or miss one it shows, and nothing but a reader's eye would
- * notice.
+ * The palette offers a project's pages by the strip's own table and filter
+ * (`routes/projectSections.ts`, which `ProjectShell` draws from too), so the
+ * two cannot disagree while it does. What this guards is the day it stops: a
+ * palette that grew its own list again — the copy this file used to compare —
+ * or filtered by a rule of its own would offer a tab the strip hides, or miss
+ * one it shows, and nothing but a reader's eye would notice.
  *
- * So this reads the shell's SOURCE — every row's key, label and `requires`,
+ * So this reads the table's SOURCE — every row's key, label and `requires`,
  * and the launch action's label and `requires` — and works out, for each kind
  * of reader, what the strip draws: every row requiring nothing, and each gated
  * row the reader's access allows. The palette must offer exactly that, in that
@@ -320,9 +338,7 @@ describe('matchPages', () => {
  * only.
  */
 describe('the palette\u2019s pages follow ProjectShell', () => {
-  const source = readFileSync(new URL('../src/routes/ProjectShell.tsx', import.meta.url), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/^\s*\/\/.*$/gm, '');
+  const source = codeOf('../src/routes/projectSections.ts');
   const sections = [
     ...source.matchAll(
       /section:\s*'([a-z]+)',\s*label:\s*'([^']+)',\s*path:\s*\w+(?:,\s*requires:\s*'([a-z:]+)')?\s*\}/g,
@@ -365,5 +381,44 @@ describe('the palette\u2019s pages follow ProjectShell', () => {
       ...drawn.map((s) => `${s.label} \u00b7 Checkout`),
       ...(offersLaunch ? [`${launch.label} \u00b7 Checkout`] : []),
     ]);
+  });
+});
+
+/**
+ * \u2550\u2550\u2550 THE PALETTE TAKES THE TABLE, NEVER THE COMPONENT \u2550\u2550\u2550
+ *
+ * The palette is in the entry chunk \u2014 the header mounts it on every page \u2014
+ * and `ProjectShell` is not: it is drawn only by the lazily loaded project
+ * pages. While `destinations.ts` read the table out of `ProjectShell.tsx`, the
+ * bundler had to bring the whole module, component and all, into the entry
+ * chunk for a table and a filter (measured). The table lives in a module of
+ * its own now, with no component in it, and these two scans keep it that way:
+ * the palette imports it from there, and it imports nothing at run time but
+ * the paths it is built from. A TYPE import is erased before the bundler sees
+ * it, so only value imports count.
+ */
+describe('the palette\u2019s table comes from a module with no component in it', () => {
+  /** Every module a file imports at run time: `import type` is erased and does not count. */
+  const valueImports = (code: string): string[] =>
+    [...code.matchAll(/^import\s+(type\s+)?[\s\S]*?\sfrom\s+'([^']+)';/gm)]
+      .filter((m) => m[1] === undefined)
+      .map((m) => m[2]!);
+
+  const palette = valueImports(codeOf('../src/palette/destinations.ts'));
+  const table = valueImports(codeOf('../src/routes/projectSections.ts'));
+
+  it('found the imports it is meant to judge', () => {
+    // A pattern that matched nothing would pass both cases below.
+    expect(palette.length).toBeGreaterThanOrEqual(2);
+    expect(table.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('reads the table from projectSections.ts, never from ProjectShell', () => {
+    expect(palette).toContain('../routes/projectSections.js');
+    expect(palette.filter((from) => /ProjectShell/.test(from))).toEqual([]);
+  });
+
+  it('builds the table from paths.ts alone: no React, no router, no component', () => {
+    expect(table).toEqual(['./paths']);
   });
 });

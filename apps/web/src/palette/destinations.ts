@@ -1,7 +1,7 @@
 import { matchPath } from 'react-router-dom';
 import type { ProjectAccess } from '../access/useAccess.js';
 import { ALL_RUNS_ROUTE, HOME_ROUTE, NEW_PROJECT_ROUTE } from '../routes/paths.js';
-import { LAUNCH, visibleSections, type ProjectSection } from '../routes/ProjectShell.js';
+import { LAUNCH, visibleSections, type ProjectSection } from '../routes/projectSections.js';
 
 /**
  * Where the command palette can take a reader without searching for it.
@@ -11,10 +11,11 @@ import { LAUNCH, visibleSections, type ProjectSection } from '../routes/ProjectS
  * rendered dialog. Every `to` comes from `paths.ts` and none is spelled here —
  * that file is where a route's shape is decided, and a palette that wrote its
  * own `/projects/${slug}/rules` would be a second opinion about it. A
- * project's pages arrive by way of `ProjectShell`'s own table, which takes its
- * paths from there and decides which of them a reader is offered; this module
- * imports the table and its filter, which are plain data and a plain
- * function, not the component.
+ * project's pages arrive by way of the table `ProjectShell` draws its strip
+ * from (`routes/projectSections.ts`), which takes its paths from there and
+ * decides which of them a reader is offered. That module holds the table,
+ * its filter and the launch action and no component, so importing it does not
+ * bring `ProjectShell` into the entry chunk this palette lives in.
  */
 
 /** One place the palette can go. */
@@ -37,9 +38,12 @@ export interface ProjectRef {
 
 /**
  * A project the palette offers PAGES of, with what the reader may do in it —
- * `useProjectAccess`'s answer for that project, which is what decides which
- * of its pages are offered. Carried together so a project's pages can never
- * be filtered by another project's access.
+ * `projectAccess`'s answer for that project, which is what decides which of
+ * its pages are offered. Carried together so the CALLER names, in one value,
+ * which project's access it means: nothing here can check that `access` was
+ * asked about `project` rather than some other project, so the pairing is the
+ * caller's to get right. `usePaletteSearch` builds every one of them from a
+ * single slug (`withAccess`).
  */
 export interface ProjectWithAccess {
   readonly project: ProjectRef;
@@ -106,12 +110,12 @@ interface Page {
  * A project's pages for a reader: the sections `ProjectShell` draws for them,
  * in its order, then the launch form when they may start a run.
  *
- * Read off the shell itself — its `visibleSections` and its `LAUNCH` — and
- * never written down here. A palette that kept its own list, or decided its
- * own way which pages a role may open, would be a second opinion about both:
- * it could offer a Viewer an API tokens row the strip hides from them.
- * `paletteDestinations.test.ts` reads the shell's source and fails the day the
- * two disagree.
+ * Read off the shell's own table — `visibleSections` and `LAUNCH`, which the
+ * shell draws its strip and its launch by — and never written down here. A
+ * palette that kept its own list, or decided its own way which pages a role
+ * may open, would be a second opinion about both: it could offer a Viewer an
+ * API tokens row the strip hides from them. `paletteDestinations.test.ts`
+ * reads the table's source and fails the day the two disagree.
  *
  * `key` is the section's own name there (`ProjectSection`); the launch, which
  * is the action beside the strip rather than a section of it, is `new-run`.
@@ -165,19 +169,28 @@ export function projectPages(project: ProjectRef, access: ProjectAccess): Destin
 const ALWAYS: readonly Destination[] = [
   { id: 'go:home', label: 'Home', to: HOME_ROUTE },
   { id: 'go:all-runs', label: 'All runs', to: ALL_RUNS_ROUTE },
-  { id: 'go:new-project', label: 'New project', to: NEW_PROJECT_ROUTE },
 ];
+
+/**
+ * The create page, offered to an admin alone: its one action is
+ * `projects:create`, which only an admin may take — gate by destination.
+ */
+const NEW_PROJECT: Destination = { id: 'go:new-project', label: 'New project', to: NEW_PROJECT_ROUTE };
 
 /**
  * The palette's opening state: nothing typed, so nothing searched.
  *
- * Home, All runs and New project are always there. The project's own pages
- * follow when the reader is inside one — "go to this project's rules" is the
- * commonest trip from a project page and costs no typing — as many of them as
- * the reader's access there offers.
+ * Home and All runs are always there, and New project after them for an
+ * admin. `isAdmin` is `useIsAdmin`'s answer, `undefined` while the session has
+ * not answered — and then New project is not offered: hidden until known.
+ * REQUIRED, with no default, because a default would decide in silence who is
+ * offered it. The project's own pages follow when the reader is inside one —
+ * "go to this project's rules" is the commonest trip from a project page and
+ * costs no typing — as many of them as the reader's access there offers.
  */
-export function goToDestinations(current: ProjectWithAccess | null): Destination[] {
-  return current === null ? [...ALWAYS] : [...ALWAYS, ...projectPages(current.project, current.access)];
+export function goToDestinations(current: ProjectWithAccess | null, isAdmin: boolean | undefined): Destination[] {
+  const always = isAdmin === true ? [...ALWAYS, NEW_PROJECT] : [...ALWAYS];
+  return current === null ? always : [...always, ...projectPages(current.project, current.access)];
 }
 
 /**

@@ -1,7 +1,6 @@
 import type { ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import type { AccessAction } from '@perfportal/contracts';
 import { useProjectAccess, type ProjectAccess } from '../access/useAccess';
 import { linkButtonClasses } from '../components/Button';
 import { ErrorState } from '../components/States';
@@ -9,17 +8,8 @@ import { ChevronLeftIcon, PlayIcon } from '../components/icons';
 import { ProblemError } from '../api/fetch';
 import { fetchProjects, projectsQueryKey } from '../api/projects';
 import useDocumentTitle from '../useDocumentTitle';
-import {
-  ALL_RUNS_ROUTE,
-  projectAccessPath,
-  projectMembersPath,
-  projectNewRunnerRunPath,
-  projectPackagesPath,
-  projectPath,
-  projectRulesPath,
-  projectRunsPath,
-  projectSetupPath,
-} from './paths';
+import { ALL_RUNS_ROUTE } from './paths';
+import { LAUNCH, SECTIONS, visibleSections, type ProjectSection } from './projectSections';
 
 /**
  * The chrome EVERY project page shares — review M10.
@@ -59,14 +49,13 @@ import {
  *
  * ═══ WHICH SECTIONS A READER IS OFFERED FOLLOWS THEIR ROLE ═══
  *
- * Two sections exist to take an action — Add results to upload a run, API
- * tokens to manage credentials — and so does the launch. Each carries the
- * action it needs (`requires`), and is drawn only when `useProjectAccess`
- * says the reader may take it: a link to a page whose one action the API
- * would refuse is an offer the reader cannot accept. The API refuses either
- * way; hiding is for clarity. The other five are places every role may read —
- * Members included, since `members:read` asks only for Viewer — so they are
- * drawn whatever the answer, which also means they need not wait for one.
+ * The table of sections, the rule that filters it by role (`visibleSections`)
+ * and the launch action live in `projectSections.ts`, which says why each
+ * gated one is gated. They are there rather than here because the command
+ * palette offers a project's pages by the same table and filter, and the
+ * palette is in the entry chunk while this component is not: one table and
+ * one filter, so the palette can never offer a tab this strip hides, without
+ * the palette pulling the strip in with it.
  *
  * Hidden until KNOWN: while the session or a non-admin's project list is
  * pending (or that list failed, or lists the project with no `role` field),
@@ -75,10 +64,6 @@ import {
  * refused. A gated section stays hidden even on its own page (a Viewer who
  * types `/setup`), so no tab is current there: saying why is that page's job,
  * not the strip's.
- *
- * The rule is `visibleSections`, exported because the command palette offers
- * a project's pages by it too. One table and one filter, so the palette can
- * never offer a tab this strip hides.
  *
  * ═══ THE `<h1>` IS THE PROJECT, AND THE SECTION IS NOT A HEADING AT ALL ═══
  *
@@ -96,61 +81,6 @@ import {
  * So each section's own content keeps its `<h2>`s and contributes no heading
  * naming itself — which also means no section's heading levels had to move.
  */
-export type ProjectSection = 'tests' | 'runs' | 'packages' | 'setup' | 'rules' | 'members' | 'access';
-
-/** One tab of the strip: where it goes, what it is called, and what a reader needs to be offered it. */
-export interface Section {
-  readonly section: ProjectSection;
-  readonly label: string;
-  readonly path: (slug: string) => string;
-  /** The action the section's page exists to take; absent for a section every role may read. */
-  readonly requires?: AccessAction;
-}
-
-const SECTIONS: readonly Section[] = [
-  /* Tests first because `/projects/:slug` is the project's own page and a
-     project's tests are the rung directly below it — `Organization → Project
-     → Test → Run`. Runs second because it is the same data one rung flatter.
-     Then the configuration sections, in the order a project is set up: what
-     you run, how results get in, what judges them, who works on it, and the
-     credential the second of those needs. Packages come first of them
-     because a package is the thing a run is made FROM, which is the nearest
-     neighbour of "what ran here" — and an upload under Add results becomes
-     one either way. */
-  { section: 'tests', label: 'Tests', path: projectPath },
-  { section: 'runs', label: 'Runs', path: projectRunsPath },
-  { section: 'packages', label: 'Packages', path: projectPackagesPath },
-  { section: 'setup', label: 'Add results', path: projectSetupPath, requires: 'run:upload' },
-  { section: 'rules', label: 'SLA rules', path: projectRulesPath },
-  { section: 'members', label: 'Members', path: projectMembersPath },
-  /* "API tokens", matching the page's own content (review 09-13 M18). A tab
-     and the page it opens must not disagree about what the page is — and
-     "Access" promised members and roles, which are the section above. */
-  { section: 'access', label: 'API tokens', path: projectAccessPath, requires: 'tokens:manage' },
-];
-
-/**
- * The sections `access` allows, in the strip's order: every section that
- * requires nothing, and each gated one only when `access.can` says yes — which
- * it never does before access is known.
- *
- * The shell draws its strip with this, and the command palette offers a
- * project's pages with it, so the two answer the same question the same way.
- */
-export function visibleSections(access: ProjectAccess): readonly Section[] {
-  return SECTIONS.filter((s) => s.requires === undefined || access.can(s.requires));
-}
-
-/**
- * The launch action beside the heading — and the palette's last page for a
- * project — with the action it needs: the form starts a run on the on-prem
- * runner, which `runner:run` guards.
- */
-export const LAUNCH: Readonly<{ label: string; path: (slug: string) => string; requires: AccessAction }> = {
-  label: 'New on-prem run',
-  path: (slug) => projectNewRunnerRunPath(slug),
-  requires: 'runner:run',
-};
 
 /**
  * Draws the heading, the launch action and the nav, and hands the section its

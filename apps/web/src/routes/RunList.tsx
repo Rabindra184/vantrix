@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 're
 import { Link, useSearchParams } from 'react-router-dom';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import type { RunListResponse } from '@perfportal/contracts';
+import { useIsAdmin } from '../access/useAccess';
 import Badge from '../components/Badge';
 import Button, { linkButtonClasses } from '../components/Button';
 import CopyIdButton from '../components/CopyIdButton';
@@ -165,12 +166,7 @@ export default function RunList({
       onClear={clearFilters}
     />
   );
-  const headingAction = action ?? (projectSlug === null ? (
-    <Link to={NEW_PROJECT_ROUTE} className={linkButtonClasses}>
-      <PlusIcon className="h-3.5 w-3.5" />
-      New project
-    </Link>
-  ) : undefined);
+  const headingAction = action ?? (projectSlug === null ? <NewProjectAction /> : undefined);
 
   // `heading` is the literal "Runs" on the org-wide list and the TEST's name
   // on `/projects/:slug/tests/:testSlug`, so one call covers both. The
@@ -685,6 +681,30 @@ function PageHeading({
       </div>
       {action}
     </div>
+  );
+}
+
+/**
+ * The org-wide list's heading action, drawn for an admin alone.
+ *
+ * Gate by destination: the create page's one action is `projects:create`,
+ * which only an admin may take, and the API refuses anyone else whatever this
+ * page draws. Hidden until known — nothing while the session has not
+ * answered.
+ *
+ * ITS OWN COMPONENT so the flag is asked only where the link can appear: a
+ * project's run list and a test's page pass no such action, and a
+ * `useIsAdmin` in `RunList` itself would put another observer on the session
+ * on every one of them — which, with no `staleTime`, refetches it on mount.
+ */
+function NewProjectAction() {
+  const isAdmin = useIsAdmin();
+  if (isAdmin !== true) return null;
+  return (
+    <Link to={NEW_PROJECT_ROUTE} className={linkButtonClasses}>
+      <PlusIcon className="h-3.5 w-3.5" />
+      New project
+    </Link>
   );
 }
 

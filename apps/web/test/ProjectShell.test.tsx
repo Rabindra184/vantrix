@@ -5,7 +5,8 @@ import { cleanup, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectRole } from '@perfportal/contracts';
-import ProjectShell, { type ProjectSection } from '../src/routes/ProjectShell';
+import ProjectShell from '../src/routes/ProjectShell';
+import type { ProjectSection } from '../src/routes/projectSections';
 import { seedAccess } from './support/access';
 
 // `vitest.config.ts` sets no `globals`, so Testing Library's automatic cleanup
