@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
+import type { ProjectAccess } from '../access/useAccess';
 import { linkButtonClasses } from '../components/Button';
 import Card from '../components/Card';
 import InfoTip from '../components/InfoTip';
@@ -68,11 +69,25 @@ export default function ProjectSetup() {
      *
      * `ProjectShell` has no `intro` at all since clean UI PR 4 — a section is
      * named by its nav, and `tsc` refuses a page that tries to add one. */
-    <ProjectShell current="setup">{({ slug }) => <AddResults key={slug} slug={slug} />}</ProjectShell>
+    <ProjectShell current="setup">
+      {({ slug, access }) => <AddResults key={slug} slug={slug} access={access} />}
+    </ProjectShell>
   );
 }
 
-function AddResults({ slug }: { readonly slug: string }) {
+/**
+ * ═══ EVERY WAY TO API TOKENS IS A MANAGER'S ═══
+ *
+ * Three links here lead to API tokens — Import's and CI's "Create one", and
+ * the runner card's "Create a runner token" — and that page exists to manage
+ * tokens, which is `tokens:manage`. So each is drawn only when the reader may
+ * (gate by destination): anyone else would follow it to a page that can only
+ * tell them no. The PREREQUISITE stays named either way — a command that
+ * needs `PERFPORTAL_TOKEN` still says so — and only the way there goes. Until
+ * access is known none of the three is drawn.
+ */
+function AddResults({ slug, access }: { readonly slug: string; readonly access: ProjectAccess }) {
+  const canManageTokens = access.can('tokens:manage');
   /* The instance the reader is already talking to. A hard-coded localhost
      would be wrong for every real deployment, and a relative path is not
      runnable at all: this ended in a bare `/v1/runs` once, so the one command
@@ -134,10 +149,15 @@ function AddResults({ slug }: { readonly slug: string }) {
               <p className="flex flex-wrap items-center gap-x-1 text-[0.8125rem] text-muted">
                 <span>
                   Needs <code className="font-mono text-primary">PERFPORTAL_TOKEN</code> (Completed
-                  reports) ·{' '}
-                  <Link to={projectAccessPath(slug)} className="text-accent underline underline-offset-2">
-                    Create one
-                  </Link>
+                  reports)
+                  {canManageTokens && (
+                    <>
+                      {' · '}
+                      <Link to={projectAccessPath(slug)} className="text-accent underline underline-offset-2">
+                        Create one
+                      </Link>
+                    </>
+                  )}
                 </span>
                 <InfoTip label="About posting results">
                   The picker above and this command reach the same ingest pipeline. The bundle is a
@@ -178,7 +198,9 @@ function AddResults({ slug }: { readonly slug: string }) {
         {/* Only on a SETTLED list: one still loading, or one that failed, has
             seen nothing either way, and offering setup under "Checking…" or
             "Status unavailable" is the wrong advice M12 was about. */}
-        {jobs.isSuccess && runnerReadiness(jobs.data.items).needsSetup && (
+        {/* And only for a reader who may create the token (gate by
+            destination, above). */}
+        {jobs.isSuccess && runnerReadiness(jobs.data.items).needsSetup && canManageTokens && (
           <Link
             to={projectAccessPath(slug)}
             data-testid="runner-setup"
@@ -205,10 +227,15 @@ function AddResults({ slug }: { readonly slug: string }) {
               <p className="flex flex-wrap items-center gap-x-1 text-[0.8125rem] text-muted">
                 <span>
                   Store the token as <code className="font-mono text-primary">PERFPORTAL_TOKEN</code> in
-                  your pipeline secrets ·{' '}
-                  <Link to={projectAccessPath(slug)} className="text-accent underline underline-offset-2">
-                    Create one
-                  </Link>
+                  your pipeline secrets
+                  {canManageTokens && (
+                    <>
+                      {' · '}
+                      <Link to={projectAccessPath(slug)} className="text-accent underline underline-offset-2">
+                        Create one
+                      </Link>
+                    </>
+                  )}
                 </span>
                 <InfoTip label="About the CI step">
                   branch and commitSha let the Compare page tell a regression from a different build;

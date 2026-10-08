@@ -10,6 +10,7 @@ import { errorsQuery } from '../src/api/metrics';
 import type { LiveRunState } from '../src/api/live';
 import RunSummary from '../src/routes/RunSummary';
 import type { RunWindowContext } from '../src/routes/useRunWindow';
+import { UNKNOWN_ACCESS } from './support/access';
 
 /**
  * `RunSummary`'s live branch — what the Overview tab's live branch (Task 8) and
@@ -120,7 +121,7 @@ function renderSummary({
             element={
               <Outlet
                 context={
-                  { window: null, durationMs: null, liveDurationMs: null, warmupMs: null, live } satisfies RunWindowContext
+                  { window: null, durationMs: null, liveDurationMs: null, warmupMs: null, live, projectAccess: UNKNOWN_ACCESS } satisfies RunWindowContext
                 }
               />
             }

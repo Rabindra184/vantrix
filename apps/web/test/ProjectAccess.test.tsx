@@ -1,13 +1,14 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fetchProjects } from '../src/api/projects.js';
+import { accessRefusal, type ProjectRole } from '@perfportal/contracts';
+import { fetchProjects, projectsQueryKey } from '../src/api/projects.js';
 import { fetchProjectTokens, mintProjectToken, revokeProjectToken } from '../src/api/tokens.js';
 import ProjectAccess from '../src/routes/ProjectAccess.js';
-import { seedAccess } from './support/access';
+import { projectListBody, seedAccess } from './support/access';
 
 vi.mock('../src/api/projects.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../src/api/projects.js')>()),
@@ -77,6 +78,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.unstubAllGlobals();
   fetchProjectsMock.mockClear();
   fetchProjectTokensMock.mockClear();
   mintProjectTokenMock.mockClear();
@@ -91,13 +93,18 @@ describe('ProjectAccess', () => {
   /** The token table and the revoke alert that sits above it. */
   const tokenList = () => screen.getByTestId('token-list');
 
-  function renderSetup() {
+  /**
+   * An admin by default: every claim here before the role cases below is about
+   * the page a reader who MAY manage tokens sees — and the shell offers this
+   * section's tab, which `ready` waits on, only once access is known and
+   * allows `tokens:manage`. `who: null` seeds nothing.
+   */
+  function renderSetup(
+    who: { isAdmin: boolean; roles?: Readonly<Record<string, ProjectRole>> } | null = { isAdmin: true },
+  ) {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-    // An admin: every claim here is about the page a reader who MAY manage
-    // tokens sees — and the shell offers this section's tab, which `ready`
-    // waits on, only once access is known and allows `tokens:manage`.
-    seedAccess(client, { isAdmin: true });
-    return render(
+    if (who !== null) seedAccess(client, who);
+    const view = render(
       <QueryClientProvider client={client}>
         <MemoryRouter initialEntries={['/projects/alpha/access']}>
           <Routes>
@@ -106,6 +113,7 @@ describe('ProjectAccess', () => {
         </MemoryRouter>
       </QueryClientProvider>,
     );
+    return { ...view, client };
   }
 
   /**
@@ -512,4 +520,71 @@ describe('ProjectAccess', () => {
     expect(cellOf('Old Pod CI', 'Status')).toHaveTextContent('Active');
   });
 
+  /**
+   * ═══ MANAGING TOKENS IS A MANAGER'S (project access, PR 3) ═══
+   *
+   * Listing, creating and revoking are all `tokens:manage`, so the page has
+   * nothing to offer anyone below Manager — and the token list itself is a
+   * request the API would refuse, so it is not made. A member who reaches the
+   * URL is told why, in the API's own words, and nothing else.
+   *
+   * HIDDEN UNTIL KNOWN: while access is pending there is no form, no list and
+   * no refusal — nobody has been refused anything yet.
+   */
+  describe('ProjectAccess — who may manage tokens', () => {
+    const MEMBER = { isAdmin: false, roles: { alpha: 'member' } } as const;
+    const MANAGER = { isAdmin: false, roles: { alpha: 'manager' } } as const;
+
+    it('tells a member it needs the Manager role, and never asks for the tokens', async () => {
+      renderSetup(MEMBER);
+
+      expect(
+        await screen.findByText('Managing API tokens needs the Manager role in this project.'),
+      ).toBeInTheDocument();
+      expect(screen.getByText('Ask an admin to change your role.')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /create token/i })).toBeNull();
+      expect(screen.queryByTestId('token-list')).toBeNull();
+      expect(fetchProjectTokensMock).not.toHaveBeenCalled();
+    });
+
+    it('offers a manager the form and the list', async () => {
+      renderSetup(MANAGER);
+
+      expect(await ready()).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /create token/i })).toBeInTheDocument();
+      expect(await within(tokenList()).findByText('Existing CI')).toBeInTheDocument();
+      expect(screen.queryByText(/needs the Manager role/)).toBeNull();
+    });
+
+    /** Review Focus 2: unknown is not refused. The session is held, so who is looking is not known. */
+    it('draws neither the page nor a refusal while access is pending', async () => {
+      vi.stubGlobal('fetch', () => new Promise<Response>(() => {}));
+      renderSetup(null);
+
+      // The shell has drawn — its ungated sections — so the absences are about access.
+      expect(await screen.findByRole('link', { name: 'SLA rules' })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /create token/i })).toBeNull();
+      expect(screen.queryByTestId('token-list')).toBeNull();
+      expect(screen.queryByText(/needs the Manager role/)).toBeNull();
+      expect(fetchProjectTokensMock).not.toHaveBeenCalled();
+    });
+
+    /**
+     * Review Focus 3: demoted with the page open. When the project list next
+     * answers, the form and the list go and the refusal takes their place.
+     */
+    it('replaces the page with the refusal when the role drops', async () => {
+      const refusal = accessRefusal('tokens:manage');
+      const { client } = renderSetup(MANAGER);
+      expect(await screen.findByRole('button', { name: /create token/i })).toBeInTheDocument();
+
+      act(() => {
+        client.setQueryData(projectsQueryKey, projectListBody({ alpha: 'member' }));
+      });
+
+      expect(await screen.findByText(refusal.detail)).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /create token/i })).toBeNull();
+      expect(screen.queryByTestId('token-list')).toBeNull();
+    });
+  });
 });

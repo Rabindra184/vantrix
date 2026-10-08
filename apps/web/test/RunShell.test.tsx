@@ -5,13 +5,14 @@ import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes, useOutletContext } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { LiveDelta, RunNote as RunNoteValue, RunResponse } from '@perfportal/contracts';
+import type { LiveDelta, ProjectRole, RunNote as RunNoteValue, RunResponse } from '@perfportal/contracts';
 import type { LiveRunState } from '../src/api/live';
 import RunShell from '../src/routes/RunShell';
 import { formatDuration } from '../src/routes/format';
 import useIsCompact from '../src/useIsCompact';
 import type { RunWindowContext } from '../src/routes/useRunWindow';
 import { useTimeAxis } from '../src/charts/TimeAxisContext';
+import { seedAccess } from './support/access';
 
 /* NOT compact by default, which is what every case above this file's last
    describe assumes and what `useIsCompact` itself falls back to where
@@ -936,5 +937,84 @@ describe('RunShell — the Logs tab follows the run’s runner job', () => {
     cleanup();
     renderShellWith({ identity: RUN });
     expect(screen.queryByRole('link', { name: 'Logs' })).toBeNull();
+  });
+});
+
+/**
+ * ═══ THE RUN'S PROJECT ACCESS, ASKED ONCE AND HANDED DOWN (ruling P13) ═══
+ *
+ * The sections are `<Outlet/>` children with no prop channel from the shell,
+ * so a control in one that a role gates — the telemetry page's link to API
+ * tokens — reads the shell's answer off the outlet context rather than
+ * mounting its own observer on the session and the project list. The answer
+ * is for the RUN'S project: a reader is a Manager in one project and a Viewer
+ * in another, and the context must say which this run belongs to.
+ */
+describe('RunShell — the run’s project access', () => {
+  /** Reads back the shell's `projectAccess`: known, and whether it allows `tokens:manage`. */
+  function AccessProbe() {
+    const { projectAccess } = useOutletContext<RunWindowContext>();
+    return (
+      <div
+        data-testid="access-probe"
+        data-known={String(projectAccess.known)}
+        data-tokens={String(projectAccess.can('tokens:manage'))}
+      />
+    );
+  }
+
+  function renderAccessProbe(
+    identity: ComponentProps<typeof RunShell>['identity'],
+    who: { isAdmin: boolean; roles?: Readonly<Record<string, ProjectRole>> },
+  ) {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    seedAccess(client, who);
+    return render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={[`/runs/${RUN.id}`]}>
+          <Routes>
+            <Route
+              path="/runs/:runId"
+              element={
+                <RunShell
+                  identity={identity}
+                  status={RUN.status}
+                  verdict={RUN.verdict}
+                  windowable={RUN.windowable}
+                  terminal
+                  live={null}
+                  capReached={false}
+                  onRetry={() => {}}
+                />
+              }
+            >
+              <Route index element={<AccessProbe />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  }
+
+  it('hands its sections the reader’s access in the run’s own project', () => {
+    renderAccessProbe(RUN, { isAdmin: false, roles: { checkout: 'manager', search: 'viewer' } });
+    const probe = screen.getByTestId('access-probe');
+    expect(probe).toHaveAttribute('data-known', 'true');
+    expect(probe).toHaveAttribute('data-tokens', 'true');
+  });
+
+  it('answers for the run’s project, not for another one the reader manages', () => {
+    renderAccessProbe(RUN, { isAdmin: false, roles: { checkout: 'viewer', search: 'manager' } });
+    const probe = screen.getByTestId('access-probe');
+    expect(probe).toHaveAttribute('data-known', 'true');
+    expect(probe).toHaveAttribute('data-tokens', 'false');
+  });
+
+  /** A run whose identity names no project yet asks about none — which is not known for anyone, an admin included. */
+  it('knows nothing for a run with no project yet, even for an admin', () => {
+    renderAccessProbe({ ...RUN, project: undefined }, { isAdmin: true, roles: {} });
+    const probe = screen.getByTestId('access-probe');
+    expect(probe).toHaveAttribute('data-known', 'false');
+    expect(probe).toHaveAttribute('data-tokens', 'false');
   });
 });

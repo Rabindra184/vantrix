@@ -10,6 +10,7 @@ import { runQueryKey } from '../src/api/run';
 import RunSummary from '../src/routes/RunSummary';
 import { peakConcurrentUsers } from '../src/routes/runUsers';
 import { useWholeRunDomainFromShell, type RunWindowContext } from '../src/routes/useRunWindow';
+import { UNKNOWN_ACCESS } from './support/access';
 import useIsCompact from '../src/useIsCompact';
 
 vi.mock('../src/useIsCompact.js', () => ({ default: vi.fn(() => false) }));
@@ -166,7 +167,7 @@ function renderSummary({
             path="/runs/:runId"
             element={
               <Outlet
-                context={{ window, durationMs: run.durationMs ?? null, liveDurationMs: null, warmupMs: null, live: null } satisfies RunWindowContext}
+                context={{ window, durationMs: run.durationMs ?? null, liveDurationMs: null, warmupMs: null, live: null, projectAccess: UNKNOWN_ACCESS } satisfies RunWindowContext}
               />
             }
           >
@@ -298,7 +299,7 @@ describe('RunSummary — always the whole run', () => {
         <Routes>
           <Route
             path="/r"
-            element={<Outlet context={{ window: { fromMs: 10_000, toMs: 20_000, bucketWidthMs: 1_000 }, durationMs: 63161, liveDurationMs: null, warmupMs: null, live: null } satisfies RunWindowContext} />}
+            element={<Outlet context={{ window: { fromMs: 10_000, toMs: 20_000, bucketWidthMs: 1_000 }, durationMs: 63161, liveDurationMs: null, warmupMs: null, live: null, projectAccess: UNKNOWN_ACCESS } satisfies RunWindowContext} />}
           >
             <Route index element={<Probe />} />
           </Route>

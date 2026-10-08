@@ -10,6 +10,7 @@ import reference from './fixtures/reference-run.json';
 import { runQueryKey } from '../src/api/run';
 import RunReport from '../src/routes/RunReport';
 import type { RunWindowContext } from '../src/routes/useRunWindow';
+import { UNKNOWN_ACCESS } from './support/access';
 import useIsCompact from '../src/useIsCompact';
 
 vi.mock('../src/useIsCompact.js', () => ({ default: vi.fn(() => false) }));
@@ -134,7 +135,7 @@ function renderReport({
         <Routes>
           <Route
             path="/runs/:runId"
-            element={<Outlet context={{ window, durationMs: 63161, liveDurationMs: null, warmupMs: null, live: null } satisfies RunWindowContext} />}
+            element={<Outlet context={{ window, durationMs: 63161, liveDurationMs: null, warmupMs: null, live: null, projectAccess: UNKNOWN_ACCESS } satisfies RunWindowContext} />}
           >
             <Route path="report" element={<RunReport />} />
           </Route>

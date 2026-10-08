@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { ProjectRole } from '@perfportal/contracts';
 import { fetchProjects } from '../src/api/projects.js';
 import { fetchRunnerJobs } from '../src/api/runner.js';
 import ProjectSetup from '../src/routes/ProjectSetup.js';
@@ -44,6 +45,7 @@ const fetchRunnerJobsMock = vi.mocked(fetchRunnerJobs);
 
 afterEach(() => {
   cleanup();
+  vi.unstubAllGlobals();
   fetchProjectsMock.mockClear();
   fetchRunnerJobsMock.mockClear();
 });
@@ -82,14 +84,17 @@ function job(status: string, agedMs: number) {
   } as unknown as Awaited<ReturnType<typeof fetchRunnerJobs>>['items'][number];
 }
 
-function renderPage() {
+function renderPage(
+  // An admin by default: every claim here before the token-link cases is
+  // about the page a reader who MAY add results sees — and the shell offers
+  // this section's tab, which `ready` waits on, only once access is known and
+  // allows `run:upload`. `null` seeds nothing.
+  who: { isAdmin: boolean; roles?: Readonly<Record<string, ProjectRole>> } | null = { isAdmin: true },
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  // An admin: every claim here is about the page a reader who MAY add results
-  // sees — and the shell offers this section's tab, which `ready` waits on,
-  // only once access is known and allows `run:upload`.
-  seedAccess(client, { isAdmin: true });
+  if (who !== null) seedAccess(client, who);
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={['/projects/alpha/setup']}>
@@ -571,5 +576,66 @@ describe('ProjectSetup — the workflows are choices before they are documents',
 
     // The picker itself — the assertion the interim case was written to fail on.
     expect(document.querySelector('input[type="file"]')).not.toBeNull();
+  });
+});
+
+/**
+ * ═══ A LINK TO API TOKENS IS A MANAGER'S (project access, PR 3) ═══
+ *
+ * Gate by destination: the API tokens page exists to manage tokens, which is
+ * `tokens:manage`, so each of this page's three ways there — Import's and CI's
+ * "Create one", and the runner card's "Create a runner token" — is drawn only
+ * for a reader who may. Anyone else would follow it to a page that can only
+ * tell them no.
+ */
+describe('ProjectSetup — the links to API tokens follow the role', () => {
+  /**
+   * Every link THIS PAGE draws to API tokens — outside the shell's nav, whose
+   * own API tokens tab is `ProjectShell`'s to gate and is tested there.
+   */
+  const tokenLinks = () =>
+    screen
+      .queryAllByRole('link')
+      .filter((a) => a.getAttribute('href') === '/projects/alpha/access' && a.closest('nav') === null);
+
+  /**
+   * Settled: the runner card's link waits on the job list (see `needsSetup`),
+   * so its absence means something only once that list has answered — the
+   * "unknown" headline is what an answered empty list says.
+   */
+  async function settled() {
+    await within(await entry('Run a test')).findByText(/runner availability unknown/i);
+  }
+
+  it.each([
+    ['a viewer', 'viewer'],
+    ['a member', 'member'],
+  ] as const)('draws none of the three for %s', async (_who, role) => {
+    renderPage({ isAdmin: false, roles: { alpha: role } });
+    await settled();
+
+    expect(tokenLinks()).toEqual([]);
+    expect(screen.queryByRole('link', { name: 'Create one' })).toBeNull();
+    expect(screen.queryByTestId('runner-setup')).toBeNull();
+    // The prerequisite is still named where it applies; only the way there goes.
+    expect(within(await entry('Import results')).getByText('PERFPORTAL_TOKEN')).toBeInTheDocument();
+  });
+
+  it('draws all three for a manager', async () => {
+    renderPage({ isAdmin: false, roles: { alpha: 'manager' } });
+    await settled();
+
+    expect(tokenLinks()).toHaveLength(3);
+    expect(screen.getByTestId('runner-setup')).toHaveAttribute('href', '/projects/alpha/access');
+  });
+
+  /** Review Focus 2: while the session is held nothing is known, so none is drawn — and nobody is refused. */
+  it('draws none while access is pending', async () => {
+    vi.stubGlobal('fetch', () => new Promise<Response>(() => {}));
+    renderPage(null);
+    await settled();
+
+    expect(tokenLinks()).toEqual([]);
+    expect(screen.queryByText(/needs the .* role/)).toBeNull();
   });
 });

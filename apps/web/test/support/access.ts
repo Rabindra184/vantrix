@@ -4,6 +4,7 @@ import {
   type ProjectRole,
 } from '@perfportal/contracts';
 import type { QueryClient } from '@tanstack/react-query';
+import { projectAccess, type ProjectAccess } from '../../src/access/useAccess';
 import { projectsQueryKey } from '../../src/api/projects';
 import { sessionQueryKey, type Session } from '../../src/api/session';
 
@@ -139,3 +140,16 @@ export function seedAccess(
   client.setQueryDefaults(projectsQueryKey, { staleTime: Infinity });
   client.setQueryData(projectsQueryKey, projectListBody(who.roles ?? {}));
 }
+
+/**
+ * Access that knows nothing — no session, no project list, no project — for a
+ * fixture standing in for `RunShell`'s outlet context in a test whose subject
+ * is not access: `known` false and every `can` false, which is what a section
+ * meets while the shell's own question is still pending.
+ *
+ * Built by `projectAccess`, the hook's own decision, not written by hand, so
+ * it cannot drift into an answer the real one never gives. A test ABOUT a
+ * gated control seeds who is looking with `seedAccess` and asks the real hook
+ * instead.
+ */
+export const UNKNOWN_ACCESS: ProjectAccess = projectAccess(undefined, undefined, undefined);
