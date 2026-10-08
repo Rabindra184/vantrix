@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fetchProjects } from '../src/api/projects.js';
 import { fetchRunnerJobs } from '../src/api/runner.js';
 import ProjectSetup from '../src/routes/ProjectSetup.js';
+import { seedAccess } from './support/access';
 
 /**
  * ═══ REVIEW M15 — THE PAGE THAT WAS FOUR PAGES ═══
@@ -85,6 +86,10 @@ function renderPage() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
+  // An admin: every claim here is about the page a reader who MAY add results
+  // sees — and the shell offers this section's tab, which `ready` waits on,
+  // only once access is known and allows `run:upload`.
+  seedAccess(client, { isAdmin: true });
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={['/projects/alpha/setup']}>

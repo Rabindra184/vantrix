@@ -2,6 +2,7 @@ import { hashKey, useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import type { OrgTestSummary, RunListResponse } from '@perfportal/contracts';
+import { projectAccess, useIsAdmin } from '../access/useAccess';
 import { ProblemError } from '../api/fetch';
 import { fetchProjects, projectsQueryKey } from '../api/projects';
 import { fetchRunByNumber, searchRuns } from '../api/runs';
@@ -13,6 +14,7 @@ import {
   matchProjects,
   type Destination,
   type ProjectRef,
+  type ProjectWithAccess,
 } from './destinations';
 import { parsePaletteQuery, type PaletteQuery } from './parseQuery';
 import { useDebouncedValue } from './useDebouncedValue';
@@ -247,19 +249,39 @@ export function usePaletteSearch(raw: string): PaletteGroups {
   const currentSlug = currentProjectSlug(useLocation().pathname);
 
   const projectList = useQuery({ queryKey: projectsQueryKey, queryFn: fetchProjects });
+  const listed = projectList.data?.items;
   const projectRefs = useMemo(
-    () => projectList.data?.items.map((p): ProjectRef => ({ slug: p.slug, name: p.name })),
-    [projectList.data],
+    () => listed?.map((p): ProjectRef => ({ slug: p.slug, name: p.name })),
+    [listed],
   );
+
+  /* ═══ A PROJECT'S PAGES ARE THE ONES ITS STRIP OFFERS THIS READER ═══
+
+     Which of a project's pages the palette offers is `ProjectShell`'s rule
+     (`visibleSections`), asked with the reader's access in THAT project — and
+     the palette may be about a project the reader is not inside (the best
+     match for what they typed), so it cannot borrow a page's hook. It asks
+     `projectAccess` instead: the decision `useProjectAccess` makes, from the
+     same two answers, the admin flag and the project list this hook already
+     reads. Until those are known nothing gated is offered, exactly as the
+     strip draws nothing gated. */
+  const isAdmin = useIsAdmin();
+  const withAccess = (project: ProjectRef): ProjectWithAccess => ({
+    project,
+    access: projectAccess(isAdmin, listed, project.slug),
+  });
 
   /* The project the reader is inside, named from the project list when it has
      arrived and by its slug until then: a name the reader can read now beats
      waiting on a request to say "Tests · Checkout". */
-  const current = useMemo((): ProjectRef | null => {
+  const current = useMemo((): ProjectWithAccess | null => {
     if (currentSlug === null) return null;
     const name = projectRefs?.find((p) => p.slug === currentSlug)?.name ?? currentSlug;
-    return { slug: currentSlug, name };
-  }, [currentSlug, projectRefs]);
+    return {
+      project: { slug: currentSlug, name },
+      access: projectAccess(isAdmin, listed, currentSlug),
+    };
+  }, [currentSlug, projectRefs, isAdmin, listed]);
 
   const tests = useQuery({
     queryKey: keys.tests,
@@ -292,16 +314,20 @@ export function usePaletteSearch(raw: string): PaletteGroups {
   })();
 
   /* Pages belong to the project the reader is in, else to the best project
-     match. Inside a project they need nothing fetched. Outside one they depend
-     on the project list, and when that has failed they are an error too — the
-     Projects group's failure line speaks for both, because a page cannot be
-     matched to a project nobody could list. */
+     match. Inside a project they need nothing fetched to be matched — which
+     of them are offered waits on access, as the strip's tabs do. Outside one
+     they depend on the project list, and when that has failed they are an
+     error too — the Projects group's failure line speaks for both, because a
+     page cannot be matched to a project nobody could list. */
   const pagesGroup = ((): GroupState<Destination> => {
     if (!searching) return { items: [], status: 'idle' };
     if (current !== null) return { items: matchPages(text, current), status: 'ready' };
     if (projectRefs !== undefined) {
-      const candidate = matchProjects(text, projectRefs, 1)[0] ?? null;
-      return { items: matchPages(text, candidate), status: 'ready' };
+      const candidate = matchProjects(text, projectRefs, 1)[0];
+      return {
+        items: matchPages(text, candidate === undefined ? null : withAccess(candidate)),
+        status: 'ready',
+      };
     }
     return { items: [], status: projectList.isError ? 'error' : 'loading' };
   })();

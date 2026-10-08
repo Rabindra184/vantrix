@@ -9,11 +9,13 @@ import type {
   OrgTestListResponse,
   OrgTestSummary,
   ProjectListResponse,
+  ProjectRole,
   RunListResponse,
 } from '@perfportal/contracts';
 import CommandPalette from '../src/palette/CommandPalette';
 import { orgTestsQueryKey } from '../src/api/tests';
 import { projectTestPath } from '../src/routes/paths';
+import { seedAccess } from './support/access';
 
 afterEach(cleanup);
 
@@ -210,9 +212,25 @@ function Harness({
   );
 }
 
-function renderPalette({ route = '/runs', open = true }: { route?: string; open?: boolean } = {}) {
+/**
+ * Who is looking defaults to an install-wide ADMIN: a project's pages in the
+ * palette follow the reader's access there (`ProjectShell`'s own rule), and an
+ * admin is offered every one — which is what the cases about searching and
+ * choosing assume. Seeding only the session leaves the project list to the
+ * fetch stub, as before. A case about who is offered what names its reader.
+ */
+function renderPalette({
+  route = '/runs',
+  open = true,
+  who = { isAdmin: true },
+}: {
+  route?: string;
+  open?: boolean;
+  who?: { isAdmin: boolean; roles?: Readonly<Record<string, ProjectRole>> };
+} = {}) {
   const onOpenChange = vi.fn<(open: boolean) => void>();
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  seedAccess(client, who);
   const utils = render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[route]}>
@@ -269,12 +287,67 @@ describe('CommandPalette', () => {
       'Packages · Checkout',
       'Add results · Checkout',
       'SLA rules · Checkout',
+      'Members · Checkout',
       'API tokens · Checkout',
       'New on-prem run · Checkout',
     ]);
     // Nothing typed, so nothing searched.
     expect(requestsTo('/v1/tests')).toHaveLength(0);
     expect(requestsTo('/v1/runs')).toHaveLength(0);
+  });
+
+  /**
+   * ═══ THE PALETTE OFFERS WHAT THE STRIP OFFERS, AND NOTHING THE STRIP HIDES ═══
+   *
+   * `paletteDestinations.test.ts` proves the pure functions filter by the
+   * access they are HANDED; these two prove the hook hands them the right
+   * one — the reader's access in the project the pages belong to, which is
+   * the seam a pure test cannot see. A hook that passed an admin's answer, or
+   * the CURRENT project's answer for the best match of a search, would pass
+   * every case over there.
+   */
+  it("offers a Viewer only the current project's pages a Viewer may open", async () => {
+    stubApi();
+    renderPalette({ route: '/projects/checkout/rules', who: { isAdmin: false, roles: { checkout: 'viewer' } } });
+
+    await screen.findByRole('option', { name: 'Tests · Checkout' });
+    expect(optionNames(screen.getByRole('group', { name: 'Go to' }))).toEqual([
+      'Home',
+      'All runs',
+      'New project',
+      'Tests · Checkout',
+      'Runs · Checkout',
+      'Packages · Checkout',
+      'SLA rules · Checkout',
+      'Members · Checkout',
+    ]);
+  });
+
+  /* Outside any project, the Pages group belongs to the best match for the
+     query — `search` here — and must be filtered by the reader's access in
+     THAT project, never by their role elsewhere. Each reader holds the
+     opposite role in `checkout`, so an answer borrowed from the wrong project
+     (or an admin's, or nobody's) shows the other list. The group holds five,
+     so a Manager's fifth page is SLA rules and a Viewer's is Members. */
+  it.each([
+    [
+      'a Manager there',
+      { checkout: 'viewer', search: 'manager' } as const,
+      ['Tests · Search', 'Runs · Search', 'Packages · Search', 'Add results · Search', 'SLA rules · Search'],
+    ],
+    [
+      'a Viewer there',
+      { checkout: 'manager', search: 'viewer' } as const,
+      ['Tests · Search', 'Runs · Search', 'Packages · Search', 'SLA rules · Search', 'Members · Search'],
+    ],
+  ])("matches a searched project's pages for %s, whatever their role elsewhere", async (_, roles, expected) => {
+    stubApi();
+    renderPalette({ route: '/runs', who: { isAdmin: false, roles } });
+    const user = userEvent.setup();
+
+    await enter(user, 'search');
+    const pages = await screen.findByRole('group', { name: 'Pages' });
+    expect(optionNames(pages)).toEqual(expected);
   });
 
   it('waits 150 ms after the last keystroke before searching', () => {

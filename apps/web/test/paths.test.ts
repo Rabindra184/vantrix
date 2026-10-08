@@ -9,6 +9,7 @@ import {
   DEFAULT_ROUTE,
   HOME_ROUTE,
   NEW_PROJECT_ROUTE,
+  projectMembersPath,
   projectNewRunnerRunPath,
   projectPackagesPath,
   projectPath,
@@ -169,6 +170,20 @@ describe('packages, as paths', () => {
     expect(projectNewRunnerRunPath('checkout', 'a&b=c')).toBe(
       `${projectPath('checkout')}/run/new?package=a%26b%3Dc`,
     );
+  });
+});
+
+/**
+ * A project's members, one segment under the project like every other
+ * section. The SHAPE only: the route that serves it is declared by the
+ * Members page itself, and the scan below learns about it from `App.tsx`
+ * then.
+ */
+describe('members, as paths', () => {
+  it('puts the Members page one segment under the project, encoding the slug', () => {
+    expect(projectMembersPath('checkout')).toBe('/projects/checkout/members');
+    expect(projectMembersPath('checkout').startsWith(`${projectPath('checkout')}/`)).toBe(true);
+    expect(projectMembersPath('a/b')).toBe('/projects/a%2Fb/members');
   });
 });
 

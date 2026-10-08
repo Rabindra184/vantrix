@@ -1,4 +1,4 @@
-import { canPerform, type AccessAction, type ProjectRole } from '@perfportal/contracts';
+import { canPerform, type AccessAction, type ProjectRole, type ProjectSummary } from '@perfportal/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { fetchProjects, projectsQueryKey } from '../api/projects';
@@ -98,19 +98,23 @@ export function useAdminAccess(): { readonly known: boolean; readonly isAdmin: b
   return { known: isAdmin !== undefined, isAdmin: isAdmin === true };
 }
 
-/**
- * Access to actions in the project named by `slug`, or in none when `slug`
- * is undefined — a run with no project, say — which is not known for anyone,
- * an admin included: there is no project to ask about.
- */
-export function useProjectAccess(slug: string | undefined): ProjectAccess {
-  const isAdmin = useIsAdmin();
-  const projects = useQuery({ queryKey: projectsQueryKey, queryFn: fetchProjects });
+/** A project as the list answers it: only the two fields the decision reads. */
+type ListedProject = Readonly<Pick<ProjectSummary, 'slug' | 'role'>>;
 
+/**
+ * The decision's two values, from the hook's inputs: is access known, and
+ * which role is read. Every rule in the module docstring is applied here and
+ * nowhere else — `projectAccess` and `useProjectAccess` both start from it.
+ */
+function decide(
+  isAdmin: boolean | undefined,
+  items: readonly ListedProject[] | undefined,
+  slug: string | undefined,
+): { readonly known: boolean; readonly role: ProjectRole | null | undefined } {
   /* `null` when the list holds no such project: this person has no role
      there. The project's own `role` otherwise, which is `undefined` only for
      a response with no such field (see the module docstring). */
-  const project = slug === undefined ? undefined : projects.data?.items.find((p) => p.slug === slug);
+  const project = slug === undefined ? undefined : items?.find((p) => p.slug === slug);
   const role: ProjectRole | null | undefined = project === undefined ? null : project.role;
 
   /* For a non-admin: a list has answered, AND it did not leave the role out.
@@ -119,16 +123,51 @@ export function useProjectAccess(slug: string | undefined): ProjectAccess {
   const known =
     slug !== undefined &&
     isAdmin !== undefined &&
-    (isAdmin || (projects.data !== undefined && role !== undefined));
+    (isAdmin || (items !== undefined && role !== undefined));
+
+  return { known, role };
+}
+
+/** The answer a control reads, built from the decision. */
+function grant(known: boolean, isAdmin: boolean | undefined, role: ProjectRole | null | undefined): ProjectAccess {
+  return {
+    known,
+    can: (action) => known && canPerform(action, { isAdmin: isAdmin === true, role }),
+  };
+}
+
+/**
+ * The same answer `useProjectAccess` gives, as a pure function of the two
+ * things it reads: `useIsAdmin`'s answer (`undefined` while the session is
+ * pending) and the project list's items (`undefined` while it has no data).
+ *
+ * For a caller that needs the answer for a project it did not mount a hook
+ * for — the command palette offers the pages of whichever project a query is
+ * about, out of the list it already holds. It is the hook's own decision, not
+ * a copy of it: a second spelling of "admin first" or of the field-less item
+ * is exactly the drift this module exists to prevent.
+ */
+export function projectAccess(
+  isAdmin: boolean | undefined,
+  items: readonly ListedProject[] | undefined,
+  slug: string | undefined,
+): ProjectAccess {
+  const { known, role } = decide(isAdmin, items, slug);
+  return grant(known, isAdmin, role);
+}
+
+/**
+ * Access to actions in the project named by `slug`, or in none when `slug`
+ * is undefined — a run with no project, say — which is not known for anyone,
+ * an admin included: there is no project to ask about.
+ */
+export function useProjectAccess(slug: string | undefined): ProjectAccess {
+  const isAdmin = useIsAdmin();
+  const projects = useQuery({ queryKey: projectsQueryKey, queryFn: fetchProjects });
+  const { known, role } = decide(isAdmin, projects.data?.items, slug);
 
   /* Memoised on the three values the answer depends on, so a control that
      puts `access` in an effect's dependencies is not re-run by every render
      that changed nothing about it. */
-  return useMemo<ProjectAccess>(
-    () => ({
-      known,
-      can: (action) => known && canPerform(action, { isAdmin: isAdmin === true, role }),
-    }),
-    [known, isAdmin, role],
-  );
+  return useMemo<ProjectAccess>(() => grant(known, isAdmin, role), [known, isAdmin, role]);
 }

@@ -8,7 +8,7 @@ import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-quer
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { useAdminAccess, useIsAdmin, useProjectAccess } from '../src/access/useAccess';
+import { projectAccess, useAdminAccess, useIsAdmin, useProjectAccess } from '../src/access/useAccess';
 import { fetchProjects, projectsQueryKey } from '../src/api/projects';
 import { sessionQueryKey } from '../src/api/session';
 import { projectListBody, seedAccess, sessionBody } from './support/access';
@@ -259,5 +259,84 @@ describe('useIsAdmin and useAdminAccess — actions on no project', () => {
     const person = renderHook(() => ({ isAdmin: useIsAdmin(), access: useAdminAccess() }), { wrapper });
     expect(person.result.current.isAdmin).toBe(false);
     expect(person.result.current.access).toEqual({ known: true, isAdmin: false });
+  });
+});
+
+/**
+ * ═══ ONE DECISION, TWO CALLERS ═══
+ *
+ * `projectAccess` exists for a caller that holds the project list and needs
+ * the answer for a project it mounted no hook for — the command palette, which
+ * offers the pages of whichever project a query is about. It is only safe to
+ * hand that caller if it answers EXACTLY what the hook answers: a palette that
+ * offered API tokens to somebody the shell hides them from would be a second
+ * opinion about access, which is the thing this module exists to prevent.
+ *
+ * So each state the hook distinguishes is set up in the cache, the hook is
+ * rendered beside the two reads it makes, and `projectAccess` is asked the
+ * same question from those same two reads. Every action is compared, and
+ * `known` with them — the field-less item and the pending list are the states
+ * a careless copy would get wrong, by refusing instead of not knowing.
+ */
+describe('projectAccess — the hook\u2019s decision, for a caller holding the list', () => {
+  const FIELDLESS = ProjectListResponseSchema.parse({
+    items: [{ id: 'c0000000-0000-4000-8000-000000000001', slug: 'checkout', name: 'Checkout', latestRun: null }],
+  });
+
+  const STATES: readonly [string, () => void, string | undefined][] = [
+    ['an admin, before the list answers', () => seedAccess(client, { isAdmin: true }), 'checkout'],
+    ['an admin holding only a Viewer row', () => seedAccess(client, { isAdmin: true, roles: { checkout: 'viewer' } }), 'checkout'],
+    ['a Viewer', () => seedAccess(client, { isAdmin: false, roles: { checkout: 'viewer' } }), 'checkout'],
+    ['a Member', () => seedAccess(client, { isAdmin: false, roles: { checkout: 'member' } }), 'checkout'],
+    ['a Manager', () => seedAccess(client, { isAdmin: false, roles: { checkout: 'manager' } }), 'checkout'],
+    ['a person in another project only', () => seedAccess(client, { isAdmin: false, roles: { search: 'manager' } }), 'checkout'],
+    [
+      'a non-admin whose project says role null',
+      () => {
+        seedAccess(client, { isAdmin: false, roles: {} });
+        client.setQueryData(projectsQueryKey, projectListBody({ checkout: null }));
+      },
+      'checkout',
+    ],
+    [
+      'a non-admin whose project carries no role field',
+      () => {
+        client.setQueryData(sessionQueryKey, sessionBody(false));
+        client.setQueryData(projectsQueryKey, FIELDLESS);
+      },
+      'checkout',
+    ],
+    ['a non-admin before the list answers', () => client.setQueryData(sessionQueryKey, sessionBody(false)), 'checkout'],
+    ['anyone before the session answers', () => client.setQueryData(projectsQueryKey, projectListBody({ checkout: 'manager' })), 'checkout'],
+    ['an admin asked about no project', () => seedAccess(client, { isAdmin: true, roles: { checkout: 'manager' } }), undefined],
+  ];
+
+  it.each(STATES)('answers what the hook answers for %s', (_, seed, slug) => {
+    seed();
+
+    const { result } = renderHook(
+      () => ({
+        hook: useProjectAccess(slug),
+        isAdmin: useIsAdmin(),
+        items: useQuery({ queryKey: projectsQueryKey, queryFn: fetchProjects }).data?.items,
+      }),
+      { wrapper },
+    );
+    const pure = projectAccess(result.current.isAdmin, result.current.items, slug);
+
+    expect(pure.known).toBe(result.current.hook.known);
+    expect(allowed(pure)).toEqual(allowed(result.current.hook));
+  });
+
+  it('is not vacuous: the states above disagree among themselves', () => {
+    // A pure function answering `{ known: false, can: () => false }` for
+    // everything would agree with a hook doing the same; the hook is pinned
+    // by the cases above this block, and this pins that the agreement was
+    // reached across answers that differ.
+    const viewer = projectAccess(false, projectListBody({ checkout: 'viewer' }).items, 'checkout');
+    const manager = projectAccess(false, projectListBody({ checkout: 'manager' }).items, 'checkout');
+    expect(viewer.known && manager.known).toBe(true);
+    expect(allowed(viewer)).not.toEqual(allowed(manager));
+    expect(projectAccess(false, FIELDLESS.items, 'checkout').known).toBe(false);
   });
 });

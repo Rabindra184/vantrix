@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fetchProjects } from '../src/api/projects.js';
 import { fetchProjectTokens, mintProjectToken, revokeProjectToken } from '../src/api/tokens.js';
 import ProjectAccess from '../src/routes/ProjectAccess.js';
+import { seedAccess } from './support/access';
 
 vi.mock('../src/api/projects.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../src/api/projects.js')>()),
@@ -92,6 +93,10 @@ describe('ProjectAccess', () => {
 
   function renderSetup() {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    // An admin: every claim here is about the page a reader who MAY manage
+    // tokens sees — and the shell offers this section's tab, which `ready`
+    // waits on, only once access is known and allows `tokens:manage`.
+    seedAccess(client, { isAdmin: true });
     return render(
       <QueryClientProvider client={client}>
         <MemoryRouter initialEntries={['/projects/alpha/access']}>

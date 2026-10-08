@@ -1,6 +1,8 @@
 import type { ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
+import type { AccessAction } from '@perfportal/contracts';
+import { useProjectAccess, type ProjectAccess } from '../access/useAccess';
 import { linkButtonClasses } from '../components/Button';
 import { ErrorState } from '../components/States';
 import { ChevronLeftIcon, PlayIcon } from '../components/icons';
@@ -10,6 +12,7 @@ import useDocumentTitle from '../useDocumentTitle';
 import {
   ALL_RUNS_ROUTE,
   projectAccessPath,
+  projectMembersPath,
   projectNewRunnerRunPath,
   projectPackagesPath,
   projectPath,
@@ -40,19 +43,42 @@ import {
  * one said "Project runs", the other "All tests" — so the same relationship
  * was spelled two ways depending on which end you were standing at.
  *
- * One strip, six sections (Packages joined it with backlog #8), on all six
- * pages. The reader can see the whole project from anywhere in it, and "where
- * am I" is answered by `aria-current="page"` rather than by which set of
- * buttons happens to be on screen.
+ * One strip, on every project page (Packages joined it with backlog #8,
+ * Members with project access). The reader can see the whole project from
+ * anywhere in it, and "where am I" is answered by `aria-current="page"`
+ * rather than by which set of buttons happens to be on screen.
  *
- * ═══ LAUNCH IS AN ACTION, NOT A SEVENTH TAB ═══
+ * ═══ LAUNCH IS AN ACTION, NOT ANOTHER TAB ═══
  *
- * M10 asks for that explicitly, and it is right: the other six are PLACES —
+ * M10 asks for that explicitly, and it is right: the sections are PLACES —
  * each is a URL you can sit on, bookmark and come back to — while "New
  * on-prem run" is a thing you DO, which happens to have a form behind it.
  * Mixing the two in one strip is what makes a nav stop reading as a map. It
  * sits beside the heading instead, where it is on every project page for the
  * first time (it used to be on three of the then-five pages).
+ *
+ * ═══ WHICH SECTIONS A READER IS OFFERED FOLLOWS THEIR ROLE ═══
+ *
+ * Two sections exist to take an action — Add results to upload a run, API
+ * tokens to manage credentials — and so does the launch. Each carries the
+ * action it needs (`requires`), and is drawn only when `useProjectAccess`
+ * says the reader may take it: a link to a page whose one action the API
+ * would refuse is an offer the reader cannot accept. The API refuses either
+ * way; hiding is for clarity. The other five are places every role may read —
+ * Members included, since `members:read` asks only for Viewer — so they are
+ * drawn whatever the answer, which also means they need not wait for one.
+ *
+ * Hidden until KNOWN: while the session or a non-admin's project list is
+ * pending (or that list failed, or lists the project with no `role` field),
+ * `can` answers false for everything, so the strip shows the five ungated
+ * sections and no launch, and nothing on the page claims the reader was
+ * refused. A gated section stays hidden even on its own page (a Viewer who
+ * types `/setup`), so no tab is current there: saying why is that page's job,
+ * not the strip's.
+ *
+ * The rule is `visibleSections`, exported because the command palette offers
+ * a project's pages by it too. One table and one filter, so the palette can
+ * never offer a tab this strip hides.
  *
  * ═══ THE `<h1>` IS THE PROJECT, AND THE SECTION IS NOT A HEADING AT ALL ═══
  *
@@ -65,45 +91,80 @@ import {
  * The three configuration pages used to take the section name AS their `<h1>`
  * ("Add results", "SLA rules", "API tokens") with the project demoted to a
  * breadcrumb above it. That reads correctly on one page and stops being true
- * the moment there are six: the thing the reader is looking at is the
- * PROJECT, and which of its six faces is showing is what the strip is for.
+ * the moment there are several: the thing the reader is looking at is the
+ * PROJECT, and which of its faces is showing is what the strip is for.
  * So each section's own content keeps its `<h2>`s and contributes no heading
  * naming itself — which also means no section's heading levels had to move.
  */
-export type ProjectSection = 'tests' | 'runs' | 'packages' | 'setup' | 'rules' | 'access';
+export type ProjectSection = 'tests' | 'runs' | 'packages' | 'setup' | 'rules' | 'members' | 'access';
 
-const SECTIONS: readonly {
-  section: ProjectSection;
-  label: string;
-  path: (slug: string) => string;
-}[] = [
+/** One tab of the strip: where it goes, what it is called, and what a reader needs to be offered it. */
+export interface Section {
+  readonly section: ProjectSection;
+  readonly label: string;
+  readonly path: (slug: string) => string;
+  /** The action the section's page exists to take; absent for a section every role may read. */
+  readonly requires?: AccessAction;
+}
+
+const SECTIONS: readonly Section[] = [
   /* Tests first because `/projects/:slug` is the project's own page and a
      project's tests are the rung directly below it — `Organization → Project
      → Test → Run`. Runs second because it is the same data one rung flatter.
-     Then the four configuration sections, in the order a project is set up:
-     what you run, how results get in, what judges them, and the credential
-     the second of those needs. Packages come first of them because a package
-     is the thing a run is made FROM, which is the nearest neighbour of "what
-     ran here" — and an upload under Add results becomes one either way. */
+     Then the configuration sections, in the order a project is set up: what
+     you run, how results get in, what judges them, who works on it, and the
+     credential the second of those needs. Packages come first of them
+     because a package is the thing a run is made FROM, which is the nearest
+     neighbour of "what ran here" — and an upload under Add results becomes
+     one either way. */
   { section: 'tests', label: 'Tests', path: projectPath },
   { section: 'runs', label: 'Runs', path: projectRunsPath },
   { section: 'packages', label: 'Packages', path: projectPackagesPath },
-  { section: 'setup', label: 'Add results', path: projectSetupPath },
+  { section: 'setup', label: 'Add results', path: projectSetupPath, requires: 'run:upload' },
   { section: 'rules', label: 'SLA rules', path: projectRulesPath },
+  { section: 'members', label: 'Members', path: projectMembersPath },
   /* "API tokens", matching the page's own content (review 09-13 M18). A tab
      and the page it opens must not disagree about what the page is — and
-     "Access" promised members and roles that do not exist here. */
-  { section: 'access', label: 'API tokens', path: projectAccessPath },
+     "Access" promised members and roles, which are the section above. */
+  { section: 'access', label: 'API tokens', path: projectAccessPath, requires: 'tokens:manage' },
 ];
 
 /**
+ * The sections `access` allows, in the strip's order: every section that
+ * requires nothing, and each gated one only when `access.can` says yes — which
+ * it never does before access is known.
+ *
+ * The shell draws its strip with this, and the command palette offers a
+ * project's pages with it, so the two answer the same question the same way.
+ */
+export function visibleSections(access: ProjectAccess): readonly Section[] {
+  return SECTIONS.filter((s) => s.requires === undefined || access.can(s.requires));
+}
+
+/**
+ * The launch action beside the heading — and the palette's last page for a
+ * project — with the action it needs: the form starts a run on the on-prem
+ * runner, which `runner:run` guards.
+ */
+export const LAUNCH: Readonly<{ label: string; path: (slug: string) => string; requires: AccessAction }> = {
+  label: 'New on-prem run',
+  path: (slug) => projectNewRunnerRunPath(slug),
+  requires: 'runner:run',
+};
+
+/**
  * Draws the heading, the launch action and the nav, and hands the section its
- * project.
+ * project and what the reader may do in it.
  *
  * `children` is a FUNCTION rather than a node, for the reason `DesktopOnly`
  * takes one: the sections below all need the project's name and its slug, and
  * every caller would otherwise have to resolve the project a second time to
  * build the node it passes in.
+ *
+ * `access` rides along for the same reason: the shell has already asked
+ * `useProjectAccess`, and a section that asked again would mount another
+ * observer on the session and the project list — each refetching on mount —
+ * to learn what the strip above it already knows. One question per page.
  */
 export default function ProjectShell({
   current,
@@ -113,24 +174,29 @@ export default function ProjectShell({
   /* No `intro` (clean UI PR 4): a section is named by the nav, and a sentence
      under it saying what the section is for is the description the text rule
      deletes. Gone from the type, so `tsc` refuses a caller that brings one. */
-  readonly children: (project: { slug: string; name: string }) => ReactNode;
+  readonly children: (project: { slug: string; name: string; access: ProjectAccess }) => ReactNode;
 }) {
   const { slug = '' } = useParams<{ slug: string }>();
   const projects = useQuery({ queryKey: projectsQueryKey, queryFn: fetchProjects });
+  const access = useProjectAccess(slug);
   const project = projects.data?.items.find((p) => p.slug === slug) ?? null;
   const label = SECTIONS.find((s) => s.section === current)?.label ?? '';
 
   /* ═══ THE SLUG IS A REAL NAME, SO NOTHING WAITS FOR THE LOOKUP ═══
    *
-   * Every part of this shell — the six destinations, the launch action, the
-   * heading — is derivable from the slug alone; only the DISPLAY NAME needs
-   * `GET /v1/projects`. `ProjectConfigPage` blocked the whole page on that
-   * query anyway, which was tolerable on three configuration screens and is
-   * not on `/projects/:slug`: the project's own page would sit as a spinner
-   * while its content was ready to draw. `ProjectTests` documented the
-   * opposite behaviour for exactly this reason, and keeps it — until the name
-   * resolves the heading is the slug, which is a real name for the project
-   * rather than a placeholder. */
+   * Every destination in this shell, and the heading, is derivable from the
+   * slug alone; only the DISPLAY NAME needs `GET /v1/projects`.
+   * `ProjectConfigPage` blocked the whole page on that query anyway, which
+   * was tolerable on three configuration screens and is not on
+   * `/projects/:slug`: the project's own page would sit as a spinner while its
+   * content was ready to draw. `ProjectTests` documented the opposite
+   * behaviour for exactly this reason, and keeps it — until the name resolves
+   * the heading is the slug, which is a real name for the project rather than
+   * a placeholder.
+   *
+   * WHICH destinations are offered is the one thing that waits, and only for
+   * the gated ones: the launch and the two gated sections appear once access
+   * is known, and everything else is drawn from the first paint. */
   const name = project?.name ?? slug;
 
   /* The project's own page titles as the PROJECT and nothing else: it is what
@@ -179,7 +245,7 @@ export default function ProjectShell({
         titleAs="h1"
         title="Project not found"
         detail={`No project "${slug}" is visible to this session.`}
-        /* NOT "Back to project": every one of these six URLs carries the slug
+        /* NOT "Back to project": every one of these URLs carries the slug
            that just failed to resolve, so an offer to go back to the project
            is an offer to reload the same error. The org's run list is the
            nearest place that exists — `ALL_RUNS_ROUTE`, which is what these
@@ -211,7 +277,7 @@ export default function ProjectShell({
             does not give the TEXT permission to break, so an unbreakable
             name overflowed it.
             MEASURED at 320px: /projects/:slug scrolled sideways with a
-            120-character name, and this heading is on all six sections. */}
+            120-character name, and this heading is on every section. */}
         <h1 className="min-w-0 text-xl font-semibold tracking-tight break-all">{name}</h1>
         {/* ═══ A TESTID, BECAUSE THE NAME IS LEGITIMATELY NOT UNIQUE ═══
             The Add results page's "Run a test" card links to this same form
@@ -220,15 +286,16 @@ export default function ProjectShell({
             repo records is the opposite one (`ProjectRuns` and `ProjectTests`
             calling ONE destination two different things). So a page-wide query
             for the label resolves two elements there, and a spec asserting the
-            SHELL contributes this action needs to say which one it means. */}
-        <Link
-          to={projectNewRunnerRunPath(slug)}
-          data-testid="project-launch"
-          className={linkButtonClasses}
-        >
-          <PlayIcon className="h-3.5 w-3.5" />
-          New on-prem run
-        </Link>
+            SHELL contributes this action needs to say which one it means.
+
+            Drawn only when the reader may start a run: the form exists to
+            queue one, and `runner:run` is what the API asks of that. */}
+        {access.can(LAUNCH.requires) && (
+          <Link to={LAUNCH.path(slug)} data-testid="project-launch" className={linkButtonClasses}>
+            <PlayIcon className="h-3.5 w-3.5" />
+            {LAUNCH.label}
+          </Link>
+        )}
       </div>
 
       {/* ═══ A `<nav>` WITH ITS OWN NAME, BECAUSE IT IS NOT THE ONLY ONE ═══
@@ -248,14 +315,14 @@ export default function ProjectShell({
        * up no tab at all rather than the project's. The section a page belongs
        * to is the page's own claim to make.
        *
-       * `overflow-x-auto` for the reason `RunTabs` has it: six labels plus
+       * `overflow-x-auto` for the reason `RunTabs` has it: seven labels plus
        * their padding do not fit 375px, and a strip that wraps to two lines
        * stops reading as one control. */}
       <nav
         aria-label="Project sections"
         className="-mb-px flex gap-1 overflow-x-auto border-b border-divider"
       >
-        {SECTIONS.map(({ section, label: tabLabel, path }) => {
+        {visibleSections(access).map(({ section, label: tabLabel, path }) => {
           const active = section === current;
           return (
             <Link
@@ -274,7 +341,7 @@ export default function ProjectShell({
         })}
       </nav>
 
-      {children({ slug, name })}
+      {children({ slug, name, access })}
     </div>
   );
 }
