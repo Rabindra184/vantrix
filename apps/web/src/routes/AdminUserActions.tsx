@@ -22,7 +22,6 @@ import {
 import { ProblemError } from '../api/fetch';
 import { adminProjectsQueryKey, adminUsersQueryKey, removeUser, resetUserPassword, updateUser } from '../api/admin';
 import { addMember, removeMember, updateMember } from '../api/members';
-import { sessionQueryKey } from '../api/session';
 import { fieldMessages } from '../formIssues';
 import { ROLE_LABEL, RowField } from './AdminFields';
 
@@ -185,14 +184,20 @@ export function UserActions({
   const mutation = useMutation({
     mutationFn: ({ action }: RowRequest) => send(user.id, action),
     onSuccess: async (_data, { action, from, resume }) => {
-      /* Your own admin flag is also your session's: the account menu offers
-         Administration from it, so it is re-read too (ruling W17). */
+      /* Your own admin flag is also your session's, and it decides what every
+         org-wide read shows you: the account menu offers Administration from
+         it (ruling W17), and an admin's rail, Home and run lists span the
+         whole org where a member's span their own projects. So changing it
+         re-reads EVERYTHING cached, not a list of keys — a key left off that
+         list is a rail still offering projects the reader can no longer
+         open. Anyone else's change moves the two lists alone. */
       const ownAdminFlag = own && action.kind === 'update' && action.body.isAdmin !== undefined;
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: adminUsersQueryKey }),
-        queryClient.invalidateQueries({ queryKey: adminProjectsQueryKey }),
-        ownAdminFlag ? queryClient.invalidateQueries({ queryKey: sessionQueryKey }) : undefined,
-      ]);
+      await (ownAdminFlag
+        ? queryClient.invalidateQueries()
+        : Promise.all([
+            queryClient.invalidateQueries({ queryKey: adminUsersQueryKey }),
+            queryClient.invalidateQueries({ queryKey: adminProjectsQueryKey }),
+          ]));
       // Only if the block it came from is still the open one. A reader who has
       // opened another since must not have it closed, or their caret taken, by
       // the answer to a question they have moved on from.

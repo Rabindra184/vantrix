@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { PASSWORD_CHANGE_REQUIRED } from '@perfportal/contracts';
 import { ZodError } from 'zod';
 import ChoosePassword from './ChoosePassword';
 import { AlertMark } from './components/States';
@@ -9,13 +10,6 @@ import { ProblemError } from './api/fetch';
 import { activityQueryKey, activityQueryOptions, browserTimeZone } from './api/activity';
 import { getSession, sessionQueryKey } from './api/session';
 import { NO_ORG_ROUTE, loginPathFor } from './routes/paths';
-
-/**
- * The code the API's password gate refuses every other `/v1` route with while
- * a session must change its password. Written here rather than imported: the
- * API sets it, and no contract module exports it. See the probe's 403 below.
- */
-const PASSWORD_CHANGE_REQUIRED = 'PASSWORD_CHANGE_REQUIRED';
 
 /**
  * The session bootstrap, asked once on load, whose answer decides `/login`
@@ -38,7 +32,8 @@ const PASSWORD_CHANGE_REQUIRED = 'PASSWORD_CHANGE_REQUIRED';
  * is the contract (spec §7), while a code is a label the API is free to make
  * more specific later. With ONE exception, the probe's 403
  * `PASSWORD_CHANGE_REQUIRED`, below: there the code is the only thing that
- * tells two 403s apart.
+ * tells two 403s apart, so it is imported from `@perfportal/contracts`, the
+ * one definition the API's gate sets it from, never spelled out here.
  *
  * ═══ A PASSWORD THAT MUST BE CHANGED COMES FIRST ═══
  *

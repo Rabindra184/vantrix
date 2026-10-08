@@ -36,6 +36,16 @@ export const PasswordSchema = z.string().min(PASSWORD_MIN_LENGTH).max(PASSWORD_M
 export const PASSWORD_UNCHANGED = 'PASSWORD_UNCHANGED';
 
 /**
+ * The `code` of the password gate's 403: this session's account must choose a
+ * new password before anything else, and every route a session could otherwise
+ * reach answers it, except `PUT /v1/me/password`. Both ends branch on it — the
+ * API sets it (`passwordChangeRequired`) and the web's `AuthGate` reads it, the
+ * one 403 it tells apart by code — so it is defined once, here, where neither
+ * can drift from the other.
+ */
+export const PASSWORD_CHANGE_REQUIRED = 'PASSWORD_CHANGE_REQUIRED';
+
+/**
  * The body of `PUT /v1/me/password`: change your own password, which also
  * clears a forced change.
  *

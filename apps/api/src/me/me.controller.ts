@@ -12,7 +12,7 @@ import type { Request, Response } from 'express';
 import { AllowedBeforePasswordChange, OwnAccount } from '../auth/access.decorator.js';
 import { auth } from '../auth/better-auth.instance.js';
 import { SESSION_TOKEN_ID_PREFIX, SessionOnlyGuard } from '../auth/session-only.guard.js';
-import { badRequest, rateLimited } from '../common/validation.js';
+import { badRequest, rateLimited, sessionEnded } from '../common/validation.js';
 import { PasswordAttempts } from './password-attempts.js';
 
 /**
@@ -114,6 +114,11 @@ export class MeController {
           'Type the password you signed in with.',
         );
       }
+      // Better Auth reads the session again, authoritatively: an admin who
+      // reset or disabled this account while the change was in flight has
+      // ended it, and that is the 401 any ended session gets, not a 500.
+      // The same mapping AdminUsersService.fromBetterAuth makes.
+      if (err instanceof APIError && err.statusCode === 401) throw sessionEnded();
       throw err;
     }
 

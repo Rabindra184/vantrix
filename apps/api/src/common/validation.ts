@@ -8,6 +8,7 @@ import {
   ParseUUIDPipe,
   UnauthorizedException,
 } from '@nestjs/common';
+import { PASSWORD_CHANGE_REQUIRED } from '@perfportal/contracts';
 import { MAX_OFFSET_MS } from '@perfportal/persistence';
 import { z, type ZodError } from 'zod';
 
@@ -171,7 +172,7 @@ export function accessDenied(
  */
 export function passwordChangeRequired(): ForbiddenException {
   return Object.assign(new ForbiddenException('Choose a new password before doing anything else.'), {
-    code: 'PASSWORD_CHANGE_REQUIRED',
+    code: PASSWORD_CHANGE_REQUIRED,
     remediation: 'Change it with PUT /v1/me/password.',
   });
 }

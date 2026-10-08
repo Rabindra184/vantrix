@@ -397,10 +397,11 @@ async function main(): Promise<void> {
               /* Said here because nobody chose this password (WantedAdmin), and
                  the first thing the account meets is the step that replaces
                  it: the web app shows "Choose a new password" and nothing else,
-                 and every /v1 route but PUT /v1/me/password answers 403
-                 PASSWORD_CHANGE_REQUIRED until it is done. An operator-chosen
-                 password is not flagged, so this line is not printed for it —
-                 ci.yml's bootstrap steps hold both halves. */
+                 and every route a session could otherwise reach, except
+                 PUT /v1/me/password, answers 403 PASSWORD_CHANGE_REQUIRED until
+                 it is done. An operator-chosen password is not flagged, so this
+                 line is not printed for it — ci.yml's bootstrap steps hold both
+                 halves. */
               ...(admin.mustChangePassword
                 ? [
                     '',
@@ -411,9 +412,13 @@ async function main(): Promise<void> {
               ...(admin.usingDefaultPassword
                 ? [
                     '',
+                    /* No "or redeploy with PERFPORTAL_ADMIN_PASSWORD set": the
+                       account now exists, and bootstrap never re-passwords one
+                       that does, so a redeploy would leave this password in
+                       place. Signing in and changing it is the one thing that
+                       replaces it. */
                     '  !! THIS IS THE PUBLISHED DEFAULT PASSWORD. Anyone who can reach',
-                    '  !! this instance knows it. Sign in and change it now, or redeploy',
-                    '  !! with PERFPORTAL_ADMIN_PASSWORD set to something of your own.',
+                    '  !! this instance knows it. Sign in and change it now.',
                   ]
                 : []),
             ]
