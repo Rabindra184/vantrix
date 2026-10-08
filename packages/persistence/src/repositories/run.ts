@@ -482,15 +482,38 @@ function startedOnFrom(startedAt: Date): Date {
 }
 
 /**
- * Robust to message-text changes in Prisma: keys on the stable error code.
+ * Whether `err` is the `(project_id, idempotency_key)` unique index refusing a
+ * run — the one P2002 an idempotent create may answer with the winner's row.
  *
- * Replicated from apps/api/src/ingest/ingest.service.ts's private helper of
- * the same name rather than imported: apps/api depends on
- * packages/persistence, never the reverse, so importing it across that
- * boundary is not available. Same one-line check, kept in sync by hand.
+ * NARROWED BY TARGET, NOT BY CODE ALONE. `run` carries three unique indexes,
+ * and Prisma reports each P2002's database columns in `meta.target`, measured
+ * against a migrated database:
+ *
+ *   (project_id, idempotency_key)  ["project_id","idempotency_key"]
+ *   (test_id, run_number)          ["test_id","run_number"]
+ *   primary key                    ["id"]
+ *
+ * Matching on `code === 'P2002'` alone read every one of them as an
+ * idempotent replay. Matched as a SET of exactly those two columns — the rule
+ * `isSlugTaken` follows — so a future index that merely includes one of them
+ * is not mistaken for this one, and any other P2002 propagates as the fault it
+ * is. The column names are the database's, not Prisma's field names
+ * (`projectId`, `idempotencyKey`), which would match nothing.
+ *
+ * Duck-typed rather than `instanceof Prisma.PrismaClientKnownRequestError`, as
+ * the code-only check it replaces was: `apps/api` imports this for the bundle
+ * path, and a structural check does not depend on both sides resolving one
+ * copy of `@prisma/client`.
  */
-function isUniqueConstraintViolation(err: unknown): boolean {
-  return typeof err === 'object' && err !== null && 'code' in err && err.code === 'P2002';
+export function isIdempotencyKeyCollision(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  if (!('code' in err) || err.code !== 'P2002') return false;
+  const meta = 'meta' in err ? err.meta : undefined;
+  if (typeof meta !== 'object' || meta === null || !('target' in meta)) return false;
+  const target = meta.target;
+  if (!Array.isArray(target)) return false;
+  const columns = new Set(target.map(String));
+  return columns.size === 2 && columns.has('project_id') && columns.has('idempotency_key');
 }
 
 /**
@@ -667,7 +690,7 @@ export class RunRepository {
       // path and hand it back rather than a 500. If the re-fetch somehow
       // finds nothing, this was not actually an idempotency-key race;
       // rethrow the original error rather than invent a result.
-      if (input.idempotencyKey && isUniqueConstraintViolation(err)) {
+      if (input.idempotencyKey && isIdempotencyKeyCollision(err)) {
         const winner = await this.findByIdempotencyKey(scope, input.idempotencyKey);
         if (winner) return winner;
       }

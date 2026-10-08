@@ -3,6 +3,7 @@ import type { Readable } from 'node:stream';
 import { Inject, Injectable } from '@nestjs/common';
 import { engineOptionsFrom, ingestError } from '@perfportal/core';
 import {
+  isIdempotencyKeyCollision,
   ProjectRepository,
   RunRepository,
   type RunRecord,
@@ -100,12 +101,15 @@ export class IngestService {
       // Lost a concurrent race against another request sharing this
       // idempotency key: the unique index (projectId, idempotencyKey)
       // rejected our insert after we had already durably uploaded `key`.
+      // Only THAT index — `isIdempotencyKeyCollision` matches its two
+      // columns exactly, so a P2002 from any other index on `run` is a fault
+      // and propagates instead of being answered with somebody else's run.
       // The winner's row is the one true answer here — behave exactly like
       // the sequential duplicate path above and hand back its run, not a
       // 500. If the re-fetch somehow finds nothing, this wasn't actually an
       // idempotency-key race; rethrow the original error rather than invent
       // a response.
-      if (metadata.idempotencyKey && isUniqueConstraintViolation(err)) {
+      if (metadata.idempotencyKey && isIdempotencyKeyCollision(err)) {
         const winner = await this.runs.findByIdempotencyKey(scope, metadata.idempotencyKey);
         if (winner) {
           await this.deleteOrphanedBundle(key);
@@ -133,9 +137,4 @@ export class IngestService {
       console.error('failed to delete orphaned bundle after losing idempotency race', key, err);
     }
   }
-}
-
-/** Robust to message-text changes in Prisma: keys on the stable error code. */
-function isUniqueConstraintViolation(err: unknown): boolean {
-  return typeof err === 'object' && err !== null && 'code' in err && err.code === 'P2002';
 }

@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPool, createPrisma, RunRepository } from '../src/index.js';
 import { requireDatabaseUrl, resetDatabase } from './support/db.js';
 
@@ -34,6 +34,10 @@ function liveInput(
 
 beforeEach(async () => {
   await resetDatabase(pool);
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 afterAll(async () => {
@@ -174,6 +178,27 @@ describe('RunRepository live runs', () => {
     expect(a.id).toBe(b.id);
     const rows = await prisma.run.findMany({ where: { projectId } });
     expect(rows).toHaveLength(1);
+  });
+
+  // The concurrent case above does not always reach the catch: when one open
+  // commits before the other checks, the second takes the sequential path and
+  // the catch is never run. This forces the loser's path — the sequential
+  // check is made to miss a row that exists — so the insert meets the REAL
+  // (project_id, idempotency_key) index and its REAL P2002. It is the case
+  // that fails if `isIdempotencyKeyCollision` stops recognising what Prisma
+  // actually reports (spelling the columns as Prisma field names, say),
+  // which a hand-built error in the unit matrix cannot show.
+  it('a lost race answers the winner through the index, not through the sequential check', async () => {
+    const { orgId, projectId } = await seedProject();
+    const repo = new RunRepository(prisma);
+    const winner = await repo.createLive(liveInput(orgId, projectId, { idempotencyKey: 'forced-race' }));
+
+    const lookup = vi.spyOn(repo, 'findByIdempotencyKey').mockResolvedValueOnce(null);
+    const loser = await repo.createLive(liveInput(orgId, projectId, { idempotencyKey: 'forced-race' }));
+
+    expect(lookup).toHaveBeenCalledTimes(2); // the missed check, then the catch's re-fetch
+    expect(loser.id).toBe(winner.id);
+    expect(await prisma.run.count({ where: { projectId } })).toBe(1);
   });
 
   it('markIncomplete is terminal and leaves the verdict unevaluated', async () => {
