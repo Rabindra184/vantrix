@@ -128,9 +128,9 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **237 files / 3843 tests**, it
+`nvm use` first, and if a run reports fewer than **237 files / 3855 tests**, it
 did not run everything — nor did an integration run reporting fewer than
-**215 files / 3328 tests**, an e2e run fewer than **203**, or a
+**215 files / 3329 tests**, an e2e run fewer than **203**, or a
 `pnpm test:e2e:cross` run fewer than **609** (203 on each of three engines).
 (Update those numbers when a sub-project adds suites, or the next reader
 calibrates against a stale floor and a silently-skipped run looks like a
@@ -169,7 +169,15 @@ SIX unit files, all in `apps/web/test` — `useAccess` (27), `NoAccess` (2),
 `administration.spec.ts` and `project-shell.spec.ts` changed inside existing
 cases. Its suites ran on the scratch database `perfportal_experience`, Redis
 db 11 and e2e port 3710 (Ruling P4: another session's worktree held the
-plan's).
+plan's). **Its final fix wave**, after both final reviews, added no file and
+twelve unit cases in eight existing ones — `RunSummary` 3, `ProjectRules` 2,
+`ProjectPackages` 2, and one each in `AssertionBars`,
+`ProjectPackages.access`, `queryClient`, `ProjectTests` and
+`paletteDestinations` — **237 / 3843 to 237 / 3855**. Integration gains the
+one `.ts` case among them (`paletteDestinations`): **215 / 3328 to
+215 / 3329**, which is arithmetic here, and CI's `build` job on the final head
+is what measures it. **e2e stays 203**: the wave's spec edits sit inside
+existing cases.
 
 It makes the web DRAW what PR 1 and PR 2 made the API enforce, and the API
 does not move: the guard's 403 wording now comes from `accessRefusal` in
@@ -222,11 +230,13 @@ rename and delete halves at once) — the row's own gate masked each.
 `ProjectPackages.access.test.tsx` mocks the hook to grant each action alone:
 ungated Upload then fails "delete alone" and "runner:run alone", and the
 ungated armed block fails the rename-drop case alone. **The armed DELETE half
-on its own is still untested there** — the gate is
-`armed.mode === 'rename' ? may.manage : may.delete`, the file has no
-delete-drop case, and ungating only `may.delete` would survive the whole
-suite (below). Add results' picker and launch gates have the same shape, and
-only the pending case tells them apart (below).
+on its own went untested until the final fix wave** — the gate is
+`armed.mode === 'rename' ? may.manage : may.delete`, and the file had no
+delete-drop case. It has one now (allow `packages:delete` and `runner:run`,
+arm Delete, drop `packages:delete`), and ungating only `may.delete` fails it
+alone: 1 of 51 across the two package files, `expected <button …> to be
+null`. Add results' picker and launch gates have the same shape, and only the
+pending case tells them apart (below).
 
 **A 401 MEANS THE SESSION IS OVER WHEREVER IT ARRIVES (Ruling P9).** The plan
 kept both XHR uploads outside the handler; the package upload runs inside a
@@ -234,8 +244,9 @@ kept both XHR uploads outside the handler; the package upload runs inside a
 like any other. Only `BundleUpload`, a bare XHR from an event handler, stays
 outside and shows the server's sentence inline. **And a handler that does
 more than navigate can hang the suite:** widened to invalidate everything
-else on a 401, it ran 401, invalidate, refetch, 401 as an unbounded microtask
-loop, and vitest never reported.
+else on a 401, it hung and vitest never reported — read as 401, invalidate,
+refetch, 401 in an unbounded microtask loop, a mechanism inferred from the
+code rather than traced.
 
 **AN ALWAYS-MOUNTED LIVE REGION MUST NOT CARRY ITS MESSAGE'S LAYOUT (Ruling
 P14).** Below `lg` the rail is one `overflow-x-auto` strip and its message
@@ -283,7 +294,7 @@ output to files and reading only tails.
       projects.isSuccess for data !== undefined            SURVIVED 15/15 until the case read one render
   T4  the 401 check dropped (any status)                   the 403 case alone
       no MutationCache handler                             the mutation case alone
-      invalidate everything on a 401                       HUNG — the unbounded loop above
+      invalidate everything on a 401                       HUNG — the loop read above
   T5  visibleSections returns every section                12, shell and palette, the source scan among them
       the header launch drawn for everyone                 the Viewer row and the pending case
   T7  RoleChange never moves the caret after a Save        five, Members' role case among them
@@ -291,11 +302,21 @@ output to files and reading only tails.
   T9  Upload ungated                                       SURVIVED the role cases; the stand-in's "delete alone"
                                                            and "runner:run alone"
       the armed block ungated (rename and delete halves)   SURVIVED the role cases; the stand-in's rename-drop
-                                                           case alone (the delete half alone: no case)
+                                                           case alone (the delete half alone: FW below)
   T11 bearerAuth back on startRunnerRun                    openapi 1 of 32: "must not narrow to one credential"
       canEdit = true on ProjectRules                       the Viewer journey's SLA rules step: expected 0, received 1
       Members Save never sends                             2.0 m timeout; 19.7 s once the wait was bounded
       the rail message wrapper back to shrink-0            the no-projects journey at ratio 0.5548
+  FW  the Summary passing canEditRules whatever access     the Viewer seam case alone (RunSummary, 1 of 13)
+      the Configure link drawn without canEditRules        both non-editor cases, the bar's and the Summary's
+      the test page's rules <h2> gated on rules:edit       the Viewer heading case alone (1 of 81)
+      the armed delete half alone (may.delete -> true)     the stand-in's delete-drop case alone (1 of 51)
+      the MutationCache guard dropped                      the re-sign-in case alone: expected null to equal s2
+      ...the guard inverted                                it, and "sends the reader to sign-in from a mutation"
+      the skeleton at columns={6} / at a fixed 5           the Viewer case, 6 vs 5 / the admin case, 5 vs 6
+      ProjectTests' second sentence for every reader       the Viewer-then-Member case alone
+      the palette guard's old valueImports regex           the new case: ['./b'] for three loads
+      an export counted without its `from`                 the new case and the real projectSections scan
 ```
 
 **WHAT WAS RUN**, on Node v22.19.0, every total predicted first from
@@ -318,12 +339,31 @@ per-file `vitest list` deltas and `playwright test --list`:
   - `PERFPORTAL_E2E_PORT=3710 pnpm test:e2e --workers=2` read back `Running
     203 tests using 2 workers` twice. At `2995d2c`: 199 passed, 4 failed —
     `acceptance.spec.ts`' keyboard-and-chart-table `toBeFocused`
-    intermittent, the two journey test defects above, and P14. On `cbb6a6e`:
+    intermittent, the exact-name defect above (met twice, Member and
+    Manager), and P14. On `cbb6a6e`:
     **203 passed, exit 0**, no flaky case (load 10.4 at start). `--list`
     collects **203**, and **609** with `PERFPORTAL_E2E_BROWSERS=all`.
   - Swap stayed 93-98% used through every suite, by other processes; the
     integration timeout is that shape, and is recorded rather than chased.
-  - The three-engine dispatch on `cbb6a6e` is run 37877419943.
+  - **CI run 37877419943 on `cbb6a6e7` passed every job**, read off its own
+    logs. `build`: unit **237 / 3843** (3842 passed, 1 skipped — loopback's
+    macOS case), integration **215 / 3328** (3327 passed, 1 skipped, zero
+    failures — so the local fold-owner timeout above was the machine) and
+    `test:e2e` **203 passed**. `e2e-cross-browser`: `Running 609 tests using
+    1 worker`, **600 passed, 9 skipped, 0 failed, 0 flaky** (25.2 m). Each
+    the prediction exactly.
+  - **The final fix wave** (`a3b0313..`, this entry's last commits), on the
+    same Node and stores, each total predicted first: `pnpm build`,
+    `typecheck` and `lint` exit 0 by their own exit codes; `test:unit`
+    **237 / 3855**, exit 0, zero `Errors` lines (load 9.99 at start);
+    `PERFPORTAL_E2E_PORT=3710 pnpm test:e2e --workers=2` at `6b07f3f` (the
+    commit after it changes `CLAUDE.md` alone) read back `Running 203 tests
+    using 2 workers` and **203 passed, exit 0**, no flaky case, in 4.2 m
+    (load 13.4 at start, 22 GiB of disk free). `test:integration` was not
+    run: its config collects `.ts` test
+    files only, and the wave's one is `paletteDestinations` (one case, so
+    **215 / 3329** by arithmetic). CI's `build` job on the final head is
+    what measures it, and `git diff --check 9f73f4be` exits 0.
 
 **THE REAL RUN, ON A COPY OF THE DEVELOPER DATABASE**, which was only read:
 `pg_dump perfportal` into `perfportal_pr3_real` (28 runs, 5 users, 25 tokens,
@@ -369,7 +409,8 @@ the COPY.
     1280x900 and counted what each page draws. Every cell matched Tasks 5, 8
     and 9's tables, and no control was found without a gate. "Rules" is New
     rule, Enable/Disable and the Actions column; "packages" is New package
-    and each row's menu; "New project" is `/runs`' link and the
+    and each row's menu; Members' "Add, roles" is Add member, each row's
+    role and its Remove from project; "New project" is `/runs`' link and the
     `/projects/_new` form, which answers the others with `NoAccess`:
 
 ```
@@ -400,8 +441,9 @@ files deleted, and the developer database still read 28 runs, 5 users, 25
 tokens, 35 migrations, the same credential fingerprint and no
 `project_member` table.
 
-**RULINGS, EACH A DECISION RATHER THAN AN OVERSIGHT** (the ledger's P1-P15
-and the user's decisions of 2026-10-08):
+**RULINGS, EACH A DECISION RATHER THAN AN OVERSIGHT** (the ledger's P1-P15,
+P3 lapsing when Task 7 added the Members route, and the user's decisions of
+2026-10-08):
 
   - Admin first: `GET /v1/projects` gives an admin their membership row's
     role or `null`, and the web reads `role` only for a non-admin.
@@ -438,26 +480,26 @@ and the user's decisions of 2026-10-08):
 
 **KNOWN AND LEFT, EACH A DECISION RATHER THAN AN OVERSIGHT:**
 
-  - Open at this entry, carried to the final review: the `MutationCache`
-    handler acts on a mutation no longer in the cache (`Login` clears without
-    cancelling, so a 401 landing after a re-sign-in would null the NEW
-    session; Ruling P10) and four comments still describe a 401 drawn in
-    place; `ProjectTests`' empty state names New on-prem run and Add results
-    to a Viewer who has neither; `ProjectPackages`' skeleton declares six
-    columns for a five-column table; two trailing-whitespace lines in
-    `NewProject.tsx` (`git diff --check` exits 2); the palette source guard's
-    docstring claims more than its two-file check.
-  - A reader below `rules:edit` on a test's page has no rules heading (the
-    removed card title was it); a role dropping under an open page discards a
-    just-minted token secret and drops a focused control's caret to the body;
-    the phone's run-details note cell stays an empty 12 px gap below
-    `run:note`.
+  - FIXED BY THE FINAL FIX WAVE, which this entry once listed as open: the
+    `MutationCache` handler acted on a mutation no longer in the cache
+    (`Login` clears without cancelling, so a 401 landing after a re-sign-in
+    nulled the NEW session; Ruling P10) — it acts only on one the cache still
+    holds; four comments described a 401 drawn in place; `ProjectTests`'
+    empty state named New on-prem run and Add results to a Viewer;
+    `ProjectPackages`' skeleton declared six columns for a five-column
+    table; two trailing-whitespace lines in `NewProject.tsx`; the palette
+    source guard's docstring claimed more than its two-file check, and its
+    regex misread a side-effect import; a reader below `rules:edit` on a
+    test's page had no rules heading (one `<h2>` above the tables now, every
+    role); the armed-DELETE half of Packages' mode gate was untested under
+    the stand-in; and the run Summary offered every reader, a Viewer
+    included, "adding one affects future runs" and a Configure SLA rules
+    link (now `rules:edit`'s, through a required `canEditRules`).
+  - A role dropping under an open page discards a just-minted token secret
+    and drops a focused control's caret to the body; the phone's run-details
+    note cell stays an empty 12 px gap below `run:note`.
   - Add results' picker and launch gates are told apart only by the pending
     case (both ask Member).
-  - The armed-DELETE half of Packages' mode gate (`ProjectPackages.tsx`,
-    `armed.mode === 'rename' ? may.manage : may.delete`) is untested under
-    the stand-in: `ProjectPackages.access.test.tsx` has a rename-drop case and
-    no delete-drop case, so ungating only `may.delete` survives the suite.
   - `BundleUpload` stays outside the 401 handler by design (Ruling P9); a
     page's own 401 branch may render for one task before `AuthGate`
     redirects (unverified in a browser).
@@ -469,6 +511,29 @@ and the user's decisions of 2026-10-08):
   - OpenAPI: twelve session-only operations say the session requirement
     twice, six admin descriptions keep orphaned short literals, and the
     opener check is one-directional.
+  - The final reviews' LEAVE triage, each judged pre-PR-3 or a cost already
+    accepted: the repeated per-row controls on rule rows and runner-job rows
+    share one accessible name across rows (pre-PR-3); two primary
+    buttons while a Rename is open; `ProjectShell` draws its `ErrorState`
+    over data it kept; every gated mount refetches `/auth/get-session` and
+    `/v1/projects` (Ruling P8 accepted it; `refetchOnMount: false` on the
+    session observer is the suggested fix, LEFT by Ruling P19 because both
+    reviews and every suite measured the current behaviour); a role drop's
+    `NoAccess` is not announced (mounted holding its text); a 401 from a
+    proxy in front of the API ends the session too; `ProjectPackages`
+    keeps a local `Problem`; Administration's panel leaves the caret on the
+    page after a save whose re-read fails, and no case covers a refused
+    Remove from project or Members' loading skeleton's column count; the
+    palette offers a project's five ungated pages for a project the reader
+    cannot see.
+  - Two Task 11 test minors are left: the Viewer's "no New on-prem run"
+    rests on the shell's launch testid alone, and
+    `project-shell.spec.ts` reads every heading on the Members page without
+    first waiting for content unique to it.
+  - New on-prem run's status card sits in the wide column while access is
+    unknown and moves right once it is known: `xl:col-start-2` would hold
+    it, but `Card` takes no `className`, and the review offered that fix
+    only if it was a class alone.
 
 The project-access administration branch (`feat/project-access-admin`, PR 2
 of `docs/superpowers/specs/2026-10-07-project-access-design.md`, plan
@@ -558,7 +623,11 @@ reset ends the session — a 401, where a surviving session would get 403
 `PASSWORD_CHANGE_REQUIRED` and read "change it again" rather than "signed out
 everywhere" — `admin.integration` already decides at the API. What only the
 journey decides is that the person's OPEN page carries that 401 on its next
-request, and shows it (its presence, never its words: those are the API's). A
+request, and shows it (its presence, never its words: those are the API's).
+**[Corrected later: since PR 3 the open page does not show it — a 401 from
+any request ends the session in the app and sends the reader to
+`/login?next=…`, which `administration.spec.ts` asserts now. See the
+project-access experience entry.]** A
 second project with a run of its own is seeded, because "the rail lists only
 Checkout" and "the run list is one row" are true of a product that filters
 nothing. And AuthGate's two routes to the step — the session flag, and a probe
