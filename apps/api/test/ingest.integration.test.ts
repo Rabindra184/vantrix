@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Queue } from 'bullmq';
 import request from 'supertest';
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { RunRepository } from '@perfportal/persistence';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createTestApp, type TestContext } from './support/app.js';
 
 const FIXTURE_LOG = fileURLToPath(
@@ -27,6 +28,7 @@ beforeAll(() => {
 let ctx: TestContext;
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await ctx?.close();
 });
 
@@ -222,6 +224,35 @@ describe('POST /v1/runs', () => {
     expect(first.status).toBeLessThan(300);
     expect(second.status).toBeLessThan(300);
     expect(first.body.id).toBe(second.body.id);
+    expect(await ctx.prisma.run.count()).toBe(1);
+  });
+
+  // The concurrent case above reaches IngestService's catch only when both
+  // posts pass the sequential check before either commits, which it does not
+  // promise. This forces the loser's path: the sequential check is made to
+  // miss the row the first post wrote, so the second insert meets the REAL
+  // (project_id, idempotency_key) index. It fails if the catch stops
+  // recognising Prisma's actual P2002 for that index — the helper now matches
+  // its columns exactly, so a misspelt column set would turn this into a 500.
+  it('a POST that loses the race through the index answers the winner', async () => {
+    await drainQueue();
+    ctx = await createTestApp();
+    const post = () =>
+      request(ctx.app.getHttpServer())
+        .post('/v1/runs')
+        .set('Authorization', `Bearer ${ctx.ingestToken}`)
+        .field('metadata', JSON.stringify({ tool: 'gatling', waitMs: 0, idempotencyKey: 'forced-race' }))
+        .attach('bundle', bundle, 'bundle.tgz');
+
+    const first = await post();
+    expect(first.status).toBeLessThan(300);
+
+    const lookup = vi.spyOn(RunRepository.prototype, 'findByIdempotencyKey').mockResolvedValueOnce(null);
+    const second = await post();
+
+    expect(lookup).toHaveBeenCalledTimes(2); // the missed check, then the catch's re-fetch
+    expect(second.status).toBeLessThan(300);
+    expect(second.body.id).toBe(first.body.id);
     expect(await ctx.prisma.run.count()).toBe(1);
   });
 

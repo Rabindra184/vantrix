@@ -128,9 +128,9 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **237 files / 3855 tests**, it
+`nvm use` first, and if a run reports fewer than **238 files / 3860 tests**, it
 did not run everything — nor did an integration run reporting fewer than
-**215 files / 3329 tests**, an e2e run fewer than **203**, or a
+**216 files / 3336 tests**, an e2e run fewer than **203**, or a
 `pnpm test:e2e:cross` run fewer than **609** (203 on each of three engines).
 (Update those numbers when a sub-project adds suites, or the next reader
 calibrates against a stale floor and a silently-skipped run looks like a
@@ -150,6 +150,81 @@ still Chromium and still 102; `pnpm test:e2e:cross` was 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The ingest-idempotency-p2002-target branch
+(`fix/ingest-idempotency-p2002-target`) added ONE unit file,
+`packages/persistence/test/idempotency-collision.test.ts` (5), moving unit from
+**220 / 3420 to 221 / 3425** on the tree it was cut from. Integration gains that file plus one forced-race
+case each in `run-live.integration.test.ts` and `ingest.integration.test.ts`,
+moving it from **203 / 3058 to 204 / 3065**. **e2e stays 197.**
+
+**BOTH IDEMPOTENT CREATES READ ANY P2002 AS A LOST IDEMPOTENCY RACE.** The
+bundle upload (`IngestService.accept`) and the live open
+(`RunRepository.createLive`) each kept a private `isUniqueConstraintViolation`
+that checked `code === 'P2002'` and nothing else. But `run` carries three
+unique indexes. Prisma names each one's DATABASE columns in `meta.target`,
+measured with a throwaway probe on a migrated scratch database:
+
+```
+  (project_id, idempotency_key)  ["project_id","idempotency_key"]
+  (test_id, run_number)          ["test_id","run_number"]
+  primary key                    ["id"]
+```
+
+`isIdempotencyKeyCollision` (exported from `run.ts`) matches exactly the first
+set, the rule `isSlugTaken` already follows. The re-fetch-or-rethrow after the
+catch was already a backstop, and neither create can set
+`test_id`/`run_number` or choose its id today, so this closes a narrow hazard
+rather than a reachable bug. The API's copy had said it could not import the
+helper across the package boundary. That is true only in the other direction,
+and the copy's "kept in sync by hand" is how the two would have drifted.
+
+**THE CONCURRENT CASES DO NOT PROVE THE CATCH; THE FORCED ONES DO.** "Two
+concurrent opens agree on one run" reaches the catch only when both requests
+pass the sequential check before either commits, which nothing guarantees. The
+new cases make `findByIdempotencyKey` miss an existing row once, so the insert
+meets the REAL index and its REAL P2002. Red-verified, one replacement each:
+
+  - Columns spelt as Prisma field names (`projectId`, `idempotencyKey`): both
+    forced-race cases fail. The P2002 is rethrown, and the lookup is called
+    once, not twice.
+  - The target check dropped (the old code-only rule): 4 of the 5 unit cases
+    fail.
+
+**WHAT WAS RUN** on Node 22, against a scratch database (`perfportal_p2002`)
+and Redis db 12:
+
+  - `build`, `typecheck` and `lint` exit 0.
+  - `test:unit` **221 / 3425**, zero `Errors` lines.
+  - `test:integration` collected **204 / 3065**, both the predictions. It
+    exited 1 on ONE case, `org-tests.integration`'s whitespace `q`, a P1001
+    "Can't reach database server" at a load spike of 46. That file then
+    passed 16 of 16 alone.
+  - `pnpm test:e2e --workers=2` **197 passed**, exit 0.
+
+**PROJECT ACCESS PR 2 AND PR 3 MERGED FIRST, AND THIS BRANCH SUMS THEIR
+FLOORS.** It was cut from the tree after PR 1, so its 221 / 3425 and
+204 / 3065 describe a tree that no longer exists. On the merged tree it is
+PR 3's floors plus its own: unit **237 / 3855 to 238 / 3860**, integration
+**215 / 3329 to 216 / 3336**, and **e2e stays 203** (609 on three engines).
+The conflict was `CLAUDE.md` alone. On the merged tree, on Node v22.19.0:
+`pnpm build`, `typecheck` and `lint` exit 0 by their own exit codes;
+`test:unit` **238 / 3860**, exit 0, zero `Errors` lines, the prediction
+exactly; and the three files this branch touches, run alone under the
+integration config against a scratch database (`perfportal_p2002`, migrated
+from scratch) and Redis db 12, **3 / 36**, exit 0. The full
+`test:integration` and `test:e2e` were not run locally: the machine sat at a
+load of 17 to 36 with 91% of swap in use and about 3,800 free pages, under
+other projects' suites. CI's `build` job on the merge is what measures
+**216 / 3336** and **203**.
+
+**PR 2's `isUniqueViolationOn` AND THIS `isIdempotencyKeyCollision` ARE ONE
+RULE, AND BOTH STAY.** Each compares `meta.target` to its index's columns as a
+SET. The API's helper is generic over the columns and serves the members
+route; this one names `run`'s idempotency index, lives in persistence because
+`run` does, and is what `createLive` needs — persistence cannot import from the
+API. So there is one definition per INDEX, and the upload imports the one for
+its index rather than spelling the columns a second time.
 
 The project-access experience branch (`feat/project-access-experience`, PR 3
 of `docs/superpowers/specs/2026-10-07-project-access-design.md`, plan
@@ -857,6 +932,7 @@ fingerprint and no `project_member` table.
     icon-only below `sm`; `AccountPassword` has no unit test.
   - Offered separately: `ingest.service.ts` and `run.ts` read ANY P2002 as an
     idempotent replay.
+    **[Done by the ingest-idempotency-p2002-target branch, the entry above.]**
 
 The project-access branch (`feat/project-access`, PR 1 of
 `docs/superpowers/specs/2026-10-07-project-access-design.md`, plan
