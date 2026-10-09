@@ -84,9 +84,17 @@ that lives on a load generator, often a shared and disposable host, should
 be able to do exactly one thing.
 
 The on-prem runner's job routes (`/v1/projects/{slug}/runner/…`) take either
-credential: a token with `runner`, or a signed-in session with the Member role
-or above in the project, or an admin's. The **New on-prem run** page queues,
-cancels and retries a job with the session.
+credential, and which one depends on the route:
+
+- Queuing, cancelling and retrying a job (`POST …/runner/runs`,
+  `POST …/runner/runs/{jobId}/cancel`, `POST …/runner/runs/{jobId}/retry`)
+  take a token with `runner`, or a signed-in session with the Member role or
+  above in the project, or an admin's. The **New on-prem run** page does all
+  three with the session.
+- Listing jobs and reading a job's logs (`GET …/runner/runs`,
+  `GET …/runner/runs/{jobId}/logs`) are reads: they take a token with `read`,
+  or a session with any role in the project, or an admin's. A token carrying
+  `runner` alone is refused them.
 
 ### Which credential can send a run
 

@@ -338,10 +338,14 @@ the COPY.
     ("Starting, cancelling and retrying runs needs the Member role…"), a note
     ("Editing run notes needs the Member role…"), the tokens list and the
     test's rename ("Managing API tokens…" and "Renaming and deleting tests
-    needs the Manager role…", and the same two for a Member), adding a
-    member (`ADMIN_REQUIRED`, "Managing members needs an admin." / "Ask an
-    admin to do this."), creating a project and `/v1/admin/users` ("Creating
-    projects…", "Managing users needs an admin.").
+    needs the Manager role…"), adding a member (`ADMIN_REQUIRED`, "Managing
+    members needs an admin." / "Ask an admin to do this."), creating a
+    project and `/v1/admin/users` ("Creating projects…", "Managing users
+    needs an admin."). A Member got the same tokens refusal. Its PATCH and
+    DELETE of a test went to the slug `null` (a bug in the throwaway
+    script), so all they show is the guard refusing at the PROJECT, before
+    any test lookup, with the Manager sentence; neither was re-run on a real
+    test.
   - The members routes: a Viewer and a Manager read the list (200); a
     Manager's add, role change and removal answered `ADMIN_REQUIRED`, all
     three. A Member wrote a note (200) and read the runner jobs; a Manager
