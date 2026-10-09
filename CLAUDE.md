@@ -128,10 +128,10 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **231 files / 3601 tests**, it
+`nvm use` first, and if a run reports fewer than **237 files / 3843 tests**, it
 did not run everything — nor did an integration run reporting fewer than
-**215 files / 3261 tests**, an e2e run fewer than **198**, or a
-`pnpm test:e2e:cross` run fewer than **594** (198 on each of three engines).
+**215 files / 3328 tests**, an e2e run fewer than **203**, or a
+`pnpm test:e2e:cross` run fewer than **609** (203 on each of three engines).
 (Update those numbers when a sub-project adds suites, or the next reader
 calibrates against a stale floor and a silently-skipped run looks like a
 pass.)
@@ -150,6 +150,308 @@ still Chromium and still 102; `pnpm test:e2e:cross` was 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The project-access experience branch (`feat/project-access-experience`, PR 3
+of `docs/superpowers/specs/2026-10-07-project-access-design.md`, plan
+`docs/superpowers/plans/2026-10-08-project-access-pr3-experience.md`) added
+SIX unit files, all in `apps/web/test` — `useAccess` (27), `NoAccess` (2),
+`queryClient` (5), `AdminFields` (17), `ProjectMembers` (18) and
+`ProjectPackages.access` (6) — and 167 cases elsewhere
+(`packages/contracts/test/access` 32, `apps/api/test/access` 14,
+`paletteDestinations` 16, `RunShell` 10, eight each in `ProjectShell`,
+`ProjectRules`, `ProjectSetup` and `Home`, seven each in `AttentionCard`,
+`NewRunnerRun` and `ProjectPackages`, and 42 across eleven more):
+**231 / 3601 to 237 / 3843**. Integration gains no file and 67 cases — the
+`.ts` unit cases above (`contracts/access` 32, `api/access` 14,
+`paletteDestinations` 16, `paths` 2), `access-routes.integration` 2 and
+`openapi.integration` 1: **215 / 3261 to 215 / 3328**. **e2e rises to 203**
+(`apps/web/e2e/project-roles.spec.ts`, 5), **609** on three engines;
+`administration.spec.ts` and `project-shell.spec.ts` changed inside existing
+cases. Its suites ran on the scratch database `perfportal_experience`, Redis
+db 11 and e2e port 3710 (Ruling P4: another session's worktree held the
+plan's).
+
+It makes the web DRAW what PR 1 and PR 2 made the API enforce, and the API
+does not move: the guard's 403 wording now comes from `accessRefusal` in
+`@perfportal/contracts` (byte-identical, and the one builder both sides use),
+and the OpenAPI document changed. `useProjectAccess`
+(`apps/web/src/access/useAccess.ts`) answers `{ known, can(action) }` for a
+project from the session and `GET /v1/projects`' `role`, admin first. The
+project shell draws five sections for a Viewer, six for a Member (Add
+results), seven for a Manager or an admin (API tokens), and its header's New
+on-prem run only with `runner:run`. A **Members** section
+(`/projects/:slug/members`, `ProjectMembers.tsx`) lists a project's people to
+any role and lets an admin add, re-role and remove them. Rules, tests, tokens,
+upload, the runner, packages and run notes draw no control below the action's
+role, and a page reached by its address answers with `NoAccess`: the API's
+own two sentences. A person on no project reads `You're not on any project
+yet. Ask an admin to add you.` in the rail and on Home, and New project is an
+admin's. A 401 from ANY query or mutation ends the session once and sends the
+reader to `/login?next=<where they were>` (`apps/web/src/queryClient.ts`).
+Role selectors in Members and Administration are pick-then-Save, and an admin
+removing their OWN admin flag confirms inline (`Remove your admin rights? You
+lose Administration at once.`). The 45 `@Requires` operations in the OpenAPI
+document open with the role a session needs
+(`apps/api/src/openapi/access-sentence.ts`), and `startRunnerRun`,
+`cancelRunnerRun` and `retryRunnerRun` no longer narrow their security to a
+bearer token (Ruling P5): the New on-prem run page calls them with a cookie.
+
+**UNKNOWN IS NOT REFUSED, AND UNKNOWN IS WIDER THAN PENDING.** A gated
+control renders only when access is KNOWN and allows it; `NoAccess` only when
+access is known and refuses. Known needs the session and, for a non-admin,
+`GET /v1/projects` data — and a list that failed with no data, or an item
+with no `role` field (an API older than the field, Ruling P7), is unknown
+too: a `NoAccess` sentence over a deploy-window response would be a false
+claim. Nor is the answer a spinner until known (Ruling P8): `!known` covers a
+failure that never resolves, so the page hides its gated controls and renders
+the rest.
+
+**A CACHE READ AND A RENDER ARE DIFFERENT MOMENTS.** The hook's refetch case
+checked `client.getQueryState(...).status === 'error'` and then read
+`result.current` — still the render from before the refetch, because TanStack
+notifies on its own scheduler — so a mutation making the hook forget its
+answer when a refetch FAILED survived, 15 of 15. The case reads the list's own
+`useQuery` state in the same render as the access answer now, and that
+mutation fails it.
+
+**TWO GATES ASKING THE SAME ROLE CANNOT BE TOLD APART BY ROLE FIXTURES.**
+Upload and Rename need `packages:manage` and Delete `packages:delete`, both
+Member, so ungating Upload, or leaving the armed-delete block ungated,
+SURVIVED every Viewer and Member case: the row's own gate masked each.
+`ProjectPackages.access.test.tsx` mocks the hook to grant each action alone,
+and both mutations fail there. Add results' picker and launch gates have the
+same shape, and only the pending case tells them apart (below).
+
+**A 401 MEANS THE SESSION IS OVER WHEREVER IT ARRIVES (Ruling P9).** The plan
+kept both XHR uploads outside the handler; the package upload runs inside a
+`useMutation` and rejects with a `ProblemError`, so its 401 ends the session
+like any other. Only `BundleUpload`, a bare XHR from an event handler, stays
+outside and shows the server's sentence inline. **And a handler that does
+more than navigate can hang the suite:** widened to invalidate everything
+else on a 401, it ran 401, invalidate, refetch, 401 as an unbounded microtask
+loop, and vitest never reported.
+
+**AN ALWAYS-MOUNTED LIVE REGION MUST NOT CARRY ITS MESSAGE'S LAYOUT (Ruling
+P14).** Below `lg` the rail is one `overflow-x-auto` strip and its message
+wrapper was `shrink-0` with no width, so at 375px the no-projects sentence
+was 55% in view (`toBeInViewport` ratio 0.5548; the strip 533 px wide in a
+375 px viewport). The first proposed fix put `max-lg:min-w-40` on the
+WRAPPER — the always-mounted live region — which would hold every phone's
+strip open by 160 px of blank space with nothing to say. The floor is on the
+`<p>`, which exists only while there is a message: an admin's empty wrapper
+measures 0 px, and the sentence wraps to three lines ending at 367 of 375.
+
+**`exact: true` MATCHES THE ACCESSIBLE NAME, AND AN `aria-label` REPLACES THE
+VISIBLE TEXT.** Two journeys clicked the tests table's link as
+`{ name: 'Payments sweep', exact: true }`; its name is `View test Payments
+sweep`, so the locator matched nothing. **And a test's page is OUTSIDE the
+project shell** — a breadcrumb, no `Project sections` strip — so a journey
+clicking a section tab from there finds none.
+
+**AN UNBOUNDED `waitForResponse` TURNS A MISSING REQUEST INTO A WHOLE-TEST
+TIMEOUT, REPORTED BY THE `finally`.** With the Members Save broken
+(`onSave={() => undefined}`) the admin journey failed as a 2.0-minute test
+timeout reading `browserContext.close: Target page… closed` — a failure that
+named nothing. With `{ timeout: 15_000 }` on the PATCH wait the same mutation
+fails in 19.7 s at `page.waitForResponse: Timeout 15000ms exceeded`, on the
+line that waited.
+
+**`playwright test --list` NEEDS `DATABASE_URL` TOO.** `fixtures.ts` throws
+at load without it, and `--list` then reports `Total: 0 tests` — which reads
+as a suite that lost every spec rather than a missing variable. Export the
+scratch database before counting the floor.
+
+**AND THE FIRST TASK 11 IMPLEMENTER DIED OF A FULL CONTEXT, THEN THE
+CONTROLLER DID.** It had stopped at a full host disk (recorded beside the
+inode lesson below) and then died on "Prompt is too long". The remainder ran
+as two fresh implementers in the same worktree (Ruling P15: the whole
+remainder in one context is what exhausted the first), each sending suite
+output to files and reading only tails.
+
+**RED-VERIFIED** (the tasks' own, about 140, are in the SDD task reports):
+
+```
+  T2  createProjectSlaRule given the rules:read sentence  the opener case, naming the operation
+      the walk reads @Requires from a missing key          the floor: expected +0 to be 45
+  T3  `known` without its session check                    "knows nothing while the session is pending"
+      projects.isSuccess for data !== undefined            SURVIVED 15/15 until the case read one render
+  T4  the 401 check dropped (any status)                   the 403 case alone
+      no MutationCache handler                             the mutation case alone
+      invalidate everything on a 401                       HUNG — the unbounded loop above
+  T5  visibleSections returns every section                12, shell and palette, the source scan among them
+      the header launch drawn for everyone                 the Viewer row and the pending case
+  T7  RoleChange never moves the caret after a Save        five, Members' role case among them
+      a shared display name never brings its email         five: Administration's W6 cases and Members'
+  T9  Upload ungated; the armed-delete block ungated       SURVIVED the role cases; fail under the stand-in
+  T11 bearerAuth back on startRunnerRun                    openapi 1 of 32: "must not narrow to one credential"
+      canEdit = true on ProjectRules                       the Viewer journey's SLA rules step: expected 0, received 1
+      Members Save never sends                             2.0 m timeout; 19.7 s once the wait was bounded
+      the rail message wrapper back to shrink-0            the no-projects journey at ratio 0.5548
+```
+
+**WHAT WAS RUN**, on Node v22.19.0, every total predicted first from
+per-file `vitest list` deltas and `playwright test --list`:
+
+  - On `cbb6a6e`: `pnpm build`, `typecheck` and `lint` exit 0 by their own
+    exit codes; `test:unit` **237 / 3843**, exit 0, zero `Errors` lines (load
+    5.11 / 9.98).
+  - `test:integration` at `2995d2c` (every later commit touches `.tsx` files
+    and an e2e spec alone, which that config never runs) COLLECTED
+    **215 / 3328** and exited 1 on ONE case, a timeout with no assertion
+    about a value: `fold-owner.integration`'s "folds correctly when chunks
+    are smaller than a single record, across several ticks", `Test timed out
+    in 60000ms`, the file taking 145 s at a load of 10.8 mid-run. It started
+    at load 8.80 / 9.56 / 11.84 with 3,559 free pages and 25,069 of 25,600 MB
+    of swap in use. Nothing under `apps/worker` or
+    `packages/{persistence,statistics,storage}` differs from `main`; alone,
+    at load 6.45, it passed **46 / 46** — the case and shape PR 2's final
+    wave recorded.
+  - `PERFPORTAL_E2E_PORT=3710 pnpm test:e2e --workers=2` read back `Running
+    203 tests using 2 workers` twice. At `2995d2c`: 199 passed, 4 failed —
+    `acceptance.spec.ts`' keyboard-and-chart-table `toBeFocused`
+    intermittent, the two journey test defects above, and P14. On `cbb6a6e`:
+    **203 passed, exit 0**, no flaky case (load 10.4 at start). `--list`
+    collects **203**, and **609** with `PERFPORTAL_E2E_BROWSERS=all`.
+  - Swap stayed 93-98% used through every suite, by other processes; the
+    integration timeout is that shape, and is recorded rather than chased.
+  - The three-engine dispatch on `cbb6a6e` is run 37877419943.
+
+**THE REAL RUN, ON A COPY OF THE DEVELOPER DATABASE**, which was only read:
+`pg_dump perfportal` into `perfportal_pr3_real` (28 runs, 5 users, 25 tokens,
+35 migrations, no `project_member` table), then `prisma migrate deploy`
+(`20261007120000_project_access` and `20261008120000_must_change_password`:
+all five users admins, none flagged, `project_member` empty). The API and
+worker from this checkout's `dist` on :3720, Redis db 2 and a scratch bucket;
+bootstrap, with a password read from a private file, made a sixth admin on
+the COPY.
+
+  - That admin's `GET /v1/projects` listed all four projects with
+    `role: null`: an admin with no membership row. Through the admin routes it
+    created a Viewer and a Member of `gatling-demo`, a person on no project,
+    and a Manager it then added through `POST /v1/projects/gatling-demo/members`
+    (201). Each signed in to 403 `PASSWORD_CHANGE_REQUIRED`, changed the
+    password (204), and then read `gatling-demo` alone with their role — the
+    person on no project an empty list.
+  - Every refusal was 403 in `accessRefusal`'s words. A Viewer: authoring a
+    rule (`ROLE_REQUIRED`, "Editing SLA rules needs the Member role in this
+    project." / "Ask an admin to change your role."), starting a runner run
+    ("Starting, cancelling and retrying runs needs the Member role…"), a note
+    ("Editing run notes needs the Member role…"), the tokens list and the
+    test's rename ("Managing API tokens…" and "Renaming and deleting tests
+    needs the Manager role…", and the same two for a Member), adding a
+    member (`ADMIN_REQUIRED`, "Managing members needs an admin." / "Ask an
+    admin to do this."), creating a project and `/v1/admin/users` ("Creating
+    projects…", "Managing users needs an admin.").
+  - The members routes: a Viewer and a Manager read the list (200); a
+    Manager's add, role change and removal answered `ADMIN_REQUIRED`, all
+    three. A Member wrote a note (200) and read the runner jobs; a Manager
+    renamed the test and back (200, 200) and read the tokens (200). The
+    person on no project got the missing project's own 404 for its members,
+    its tests and a run, and an empty run list. After `POST /auth/sign-out`
+    the same cookie answered 401 `UNAUTHENTICATED`.
+  - `/v1/openapi.json` served 58 operations, 45 opening with the role
+    sentence (18 any role, 12 Member, 5 Manager, 10 admin), and the three
+    runner job operations carried no security override.
+  - A throwaway Playwright script (not committed) signed in as each at
+    1280x900 and counted what each page draws. Every cell matched Tasks 5, 8
+    and 9's tables, and no control was found without a gate. "Rules" is New
+    rule, Enable/Disable and the Actions column; "packages" is New package
+    and each row's menu; "New project" is `/runs`' link and the
+    `/projects/_new` form, which answers the others with `NoAccess`:
+
+```
+                      admin       Manager     Member      Viewer      no project
+  section tabs        7           7           6           5           not found
+  header launch       yes         yes         yes         no          -
+  rules               yes         yes         yes         none        -
+  Rename, Delete test yes         yes         none        none        -
+  Add results         cards       cards       cards       NoAccess    -
+  New on-prem run     form        form        form        NoAccess    -
+  packages            yes         yes         yes         none        -
+  API tokens          Create      Create      NoAccess    NoAccess    -
+  Members             Add, roles  read only   read only   read only   -
+  a run's note        Edit        Edit        Edit        read only   -
+  New project         yes         (unread)    no          (unread)    no
+```
+
+  - At 375 px the no-projects sentence ended at 367 of 375 and the strip
+    measured 375 / 375. Disabling the Viewer (200) while their SLA rules page
+    was open, then clicking Runs, landed them on
+    `/login?next=%2Fprojects%2Fgatling-demo%2Fruns`.
+
+The API stopped on SIGTERM; the worker ignored it for over 30 s and took a
+SIGKILL by PID, as this file records. The copy was dropped, the bucket (no
+objects: nothing was uploaded) removed, Redis db 2 read back as found (one
+`bull:ingest:meta` hash, the same two fields), the password, cookie and dump
+files deleted, and the developer database still read 28 runs, 5 users, 25
+tokens, 35 migrations, the same credential fingerprint and no
+`project_member` table.
+
+**RULINGS, EACH A DECISION RATHER THAN AN OVERSIGHT** (the ledger's P1-P15
+and the user's decisions of 2026-10-08):
+
+  - Admin first: `GET /v1/projects` gives an admin their membership row's
+    role or `null`, and the web reads `role` only for a non-admin.
+  - Gate by destination: a link to Add results needs `run:upload`, to API
+    tokens `tokens:manage`, to New on-prem run `runner:run`, to New project
+    an admin.
+  - Role selectors only stage a choice; Save appears when it differs (user
+    decision). Own-row Remove admin confirms inline; other rows stay one
+    click.
+  - P1: the OpenAPI vacuity floor is derived — routes walked with
+    `@Requires` equal `ACCESS_BY_ROUTE`'s AccessAction values (45), never a
+    written number.
+  - P2: the admin journey CHANGES the Viewer's role to Member through Save;
+    Add member is exercised on a person with no row.
+  - P5: the three runner job operations inherit both security schemes (a
+    document change, not server behaviour).
+  - P6 / P7: `seedAccess` leaves an admin's list uncached without `roles`;
+    a field-less item is unknown, `role: null` known and refused.
+  - P8: one access hook per page or tree, passed down (its observers carry
+    no `staleTime`); no indefinite LoadingState on `!known`; outside the
+    shell, not-found before `NoAccess`; `AppShell` reads `useIsAdmin`.
+  - P11: the section table is React-free `routes/projectSections.ts`, shared
+    by the shell and the palette, which keeps `ProjectShell` out of the entry
+    chunk — measured from two build logs as 2.26 kB raw and 1.69 kB gzip
+    less at startup, though the entry FILE grew 136.7 to 152.3 kB as four
+    shared chunks folded into it.
+  - P12: `labelHidden` on `RowField`/`RoleChange`; the caret move after a
+    Save lives in `RoleChange` alone. P13: `RunShell` computes the run's
+    project access once and shares it through its outlet context.
+  - Beyond the briefs, kept: refused Enable/Disable and test delete show the
+    API's sentences inline; an empty org's Add results links the first
+    project the reader may add to; the runner-jobs and packages queries are
+    not fetched when refused or hidden.
+
+**KNOWN AND LEFT, EACH A DECISION RATHER THAN AN OVERSIGHT:**
+
+  - Open at this entry, carried to the final review: the `MutationCache`
+    handler acts on a mutation no longer in the cache (`Login` clears without
+    cancelling, so a 401 landing after a re-sign-in would null the NEW
+    session; Ruling P10) and four comments still describe a 401 drawn in
+    place; `ProjectTests`' empty state names New on-prem run and Add results
+    to a Viewer who has neither; `ProjectPackages`' skeleton declares six
+    columns for a five-column table; two trailing-whitespace lines in
+    `NewProject.tsx` (`git diff --check` exits 2); the palette source guard's
+    docstring claims more than its two-file check.
+  - A reader below `rules:edit` on a test's page has no rules heading (the
+    removed card title was it); a role dropping under an open page discards a
+    just-minted token secret and drops a focused control's caret to the body;
+    the phone's run-details note cell stays an empty 12 px gap below
+    `run:note`.
+  - Add results' picker and launch gates are told apart only by the pending
+    case (both ask Member).
+  - `BundleUpload` stays outside the 401 handler by design (Ruling P9); a
+    page's own 401 branch may render for one task before `AuthGate`
+    redirects (unverified in a browser).
+  - `ProjectMember` carries no admin or disabled marker, and Administration's
+    panel does not invalidate `['project-members', slug]` (Members refetches
+    on mount: stale, then right).
+  - Two projects with one name can still read alike in the rail and the
+    pickers; an open live socket is still checked only at its handshake.
+  - OpenAPI: twelve session-only operations say the session requirement
+    twice, six admin descriptions keep orphaned short literals, and the
+    opener check is one-directional.
 
 The project-access administration branch (`feat/project-access-admin`, PR 2
 of `docs/superpowers/specs/2026-10-07-project-access-design.md`, plan
@@ -425,7 +727,10 @@ fingerprint and no `project_member` table.
     UI, and per-operation role sentences in OpenAPI. Recommended there: treat a
     401 from ANY query as the end of the session (a `QueryCache` `onError`);
     disable and reset make that the normal path now. `ProjectMember` carries
-    no admin or disabled marker, which that UI will want.
+    no admin or disabled marker, which that UI will want. **[Done by PR 3,
+    the project-access experience entry above — the 401 handler is a
+    `QueryCache` AND a `MutationCache` `onError` — except the marker:
+    `ProjectMember` still carries none.]**
   - An open live socket is checked only at its handshake, so a person reset,
     disabled or removed keeps watching it until it closes (PR 1's ruling).
   - Better Auth routes a flagged session can still call (`update-user`,
@@ -459,8 +764,10 @@ fingerprint and no `project_member` table.
     English is reachable on Add user (a blank or 121-character name, `a@b`);
     Add project is disabled with no reason when the list fails; the role
     select saves on change, so ArrowDown saves each role it passes on Windows
-    and Linux Chromium; own-row Remove admin is one click (revisit before PR 3
-    copies it); no success message after a change; `NoOrg`'s Sign out is
+    and Linux Chromium **[PR 3: pick-then-Save, in Administration and
+    Members]**; own-row Remove admin is one click (revisit before PR 3
+    copies it) **[PR 3: confirmed inline; other rows stay one click]**; no
+    success message after a change; `NoOrg`'s Sign out is
     icon-only below `sm`; `AccountPassword` has no unit test.
   - Offered separately: `ingest.service.ts` and `run.ts` read ANY P2002 as an
     idempotent replay.
@@ -758,10 +1065,14 @@ rows were run by the final fix round, its `role` mutation with persistence's
     they already had open, until it disconnects.
   - Per-operation role sentences in the OpenAPI document are deferred to PR
     2/3; until then the contract names roles only on the shared 403s.
+    **[Done by PR 3: the 45 `@Requires` operations open with one — see the
+    project-access experience entry.]**
   - The web app is unchanged: it shows edit controls to every role and a
     viewer meets the 403 on submit, and the API tokens page GETs a
     manager-only route. Harmless today — the backfill made every existing
     account an admin — and PR 3's role-aware UI is where it is fixed.
+    **[Done by PR 3: controls below a role are not drawn, and the tokens
+    page never fetches for a reader below Manager — see that entry.]**
   - An absolute-form request target makes better-call's `toNodeHandler`
     throw and answer 500. That 500, and Express's 400 for a malformed
     %-escape, render an HTML stack trace unless `NODE_ENV=production`
@@ -17627,6 +17938,20 @@ docker run --rm --privileged --pid=host alpine \
 deleting millions of small files. `docker builder prune` and `docker image
 prune` do NOT touch it — both were run first here, reclaimed 4 GB of bytes, and
 moved the inode count by nothing.
+
+**AND THE HOST'S OWN DISK IS A THIRD SHAPE, ONE LEVEL OUT: IT STOPS DOCKER
+RATHER THAN BREAKING IT.** On the project-access experience branch the Mac's
+data volume filled to about 2 GiB free of 926, and Docker Desktop's VM
+stopped and could not start again — `com.docker.backend.log` read
+`write …/Data/log/vm/init.log: no space left on device`. Nothing listened on
+5433, 6380 or 9000, `docker ps` hung, and an error dialog sat behind the
+terminal; no suite could run at all, which is a different symptom from the
+inode case above, where Postgres runs and refuses writes. `Docker.raw` is a
+sparse file (264 GiB apparent, 32 GiB allocated), so its size in Finder says
+nothing either. **`df -h /System/Volumes/Data` is the check** — `df -i` inside
+the VM cannot answer while the VM is down. Freed with the user's approval (npm
+cache, unavailable simulators, superseded iOS DeviceSupport folders, a merged
+agent worktree): 2 to 14 GiB, then a Docker Desktop restart.
 
 AN EIGHTH THING, AND IT IS A PRODUCT DEFECT THAT ONLY A THIRD ENGINE COULD
 FIND. **`secure: true` ON THE SESSION COOKIE MEANT NOBODY COULD SIGN IN TO A
