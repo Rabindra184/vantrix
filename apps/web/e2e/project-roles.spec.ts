@@ -134,7 +134,9 @@ test('a Member adds results and starts runs, and is offered neither API tokens n
   });
 
   await test.step('a test’s page: New rule, and no Rename or Delete test', async () => {
-    await page.getByRole('link', { name: TEST.name, exact: true }).click();
+    // The Tests table names each row's link "View test <name>" (its
+    // `aria-label` in `ProjectTests`), so the bare name never matches exactly.
+    await page.getByRole('link', { name: `View test ${TEST.name}`, exact: true }).click();
     await expect(page.getByRole('heading', { level: 1, name: TEST.name, exact: true })).toBeVisible();
     // A Member may edit rules, so this disclosure is the proof, on THIS page,
     // that access is known — and Rename and Delete test ask for Manager.
@@ -144,7 +146,9 @@ test('a Member adds results and starts runs, and is offered neither API tokens n
   });
 
   await test.step('SLA rules and Packages draw what a Viewer’s hide', async () => {
-    await sections(page).getByRole('link', { name: 'SLA rules', exact: true }).click();
+    // By address: a test's page sits outside the project shell, so it has a
+    // breadcrumb and no section strip to click.
+    await page.goto('/projects/checkout/rules');
     await expect(page.getByText('No rules yet.')).toBeVisible();
     await expect(page.locator('summary', { hasText: 'New rule' })).toBeVisible();
 
@@ -179,7 +183,7 @@ test('a Manager is offered API tokens, and Rename and Delete test', async ({ pag
   await expect(page.getByText(TOKENS_REFUSED, { exact: true })).toHaveCount(0);
 
   await sections(page).getByRole('link', { name: 'Tests', exact: true }).click();
-  await page.getByRole('link', { name: TEST.name, exact: true }).click();
+  await page.getByRole('link', { name: `View test ${TEST.name}`, exact: true }).click();
   await expect(page.getByRole('button', { name: 'Rename', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Delete test', exact: true })).toBeVisible();
 });
