@@ -216,11 +216,17 @@ mutation fails it.
 
 **TWO GATES ASKING THE SAME ROLE CANNOT BE TOLD APART BY ROLE FIXTURES.**
 Upload and Rename need `packages:manage` and Delete `packages:delete`, both
-Member, so ungating Upload, or leaving the armed-delete block ungated,
-SURVIVED every Viewer and Member case: the row's own gate masked each.
-`ProjectPackages.access.test.tsx` mocks the hook to grant each action alone,
-and both mutations fail there. Add results' picker and launch gates have the
-same shape, and only the pending case tells them apart (below).
+Member, so two mutations SURVIVED every Viewer and Member case in
+`ProjectPackages.test.tsx`: Upload ungated, and the armed block ungated (its
+rename and delete halves at once) — the row's own gate masked each.
+`ProjectPackages.access.test.tsx` mocks the hook to grant each action alone:
+ungated Upload then fails "delete alone" and "runner:run alone", and the
+ungated armed block fails the rename-drop case alone. **The armed DELETE half
+on its own is still untested there** — the gate is
+`armed.mode === 'rename' ? may.manage : may.delete`, the file has no
+delete-drop case, and ungating only `may.delete` would survive the whole
+suite (below). Add results' picker and launch gates have the same shape, and
+only the pending case tells them apart (below).
 
 **A 401 MEANS THE SESSION IS OVER WHEREVER IT ARRIVES (Ruling P9).** The plan
 kept both XHR uploads outside the handler; the package upload runs inside a
@@ -282,7 +288,10 @@ output to files and reading only tails.
       the header launch drawn for everyone                 the Viewer row and the pending case
   T7  RoleChange never moves the caret after a Save        five, Members' role case among them
       a shared display name never brings its email         five: Administration's W6 cases and Members'
-  T9  Upload ungated; the armed-delete block ungated       SURVIVED the role cases; fail under the stand-in
+  T9  Upload ungated                                       SURVIVED the role cases; the stand-in's "delete alone"
+                                                           and "runner:run alone"
+      the armed block ungated (rename and delete halves)   SURVIVED the role cases; the stand-in's rename-drop
+                                                           case alone (the delete half alone: no case)
   T11 bearerAuth back on startRunnerRun                    openapi 1 of 32: "must not narrow to one credential"
       canEdit = true on ProjectRules                       the Viewer journey's SLA rules step: expected 0, received 1
       Members Save never sends                             2.0 m timeout; 19.7 s once the wait was bounded
@@ -445,6 +454,10 @@ and the user's decisions of 2026-10-08):
     `run:note`.
   - Add results' picker and launch gates are told apart only by the pending
     case (both ask Member).
+  - The armed-DELETE half of Packages' mode gate (`ProjectPackages.tsx`,
+    `armed.mode === 'rename' ? may.manage : may.delete`) is untested under
+    the stand-in: `ProjectPackages.access.test.tsx` has a rename-drop case and
+    no delete-drop case, so ungating only `may.delete` survives the suite.
   - `BundleUpload` stays outside the 401 handler by design (Ruling P9); a
     page's own 401 branch may render for one task before `AuthGate`
     redirects (unverified in a browser).
