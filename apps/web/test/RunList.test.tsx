@@ -5,6 +5,8 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { RunListResponse } from '@perfportal/contracts';
 import RunList from '../src/routes/RunList';
+import { NEW_PROJECT_ROUTE } from '../src/routes/paths';
+import { seedAccess } from './support/access';
 
 afterEach(cleanup);
 
@@ -641,5 +643,61 @@ describe('RunList — a run’s id is copyable from its row', () => {
     const rows = await screen.findAllByTestId('run-row');
     expect(screen.getAllByTestId('copy-id')).toHaveLength(rows.length);
     expect(screen.queryAllByRole('status')).toHaveLength(0);
+  });
+});
+
+/**
+ * ═══ NEW PROJECT IS OFFERED TO AN ADMIN, AND ONLY ONCE THAT IS KNOWN ═══
+ *
+ * Gate by destination: the heading's New project opens a page whose one action
+ * is `projects:create`, which only an admin may take. The API refuses anyone
+ * else whatever this page draws; hiding is for clarity. It stays on the
+ * org-wide list alone — `run-list.spec.ts` pins exactly one link by that name
+ * on `/runs` for the admin every e2e signs in as — and never on a project's.
+ *
+ * Who is looking is SEEDED (`seedAccess`), so the flag is in the cache before
+ * the list draws; a pending reader is a session that never answers.
+ */
+describe('RunList — New project follows the admin flag', () => {
+  function renderAs(who: 'admin' | 'member' | 'pending', props: { projectSlug?: string } = {}) {
+    vi.stubGlobal('fetch', (input: RequestInfo | URL) => {
+      const { pathname } = new URL(String(input), 'http://localhost');
+      if (pathname === '/auth/get-session') return new Promise<Response>(() => {});
+      return Promise.resolve(
+        new Response(JSON.stringify({ items: ROWS, nextCursor: null }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    if (who !== 'pending') seedAccess(client, { isAdmin: who === 'admin' });
+    return render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/runs']}>
+          <RunList {...props} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  }
+  const newProject = () => screen.queryByRole('link', { name: 'New project' });
+
+  it('offers an admin New project in the org-wide list’s heading', async () => {
+    renderAs('admin');
+    expect(await screen.findByRole('link', { name: 'New project' })).toHaveAttribute('href', NEW_PROJECT_ROUTE);
+  });
+
+  it.each(['member', 'pending'] as const)('offers a %s reader none', async (who) => {
+    renderAs(who);
+    // The loaded list, so the heading and its action slot have drawn.
+    await screen.findAllByTestId('run-row');
+    expect(screen.getByRole('heading', { level: 1, name: 'Runs' })).toBeInTheDocument();
+    expect(newProject()).toBeNull();
+  });
+
+  it('offers none on a project’s own list, even to an admin', async () => {
+    renderAs('admin', { projectSlug: 'checkout' });
+    await screen.findAllByTestId('run-row');
+    expect(newProject()).toBeNull();
   });
 });

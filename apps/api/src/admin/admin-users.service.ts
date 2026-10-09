@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
-import { ACCESS_ACTIONS, type CreateUserRequest, type ProjectRole, type UpdateUserRequest } from '@perfportal/contracts';
+import { accessRefusal, type CreateUserRequest, type ProjectRole, type UpdateUserRequest } from '@perfportal/contracts';
 import {
   OrgMemberRepository,
   ProjectMemberRepository,
@@ -62,7 +62,8 @@ function fromBetterAuth(err: unknown, userId: string | null): unknown {
   if (!(err instanceof APIError)) return err;
   if (err.statusCode === 401) return sessionEnded();
   if (err.statusCode === 403) {
-    return accessDenied('ADMIN_REQUIRED', `${ACCESS_ACTIONS['users:manage'].label} needs an admin.`, 'Ask an admin to do this.');
+    const r = accessRefusal('users:manage');
+    return accessDenied(r.code, r.detail, r.remediation);
   }
   if (err.statusCode === 404 && userId !== null) return userNotFound(userId);
   return err;

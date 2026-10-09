@@ -32,11 +32,24 @@ const EXPAND_TEST_ID = 'run-note-expand';
 export default function RunNote({
   runId,
   note,
+  canEdit,
 }: {
   readonly runId: string;
   /** The run's note; null or undefined when it has none (undefined from an
    *  API pod that predates the field). */
   readonly note: RunNoteValue | null | undefined;
+  /**
+   * Whether the reader may change the note — `run:note` in the run's own
+   * project, which `RunShell` asks once. False draws the note read-only: no
+   * Add a note, no Edit note, and so no editor with its Save or Remove note.
+   * It is false while access is not known, too (hidden until known), and for
+   * a run with no project to ask about.
+   *
+   * REQUIRED, with no default: either default would be silent — `true` offers
+   * a Viewer a button whose click answers 403, `false` takes the editor from
+   * everyone who forgot to pass it.
+   */
+  readonly canEdit: boolean;
 }) {
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
@@ -120,7 +133,12 @@ export default function RunNote({
   const submit = () => save.mutate(removing ? null : trimmed);
   const canSubmit = !save.isPending && (removing || (trimmed !== '' && trimmed !== existing));
 
-  if (editing) {
+  /* `canEdit` gates the OPEN editor too, not only the button that opens it:
+     a role that drops while the editor is open (Review Focus 3) takes it
+     away, rather than leaving a Save whose click can only be refused. The
+     `editing` state is kept, so a role restored before the page moves on
+     brings the draft back as it was. */
+  if (editing && canEdit) {
     return (
       <section aria-label="Run note" data-testid="run-note" className="flex max-w-2xl flex-col gap-2">
         <label htmlFor={fieldId} className="text-[0.75rem] font-medium text-muted">
@@ -156,10 +174,20 @@ export default function RunNote({
         <p id={countId} data-testid="run-note-count" className="font-mono text-[0.75rem] text-muted">
           {draft.length} / {NOTE_MAX_LENGTH}
         </p>
+        {/* The API's remediation rides under its detail. For a save refused
+            because the reader's role dropped after the editor opened, the
+            detail says what editing notes needs and the remediation what to
+            do about it — the refusal in the API's own two sentences, never
+            half of it (Review Focus 3). */}
         {save.error ? (
-          <p role="alert" className="text-[0.75rem]" style={{ color: 'var(--color-status-failed)' }}>
-            {save.error instanceof ProblemError ? save.error.detail : 'The note could not be saved. Try again.'}
-          </p>
+          <div role="alert" className="text-[0.75rem]">
+            <p style={{ color: 'var(--color-status-failed)' }}>
+              {save.error instanceof ProblemError ? save.error.detail : 'The note could not be saved. Try again.'}
+            </p>
+            {save.error instanceof ProblemError && save.error.remediation !== '' && (
+              <p className="text-muted">{save.error.remediation}</p>
+            )}
+          </div>
         ) : null}
         <div className="flex gap-2">
           {/* SECONDARY, not primary: Button's rule is one primary per screen,
@@ -178,6 +206,9 @@ export default function RunNote({
   }
 
   if (note == null) {
+    /* Nothing to read and nothing this reader may write: no region at all,
+       rather than a labelled "Run note" landmark holding nothing. */
+    if (!canEdit) return null;
     return (
       <section aria-label="Run note" data-testid="run-note">
         <button type="button" data-testid={TOGGLE_TEST_ID} onClick={open} className={LINK_BUTTON}>
@@ -225,9 +256,11 @@ export default function RunNote({
             {expanded ? 'Show less' : 'Show all'}
           </button>
         ) : null}
-        <button type="button" data-testid={TOGGLE_TEST_ID} onClick={open} className={LINK_BUTTON}>
-          Edit note
-        </button>
+        {canEdit && (
+          <button type="button" data-testid={TOGGLE_TEST_ID} onClick={open} className={LINK_BUTTON}>
+            Edit note
+          </button>
+        )}
       </p>
     </section>
   );

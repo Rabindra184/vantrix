@@ -45,6 +45,7 @@ const ProjectSetup = lazy(() => import('./routes/ProjectSetup'));
 const ProjectPackages = lazy(() => import('./routes/ProjectPackages'));
 const ProjectRulesPage = lazy(() => import('./routes/ProjectRulesPage'));
 const ProjectAccess = lazy(() => import('./routes/ProjectAccess'));
+const ProjectMembers = lazy(() => import('./routes/ProjectMembers'));
 const ProjectTests = lazy(() => import('./routes/ProjectTests'));
 const TestRuns = lazy(() => import('./routes/TestRuns'));
 const NewRunnerRun = lazy(() => import('./routes/NewRunnerRun'));
@@ -106,6 +107,10 @@ export default function App() {
                 unchanged on purpose — see `projectSetupPath`. */}
             <Route path="/projects/:slug/rules" element={<ProjectRulesPage />} />
             <Route path="/projects/:slug/access" element={<ProjectAccess />} />
+            {/* Who holds which role in the project: every role reads it, and an
+                admin changes it here. The tab has linked here since the
+                section table gained it (`ProjectShell`). */}
+            <Route path="/projects/:slug/members" element={<ProjectMembers />} />
             {/* `Organization → Project → Test → Run`. A project's own page is
                 its TESTS; the run list across every test moved one segment
                 deeper rather than the test list taking a child segment, so an

@@ -168,7 +168,7 @@ describe('outcomeSummary', () => {
 
 describe('PlatformGatesBar', () => {
   it('opens on arrival when a gate failed, failures first', () => {
-    at('/r', <PlatformGatesBar runId={RUN_ID} assertions={[PASSED_GATE, PLATFORM_GATE]} ran />);
+    at('/r', <PlatformGatesBar runId={RUN_ID} canEditRules assertions={[PASSED_GATE, PLATFORM_GATE]} ran />);
     expect(screen.getByRole('button', { name: 'Platform gates' })).toHaveAttribute(
       'aria-expanded',
       'true',
@@ -178,7 +178,7 @@ describe('PlatformGatesBar', () => {
   });
 
   it('stays shut when every gate passed, and opens to one card per gate', async () => {
-    at('/r', <PlatformGatesBar runId={RUN_ID} assertions={[PASSED_GATE]} ran />);
+    at('/r', <PlatformGatesBar runId={RUN_ID} canEditRules assertions={[PASSED_GATE]} ran />);
     const button = screen.getByRole('button', { name: 'Platform gates' });
     expect(button).toHaveAttribute('aria-expanded', 'false');
     await userEvent.click(button);
@@ -190,7 +190,7 @@ describe('PlatformGatesBar', () => {
     [[], false, 'not evaluated — the run left nothing to judge'],
     [[], true, 'not configured — no SLA rule judged this run'],
   ] as const)('says why it has nothing to show (%#)', (assertions, ran, words) => {
-    at('/r', <PlatformGatesBar runId={RUN_ID} projectSlug="checkout" assertions={assertions} ran={ran} />);
+    at('/r', <PlatformGatesBar runId={RUN_ID} canEditRules projectSlug="checkout" assertions={assertions} ran={ran} />);
     expect(within(screen.getByTestId('section-platform-gates')).getByText(words)).toBeVisible();
   });
 
@@ -202,7 +202,7 @@ describe('PlatformGatesBar', () => {
    * that does not — so its absence is asserted beside the title's presence.
    */
   it('names a failed gate from its structured fields, never its stored message', () => {
-    at('/r', <PlatformGatesBar runId={RUN_ID} assertions={THREE_GATES} ran />);
+    at('/r', <PlatformGatesBar runId={RUN_ID} canEditRules assertions={THREE_GATES} ran />);
     const failed = screen.getAllByTestId('gate-card')[0]!;
     expect(within(failed).getByText('Whole-run p99 response time \u2264 750 ms')).toBeVisible();
     expect(failed).toHaveTextContent('Actual: 1830 ms');
@@ -220,7 +220,7 @@ describe('PlatformGatesBar', () => {
    * so a card that lost its measurement too cannot satisfy it.
    */
   it('does not restate a passed or failed gate in a sentence', () => {
-    at('/r', <PlatformGatesBar runId={RUN_ID} assertions={THREE_GATES} ran />);
+    at('/r', <PlatformGatesBar runId={RUN_ID} canEditRules assertions={THREE_GATES} ran />);
     const [failed, passed] = screen.getAllByTestId('gate-card');
     for (const [card, gate] of [
       [failed!, THREE_GATES[0]!],
@@ -241,7 +241,7 @@ describe('PlatformGatesBar', () => {
    * as a request that responded instantly.
    */
   it('shows a not-applicable gate’s stored message and a dash, never a zero, for its actual', () => {
-    at('/r', <PlatformGatesBar runId={RUN_ID} assertions={THREE_GATES} ran />);
+    at('/r', <PlatformGatesBar runId={RUN_ID} canEditRules assertions={THREE_GATES} ran />);
     // Failed first, then the rest in recorded order: [failed, passed, n/a].
     const notApplicable = screen.getAllByTestId('gate-card')[2]!;
     expect(within(notApplicable).getByTestId('gate-outcome')).toHaveTextContent(/not applicable/i);
@@ -274,7 +274,7 @@ describe('PlatformGatesBar', () => {
         threshold: 100,
       },
     };
-    at('/r', <PlatformGatesBar runId={RUN_ID} assertions={[tie]} ran />);
+    at('/r', <PlatformGatesBar runId={RUN_ID} canEditRules assertions={[tie]} ran />);
     const card = screen.getAllByTestId('gate-card')[0]!;
     expect(card).toHaveTextContent('Whole-run mean response time \u2264 100 ms');
     expect(card).toHaveTextContent('Actual: 100.004 ms');
@@ -288,7 +288,7 @@ describe('PlatformGatesBar', () => {
     // The summary line names WHICH fact it is; the body says what it means.
     // Swapping the two bodies turns "judged once the run finishes" onto a run
     // that is finished and stopped early, which is false in both directions.
-    at('/r', <PlatformGatesBar runId={RUN_ID} assertions={assertions} ran={ran} />);
+    at('/r', <PlatformGatesBar runId={RUN_ID} canEditRules assertions={assertions} ran={ran} />);
     await userEvent.click(screen.getByRole('button', { name: 'Platform gates' }));
     expect(within(screen.getByTestId('section-platform-gates')).getByText(body)).toBeVisible();
   });
@@ -298,14 +298,14 @@ describe('PlatformGatesBar', () => {
     // and the same instance re-renders when the verdict arrives. `defaultOpen`
     // is read once at mount, so only a remount keeps "a failed gate is never a
     // click away" true on exactly the run somebody was watching.
-    const { rerender } = at('/r', <PlatformGatesBar runId={RUN_ID} assertions={undefined} ran />);
+    const { rerender } = at('/r', <PlatformGatesBar runId={RUN_ID} canEditRules assertions={undefined} ran />);
     expect(screen.getByRole('button', { name: 'Platform gates' })).toHaveAttribute(
       'aria-expanded',
       'false',
     );
     rerender(
       <MemoryRouter initialEntries={['/r']}>
-        <PlatformGatesBar runId={RUN_ID} assertions={[PLATFORM_GATE]} ran />
+        <PlatformGatesBar runId={RUN_ID} canEditRules assertions={[PLATFORM_GATE]} ran />
       </MemoryRouter>,
     );
     expect(screen.getByRole('button', { name: 'Platform gates' })).toHaveAttribute(
@@ -315,8 +315,8 @@ describe('PlatformGatesBar', () => {
     expect(screen.getAllByTestId('gate-card')).toHaveLength(1);
   });
 
-  it('keeps the way to configure a rule when none is configured', async () => {
-    at('/r', <PlatformGatesBar runId={RUN_ID} projectSlug="checkout" assertions={[]} ran />);
+  it('keeps the way to configure a rule when none is configured, for a reader who may add one', async () => {
+    at('/r', <PlatformGatesBar runId={RUN_ID} canEditRules projectSlug="checkout" assertions={[]} ran />);
     await userEvent.click(screen.getByRole('button', { name: 'Platform gates' }));
     expect(screen.getByRole('link', { name: 'Configure SLA rules' })).toHaveAttribute(
       'href',
@@ -327,9 +327,26 @@ describe('PlatformGatesBar', () => {
   it('offers no link to configure rules when it does not know the project', async () => {
     // `projectRulesPath(undefined)` is `/projects/undefined/rules`, which
     // resolves and renders — a dead end that looks like a feature.
-    at('/r', <PlatformGatesBar runId={RUN_ID} assertions={[]} ran />);
+    at('/r', <PlatformGatesBar runId={RUN_ID} canEditRules assertions={[]} ran />);
     await userEvent.click(screen.getByRole('button', { name: 'Platform gates' }));
     expect(screen.getByText(/adding one affects future runs/i)).toBeVisible();
+    expect(screen.queryByRole('link', { name: 'Configure SLA rules' })).toBeNull();
+  });
+
+  /**
+   * ═══ THE WAY TO ADD A RULE IS `rules:edit`'s (project access, PR 3) ═══
+   *
+   * A Viewer reads a run's gates like anyone, and is told no rule judged it —
+   * that is a fact about the run. "Adding one affects future runs" and the
+   * Configure SLA rules link are an invitation to an action the Viewer cannot
+   * take: the link lands on a rules page with no New rule. So both go with
+   * `canEditRules`, and the sentence about the run stays.
+   */
+  it('tells a reader who may not edit rules only that none judged the run', async () => {
+    at('/r', <PlatformGatesBar runId={RUN_ID} canEditRules={false} projectSlug="checkout" assertions={[]} ran />);
+    await userEvent.click(screen.getByRole('button', { name: 'Platform gates' }));
+    expect(screen.getByText('No SLA rules judged this run.')).toBeVisible();
+    expect(screen.queryByText(/adding one affects future runs/i)).toBeNull();
     expect(screen.queryByRole('link', { name: 'Configure SLA rules' })).toBeNull();
   });
 
@@ -346,6 +363,7 @@ describe('PlatformGatesBar', () => {
       '/r',
       <PlatformGatesBar
         runId={RUN_ID}
+        canEditRules
         ran
         assertions={[
           {
@@ -373,7 +391,7 @@ describe('PlatformGatesBar', () => {
   });
 
   it('keeps the CSV export beside a populated bar', () => {
-    at('/r', <PlatformGatesBar runId={RUN_ID} assertions={[PLATFORM_GATE]} ran />);
+    at('/r', <PlatformGatesBar runId={RUN_ID} canEditRules assertions={[PLATFORM_GATE]} ran />);
     expect(screen.getByRole('button', { name: /export csv/i })).toBeVisible();
   });
 });
@@ -392,6 +410,7 @@ describe('SimulationAssertionsBar', () => {
       <>
         <PlatformGatesBar
           runId={RUN_ID}
+          canEditRules
           assertions={[PLATFORM_GATE, PASSED_GATE, SECOND_PASSED_GATE]}
           ran
         />
@@ -618,7 +637,7 @@ describe('the two bars name two systems with two nouns', () => {
     at(
       '/r',
       <>
-        <PlatformGatesBar runId={RUN_ID} assertions={[PLATFORM_GATE]} ran />
+        <PlatformGatesBar runId={RUN_ID} canEditRules assertions={[PLATFORM_GATE]} ran />
         <SimulationAssertionsBar runId={RUN_ID} assertions={[details(['Search'], 'failed')]} stats={null} />
       </>,
     );

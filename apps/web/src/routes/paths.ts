@@ -217,6 +217,17 @@ export function projectRulesPath(slug: string): string {
 }
 
 /**
+ * The project's members: who holds a role here, and which one.
+ *
+ * Every role may read them (`members:read` asks for Viewer) and only an admin
+ * may change them (`members:manage`), so the shell offers this section to
+ * everyone in the project.
+ */
+export function projectMembersPath(slug: string): string {
+  return `${projectPath(slug)}/members`;
+}
+
+/**
  * API tokens — minting, listing and revoking.
  *
  * `access` rather than `tokens` because that is the question being answered

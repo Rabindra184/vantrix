@@ -57,9 +57,11 @@ import { AlertIcon, InboxIcon } from './icons';
  * must wrap ONLY the two sentences the server sent and not the `<h1>` above
  * them (an assertive region containing a heading is announced as an
  * interruption instead of read as a title — see that component's docstring).
- * Without this export, `AuthGate` would need a fourth entry in
- * `test/tokens.test.ts`'s exemption list for one icon; with it, the count of
- * files allowed to paint in the status palette stays where it is.
+ * `access/NoAccess` is the second: it wears this frame as a polite
+ * `role="status"`, because a refusal the reader asked for by opening a page is
+ * that page's answer, not an alert. Without this export, each would need its
+ * own entry in `test/tokens.test.ts`'s exemption list for one icon; with it,
+ * the count of files allowed to paint in the status palette stays where it is.
  */
 export function AlertMark() {
   return (

@@ -12,7 +12,7 @@ import {
 } from '@perfportal/contracts';
 import { ProblemError } from '../src/api/fetch.js';
 import { fetchPackages, packagesQueryKey } from '../src/api/packages.js';
-import { fetchProjects } from '../src/api/projects.js';
+import { fetchProjects, projectsQueryKey } from '../src/api/projects.js';
 import {
   cancelRunnerJob,
   fetchRunnerJobs,
@@ -22,6 +22,16 @@ import {
 } from '../src/api/runner.js';
 import { fetchProjectTests } from '../src/api/tests.js';
 import NewRunnerRun from '../src/routes/NewRunnerRun.js';
+import { projectListBody, seedAccess } from './support/access';
+
+/**
+ * WHO IS LOOKING, for every case before the role cases at the foot: an admin,
+ * because each of those claims is about the form a reader who MAY start a run
+ * sees — and the form is drawn only once access is known and allows
+ * `runner:run`. Seeded with no `roles`, so the project list is left to this
+ * file's own `fetchProjects` mock (alpha and beta), as before.
+ */
+const ADMIN = { isAdmin: true } as const;
 
 /** An element's accessible description, read off `aria-describedby`. This
  *  file does not load jest-dom's matchers, so `toHaveAccessibleDescription`
@@ -251,6 +261,7 @@ describe('NewRunnerRun', () => {
     // Typing a class and attaching a file are UPLOAD-mode acts.
     noPackages();
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    seedAccess(client, ADMIN);
     const router = createMemoryRouter(
       [{ path: '/projects/:slug/run/new', element: <NewRunnerRun /> }],
       { initialEntries: ['/projects/alpha/run/new'] },
@@ -326,6 +337,7 @@ describe('NewRunnerRun', () => {
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
     });
+    seedAccess(client, ADMIN);
     const router = createMemoryRouter(
       [{ path: '/projects/:slug/run/new', element: <NewRunnerRun /> }],
       { initialEntries: [entry] },
@@ -607,6 +619,7 @@ describe('NewRunnerRun — what the form says about its fields, and what is know
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
     });
+    seedAccess(client, ADMIN);
     const router = createMemoryRouter(
       [{ path: '/projects/:slug/run/new', element: <NewRunnerRun /> }],
       { initialEntries: ['/projects/alpha/run/new'] },
@@ -740,6 +753,7 @@ describe('NewRunnerRun — starting from a package', () => {
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
     });
+    seedAccess(client, ADMIN);
     const router = createMemoryRouter(
       [{ path: '/projects/:slug/run/new', element: <NewRunnerRun /> }],
       { initialEntries: [entry] },
@@ -1555,6 +1569,7 @@ describe('NewRunnerRun — the jobs table names each job’s package', () => {
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
     });
+    seedAccess(client, ADMIN);
     const router = createMemoryRouter(
       [{ path: '/projects/:slug/run/new', element: <NewRunnerRun /> }],
       { initialEntries: ['/projects/alpha/run/new'] },
@@ -1600,6 +1615,7 @@ describe('NewRunnerRun — the jobs table names each job’s package', () => {
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
     });
+    seedAccess(client, ADMIN);
     const router = createMemoryRouter(
       [{ path: '/projects/:slug/run/new', element: <NewRunnerRun /> }],
       { initialEntries: ['/projects/alpha/run/new'] },
@@ -1700,5 +1716,177 @@ describe('NewRunnerRun — the jobs table names each job’s package', () => {
     expect(alert.textContent).toContain('Only a queued or running job can be cancelled.');
     expect(within(first).queryByRole('alert')).toBeNull();
     expect(screen.getAllByRole('alert')).toHaveLength(1);
+  });
+});
+
+/* ======================================================================== *
+ * WHO MAY START, CANCEL AND RETRY A RUN (project access, PR 3)
+ * ======================================================================== */
+
+/**
+ * `runner:run` asks for Member, and it is the one action behind every control
+ * on this page that changes anything: queuing a run, cancelling one, retrying
+ * one. A reader without it — a Viewer who typed the URL; every link here is
+ * drawn only for `runner:run` — is told so in place of the form, in the API's
+ * own words, and still reads the project's jobs and their logs, which a
+ * Viewer may.
+ *
+ * Hidden until known: while access is pending there is no form AND no
+ * refusal, and the jobs are listed with Logs alone.
+ */
+describe('NewRunnerRun — who may start, cancel and retry a run', () => {
+  const at = '2026-08-20T00:00:00.000Z';
+  /** A job of the CHECKOUT package in `status` — running offers Cancel, failed offers Retry. */
+  function job(status: 'running' | 'failed', id: string): RunnerJobListResponse['items'][number] {
+    return {
+      artifact: {
+        id: '00000000-0000-4000-8000-0000000000c3',
+        name: 'nightly',
+        filename: 'checkout.jar',
+        kind: 'gatling_jar',
+        simulationClass: 'example.BasicSimulation',
+        gatlingVersion: null,
+        sha256: 'sha',
+        bytes: 1,
+        createdAt: at,
+      },
+      job: {
+        id,
+        artifactId: '00000000-0000-4000-8000-0000000000c3',
+        runId: null,
+        status,
+        requestedBy: 'token',
+        environment: null,
+        branch: null,
+        commitSha: null,
+        testSlug: null,
+        javaOptions: null,
+        systemProperties: {},
+        error: null,
+        createdAt: at,
+        updatedAt: at,
+        packageId: CHECKOUT_ID,
+        packageName: 'Checkout',
+      },
+    };
+  }
+
+  const REFUSAL = 'Starting, cancelling and retrying runs needs the Member role in this project.';
+
+  /** The page as `who` sees it, over one running and one failed job; `null` seeds nothing. */
+  function mountAs(
+    who: Parameters<typeof seedAccess>[1] | null,
+    entry = '/projects/alpha/run/new',
+  ): QueryClient {
+    fetchRunnerJobsMock.mockResolvedValue({
+      items: [
+        job('running', '00000000-0000-4000-8000-000000000f01'),
+        job('failed', '00000000-0000-4000-8000-000000000f02'),
+      ],
+    });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    if (who !== null) seedAccess(client, who);
+    const router = createMemoryRouter(
+      [{ path: '/projects/:slug/run/new', element: <NewRunnerRun /> }],
+      { initialEntries: [entry] },
+    );
+    render(
+      <QueryClientProvider client={client}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    );
+    return client;
+  }
+
+  /** The jobs table's rows, once it has answered. */
+  async function jobRows(): Promise<HTMLElement[]> {
+    const table = await screen.findByRole('table', { name: 'On-prem runner jobs' });
+    const [, ...rows] = within(table).getAllByRole('row');
+    return rows;
+  }
+
+  /** Every job keeps Logs; Cancel and Retry are `runner:run`'s. */
+  async function expectLogsOnly() {
+    const rows = await jobRows();
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      expect(within(row).getByRole('button', { name: 'Logs' })).toBeDefined();
+    }
+    expect(screen.queryByRole('button', { name: /cancel/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /retry/i })).toBeNull();
+  }
+
+  it('refuses a viewer the form in the API’s own words, and never asks for the packages it would offer', async () => {
+    mountAs({ isAdmin: false, roles: { alpha: 'viewer' } });
+
+    // By its words, then up to its region: the jobs table's own loading
+    // state is a `status` too, so a bare role query would name either.
+    const refusal = (await screen.findByText(REFUSAL)).closest('[role="status"]');
+    expect(refusal).not.toBeNull();
+    expect(refusal?.textContent).toContain('Ask an admin to change your role.');
+    expect(screen.queryByRole('button', { name: /queue run/i })).toBeNull();
+    expect(screen.queryByLabelText(/run name/i)).toBeNull();
+    expect(fetchPackagesMock).not.toHaveBeenCalled();
+  });
+
+  it('still lists a viewer the jobs, each with Logs, and offers no Cancel or Retry', async () => {
+    mountAs({ isAdmin: false, roles: { alpha: 'viewer' } });
+    await screen.findByText(REFUSAL);
+    await expectLogsOnly();
+  });
+
+  it('offers a member the form, and Cancel and Retry on the jobs', async () => {
+    mountAs({ isAdmin: false, roles: { alpha: 'member' } });
+    expect(await screen.findByRole('button', { name: /queue run/i })).toBeDefined();
+    const [running, failed] = (await jobRows()) as [HTMLElement, HTMLElement];
+    expect(within(running).getByRole('button', { name: /cancel/i })).toBeDefined();
+    expect(within(failed).getByRole('button', { name: /retry/i })).toBeDefined();
+    expect(screen.queryByText(REFUSAL)).toBeNull();
+  });
+
+  /** Review Focus 1: an admin may do everything, whatever role their own row holds. */
+  it('offers an admin holding only a Viewer row the form, Cancel and Retry', async () => {
+    mountAs({ isAdmin: true, roles: { alpha: 'viewer' } });
+    expect(await screen.findByRole('button', { name: /queue run/i })).toBeDefined();
+    const [running, failed] = (await jobRows()) as [HTMLElement, HTMLElement];
+    expect(within(running).getByRole('button', { name: /cancel/i })).toBeDefined();
+    expect(within(failed).getByRole('button', { name: /retry/i })).toBeDefined();
+  });
+
+  /** Review Focus 2: while the session is held nothing is known — no form, no refusal, and the jobs with Logs alone. */
+  it('draws neither the form nor a refusal while access is pending, and lists the jobs with Logs only', async () => {
+    vi.stubGlobal('fetch', () => new Promise<Response>(() => {}));
+    try {
+      mountAs(null);
+      await expectLogsOnly();
+      expect(screen.queryByRole('button', { name: /queue run/i })).toBeNull();
+      expect(screen.queryByText(REFUSAL)).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  /** Ruling P8(c): outside the shell, a project the reader cannot see is not found — never "refused". */
+  it('says a project the reader holds no role in is not found, not that they are refused', async () => {
+    mountAs({ isAdmin: false, roles: { beta: 'viewer' } });
+    expect(await screen.findByRole('heading', { name: 'Project not found' })).toBeDefined();
+    expect(screen.queryByText(REFUSAL)).toBeNull();
+  });
+
+  /** Review Focus 3: a role that drops under an open page takes the form, Cancel and Retry with it. */
+  it('replaces the form with the refusal, and drops Cancel and Retry, when the role drops', async () => {
+    const client = mountAs({ isAdmin: false, roles: { alpha: 'member' } });
+    expect(await screen.findByRole('button', { name: /queue run/i })).toBeDefined();
+    expect(await screen.findByRole('button', { name: /cancel/i })).toBeDefined();
+
+    act(() => {
+      client.setQueryData(projectsQueryKey, projectListBody({ alpha: 'viewer' }));
+    });
+
+    expect(await screen.findByText(REFUSAL)).toBeDefined();
+    expect(screen.queryByRole('button', { name: /queue run/i })).toBeNull();
+    await expectLogsOnly();
   });
 });

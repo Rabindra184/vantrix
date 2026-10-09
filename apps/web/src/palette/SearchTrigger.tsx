@@ -50,8 +50,12 @@ import { isApplePlatform, isPaletteShortcut } from './shortcut';
  * a labelled field, and the shortcut hint names a key most phones lack. The
  * accessible name is "Search" at every width — it is an `aria-label`, not the
  * visible text, so the name does not change when the viewport does.
+ *
+ * `isAdmin` is passed straight through to the palette: `AppShell` reads the
+ * session's admin flag once and hands it down, so opening the palette never
+ * asks the session again (see `usePaletteSearch`).
  */
-export default function SearchTrigger() {
+export default function SearchTrigger({ isAdmin }: { readonly isAdmin: boolean | undefined }) {
   const [open, setOpen] = useState(false);
   const compact = useIsCompact();
   const button = useRef<HTMLButtonElement>(null);
@@ -108,7 +112,7 @@ export default function SearchTrigger() {
           </>
         )}
       </button>
-      <CommandPalette open={open} onOpenChange={setOpen} returnFocusFallback={button} />
+      <CommandPalette open={open} onOpenChange={setOpen} isAdmin={isAdmin} returnFocusFallback={button} />
     </>
   );
 }

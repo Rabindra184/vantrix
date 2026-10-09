@@ -1,6 +1,7 @@
 import { Suspense, useEffect, useRef } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
+import { useIsAdmin } from './access/useAccess';
 import { getSession, sessionQueryKey } from './api/session';
 import RouteFallback from './components/RouteFallback';
 import RouteErrorBoundary from './components/RouteErrorBoundary';
@@ -232,10 +233,15 @@ export default function AppShell() {
      it takes every page down with it. `AppShell.test.tsx`'s "renders the page
      even when the rail cannot load its projects" caught exactly that. */
   const identity = session.data?.user?.name || session.data?.user?.email || null;
-  /* The admin plugin's role, optional at every hop for the reason above — and
-     because an API older than the plugin sends no `role` at all, which reads as
-     "not an admin", the safe way round. */
-  const isAdmin = session.data?.user?.role === 'admin';
+  /* The admin flag by the web's ONE definition of it (`useIsAdmin`): the admin
+     plugin's role, optional at every hop for the reason above, `undefined`
+     while the session has not answered. Read once here and handed to the
+     three things in the chrome that turn on it — the account menu's
+     Administration item, the rail's no-projects sentence and the palette's
+     New project — rather than each asking the session again. The palette
+     especially: it mounts on every open, and an observer of its own would ask
+     `/auth/get-session` every time. */
+  const isAdmin = useIsAdmin();
 
   const { pathname, hash } = useLocation();
   /* `null` until the first render has run, which is also how the first render
@@ -363,7 +369,7 @@ export default function AppShell() {
         {/* The palette's one entry point, and the owner of its ⌘K shortcut:
             mounted here, once, so the shortcut exists on every authenticated
             page and a page can neither forget it nor add a second. */}
-        <SearchTrigger />
+        <SearchTrigger isAdmin={isAdmin} />
 
         {/* ═══ ONE CONTROL, NOT THREE (review 09-13 N03) ═══
          *
@@ -387,7 +393,9 @@ export default function AppShell() {
          * it IS, grep for whoever says what it is.
          */}
         <div className="ml-auto flex items-center gap-2">
-          <AccountMenu identity={identity} isAdmin={isAdmin} />
+          {/* `=== true`: the menu takes a settled answer, and a pending
+              session offers no Administration — hidden until known. */}
+          <AccountMenu identity={identity} isAdmin={isAdmin === true} />
         </div>
       </header>
 
@@ -396,7 +404,7 @@ export default function AppShell() {
           past the viewport and giving the whole PAGE a horizontal scrollbar,
           the failure `tableStyles.ts`'s `SCROLLER` exists to contain. */}
       <div className="lg:flex">
-        <ProjectRail />
+        <ProjectRail isAdmin={isAdmin} />
         {/* `p-4` on a phone, `p-6` from `sm` up: a 24px gutter on a 375px
             screen spends 13% of the width on nothing. */}
         <main id="main" tabIndex={-1} className="min-w-0 flex-1 p-4 outline-none sm:p-6">

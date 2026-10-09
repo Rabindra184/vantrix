@@ -22,6 +22,8 @@ import type {
   RunnerStartResponse,
 } from '@perfportal/contracts';
 import { DeclaredTestSlugSchema } from '@perfportal/contracts';
+import { NoAccess } from '../access/NoAccess';
+import { useProjectAccess, type ProjectAccess } from '../access/useAccess';
 import Button, { linkButtonClasses } from '../components/Button';
 import Card from '../components/Card';
 import FormField, { errorId, hintId, noticeId } from '../components/FormField';
@@ -228,6 +230,13 @@ type Launch =
 export default function NewRunnerRun() {
   const { slug = '' } = useParams<{ slug: string }>();
   const projects = useQuery({ queryKey: projectsQueryKey, queryFn: fetchProjects });
+  /* ASKED ONCE, HERE, AND HANDED DOWN (ruling P8): this page is not inside
+     `ProjectShell`, so nothing has asked for it yet — and asking again in the
+     form or the jobs table would mount another observer on the session and
+     the project list to learn the same answer. Before the early returns, as
+     a hook must be; it is READ only after them, so a project the reader
+     cannot see is "not found" before it is ever "refused" (P8(c)). */
+  const access = useProjectAccess(slug);
   const project = projects.data?.items.find((p) => p.slug === slug) ?? null;
   const title = project?.name ? `New run · ${project.name}` : 'New on-prem run';
   useDocumentTitle(title);
@@ -260,16 +269,35 @@ export default function NewRunnerRun() {
     );
   }
 
-  return <NewRunnerRunProject key={slug} slug={slug} projectName={project.name} />;
+  return <NewRunnerRunProject key={slug} slug={slug} projectName={project.name} access={access} />;
 }
 
+/**
+ * ═══ ONE ACTION BEHIND EVERY CONTROL THAT CHANGES SOMETHING ═══
+ *
+ * Queuing a run, cancelling one and retrying one are all `runner:run`, so a
+ * reader without it is offered none of the three. KNOWN and refused — a
+ * Viewer who typed the URL, since every link to this form is drawn only for
+ * `runner:run` — they are told so in the API's own words where the form would
+ * be. The rest of the page is reading, which a Viewer may do: the runner's
+ * status, and the project's jobs with their logs.
+ *
+ * Hidden until known: while access is pending there is no form and no
+ * refusal (never a spinner either — ruling P8(b): "not known" is also the
+ * answer for a project listed with no `role` field, which no wait would end),
+ * and the jobs are listed with Logs alone. A role that drops under an open
+ * form takes it away and puts the refusal in its place (Review Focus 3).
+ */
 function NewRunnerRunProject({
   slug,
   projectName,
+  access,
 }: {
   readonly slug: string;
   readonly projectName: string;
+  readonly access: ProjectAccess;
 }) {
+  const canRun = access.can('runner:run');
   const queryClient = useQueryClient();
   const jobs = useQuery({
     queryKey: runnerJobsQueryKey(slug),
@@ -315,10 +343,14 @@ function NewRunnerRunProject({
    * did. */
   const [searchParams] = useSearchParams();
   const requestedPackage = searchParams.get('package');
+  /* Only the form reads the packages, so only a reader offered the form asks
+     for them — the way the rules form's own test list is asked for. Until
+     then the list stays pending, so `source` stays undecided and the form,
+     once drawn, still opens on the answer rather than on a guess. */
   const packages = useQuery({
     queryKey: packagesQueryKey(slug),
     queryFn: () => fetchPackages(slug),
-    enabled: slug !== '',
+    enabled: slug !== '' && canRun,
   });
   const offered = useMemo(() => offeredPackages(packages.data?.items ?? []), [packages.data]);
   if (form.source === null && !packages.isPending) {
@@ -532,308 +564,315 @@ function NewRunnerRunProject({
          * The `<h2>` goes with the title — `Card` draws none without one — and
          * that is the right outcome rather than a side effect: the form is not
          * a second section of this page, it IS the page, and an `<h2>`
-         * repeating the `<h1>` is what a screen-reader user meets twice. */}
-        <Card headingLevel={2}>
-          {/* ═══ GROUPS, IN THE ORDER THE DECISIONS ARE MADE (review M16)
-              ═══
+         * repeating the `<h1>` is what a screen-reader user meets twice.
+         *
+         * Drawn only for a reader who may start a run; a reader KNOWN to be
+         * refused meets the API's sentence in its place, and while access is
+         * not known neither is drawn (see `NewRunnerRunProject`). */}
+        {!canRun && access.known && <NoAccess action="runner:run" />}
+        {canRun && (
+          <Card headingLevel={2}>
+            {/* ═══ GROUPS, IN THE ORDER THE DECISIONS ARE MADE (review M16)
+                ═══
 
-              The form was one flat run of eleven fields in which a JVM option
-              sat between a commit SHA and a system-property textarea, so the
-              basic path — pick a jar, name the class, go — was indistinguishable
-              from the tuning nobody uses twice.
+                The form was one flat run of eleven fields in which a JVM option
+                sat between a commit SHA and a system-property textarea, so the
+                basic path — pick a jar, name the class, go — was indistinguishable
+                from the tuning nobody uses twice.
 
-              `<fieldset>`/`<legend>` rather than headings: a legend groups
-              CONTROLS, which is what these are, and it contributes nothing to
-              the document's heading outline. This page already has an `<h1>`;
-              more headings inside one form would make the outline claim the
-              form is sections of the page rather than parts of one control.
+                `<fieldset>`/`<legend>` rather than headings: a legend groups
+                CONTROLS, which is what these are, and it contributes nothing to
+                the document's heading outline. This page already has an `<h1>`;
+                more headings inside one form would make the outline claim the
+                form is sections of the page rather than parts of one control.
 
-              AND THE NUMBERS ARE GONE (review M11). "1 · Artifact", "2 ·
-              Execution", "3 · Review" are "staged labels without staged
-              interaction": an ordinal promises a flow that gates step 2 behind
-              step 1, and this form has always shown all three at once and
-              submitted in one go. The grouping is real and stays; only the
-              claim that it is a sequence goes. And since clean UI PR 4 there
-              are two: the third, Review, read every field back and is gone —
-              see the note above Queue run. */}
-          <form className="flex flex-col gap-6" onSubmit={submit}>
-            <fieldset className="flex flex-col gap-4">
-              {/* ═══ THE GROUP WAS "ARTIFACT" AND IS "PACKAGE" ═══
-                  A run starts from one of the project's packages — a named,
-                  reusable artifact — and a file is something the reader
-                  uploads INTO one. The old name described the file; the
-                  decision this group asks for is which package. */}
-              <legend className={LEGEND}>Package</legend>
+                AND THE NUMBERS ARE GONE (review M11). "1 · Artifact", "2 ·
+                Execution", "3 · Review" are "staged labels without staged
+                interaction": an ordinal promises a flow that gates step 2 behind
+                step 1, and this form has always shown all three at once and
+                submitted in one go. The grouping is real and stays; only the
+                claim that it is a sequence goes. And since clean UI PR 4 there
+                are two: the third, Review, read every field back and is gone —
+                see the note above Queue run. */}
+            <form className="flex flex-col gap-6" onSubmit={submit}>
+              <fieldset className="flex flex-col gap-4">
+                {/* ═══ THE GROUP WAS "ARTIFACT" AND IS "PACKAGE" ═══
+                    A run starts from one of the project's packages — a named,
+                    reusable artifact — and a file is something the reader
+                    uploads INTO one. The old name described the file; the
+                    decision this group asks for is which package. */}
+                <legend className={LEGEND}>Package</legend>
 
-              {/* Only where the select is drawn: in upload mode there is
-                  nothing "below" to choose from. Tied to the select, so a
-                  screen reader landing on it hears why it holds what it does. */}
-              {mode === 'package' && linkIgnored && (
-                <p id="runner-package-link" className="text-[0.8125rem] leading-snug text-muted">
-                  The linked package can't run here — choose one below.
-                </p>
-              )}
-
-              {mode === 'upload' && (
-                /* THE INPUT IS `sr-only`, SO THE LABEL WEARS ITS FOCUS RING.
-                   The app-wide `:focus-visible` rule lands on the input, which
-                   is clipped to one pixel — tabbing to the file control showed
-                   nothing at all. `has-[:focus-visible]` puts the same 2px
-                   `--color-ring` outline on the visible box around it. */
-                <label className="flex cursor-pointer flex-col gap-2 rounded-xl border border-dashed border-default bg-sunken p-4 transition-ui hover:bg-page has-[:focus-visible]:[outline:2px_solid_var(--color-ring)] has-[:focus-visible]:outline-offset-2">
-                  <span className="flex items-center gap-2 text-sm font-medium text-primary">
-                    <UploadIcon className="h-4 w-4" />
-                    Artifact file
-                  </span>
-                  <span className="text-[0.8125rem] text-muted">{artifactHint}</span>
-                  <input
-                    ref={fileInputRef}
-                    className="sr-only"
-                    type="file"
-                    accept=".jar,.zip,.tgz,.tar.gz"
-                    onChange={(event) => setArtifact(event.target.files?.[0] ?? null)}
-                  />
-                </label>
-              )}
-
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                {mode === 'upload' ? (
-                  <FormField
-                    key="artifact-kind"
-                    label="Artifact type"
-                    id="runner-kind"
-                    hint={ARTIFACT_HINTS[form.artifactKind]}
-                  >
-                    <select
-                      id="runner-kind"
-                      className={INPUT}
-                      aria-describedby={hintId('runner-kind')}
-                      value={form.artifactKind}
-                      onChange={update('artifactKind', setForm)}
-                    >
-                      <option value="gatling_jar">Gatling jar</option>
-                      <option value="gatling_bundle">Runnable bundle</option>
-                    </select>
-                  </FormField>
-                ) : (
-                  /* DISTINCT KEYS for the two controls that share this slot.
-                     Without them React sees a `Field` holding a `select` in
-                     both branches and REUSES the DOM node, so focus on the
-                     Package select silently becomes focus on `Artifact type`
-                     — a native select fires `change` on ArrowDown, so a
-                     keyboard user gets there just by arrowing. */
-                  <FormField key="package-select" label="Package" id="runner-package">
-                    <select
-                      id="runner-package"
-                      ref={packageSelectRef}
-                      className={INPUT}
-                      aria-describedby={mode === 'package' && linkIgnored ? 'runner-package-link' : undefined}
-                      disabled={mode === 'loading'}
-                      value={mode === 'loading' ? '' : (chosenPackage?.id ?? '')}
-                      onChange={(event) => {
-                        const chosen = event.target.value;
-                        if (chosen === UPLOAD_OPTION) focusAfterSwitch.current = 'upload';
-                        // The simulation is cleared with the package: it
-                        // belongs to the package that listed it.
-                        setForm((current) =>
-                          chosen === UPLOAD_OPTION
-                            ? { ...current, source: 'upload', simulationClass: '' }
-                            : { ...current, packageId: chosen, simulationClass: '' },
-                        );
-                      }}
-                    >
-                      {mode === 'loading' ? (
-                        <option value="">Loading packages…</option>
-                      ) : (
-                        <>
-                          {offered.map((pkg) => (
-                            <option key={pkg.id} value={pkg.id}>
-                              {packageOptionLabel(pkg)}
-                            </option>
-                          ))}
-                          <option value={UPLOAD_OPTION}>Upload a new jar…</option>
-                        </>
-                      )}
-                    </select>
-                  </FormField>
+                {/* Only where the select is drawn: in upload mode there is
+                    nothing "below" to choose from. Tied to the select, so a
+                    screen reader landing on it hears why it holds what it does. */}
+                {mode === 'package' && linkIgnored && (
+                  <p id="runner-package-link" className="text-[0.8125rem] leading-snug text-muted">
+                    The linked package can't run here — choose one below.
+                  </p>
                 )}
-                <SimulationField
-                  mode={mode}
-                  simulations={simulations}
-                  value={simulationClass}
-                  onChange={(value) => setForm((current) => ({ ...current, simulationClass: value }))}
-                />
-              </div>
 
-              {mode === 'upload' && (
-                <div className="grid grid-cols-1 items-end gap-4 md:grid-cols-2">
-                  {/* ═══ THE WEB LEVER FOR "THAT NAME IS ANOTHER KIND" ═══
-                      Leaving this blank files the upload in the package its
-                      file's name stem names — which is what the placeholder
-                      shows. `foo.jar` after `foo.zip` has the SAME stem and a
-                      different kind, so the server refuses it with a
-                      remediation naming the metadata's "package" field; typing
-                      a different name here is how the upload goes elsewhere. */}
-                  <FormField label="Package name" id="runner-package-name" optional>
+                {mode === 'upload' && (
+                  /* THE INPUT IS `sr-only`, SO THE LABEL WEARS ITS FOCUS RING.
+                     The app-wide `:focus-visible` rule lands on the input, which
+                     is clipped to one pixel — tabbing to the file control showed
+                     nothing at all. `has-[:focus-visible]` puts the same 2px
+                     `--color-ring` outline on the visible box around it. */
+                  <label className="flex cursor-pointer flex-col gap-2 rounded-xl border border-dashed border-default bg-sunken p-4 transition-ui hover:bg-page has-[:focus-visible]:[outline:2px_solid_var(--color-ring)] has-[:focus-visible]:outline-offset-2">
+                    <span className="flex items-center gap-2 text-sm font-medium text-primary">
+                      <UploadIcon className="h-4 w-4" />
+                      Artifact file
+                    </span>
+                    <span className="text-[0.8125rem] text-muted">{artifactHint}</span>
                     <input
-                      id="runner-package-name"
-                      className={INPUT}
-                      value={form.packageName}
-                      // `PackageNameSchema`'s own cap: the server refuses a
-                      // longer name, so the field stops short of one.
-                      maxLength={120}
-                      placeholder={artifact === null ? undefined : packageNameFromFile(artifact.name)}
-                      onChange={update('packageName', setForm)}
+                      ref={fileInputRef}
+                      className="sr-only"
+                      type="file"
+                      accept=".jar,.zip,.tgz,.tar.gz"
+                      onChange={(event) => setArtifact(event.target.files?.[0] ?? null)}
                     />
-                  </FormField>
-                  {offered.length > 0 && (
-                    <button
-                      type="button"
-                      className="w-fit cursor-pointer pb-2 text-[0.8125rem] font-medium text-accent hover:underline hover:underline-offset-2"
-                      onClick={() => {
-                        focusAfterSwitch.current = 'package';
-                        setForm((current) => ({ ...current, source: 'package', simulationClass: '' }));
-                      }}
+                  </label>
+                )}
+
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  {mode === 'upload' ? (
+                    <FormField
+                      key="artifact-kind"
+                      label="Artifact type"
+                      id="runner-kind"
+                      hint={ARTIFACT_HINTS[form.artifactKind]}
                     >
-                      Choose an existing package
-                    </button>
-                  )}
-                </div>
-              )}
-            </fieldset>
-
-            <fieldset className="flex flex-col gap-4">
-              <legend className={LEGEND}>Execution</legend>
-
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <FormField label="Run name" id="runner-name">
-                  <input id="runner-name" className={INPUT} value={form.name} onChange={update('name', setForm)} required />
-                </FormField>
-                <FormField label="Environment" id="runner-environment" optional>
-                  <input id="runner-environment" className={INPUT} value={form.environment} onChange={update('environment', setForm)} />
-                </FormField>
-              </div>
-
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <FormField label="Branch" id="runner-branch" optional>
-                  <input id="runner-branch" className={INPUT} value={form.branch} onChange={update('branch', setForm)} />
-                </FormField>
-                <TestPicker slug={slug} form={form} setForm={setForm} left={left} onLeave={leave} />
-              </div>
-
-              {/* ═══ THE TUNING, OUT OF THE WAY OF THE LAUNCH PATH ═══
-
-                  JVM options, arbitrary system properties, a commit SHA and a
-                  Gatling override are all real and all rare. The review's
-                  objection was that they COMPETED with the basic path; a
-                  native `<details>` costs one click to reach them and gives
-                  the keyboard behaviour for free. Closed by default, and it
-                  says how many of its fields are filled so a value set here
-                  cannot be forgotten behind a collapsed summary. */}
-              <details className="rounded-xl border border-default bg-sunken p-3" data-testid="advanced">
-                <summary className="cursor-pointer list-none text-[0.8125rem] font-medium text-accent hover:underline hover:underline-offset-2">
-                  Advanced
-                  {/* A PROBLEM INSIDE IS SAID ON THE SUMMARY (PR 4 cleanup), so
-                      closing the section does not hide it. In WORDS, in the
-                      summary's own colour: the failed tone as text falls under
-                      AA on this sunken ground in the light theme (4.27:1, the
-                      measurement `FormField`'s left rule exists for). */}
-                  {(advancedCount > 0 || propertiesError !== undefined) && (
-                    <>
-                      {' '}(
-                      {advancedCount > 0 && `${advancedCount} set`}
-                      {advancedCount > 0 && propertiesError !== undefined && ' · '}
-                      {propertiesError !== undefined && (
-                        '1 problem'
-                      )}
-                      )
-                    </>
-                  )}
-                </summary>
-                <div className="flex flex-col gap-4 pt-3">
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                    <FormField label="Commit SHA" id="runner-commit" optional>
-                      <input id="runner-commit" className={INPUT} value={form.commitSha} onChange={update('commitSha', setForm)} />
+                      <select
+                        id="runner-kind"
+                        className={INPUT}
+                        aria-describedby={hintId('runner-kind')}
+                        value={form.artifactKind}
+                        onChange={update('artifactKind', setForm)}
+                      >
+                        <option value="gatling_jar">Gatling jar</option>
+                        <option value="gatling_bundle">Runnable bundle</option>
+                      </select>
                     </FormField>
-                    {mode === 'upload' && (
-                      <FormField label="Gatling version" id="runner-gatling-version" optional>
-                        <input id="runner-gatling-version" className={INPUT} value={form.gatlingVersion} onChange={update('gatlingVersion', setForm)} />
-                      </FormField>
+                  ) : (
+                    /* DISTINCT KEYS for the two controls that share this slot.
+                       Without them React sees a `Field` holding a `select` in
+                       both branches and REUSES the DOM node, so focus on the
+                       Package select silently becomes focus on `Artifact type`
+                       — a native select fires `change` on ArrowDown, so a
+                       keyboard user gets there just by arrowing. */
+                    <FormField key="package-select" label="Package" id="runner-package">
+                      <select
+                        id="runner-package"
+                        ref={packageSelectRef}
+                        className={INPUT}
+                        aria-describedby={mode === 'package' && linkIgnored ? 'runner-package-link' : undefined}
+                        disabled={mode === 'loading'}
+                        value={mode === 'loading' ? '' : (chosenPackage?.id ?? '')}
+                        onChange={(event) => {
+                          const chosen = event.target.value;
+                          if (chosen === UPLOAD_OPTION) focusAfterSwitch.current = 'upload';
+                          // The simulation is cleared with the package: it
+                          // belongs to the package that listed it.
+                          setForm((current) =>
+                            chosen === UPLOAD_OPTION
+                              ? { ...current, source: 'upload', simulationClass: '' }
+                              : { ...current, packageId: chosen, simulationClass: '' },
+                          );
+                        }}
+                      >
+                        {mode === 'loading' ? (
+                          <option value="">Loading packages…</option>
+                        ) : (
+                          <>
+                            {offered.map((pkg) => (
+                              <option key={pkg.id} value={pkg.id}>
+                                {packageOptionLabel(pkg)}
+                              </option>
+                            ))}
+                            <option value={UPLOAD_OPTION}>Upload a new jar…</option>
+                          </>
+                        )}
+                      </select>
+                    </FormField>
+                  )}
+                  <SimulationField
+                    mode={mode}
+                    simulations={simulations}
+                    value={simulationClass}
+                    onChange={(value) => setForm((current) => ({ ...current, simulationClass: value }))}
+                  />
+                </div>
+
+                {mode === 'upload' && (
+                  <div className="grid grid-cols-1 items-end gap-4 md:grid-cols-2">
+                    {/* ═══ THE WEB LEVER FOR "THAT NAME IS ANOTHER KIND" ═══
+                        Leaving this blank files the upload in the package its
+                        file's name stem names — which is what the placeholder
+                        shows. `foo.jar` after `foo.zip` has the SAME stem and a
+                        different kind, so the server refuses it with a
+                        remediation naming the metadata's "package" field; typing
+                        a different name here is how the upload goes elsewhere. */}
+                    <FormField label="Package name" id="runner-package-name" optional>
+                      <input
+                        id="runner-package-name"
+                        className={INPUT}
+                        value={form.packageName}
+                        // `PackageNameSchema`'s own cap: the server refuses a
+                        // longer name, so the field stops short of one.
+                        maxLength={120}
+                        placeholder={artifact === null ? undefined : packageNameFromFile(artifact.name)}
+                        onChange={update('packageName', setForm)}
+                      />
+                    </FormField>
+                    {offered.length > 0 && (
+                      <button
+                        type="button"
+                        className="w-fit cursor-pointer pb-2 text-[0.8125rem] font-medium text-accent hover:underline hover:underline-offset-2"
+                        onClick={() => {
+                          focusAfterSwitch.current = 'package';
+                          setForm((current) => ({ ...current, source: 'package', simulationClass: '' }));
+                        }}
+                      >
+                        Choose an existing package
+                      </button>
                     )}
                   </div>
+                )}
+              </fieldset>
 
-                  <FormField label="JVM options" id="runner-java-options" optional>
-                    <input id="runner-java-options" className={INPUT} value={form.javaOptions} onChange={update('javaOptions', setForm)} />
+              <fieldset className="flex flex-col gap-4">
+                <legend className={LEGEND}>Execution</legend>
+
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <FormField label="Run name" id="runner-name">
+                    <input id="runner-name" className={INPUT} value={form.name} onChange={update('name', setForm)} required />
                   </FormField>
-
-                  {/* ═══ NOT EVERY SIMULATION READS THE SAME PROPERTIES ═══
-
-                      The placeholder used to read `baseUrl=…` / `users=250`,
-                      which quietly asserts that those are the target and load
-                      knobs of this product. They are not: a system property is
-                      whatever the simulation's own code looks up, and two
-                      simulations in one project need not share a single name.
-                      The hint (behind the field's ⓘ) says so; nothing on the
-                      page labels any of it "target" or "load". */}
-                  <FormField
-                    label="System properties"
-                    id="runner-system-properties"
-                    optional
-                    hint="One key=value per line, passed to the JVM as -Dkey=value. Which names mean anything is up to your simulation — PerfPortal does not interpret them."
-                    /* A malformed line is flagged HERE once the reader leaves the
-                       field (clean UI PR 4, and its cleanup). The Review group
-                       used to be the one place it showed while it could still
-                       be fixed cheaply; the submit still refuses it with the
-                       alert below. */
-                    error={propertiesError}
-                  >
-                    <textarea
-                      id="runner-system-properties"
-                      className={`${INPUT} min-h-28 resize-y py-2 font-mono`}
-                      aria-describedby={
-                        propertiesError !== undefined
-                          ? `${hintId(PROPERTIES_FIELD)} ${errorId(PROPERTIES_FIELD)}`
-                          : hintId(PROPERTIES_FIELD)
-                      }
-                      aria-invalid={propertiesError !== undefined || undefined}
-                      value={form.systemProperties}
-                      onChange={update('systemProperties', setForm)}
-                      onBlur={() => leave(PROPERTIES_FIELD)}
-                    />
+                  <FormField label="Environment" id="runner-environment" optional>
+                    <input id="runner-environment" className={INPUT} value={form.environment} onChange={update('environment', setForm)} />
                   </FormField>
                 </div>
-              </details>
-            </fieldset>
 
-            {/* ═══ NO REVIEW GROUP (clean UI PR 4) ═══
-                The form is its own review. The group that read every field
-                back sat between the last field and this button: the package
-                select already names the package, its file and its size, the
-                upload's default package name is that field's placeholder, a
-                missing required field is refused where it is, and a malformed
-                property is flagged under its own field. What stays is the
-                error alert and Queue run, outside any group. */}
-            {(formError !== null || mutation.isError) && (
-              <div role="alert" className="rounded-lg border border-default bg-sunken p-3 text-[0.8125rem] text-primary">
-                {formError ?? problem?.detail ?? mutationError?.message}
-                {problem?.remediation && <p className="mt-1 text-muted">{problem.remediation}</p>}
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <FormField label="Branch" id="runner-branch" optional>
+                    <input id="runner-branch" className={INPUT} value={form.branch} onChange={update('branch', setForm)} />
+                  </FormField>
+                  <TestPicker slug={slug} form={form} setForm={setForm} left={left} onLeave={leave} />
+                </div>
+
+                {/* ═══ THE TUNING, OUT OF THE WAY OF THE LAUNCH PATH ═══
+
+                    JVM options, arbitrary system properties, a commit SHA and a
+                    Gatling override are all real and all rare. The review's
+                    objection was that they COMPETED with the basic path; a
+                    native `<details>` costs one click to reach them and gives
+                    the keyboard behaviour for free. Closed by default, and it
+                    says how many of its fields are filled so a value set here
+                    cannot be forgotten behind a collapsed summary. */}
+                <details className="rounded-xl border border-default bg-sunken p-3" data-testid="advanced">
+                  <summary className="cursor-pointer list-none text-[0.8125rem] font-medium text-accent hover:underline hover:underline-offset-2">
+                    Advanced
+                    {/* A PROBLEM INSIDE IS SAID ON THE SUMMARY (PR 4 cleanup), so
+                        closing the section does not hide it. In WORDS, in the
+                        summary's own colour: the failed tone as text falls under
+                        AA on this sunken ground in the light theme (4.27:1, the
+                        measurement `FormField`'s left rule exists for). */}
+                    {(advancedCount > 0 || propertiesError !== undefined) && (
+                      <>
+                        {' '}(
+                        {advancedCount > 0 && `${advancedCount} set`}
+                        {advancedCount > 0 && propertiesError !== undefined && ' · '}
+                        {propertiesError !== undefined && (
+                          '1 problem'
+                        )}
+                        )
+                      </>
+                    )}
+                  </summary>
+                  <div className="flex flex-col gap-4 pt-3">
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                      <FormField label="Commit SHA" id="runner-commit" optional>
+                        <input id="runner-commit" className={INPUT} value={form.commitSha} onChange={update('commitSha', setForm)} />
+                      </FormField>
+                      {mode === 'upload' && (
+                        <FormField label="Gatling version" id="runner-gatling-version" optional>
+                          <input id="runner-gatling-version" className={INPUT} value={form.gatlingVersion} onChange={update('gatlingVersion', setForm)} />
+                        </FormField>
+                      )}
+                    </div>
+
+                    <FormField label="JVM options" id="runner-java-options" optional>
+                      <input id="runner-java-options" className={INPUT} value={form.javaOptions} onChange={update('javaOptions', setForm)} />
+                    </FormField>
+
+                    {/* ═══ NOT EVERY SIMULATION READS THE SAME PROPERTIES ═══
+
+                        The placeholder used to read `baseUrl=…` / `users=250`,
+                        which quietly asserts that those are the target and load
+                        knobs of this product. They are not: a system property is
+                        whatever the simulation's own code looks up, and two
+                        simulations in one project need not share a single name.
+                        The hint (behind the field's ⓘ) says so; nothing on the
+                        page labels any of it "target" or "load". */}
+                    <FormField
+                      label="System properties"
+                      id="runner-system-properties"
+                      optional
+                      hint="One key=value per line, passed to the JVM as -Dkey=value. Which names mean anything is up to your simulation — PerfPortal does not interpret them."
+                      /* A malformed line is flagged HERE once the reader leaves the
+                         field (clean UI PR 4, and its cleanup). The Review group
+                         used to be the one place it showed while it could still
+                         be fixed cheaply; the submit still refuses it with the
+                         alert below. */
+                      error={propertiesError}
+                    >
+                      <textarea
+                        id="runner-system-properties"
+                        className={`${INPUT} min-h-28 resize-y py-2 font-mono`}
+                        aria-describedby={
+                          propertiesError !== undefined
+                            ? `${hintId(PROPERTIES_FIELD)} ${errorId(PROPERTIES_FIELD)}`
+                            : hintId(PROPERTIES_FIELD)
+                        }
+                        aria-invalid={propertiesError !== undefined || undefined}
+                        value={form.systemProperties}
+                        onChange={update('systemProperties', setForm)}
+                        onBlur={() => leave(PROPERTIES_FIELD)}
+                      />
+                    </FormField>
+                  </div>
+                </details>
+              </fieldset>
+
+              {/* ═══ NO REVIEW GROUP (clean UI PR 4) ═══
+                  The form is its own review. The group that read every field
+                  back sat between the last field and this button: the package
+                  select already names the package, its file and its size, the
+                  upload's default package name is that field's placeholder, a
+                  missing required field is refused where it is, and a malformed
+                  property is flagged under its own field. What stays is the
+                  error alert and Queue run, outside any group. */}
+              {(formError !== null || mutation.isError) && (
+                <div role="alert" className="rounded-lg border border-default bg-sunken p-3 text-[0.8125rem] text-primary">
+                  {formError ?? problem?.detail ?? mutationError?.message}
+                  {problem?.remediation && <p className="mt-1 text-muted">{problem.remediation}</p>}
+                </div>
+              )}
+
+              <div className="flex flex-wrap items-center gap-3">
+                <Button type="submit" variant="primary" loading={mutation.isPending} disabled={mode === 'loading'}>
+                  <PlayIcon className="h-3.5 w-3.5" />
+                  Queue run
+                </Button>
               </div>
-            )}
-
-            <div className="flex flex-wrap items-center gap-3">
-              <Button type="submit" variant="primary" loading={mutation.isPending} disabled={mode === 'loading'}>
-                <PlayIcon className="h-3.5 w-3.5" />
-                Queue run
-              </Button>
-            </div>
-          </form>
-        </Card>
+            </form>
+          </Card>
+        )}
 
         <RunnerStatusCard query={jobs} />
       </div>
 
       {created !== null && <QueuedJob response={created} />}
-      <RecentJobs slug={slug} query={jobs} />
+      <RecentJobs slug={slug} query={jobs} canRun={canRun} />
     </div>
   );
 }
@@ -1137,7 +1176,16 @@ function QueuedJob({ response }: { readonly response: RunnerStartResponse }) {
   );
 }
 
-function RecentJobs({ slug, query }: { readonly slug: string; readonly query: UseQueryResult<RunnerJobListResponse, Error> }) {
+function RecentJobs({
+  slug,
+  query,
+  canRun,
+}: {
+  readonly slug: string;
+  readonly query: UseQueryResult<RunnerJobListResponse, Error>;
+  /** `runner:run` — Cancel and Retry are drawn only with it; Logs is reading, and always is. */
+  readonly canRun: boolean;
+}) {
   const queryClient = useQueryClient();
   const [selectedLogJobId, setSelectedLogJobId] = useState<string | null>(null);
   const logs = useQuery({
@@ -1221,6 +1269,7 @@ function RecentJobs({ slug, query }: { readonly slug: string; readonly query: Us
                   <div className="flex flex-col items-start gap-1.5">
                     <RunnerJobActions
                       job={job}
+                      canRun={canRun}
                       cancelling={cancelMutation.isPending && cancelMutation.variables === job.id}
                       retrying={retryMutation.isPending && retryMutation.variables === job.id}
                       logsSelected={selectedLogJobId === job.id}
@@ -1261,6 +1310,7 @@ function hasActiveRunnerJobs(data: RunnerJobListResponse | undefined): boolean {
 
 function RunnerJobActions({
   job,
+  canRun,
   cancelling,
   retrying,
   logsSelected,
@@ -1269,6 +1319,13 @@ function RunnerJobActions({
   onLogs,
 }: {
   readonly job: RunnerJob;
+  /**
+   * `runner:run`, which cancelling and retrying both need. Without it — or
+   * before it is known — a row offers Logs alone: reading a job's logs is a
+   * Viewer's too, and a Cancel or Retry the API would refuse is an offer the
+   * reader cannot accept.
+   */
+  readonly canRun: boolean;
   readonly cancelling: boolean;
   readonly retrying: boolean;
   readonly logsSelected: boolean;
@@ -1281,6 +1338,7 @@ function RunnerJobActions({
       {logsSelected ? 'Hide logs' : 'Logs'}
     </Button>
   );
+  if (!canRun) return logsButton;
   if (job.status === 'queued' || job.status === 'starting' || job.status === 'running') {
     return (
       <div className="flex flex-wrap items-center gap-1.5">

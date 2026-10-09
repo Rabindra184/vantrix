@@ -37,7 +37,9 @@ An admin's session sees every project in its org. Any other session sees
 only the projects it holds a role in — Viewer, Member or Manager — and may do
 in each what that role allows; a project it holds no role in answers `404`,
 exactly as one that does not exist. A token sees exactly one project, and only
-what its scopes allow.
+what its scopes allow. In `/v1/docs`, every operation a role governs opens by
+saying which role a signed-in session needs, for example *A signed-in session
+needs the Member role or above in this project, or an admin account.*
 
 There is no public sign-up: `POST /auth/sign-up/email` is refused. An admin
 makes every account, under **Administration › Users** or with
@@ -81,13 +83,26 @@ DELETE /v1/projects/{slug}/tokens/{prefix}  revoke (idempotent)
 that lives on a load generator, often a shared and disposable host, should
 be able to do exactly one thing.
 
+The on-prem runner's five job routes (`/v1/projects/{slug}/runner/…`) all
+take either credential; the scope or role each needs depends on the route:
+
+- Queuing, cancelling and retrying a job (`POST …/runner/runs`,
+  `POST …/runner/runs/{jobId}/cancel`, `POST …/runner/runs/{jobId}/retry`)
+  take a token with `runner`, or a signed-in session with the Member role or
+  above in the project, or an admin's. The **New on-prem run** page does all
+  three with the session.
+- Listing jobs and reading a job's logs (`GET …/runner/runs`,
+  `GET …/runner/runs/{jobId}/logs`) are reads: they take a token with `read`,
+  or a session with any role in the project, or an admin's. A token carrying
+  `runner` alone is refused them.
+
 ### Which credential can send a run
 
 | Route | Credential | Why |
 |---|---|---|
 | `POST /v1/runs` | token with `ingest` | CI's path. |
 | `POST /v1/runs/live` (+ `stream`, `close`) | token with `stream` | The Gradle plugin's path. |
-| `POST /v1/projects/{slug}/runs` | session only, Member role or above | The browser upload on **Add results**. |
+| `POST /v1/projects/{slug}/runs` | session only, Member role or above, or an admin | The browser upload on **Add results**. |
 
 A session names no project, so `POST /v1/runs` refuses it with
 `400 PROJECT_REQUIRED`; the live routes need the `stream` scope, which no
@@ -173,16 +188,34 @@ GET    /v1/admin/projects                   every project, with its member count
   that does not exist.
 
 **Project roles** — Viewer, Member and Manager — are read by anyone with a
-role in the project and changed by an admin:
+role in the project, or an admin, and changed by an admin:
 
 ```text
-GET    /v1/projects/{slug}/members              Viewer and above
+GET    /v1/projects/{slug}/members              any role, or an admin
 POST   /v1/projects/{slug}/members              { userId, role } → 201   (admin)
 PATCH  /v1/projects/{slug}/members/{userId}     { role } → 200           (admin)
 DELETE /v1/projects/{slug}/members/{userId}     → 204                    (admin)
 ```
 
 A role takes effect on the person's next request; nothing is cached.
+
+**The web app draws what a role allows.** A Viewer is offered no Add rule,
+no New on-prem run, no package actions and no Add a note; a Member no API
+tokens and no test Rename or Delete; the project's **Members** section lists
+everyone with a role, and an admin adds, changes (pick a role, then **Save**)
+and removes them there. A page reached by its address for an action the role
+cannot take says so in the API's own words, e.g. *Managing API tokens needs
+the Manager role in this project. Ask an admin to change your role.* Hiding is
+for clarity only: the API refuses the request whatever the page draws. An open
+page follows a role change on its next read of `GET /v1/projects`.
+
+**A `401` from any request ends the session in the app.** A reset, a disable,
+removing the account or an expired session answers `401` on the person's next
+request, and the open page goes to sign-in, with `?next=` keeping where they
+were. Removing someone from a project is not one: that project then answers
+`404`, as one they never held a role in. The
+one exception is the bundle upload on **Add results**, a bare upload request
+outside the app's query layer: its `401` is shown in place.
 
 ---
 

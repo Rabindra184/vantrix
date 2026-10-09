@@ -1,13 +1,17 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SlaRule } from '@perfportal/contracts';
+import { accessRefusal, type ProjectRole, type SlaRule } from '@perfportal/contracts';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { useProjectAccess } from '../src/access/useAccess';
+import { ProblemError } from '../src/api/fetch';
+import { projectsQueryKey } from '../src/api/projects';
+import { projectListBody, seedAccess } from './support/access';
 
 /**
  * Where the families a rule can resolve against are actually produced.
@@ -117,19 +121,44 @@ const TEST = {
   latestRun: null,
 };
 
+/** Who is looking: what `seedAccess` writes into the cache before the panel mounts. */
+type Reader = { isAdmin: boolean; roles?: Readonly<Record<string, ProjectRole>> };
+
+/**
+ * An install-wide admin who holds no membership row in `checkout` — the
+ * `role: null` admin of Review Focus 1, and every claim in this file before
+ * project access existed is about the panel such a reader sees: every control
+ * drawn. `roles: {}` rather than none so the project list is WRITTEN (empty)
+ * and nothing here reaches for a real `GET /v1/projects`, which this file
+ * does not stub.
+ */
+const ADMIN: Reader = { isAdmin: true, roles: {} };
+
+/**
+ * The panel as a page mounts it: the page asks `useProjectAccess` once and
+ * hands the answer down (`ProjectShell` on the SLA rules page, `TestRuns` on a
+ * test's page), so the real hook runs here against what `seedAccess` wrote.
+ */
+function PanelUnderTest(props: { readonly testSlug?: string; readonly testName?: string }) {
+  const access = useProjectAccess('checkout');
+  return <ProjectRules slug="checkout" access={access} {...props} />;
+}
+
 /** `props` is empty for project mode and carries the test for test mode — the
- *  two surfaces this one component serves. */
-function renderRules(props: { testSlug?: string; testName?: string } = {}) {
+ *  two surfaces this one component serves. `who: null` seeds nothing. */
+function renderRules(props: { testSlug?: string; testName?: string } = {}, who: Reader | null = ADMIN) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  return render(
+  if (who !== null) seedAccess(client, who);
+  const view = render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
-        <ProjectRules slug="checkout" {...props} />
+        <PanelUnderTest {...props} />
       </MemoryRouter>
     </QueryClientProvider>,
   );
+  return { ...view, client };
 }
 
 beforeEach(() => {
@@ -142,6 +171,7 @@ beforeEach(() => {
 });
 
 afterEach(cleanup);
+afterEach(() => vi.unstubAllGlobals());
 
 describe('ProjectRules — authoring', () => {
   /**
@@ -1736,5 +1766,177 @@ describe('ProjectRules — nothing written under the title (clean UI PR 4)', () 
       await screen.findByText('No rules for this test — the project-wide rules below apply.'),
     ).toBeInTheDocument();
     for (const sentence of gone) expect(screen.queryByText(sentence)).toBeNull();
+  });
+});
+
+/**
+ * ═══ WHO MAY CHANGE A RULE (project access, PR 3) ═══
+ *
+ * Reading the rules is `rules:read`, which every role in the project holds, so
+ * the tables are drawn for every reader. Authoring, enabling, disabling and
+ * deleting are `rules:edit`, a Member's — so for anyone below that the panel
+ * draws no "New rule" disclosure, no Enable/Disable, no row menu and no
+ * Actions column. The API refuses either way; hiding is for clarity.
+ *
+ * HIDDEN UNTIL KNOWN: while the session or the project list is pending, none
+ * of the four is drawn and nothing claims the reader was refused.
+ */
+describe('ProjectRules — what a role is offered', () => {
+  const VIEWER: Reader = { isAdmin: false, roles: { checkout: 'viewer' } };
+  const MEMBER: Reader = { isAdmin: false, roles: { checkout: 'member' } };
+
+  /** The column headers of every rules table on screen, trimmed. */
+  const headers = () =>
+    screen.getAllByRole('columnheader').map((th) => (th.textContent ?? '').trim());
+
+  /** None of the four controls `rules:edit` gates is on screen — in any table. */
+  function expectNoControls() {
+    expect(screen.queryAllByRole('button', { name: 'Disable' })).toHaveLength(0);
+    expect(screen.queryAllByRole('button', { name: 'Enable' })).toHaveLength(0);
+    expect(screen.queryAllByRole('button', { name: /more actions/ })).toHaveLength(0);
+    expect(headers()).not.toContain('Actions');
+    expect(screen.queryByText('New rule')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Add rule' })).toBeNull();
+  }
+
+  it('lists the rules for a viewer, with nothing to change them by', async () => {
+    fetchProjectRules.mockResolvedValue({
+      rules: [rule(), rule({ id: '22222222-2222-4222-8222-222222222222', name: 'Off gate', enabled: false })],
+    });
+    renderRules({}, VIEWER);
+
+    // The list stays — every column but Actions, and both rows.
+    expect(await screen.findByText('Checkout p95 gate')).toBeInTheDocument();
+    expect(screen.getByText('Off gate')).toBeInTheDocument();
+    expect(headers()).toEqual(['Name', 'Applies to', 'Measurement', 'Limit', 'Enabled']);
+    expectNoControls();
+    // The form's "Applies to" list is the form's alone: not asked for.
+    expect(fetchProjectTests).not.toHaveBeenCalled();
+  });
+
+  it('offers a member every control', async () => {
+    fetchProjectRules.mockResolvedValue({ rules: [rule()] });
+    renderRules({}, MEMBER);
+
+    expect(await screen.findByRole('button', { name: 'Disable' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /more actions/ })).toBeInTheDocument();
+    expect(headers()).toContain('Actions');
+    expect(screen.getByText('New rule')).toBeInTheDocument();
+  });
+
+  /**
+   * Review Focus 1: an admin holding only a Viewer row in this project is
+   * still an admin. (`ADMIN`, the default above, is the one holding none.)
+   */
+  it('offers an admin every control whatever row they hold', async () => {
+    fetchProjectRules.mockResolvedValue({ rules: [rule()] });
+    renderRules({}, { isAdmin: true, roles: { checkout: 'viewer' } });
+
+    expect(await screen.findByRole('button', { name: 'Disable' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /more actions/ })).toBeInTheDocument();
+    expect(screen.getByText('New rule')).toBeInTheDocument();
+  });
+
+  /**
+   * On a test's page this panel sits under the run list, and a heading is the
+   * only thing telling the two apart — for every reader, not only one who may
+   * add a rule. It is ONE section `<h2>` above the tables: the old card title
+   * was drawn only with the form (`rules:edit`), and as an `<h3>` after the
+   * tables, directly under the page's `<h1>`.
+   */
+  it.each([
+    ['a Viewer', VIEWER],
+    ['a Member', MEMBER],
+  ])('names the rules on a test’s page for %s, as one <h2> above the tables', async (_, who) => {
+    fetchProjectRules.mockResolvedValue({ rules: [rule({ test: null })] });
+    renderRules({ testSlug: 'payments-sweep', testName: 'Payments sweep' }, who);
+
+    const heading = await screen.findByRole('heading', { level: 2, name: 'SLA rules' });
+    expect(screen.getAllByRole('heading', { name: 'SLA rules' })).toEqual([heading]);
+    const table = await screen.findByRole('table', { name: 'Inherited SLA rules' });
+    expect(heading.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('withholds them on a test’s page too, in both tables', async () => {
+    fetchProjectRules.mockResolvedValue({
+      rules: [
+        rule({ test: { id: TEST.id, slug: 'payments-sweep', name: 'Payments sweep' } }),
+        rule({ id: '22222222-2222-4222-8222-222222222222', name: 'Project gate', test: null }),
+      ],
+    });
+    renderRules({ testSlug: 'payments-sweep', testName: 'Payments sweep' }, VIEWER);
+
+    expect(await screen.findByRole('table', { name: 'Test SLA rules' })).toBeInTheDocument();
+    expect(screen.getByRole('table', { name: 'Inherited SLA rules' })).toBeInTheDocument();
+    expect(screen.getByText('Project gate')).toBeInTheDocument();
+    expectNoControls();
+  });
+
+  /**
+   * Review Focus 3: an admin demotes the person while the page is open. The
+   * controls go when the project list next answers — here, the moment the
+   * cached list says Viewer.
+   */
+  it('takes the controls away when the cached role drops to viewer', async () => {
+    fetchProjectRules.mockResolvedValue({ rules: [rule()] });
+    const { client } = renderRules({}, MEMBER);
+    expect(await screen.findByRole('button', { name: 'Disable' })).toBeInTheDocument();
+
+    act(() => {
+      client.setQueryData(projectsQueryKey, projectListBody({ checkout: 'viewer' }));
+    });
+
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Disable' })).toBeNull());
+    expect(screen.getByText('Checkout p95 gate')).toBeInTheDocument();
+    expectNoControls();
+  });
+
+  /**
+   * Review Focus 2: unknown is not refused. The session and the project list
+   * both held, so nothing is known about this reader: the list is drawn, no
+   * control is, and no sentence says the reader may not.
+   */
+  it('draws the list and no control while access is pending, and refuses nobody', async () => {
+    vi.stubGlobal('fetch', () => new Promise<Response>(() => {}));
+    fetchProjectRules.mockResolvedValue({ rules: [rule()] });
+    renderRules({}, null);
+
+    expect(await screen.findByText('Checkout p95 gate')).toBeInTheDocument();
+    expectNoControls();
+    expect(screen.queryByText(/needs the .* role/)).toBeNull();
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+
+  /**
+   * Review Focus 3's other half: the list has not answered yet, so the
+   * controls are still drawn and the reader uses one. The API's refusal is
+   * what they get, inline and in its own words — never a click that did
+   * nothing.
+   */
+  it('answers a refused toggle with the API’s own words, above the tables', async () => {
+    const user = userEvent.setup();
+    const refusal = accessRefusal('rules:edit');
+    fetchProjectRules.mockResolvedValue({ rules: [rule()] });
+    updateProjectRule.mockRejectedValue(new ProblemError(403, refusal));
+    renderRules({}, MEMBER);
+
+    await user.click(await screen.findByRole('button', { name: 'Disable' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(refusal.detail);
+    expect(alert).toHaveTextContent(refusal.remediation);
+  });
+
+  it('answers a refused new rule with the API’s own words, in the form', async () => {
+    const user = userEvent.setup();
+    const refusal = accessRefusal('rules:edit');
+    createProjectRule.mockRejectedValue(new ProblemError(403, refusal));
+    renderRules({}, MEMBER);
+
+    await user.click(await screen.findByRole('button', { name: 'Add rule' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(refusal.detail);
+    expect(alert).toHaveTextContent(refusal.remediation);
   });
 });

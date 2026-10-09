@@ -9,6 +9,7 @@ import {
   DEFAULT_ROUTE,
   HOME_ROUTE,
   NEW_PROJECT_ROUTE,
+  projectMembersPath,
   projectNewRunnerRunPath,
   projectPackagesPath,
   projectPath,
@@ -173,6 +174,20 @@ describe('packages, as paths', () => {
 });
 
 /**
+ * A project's members, one segment under the project like every other
+ * section. The SHAPE here; that `App.tsx` declares a route serving it is the
+ * scan's, below — without one, the Members tab would land on the catch-all
+ * and send the reader home.
+ */
+describe('members, as paths', () => {
+  it('puts the Members page one segment under the project, encoding the slug', () => {
+    expect(projectMembersPath('checkout')).toBe('/projects/checkout/members');
+    expect(projectMembersPath('checkout').startsWith(`${projectPath('checkout')}/`)).toBe(true);
+    expect(projectMembersPath('a/b')).toBe('/projects/a%2Fb/members');
+  });
+});
+
+/**
  * NOTHING STATIC MAY SIT WHERE A PROJECT SLUG GOES.
  *
  * React Router ranks a static segment above a dynamic one, so a literal
@@ -325,6 +340,7 @@ describe('static routes cannot shadow a project slug', () => {
     ['the project run list', 'path="/projects/:slug/runs"'],
     ['a test’s run history', 'path="/projects/:slug/tests/:testSlug"'],
     ['a project’s packages', 'path="/projects/:slug/packages"'],
+    ['a project’s members', 'path="/projects/:slug/members"'],
   ])('declares a route for %s', (_what, declaration) => {
     expect(APP).toContain(declaration);
   });

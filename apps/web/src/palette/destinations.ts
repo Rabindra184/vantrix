@@ -1,16 +1,7 @@
 import { matchPath } from 'react-router-dom';
-import {
-  ALL_RUNS_ROUTE,
-  HOME_ROUTE,
-  NEW_PROJECT_ROUTE,
-  projectAccessPath,
-  projectNewRunnerRunPath,
-  projectPackagesPath,
-  projectPath,
-  projectRulesPath,
-  projectRunsPath,
-  projectSetupPath,
-} from '../routes/paths.js';
+import type { ProjectAccess } from '../access/useAccess.js';
+import { ALL_RUNS_ROUTE, HOME_ROUTE, NEW_PROJECT_ROUTE } from '../routes/paths.js';
+import { LAUNCH, visibleSections, type ProjectSection } from '../routes/projectSections.js';
 
 /**
  * Where the command palette can take a reader without searching for it.
@@ -19,7 +10,12 @@ import {
  * place in the app is a decision, and it is cheaper to pin here than through a
  * rendered dialog. Every `to` comes from `paths.ts` and none is spelled here —
  * that file is where a route's shape is decided, and a palette that wrote its
- * own `/projects/${slug}/rules` would be a second opinion about it.
+ * own `/projects/${slug}/rules` would be a second opinion about it. A
+ * project's pages arrive by way of the table `ProjectShell` draws its strip
+ * from (`routes/projectSections.ts`), which takes its paths from there and
+ * decides which of them a reader is offered. That module holds the table,
+ * its filter and the launch action and no component, so importing it does not
+ * bring `ProjectShell` into the entry chunk this palette lives in.
  */
 
 /** One place the palette can go. */
@@ -38,6 +34,20 @@ export interface Destination {
 export interface ProjectRef {
   readonly slug: string;
   readonly name: string;
+}
+
+/**
+ * A project the palette offers PAGES of, with what the reader may do in it —
+ * `projectAccess`'s answer for that project, which is what decides which of
+ * its pages are offered. Carried together so the CALLER names, in one value,
+ * which project's access it means: nothing here can check that `access` was
+ * asked about `project` rather than some other project, so the pairing is the
+ * caller's to get right. `usePaletteSearch` builds every one of them from a
+ * single slug (`withAccess`).
+ */
+export interface ProjectWithAccess {
+  readonly project: ProjectRef;
+  readonly access: ProjectAccess;
 }
 
 /** The most pages `matchPages` returns — the palette's Pages group holds five. */
@@ -89,30 +99,35 @@ export function currentProjectSlug(pathname: string): string | null {
   return slug;
 }
 
-/**
- * A project's pages, in `ProjectShell`'s order, then the launch form.
- *
- * `key` is the section's own name there (`ProjectSection`) and `label` is what
- * its nav calls it. Both are written down once more here because that file's
- * list is private to the component that draws it; `paletteDestinations.test.ts`
- * reads the component's source and fails if the two stop agreeing, which is
- * the only thing that keeps a copy from being a second opinion.
- */
-const PAGES: readonly {
-  readonly key: string;
+/** One of a project's pages, before it is labelled for the project it belongs to. */
+interface Page {
+  readonly key: ProjectSection | 'new-run';
   readonly label: string;
   readonly path: (slug: string) => string;
-}[] = [
-  { key: 'tests', label: 'Tests', path: projectPath },
-  { key: 'runs', label: 'Runs', path: projectRunsPath },
-  { key: 'packages', label: 'Packages', path: projectPackagesPath },
-  { key: 'setup', label: 'Add results', path: projectSetupPath },
-  { key: 'rules', label: 'SLA rules', path: projectRulesPath },
-  { key: 'access', label: 'API tokens', path: projectAccessPath },
+}
+
+/**
+ * A project's pages for a reader: the sections `ProjectShell` draws for them,
+ * in its order, then the launch form when they may start a run.
+ *
+ * Read off the shell's own table — `visibleSections` and `LAUNCH`, which the
+ * shell draws its strip and its launch by — and never written down here. A
+ * palette that kept its own list, or decided its own way which pages a role
+ * may open, would be a second opinion about both: it could offer a Viewer an
+ * API tokens row the strip hides from them. `paletteDestinations.test.ts`
+ * reads the table's source and fails the day the two disagree.
+ *
+ * `key` is the section's own name there (`ProjectSection`); the launch, which
+ * is the action beside the strip rather than a section of it, is `new-run`.
+ */
+function pagesFor(access: ProjectAccess): readonly Page[] {
+  const pages: Page[] = visibleSections(access).map(({ section, label, path }) => ({ key: section, label, path }));
   /* Not a section of the shell — it is the action beside the nav — but it is
-     a page a reader goes to, so it is a destination like the rest. */
-  { key: 'new-run', label: 'New on-prem run', path: (slug) => projectNewRunnerRunPath(slug) },
-];
+     a page a reader goes to, so it is a destination like the rest, offered by
+     the rule the shell draws it by. */
+  if (access.can(LAUNCH.requires)) pages.push({ key: 'new-run', label: LAUNCH.label, path: LAUNCH.path });
+  return pages;
+}
 
 /**
  * Each page as a destination, labelled "SLA rules · Checkout" so a row names
@@ -120,11 +135,14 @@ const PAGES: readonly {
  * label without the project, which is what `matchPages` searches beside the
  * project's own name and slug.
  */
-function pageDestinations(project: ProjectRef): readonly {
+function pageDestinations(
+  project: ProjectRef,
+  access: ProjectAccess,
+): readonly {
   readonly page: string;
   readonly destination: Destination;
 }[] {
-  return PAGES.map((page) => ({
+  return pagesFor(access).map((page) => ({
     page: page.label,
     destination: {
       id: `page:${project.slug}:${page.key}`,
@@ -134,9 +152,13 @@ function pageDestinations(project: ProjectRef): readonly {
   }));
 }
 
-/** A project's pages, each labelled with the project so a row stands alone in a mixed list. */
-export function projectPages(project: ProjectRef): Destination[] {
-  return pageDestinations(project).map((p) => p.destination);
+/**
+ * A project's pages that `access` lets the reader open, each labelled with
+ * the project so a row stands alone in a mixed list. `access` must be the
+ * answer for THIS project.
+ */
+export function projectPages(project: ProjectRef, access: ProjectAccess): Destination[] {
+  return pageDestinations(project, access).map((p) => p.destination);
 }
 
 /**
@@ -147,18 +169,28 @@ export function projectPages(project: ProjectRef): Destination[] {
 const ALWAYS: readonly Destination[] = [
   { id: 'go:home', label: 'Home', to: HOME_ROUTE },
   { id: 'go:all-runs', label: 'All runs', to: ALL_RUNS_ROUTE },
-  { id: 'go:new-project', label: 'New project', to: NEW_PROJECT_ROUTE },
 ];
+
+/**
+ * The create page, offered to an admin alone: its one action is
+ * `projects:create`, which only an admin may take — gate by destination.
+ */
+const NEW_PROJECT: Destination = { id: 'go:new-project', label: 'New project', to: NEW_PROJECT_ROUTE };
 
 /**
  * The palette's opening state: nothing typed, so nothing searched.
  *
- * Home, All runs and New project are always there. The project's own pages
- * follow when the reader is inside one — "go to this project's rules" is the
- * commonest trip from a project page and costs no typing.
+ * Home and All runs are always there, and New project after them for an
+ * admin. `isAdmin` is `useIsAdmin`'s answer, `undefined` while the session has
+ * not answered — and then New project is not offered: hidden until known.
+ * REQUIRED, with no default, because a default would decide in silence who is
+ * offered it. The project's own pages follow when the reader is inside one —
+ * "go to this project's rules" is the commonest trip from a project page and
+ * costs no typing — as many of them as the reader's access there offers.
  */
-export function goToDestinations(current: ProjectRef | null): Destination[] {
-  return current === null ? [...ALWAYS] : [...ALWAYS, ...projectPages(current)];
+export function goToDestinations(current: ProjectWithAccess | null, isAdmin: boolean | undefined): Destination[] {
+  const always = isAdmin === true ? [...ALWAYS, NEW_PROJECT] : [...ALWAYS];
+  return current === null ? always : [...always, ...projectPages(current.project, current.access)];
 }
 
 /**
@@ -197,8 +229,10 @@ export function matchProjects(
 }
 
 /**
- * Pages of `candidate` that the query asks for: every word of it must appear
- * somewhere in "<page> <project name> <project slug>".
+ * Pages of `candidate` that the query asks for, among those its access offers:
+ * every word of it must appear somewhere in "<page> <project name> <project
+ * slug>". A page the reader may not open is not searched at all — a search
+ * reaching what the strip hides would be the same false offer one step later.
  *
  * Words, not the whole string, so `tokens checkout` and `checkout tokens` find
  * the same page and a reader does not have to remember which comes first. The
@@ -210,8 +244,9 @@ export function matchProjects(
  * the reader is inside, else the best project match. Null means there is no
  * such project, and then there is no page either.
  */
-export function matchPages(query: string, candidate: ProjectRef | null): Destination[] {
+export function matchPages(query: string, candidate: ProjectWithAccess | null): Destination[] {
   if (candidate === null) return [];
+  const { project, access } = candidate;
   const words = query
     .trim()
     .toLowerCase()
@@ -220,8 +255,8 @@ export function matchPages(query: string, candidate: ProjectRef | null): Destina
   if (words.length === 0) return [];
 
   const found: Destination[] = [];
-  for (const { page, destination } of pageDestinations(candidate)) {
-    const haystack = `${page} ${candidate.name} ${candidate.slug}`.toLowerCase();
+  for (const { page, destination } of pageDestinations(project, access)) {
+    const haystack = `${page} ${project.name} ${project.slug}`.toLowerCase();
     if (words.every((w) => haystack.includes(w))) found.push(destination);
     if (found.length === MAX_PAGES) break;
   }

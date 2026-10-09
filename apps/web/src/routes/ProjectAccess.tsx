@@ -8,6 +8,8 @@ import {
   type TokenScopeName,
   type TokenSummary,
 } from '@perfportal/contracts';
+import { NoAccess } from '../access/NoAccess';
+import type { ProjectAccess as ReaderAccess } from '../access/useAccess';
 import Button from '../components/Button';
 import Card from '../components/Card';
 import FormField, { hintId } from '../components/FormField';
@@ -61,15 +63,34 @@ export default function ProjectAccess() {
        this page issues and revokes API tokens and nothing else. The URL stays
        `/access`: a label is not a bookmark, and `paths.ts` already argues
        that case for `/setup`. */
-    <ProjectShell current="access">{({ slug }) => <AccessLoaded key={slug} slug={slug} />}</ProjectShell>
+    <ProjectShell current="access">
+      {({ slug, access }) => <AccessLoaded key={slug} slug={slug} access={access} />}
+    </ProjectShell>
   );
 }
 
-function AccessLoaded({ slug }: { readonly slug: string }) {
+/**
+ * ═══ EVERYTHING ON THIS PAGE IS `tokens:manage` ═══
+ *
+ * Listing, creating and revoking all ask for the Manager role, so a reader
+ * below it is offered nothing here — and the list is not even requested:
+ * `GET …/tokens` is a call the API would refuse, so the query is `enabled`
+ * only with the permission. A reader who reaches the URL anyway (the shell
+ * offers no tab to them) is told why, in the API's own words, by `NoAccess`.
+ *
+ * Until access is KNOWN the page draws nothing below the shell: no form, no
+ * list, and no refusal, since nobody has been refused anything yet. Not a
+ * spinner either — "not known" also covers a project list that failed, which
+ * may never answer, and a spinner would sit there for ever. The shell's own
+ * nav is on screen throughout.
+ */
+function AccessLoaded({ slug, access }: { readonly slug: string; readonly access: ReaderAccess }) {
   const queryClient = useQueryClient();
+  const canManage = access.can('tokens:manage');
   const tokens = useQuery({
     queryKey: projectTokensQueryKey(slug),
     queryFn: () => fetchProjectTokens(slug),
+    enabled: canManage,
   });
   const [tokenName, setTokenName] = useState('CI ingest');
   const [scopes, setScopes] = useState<Set<TokenScopeName>>(() => new Set(DEFAULT_SCOPES));
@@ -156,6 +177,10 @@ function AccessLoaded({ slug }: { readonly slug: string }) {
 
   const problem = mintMutation.error instanceof ProblemError ? mintMutation.error : null;
   const revokeProblem = revokeMutation.error instanceof ProblemError ? revokeMutation.error : null;
+
+  /* After every hook, so a role that changes under the open page swaps the
+     page for the refusal without changing how many hooks this renders. */
+  if (!canManage) return access.known ? <NoAccess action="tokens:manage" /> : null;
 
   return (
     <div className="flex flex-col gap-6">
@@ -288,14 +313,22 @@ function AccessLoaded({ slug }: { readonly slug: string }) {
              * This link is the convenience without the coupling: the reader
              * who came here to get started is pointed at the thing they came
              * to do, and the reader who came only to rotate a credential can
-             * ignore it. */}
-            <p className="mt-3 text-[0.75rem] leading-snug text-muted">
-              Next:{' '}
-              <Link to={projectSetupPath(slug)} className="text-accent underline underline-offset-2">
-                use it to add results
-              </Link>
-              .
-            </p>
+             * ignore it.
+             *
+             * Drawn only with `run:upload`, the action Add results exists to
+             * take (gate by destination), like every other link there. Every
+             * reader who reaches this block holds `tokens:manage`, a higher
+             * role, so today nobody here is refused it — the gate keeps the
+             * rule one rule rather than a list of exceptions. */}
+            {access.can('run:upload') && (
+              <p className="mt-3 text-[0.75rem] leading-snug text-muted">
+                Next:{' '}
+                <Link to={projectSetupPath(slug)} className="text-accent underline underline-offset-2">
+                  use it to add results
+                </Link>
+                .
+              </p>
+            )}
           </div>
         )}
       </Card>

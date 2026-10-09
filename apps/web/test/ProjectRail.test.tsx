@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -49,9 +49,24 @@ const PROJECTS: ProjectListResponse['items'] = [
   },
 ];
 
+/**
+ * Who is looking: the session's admin flag as `AppShell` hands it to the rail
+ * (`useIsAdmin`), or `pending` for a session that has not answered. Spelled as
+ * a word rather than as the flag itself, because `undefined` MEANS something
+ * here — pending — and a default would swallow it. An admin unless a case says
+ * otherwise: every claim above the no-projects cases is the same for both.
+ */
+type Who = 'admin' | 'member' | 'pending';
+const FLAG: Readonly<Record<Who, boolean | undefined>> = { admin: true, member: false, pending: undefined };
+
 function renderRail(
   items: ProjectListResponse['items'],
-  { route = '/runs', fail = false, hang = false } = {},
+  {
+    route = '/runs',
+    fail = false,
+    hang = false,
+    who = 'admin',
+  }: { route?: string; fail?: boolean; hang?: boolean; who?: Who } = {},
 ) {
   vi.stubGlobal('fetch', () => {
     if (hang) return new Promise<Response>(() => {});
@@ -71,13 +86,16 @@ function renderRail(
     );
   });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
-    <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={[route]}>
-        <ProjectRail />
-      </MemoryRouter>
-    </QueryClientProvider>,
-  );
+  return {
+    ...render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={[route]}>
+          <ProjectRail isAdmin={FLAG[who]} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    ),
+    client,
+  };
 }
 
 describe('ProjectRail', () => {
@@ -243,6 +261,35 @@ describe('ProjectRail', () => {
     expect(screen.getByRole('link', { name: 'All runs' })).toBeInTheDocument();
   });
 
+  /**
+   * ═══ AN EMPTY LIST MEANS TWO THINGS, AND ONLY THE FLAG SAYS WHICH ═══
+   *
+   * An admin's `GET /v1/projects` lists every project in the org, so an empty
+   * answer is a fact about the ORG: "No projects yet." A non-admin's lists
+   * only the projects they hold a role in, so the same empty answer is a fact
+   * about THEM — telling them the org has no projects would be false, and
+   * would leave them nothing to do. They are told what is true and who can
+   * change it.
+   */
+  it('tells a person on no project to ask an admin, where an admin reads that the org has none', async () => {
+    renderRail([], { who: 'member' });
+    expect(
+      await screen.findByText("You're not on any project yet. Ask an admin to add you."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('No projects yet.')).toBeNull();
+    expect(screen.getByRole('link', { name: 'All runs' })).toBeInTheDocument();
+  });
+
+  /** Hidden until known: an empty list read for nobody yet is neither sentence. */
+  it('says neither while the admin flag is pending, though the list has answered', async () => {
+    const { client } = renderRail([], { who: 'pending' });
+    expect(await screen.findByRole('link', { name: 'All runs' })).toBeInTheDocument();
+    // Settled, so the absences below are the flag's and not a list in flight.
+    await waitFor(() => expect(client.getQueryState(projectsQueryKey)?.status).toBe('success'));
+    expect(screen.queryByText('No projects yet.')).toBeNull();
+    expect(screen.queryByText("You're not on any project yet. Ask an admin to add you.")).toBeNull();
+  });
+
   it('shows neither message while the query is in flight', async () => {
     renderRail([], { hang: true });
     // Paired positive FIRST — this is what proves the rail rendered at all,
@@ -296,7 +343,7 @@ describe('ProjectRail', () => {
     render(
       <QueryClientProvider client={client}>
         <MemoryRouter initialEntries={['/runs']}>
-          <ProjectRail />
+          <ProjectRail isAdmin />
         </MemoryRouter>
       </QueryClientProvider>,
     );

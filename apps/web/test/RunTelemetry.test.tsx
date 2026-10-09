@@ -4,12 +4,14 @@ import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Outlet, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { RunProcessing, RunResponse, TelemetryResponse } from '@perfportal/contracts';
+import type { ProjectRole, RunProcessing, RunResponse, TelemetryResponse } from '@perfportal/contracts';
+import { useProjectAccess } from '../src/access/useAccess';
 import { runQueryKey } from '../src/api/run';
 import type { TelemetryChartId } from '../src/charts/TelemetryCharts';
 import RunTelemetry from '../src/routes/RunTelemetry';
 import type { RunWindowContext } from '../src/routes/useRunWindow';
 import useIsCompact from '../src/useIsCompact';
+import { seedAccess } from './support/access';
 
 vi.mock('../src/useIsCompact.js', () => ({ default: vi.fn(() => false) }));
 const useIsCompactMock = vi.mocked(useIsCompact);
@@ -40,6 +42,27 @@ const COMPLETE_RUN: RunResponse = {
   assertions: [],
 };
 
+/** Who is looking: what `seedAccess` writes into the cache before the section mounts. */
+type Reader = { isAdmin: boolean; roles?: Readonly<Record<string, ProjectRole>> };
+
+/**
+ * `RunShell`'s outlet, as the section meets it: no window, no live state, and
+ * the run's project access asked of the real hook for `COMPLETE_RUN`'s project
+ * — the one question the shell asks for its sections (`projectAccess`).
+ */
+function ShellStandIn() {
+  const projectAccess = useProjectAccess(COMPLETE_RUN.project.slug);
+  return (
+    <Outlet
+      context={
+        {
+          window: null, durationMs: null, liveDurationMs: null, warmupMs: null, live: null, projectAccess,
+        } satisfies RunWindowContext
+      }
+    />
+  );
+}
+
 /**
  * `RunTelemetry` reads its window through `useOutletContext` (`useRunWindow.ts`
  * — "the window travels down, it is not re-parsed per tab"), so it has to be
@@ -58,6 +81,12 @@ function renderRunTelemetry(
   options: {
     readonly status?: RunProcessing['status'] | 'complete';
     readonly only?: readonly TelemetryChartId[];
+    /**
+     * Who is looking. An admin by default — every case here before project
+     * access existed is about what a reader who may follow every link sees.
+     * `null` seeds nothing, and the session request is then held.
+     */
+    readonly who?: Reader | null;
   } = {},
 ) {
   const status = options.status ?? 'complete';
@@ -76,10 +105,14 @@ function renderRunTelemetry(
         new Response(JSON.stringify(detail.run), { status: detail.state === 'ready' ? 200 : 202 }),
       );
     }
+    // Held, never answered: asked only when no session was seeded.
+    if (url === '/auth/get-session') return new Promise<Response>(() => {});
     return Promise.resolve(new Response('{}', { status: 500 }));
   });
 
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const who = options.who === undefined ? { isAdmin: true } : options.who;
+  if (who !== null) seedAccess(client, who);
   client.setQueryData(runQueryKey(RUN), detail);
   return render(
     <QueryClientProvider client={client}>
@@ -87,13 +120,7 @@ function renderRunTelemetry(
         <Routes>
           <Route
             path="/runs/:runId"
-            element={
-              <Outlet
-                context={
-                  { window: null, durationMs: null, liveDurationMs: null, warmupMs: null, live: null } satisfies RunWindowContext
-                }
-              />
-            }
+            element={<ShellStandIn />}
           >
             <Route
               path="load-generators"
@@ -209,6 +236,42 @@ describe('RunTelemetry', () => {
     const link = await screen.findByTestId('telemetry-setup');
     expect(link).toHaveAttribute('href', expect.stringContaining('/access'));
     expect(link).toHaveTextContent(/generator telemetry/i);
+  });
+
+  /**
+   * ═══ GATE BY DESTINATION (project access, PR 3) ═══
+   *
+   * The link opens API tokens, a page that exists to manage tokens — which is
+   * `tokens:manage`, a Manager's. Below that it is an offer the reader cannot
+   * accept, so it is not drawn; the sentence above still names the permission
+   * the agent's token needs. The answer is the shell's, asked once for the
+   * run's project and read here off the outlet context.
+   */
+  it.each([
+    ['a member', 'member', false],
+    ['a manager', 'manager', true],
+  ] as const)('offers the token link to %s only if they may manage tokens', async (_who, role, drawn) => {
+    renderRunTelemetry(
+      { runId: RUN, available: false, bucketWidthMs: 1000, window: null, hosts: [] },
+      { who: { isAdmin: false, roles: { checkout: role } } },
+    );
+
+    // The empty state itself is there either way, so the link's presence or
+    // absence below is about the role.
+    expect(await screen.findByText(/no generator telemetry recorded/i)).toBeInTheDocument();
+    if (drawn) expect(await screen.findByTestId('telemetry-setup')).toBeInTheDocument();
+    else expect(screen.queryByTestId('telemetry-setup')).toBeNull();
+  });
+
+  /** Review Focus 2: while the session is held nothing is known, so the link is not drawn. */
+  it('draws no token link while access is pending', async () => {
+    renderRunTelemetry(
+      { runId: RUN, available: false, bucketWidthMs: 1000, window: null, hosts: [] },
+      { who: null },
+    );
+
+    expect(await screen.findByText(/no generator telemetry recorded/i)).toBeInTheDocument();
+    expect(screen.queryByTestId('telemetry-setup')).toBeNull();
   });
 
   it('says telemetry arrives when the run finishes, not that the agent was silent', async () => {
@@ -425,13 +488,7 @@ describe('RunTelemetry', () => {
           <Routes>
             <Route
               path="/runs/:runId"
-              element={
-                <Outlet
-                  context={
-                    { window: null, durationMs: null, liveDurationMs: null, warmupMs: null, live: null } satisfies RunWindowContext
-                  }
-                />
-              }
+              element={<ShellStandIn />}
             >
               <Route
                 path="load-generators"
@@ -509,13 +566,7 @@ describe('RunTelemetry', () => {
           <Routes>
             <Route
               path="/runs/:runId"
-              element={
-                <Outlet
-                  context={
-                    { window: null, durationMs: null, liveDurationMs: null, warmupMs: null, live: null } satisfies RunWindowContext
-                  }
-                />
-              }
+              element={<ShellStandIn />}
             >
               <Route
                 path="load-generators"

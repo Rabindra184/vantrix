@@ -1,7 +1,13 @@
-import { Injectable, RequestMethod, type CanActivate, type ExecutionContext } from '@nestjs/common';
+import {
+  Injectable,
+  RequestMethod,
+  type CanActivate,
+  type ExecutionContext,
+  type ForbiddenException,
+} from '@nestjs/common';
 import { METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants.js';
 import { Reflector } from '@nestjs/core';
-import { ACCESS_ACTIONS, type AccessAction } from '@perfportal/contracts';
+import { ACCESS_ACTIONS, accessRefusal, type AccessAction } from '@perfportal/contracts';
 import { isUuid, ProjectRepository, RunRepository } from '@perfportal/persistence';
 import type { Request } from 'express';
 import { accessDenied, projectNotFound, runNotFound } from '../common/validation.js';
@@ -73,10 +79,10 @@ export class AccessGuard implements CanActivate {
     const tenant = req.tenant;
     if (tenant === undefined || !tenant.tokenId.startsWith(SESSION_TOKEN_ID_PREFIX)) return true;
 
-    const { role: required, label } = ACCESS_ACTIONS[action];
+    const required = ACCESS_ACTIONS[action].role;
     if (required === 'admin') {
       if (tenant.isAdmin === true) return true;
-      throw accessDenied('ADMIN_REQUIRED', `${label} needs an admin.`, 'Ask an admin to do this.');
+      throw refused(action);
     }
 
     const target = projectTarget(ctx, req, action);
@@ -108,17 +114,21 @@ export class AccessGuard implements CanActivate {
       role: tenant.projectRoles?.get(projectId) ?? null,
     });
     if (decision === 'allow') return true;
-    if (decision === 'role-required') {
-      throw accessDenied(
-        'ROLE_REQUIRED',
-        `${label} needs the ${required.charAt(0).toUpperCase()}${required.slice(1)} role in this project.`,
-        'Ask an admin to change your role.',
-      );
-    }
+    if (decision === 'role-required') throw refused(action);
     // 'not-found'. ('admin-required' cannot arise: `required` is a project
     // role here, and the admin case returned above.)
     throw notVisible();
   }
+}
+
+/**
+ * The 403 for `action`, worded by `accessRefusal` in `@perfportal/contracts`
+ * — the sentence the web shows when it refuses the same action itself, so a
+ * reader is told one thing whichever side refuses them.
+ */
+function refused(action: AccessAction): ForbiddenException {
+  const r = accessRefusal(action);
+  return accessDenied(r.code, r.detail, r.remediation);
 }
 
 type ProjectTarget = { kind: 'slug'; slug: string } | { kind: 'run'; id: string };

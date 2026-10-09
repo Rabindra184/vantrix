@@ -19,6 +19,14 @@ export interface CommandPaletteProps {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   /**
+   * The session's admin flag (`useIsAdmin`'s answer, `undefined` while the
+   * session has not answered), read by `AppShell` and handed down rather than
+   * asked for here — see `usePaletteSearch`. It decides whether New project is
+   * offered and, with the project list, which of a project's pages are.
+   * Required, with no default: a default would decide in silence.
+   */
+  readonly isAdmin: boolean | undefined;
+  /**
    * Where focus goes on close when the element that had it before the palette
    * opened is GONE — the header's Search button, in the app. Required, with no
    * default, because forgetting it is silent: focus would fall to `<body>`.
@@ -43,6 +51,7 @@ export interface CommandPaletteProps {
 export default function CommandPalette({
   open,
   onOpenChange,
+  isAdmin,
   returnFocusFallback,
 }: CommandPaletteProps) {
   const navigate = useNavigate();
@@ -96,6 +105,7 @@ export default function CommandPalette({
               the debounce and every search reset together, and a reopened
               palette starts at "Go to" rather than at the last query. */}
           <PaletteSearch
+            isAdmin={isAdmin}
             onChoose={(to) => {
               navigate(to);
               onOpenChange(false);
@@ -147,9 +157,15 @@ function sectionsOf(groups: PaletteGroups): Section[] {
   return sections.filter((section) => section.rows.length > 0);
 }
 
-function PaletteSearch({ onChoose }: { readonly onChoose: (to: string) => void }) {
+function PaletteSearch({
+  isAdmin,
+  onChoose,
+}: {
+  readonly isAdmin: boolean | undefined;
+  readonly onChoose: (to: string) => void;
+}) {
   const [raw, setRaw] = useState('');
-  const groups = usePaletteSearch(raw);
+  const groups = usePaletteSearch(raw, isAdmin);
   const announcement = useResultAnnouncement(groups);
   const sections = sectionsOf(groups);
   const values = sections.flatMap((section) => section.rows.map((row) => row.value));

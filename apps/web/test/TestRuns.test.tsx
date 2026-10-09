@@ -1,11 +1,18 @@
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { RunListResponse, TestSummary } from '@perfportal/contracts';
+import {
+  accessRefusal,
+  type ProjectRole,
+  type RunListResponse,
+  type TestSummary,
+} from '@perfportal/contracts';
+import { projectsQueryKey } from '../src/api/projects';
 import TestRuns from '../src/routes/TestRuns';
+import { projectListBody, seedAccess } from './support/access';
 
 // No global `afterEach(cleanup)` — `vitest.config.ts` sets no `globals`, so
 // Testing Library never registers its own. See CLAUDE.md.
@@ -104,6 +111,11 @@ function stubFetch({
     if (url.pathname === '/v1/projects') {
       return Promise.resolve(jsonResponse({ items: [PROJECT] }));
     }
+    // HELD, never answered: asked only by a case that seeds no session, which
+    // is the case about access not being known yet.
+    if (url.pathname === '/auth/get-session') {
+      return new Promise<Response>(() => {});
+    }
     if (url.pathname === '/v1/projects/checkout/rules') {
       return Promise.resolve(jsonResponse({ rules: rulesBody }));
     }
@@ -113,17 +125,22 @@ function stubFetch({
         return Promise.resolve(
           deleteStatus === 200
             ? jsonResponse(TEST)
-            : jsonResponse(
-                {
-                  type: 'about:blank',
-                  title: 'Not Found',
-                  status: 404,
-                  detail: 'No test "example-checkoutsimulation" in this project.',
-                  code: 'NOT_FOUND',
-                  remediation: 'It may already have been deleted.',
-                },
-                deleteStatus,
-              ),
+            : deleteStatus === 403
+              ? jsonResponse(
+                  { type: 'about:blank', title: 'Forbidden', status: 403, ...accessRefusal('tests:manage') },
+                  403,
+                )
+              : jsonResponse(
+                  {
+                    type: 'about:blank',
+                    title: 'Not Found',
+                    status: 404,
+                    detail: 'No test "example-checkoutsimulation" in this project.',
+                    code: 'NOT_FOUND',
+                    remediation: 'It may already have been deleted.',
+                  },
+                  deleteStatus,
+                ),
         );
       }
       if (init?.method === 'PATCH') {
@@ -155,9 +172,22 @@ function stubFetch({
   });
 }
 
-function renderPage() {
+/** Who is looking: what `seedAccess` writes into the cache before the page mounts. */
+type Reader = { isAdmin: boolean; roles?: Readonly<Record<string, ProjectRole>> };
+
+/**
+ * An install-wide admin, seeded by the session alone: the project list is left
+ * to the fetch stub, whose project carries no role, and an admin's access does
+ * not read one. Every claim in this file before project access existed is
+ * about the page such a reader sees — Rename and Delete test drawn.
+ */
+const ADMIN: Reader = { isAdmin: true };
+
+/** `who: null` seeds nothing, leaving the session to the fetch stub. */
+function renderPage(who: Reader | null = ADMIN) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
+  if (who !== null) seedAccess(client, who);
+  const view = render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={['/projects/checkout/tests/example-checkoutsimulation']}>
         <Routes>
@@ -166,6 +196,7 @@ function renderPage() {
       </MemoryRouter>
     </QueryClientProvider>,
   );
+  return { ...view, client };
 }
 
 describe('TestRuns', () => {
@@ -602,5 +633,116 @@ describe('TestRuns — history before administration', () => {
     const addRule = screen.getByRole('button', { name: 'Add rule' });
     // 4 === DOCUMENT_POSITION_FOLLOWING: the form comes after the runs.
     expect(firstRun.compareDocumentPosition(addRule) & 4).toBeTruthy();
+  });
+});
+
+/**
+ * ═══ RENAMING AND DELETING ARE A MANAGER'S (project access, PR 3) ═══
+ *
+ * `tests:manage` asks for the Manager role, so below it the page draws no
+ * Rename and no Delete test — and the rules panel underneath gets the SAME
+ * answer, asked once here and handed down, rather than asking again.
+ */
+describe('TestRuns — what a role is offered', () => {
+  const MEMBER: Reader = { isAdmin: false, roles: { checkout: 'member' } };
+  const MANAGER: Reader = { isAdmin: false, roles: { checkout: 'manager' } };
+
+  it('offers a member neither Rename nor Delete test', async () => {
+    stubFetch();
+    renderPage(MEMBER);
+    await screen.findByRole('heading', { level: 1, name: 'Checkout smoke' });
+    // The page around them is all there: the rules panel's own form, which a
+    // member MAY use, has drawn — so the absences below are about the role.
+    expect(await screen.findByRole('button', { name: 'Add rule' })).toBeInTheDocument();
+
+    expect(screen.queryByRole('button', { name: 'Rename' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Delete test' })).toBeNull();
+  });
+
+  it('offers a manager both', async () => {
+    stubFetch();
+    renderPage(MANAGER);
+    expect(await screen.findByRole('button', { name: 'Rename' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Delete test' })).toBeInTheDocument();
+  });
+
+  /** The panel reads the page's answer: a viewer gets the rules and no control over them. */
+  it('hands the rules panel the same answer', async () => {
+    stubFetch({
+      rulesBody: [
+        {
+          id: '55555555-5555-4555-8555-555555555555',
+          name: 'Checkout p95 gate',
+          test: { id: TEST.id, slug: TEST.slug, name: TEST.name },
+          scope: 'run',
+          targetName: null,
+          family: 'response_time',
+          metric: 'p95',
+          comparator: 'lte',
+          threshold: 800,
+          enabled: true,
+          createdAt: '2026-08-22T10:00:00.000Z',
+          updatedAt: '2026-08-22T10:00:00.000Z',
+        },
+      ],
+    });
+    renderPage({ isAdmin: false, roles: { checkout: 'viewer' } });
+
+    expect(await screen.findByText('Checkout p95 gate')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Disable' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Add rule' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Rename' })).toBeNull();
+  });
+
+  /** Review Focus 2: while the session is held nothing is known — so nothing is drawn, and nobody is refused. */
+  it('draws neither while access is pending, and refuses nobody', async () => {
+    stubFetch();
+    renderPage(null);
+    await screen.findByRole('heading', { level: 1, name: 'Checkout smoke' });
+    await waitFor(() => expect(screen.getAllByTestId('run-row').length).toBeGreaterThan(0));
+
+    expect(screen.queryByRole('button', { name: 'Rename' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Delete test' })).toBeNull();
+    expect(screen.queryByText(/needs the .* role/)).toBeNull();
+  });
+
+  /**
+   * Review Focus 3: the reader is demoted with the rename form AND the delete
+   * confirmation open. When the project list next answers, the controls and
+   * what they opened all go.
+   */
+  it('takes Rename, Delete test and what they opened away when the role drops', async () => {
+    stubFetch();
+    const { client } = renderPage(MANAGER);
+    await userEvent.click(await screen.findByRole('button', { name: 'Rename' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Delete test' }));
+    expect(screen.getByRole('form', { name: 'Rename this test' })).toBeInTheDocument();
+    expect(screen.getByTestId('test-delete-confirm')).toBeInTheDocument();
+
+    act(() => {
+      client.setQueryData(projectsQueryKey, projectListBody({ checkout: 'member' }));
+    });
+
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Cancel rename' })).toBeNull());
+    expect(screen.queryByRole('form', { name: 'Rename this test' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Keep this test' })).toBeNull();
+    expect(screen.queryByTestId('test-delete-confirm')).toBeNull();
+  });
+
+  /**
+   * Review Focus 3's other half: the list has not answered yet, so the
+   * confirmation is still open — and the API's refusal is shown in it, both
+   * of its sentences.
+   */
+  it('answers a refused delete with the API’s own words, in the confirmation', async () => {
+    const refusal = accessRefusal('tests:manage');
+    stubFetch({ deleteStatus: 403 });
+    renderPage(MANAGER);
+    await userEvent.click(await screen.findByRole('button', { name: 'Delete test' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Delete this test' }));
+
+    const alert = await within(await screen.findByTestId('test-delete-confirm')).findByRole('alert');
+    expect(alert).toHaveTextContent(refusal.detail);
+    expect(alert).toHaveTextContent(refusal.remediation);
   });
 });

@@ -68,11 +68,21 @@ export function PlatformGatesBar({
   projectSlug,
   assertions,
   ran,
+  canEditRules,
 }: {
   readonly runId: string;
   readonly projectSlug?: string;
   readonly assertions: readonly Assertion[] | undefined;
   readonly ran: boolean;
+  /**
+   * Whether the reader may edit the project's SLA rules (`rules:edit`). With
+   * no rule configured, "adding one affects future runs" and the Configure
+   * SLA rules link invite that action, so they are drawn only with it; that
+   * no rule judged the run is said to everyone. REQUIRED, with no default: a
+   * wrong value here is silent — a Viewer offered a link to a page with no
+   * New rule, or an editor never offered it.
+   */
+  readonly canEditRules: boolean;
 }) {
   if (assertions === undefined || !ran || assertions.length === 0) {
     const words =
@@ -91,8 +101,12 @@ export function PlatformGatesBar({
         {() =>
           assertions !== undefined && ran ? (
             <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[0.8125rem] text-muted">
-              <span>No SLA rules judged this run — adding one affects future runs, not this one.</span>
-              {projectSlug !== undefined && (
+              <span>
+                {canEditRules
+                  ? 'No SLA rules judged this run — adding one affects future runs, not this one.'
+                  : 'No SLA rules judged this run.'}
+              </span>
+              {canEditRules && projectSlug !== undefined && (
                 <Link
                   to={projectRulesPath(projectSlug)}
                   className="font-medium text-accent underline-offset-2 hover:underline"

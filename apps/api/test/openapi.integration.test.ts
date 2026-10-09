@@ -398,6 +398,33 @@ describe('OpenAPI document', () => {
     }
   });
 
+  /**
+   * The on-prem runner's job API takes EITHER credential, all five routes.
+   * Start, cancel and retry used to override to bearerAuth alone, while their
+   * handlers carry `@Requires('runner:run')` and no `SessionOnlyGuard` or
+   * `@BearerOnly` — and the New on-prem run page calls all three with a
+   * session cookie. So the document told a generated client a session could
+   * not do what the product's own page does, and each operation's opening
+   * sentence ("A signed-in session needs the Member role…") contradicted its
+   * own security block. No override at all: they inherit the document-level
+   * default, as their two GETs already did.
+   */
+  it('lets every runner job operation take either credential — the New on-prem run page uses a session', async () => {
+    const doc = await fetchDoc();
+
+    for (const [path, method] of [
+      ['/v1/projects/{slug}/runner/runs', 'post'],
+      ['/v1/projects/{slug}/runner/runs', 'get'],
+      ['/v1/projects/{slug}/runner/runs/{jobId}/cancel', 'post'],
+      ['/v1/projects/{slug}/runner/runs/{jobId}/logs', 'get'],
+      ['/v1/projects/{slug}/runner/runs/{jobId}/retry', 'post'],
+    ] as const) {
+      const op = doc.paths?.[path]?.[method] as { security?: unknown[] } | undefined;
+      expect(op, `${method.toUpperCase()} ${path} must be declared`).toBeTruthy();
+      expect(op?.security, `${method.toUpperCase()} ${path} must not narrow to one credential`).toBeUndefined();
+    }
+  });
+
   it('declares the test filter on GET /v1/runs', async () => {
     const doc = await fetchDoc();
     const get = doc.paths?.['/v1/runs']?.['get'] as { parameters?: { name?: string }[] } | undefined;

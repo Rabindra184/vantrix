@@ -2,18 +2,21 @@ import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { useRef, useState } from 'react';
+import { createRef, useRef, useState } from 'react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   OrgTestListResponse,
   OrgTestSummary,
   ProjectListResponse,
+  ProjectRole,
   RunListResponse,
 } from '@perfportal/contracts';
+import { useIsAdmin } from '../src/access/useAccess';
 import CommandPalette from '../src/palette/CommandPalette';
 import { orgTestsQueryKey } from '../src/api/tests';
 import { projectTestPath } from '../src/routes/paths';
+import { seedAccess } from './support/access';
 
 afterEach(cleanup);
 
@@ -192,6 +195,9 @@ function Harness({
 }) {
   const [open, setOpen] = useState(initialOpen);
   const opener = useRef<HTMLButtonElement>(null);
+  /* The flag the way `AppShell` reads it and hands it down — once, above the
+     palette — so who is looking is still decided by what the case seeds. */
+  const isAdmin = useIsAdmin();
   return (
     <>
       <button ref={opener} type="button" onClick={() => setOpen(true)}>
@@ -199,6 +205,7 @@ function Harness({
       </button>
       <CommandPalette
         open={open}
+        isAdmin={isAdmin}
         returnFocusFallback={opener}
         onOpenChange={(next) => {
           onOpenChange(next);
@@ -210,9 +217,25 @@ function Harness({
   );
 }
 
-function renderPalette({ route = '/runs', open = true }: { route?: string; open?: boolean } = {}) {
+/**
+ * Who is looking defaults to an install-wide ADMIN: a project's pages in the
+ * palette follow the reader's access there (`ProjectShell`'s own rule), and an
+ * admin is offered every one — which is what the cases about searching and
+ * choosing assume. Seeding only the session leaves the project list to the
+ * fetch stub, as before. A case about who is offered what names its reader.
+ */
+function renderPalette({
+  route = '/runs',
+  open = true,
+  who = { isAdmin: true },
+}: {
+  route?: string;
+  open?: boolean;
+  who?: { isAdmin: boolean; roles?: Readonly<Record<string, ProjectRole>> };
+} = {}) {
   const onOpenChange = vi.fn<(open: boolean) => void>();
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  seedAccess(client, who);
   const utils = render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[route]}>
@@ -269,12 +292,98 @@ describe('CommandPalette', () => {
       'Packages · Checkout',
       'Add results · Checkout',
       'SLA rules · Checkout',
+      'Members · Checkout',
       'API tokens · Checkout',
       'New on-prem run · Checkout',
     ]);
     // Nothing typed, so nothing searched.
     expect(requestsTo('/v1/tests')).toHaveLength(0);
     expect(requestsTo('/v1/runs')).toHaveLength(0);
+  });
+
+  /**
+   * ═══ THE PALETTE OFFERS WHAT THE STRIP OFFERS, AND NOTHING THE STRIP HIDES ═══
+   *
+   * `paletteDestinations.test.ts` proves the pure functions filter by the
+   * access they are HANDED; these two prove the hook hands them the right
+   * one — the reader's access in the project the pages belong to, which is
+   * the seam a pure test cannot see. A hook that passed an admin's answer, or
+   * the CURRENT project's answer for the best match of a search, would pass
+   * every case over there.
+   */
+  it("offers a Viewer only the current project's pages a Viewer may open", async () => {
+    stubApi();
+    renderPalette({ route: '/projects/checkout/rules', who: { isAdmin: false, roles: { checkout: 'viewer' } } });
+
+    await screen.findByRole('option', { name: 'Tests · Checkout' });
+    // No New project either: creating one is an admin's alone.
+    expect(optionNames(screen.getByRole('group', { name: 'Go to' }))).toEqual([
+      'Home',
+      'All runs',
+      'Tests · Checkout',
+      'Runs · Checkout',
+      'Packages · Checkout',
+      'SLA rules · Checkout',
+      'Members · Checkout',
+    ]);
+  });
+
+  /**
+   * ═══ THE ADMIN FLAG IS HANDED IN, NOT ASKED FOR ═══
+   *
+   * `AppShell` reads the session once and hands the flag to the trigger and
+   * the palette. A palette that asked for it itself would mount another
+   * observer on the session every time it opened — and with no `staleTime`,
+   * every open would ask `/auth/get-session` again. So: with no session in the
+   * cache and the flag given as a prop, the palette offers what the flag
+   * allows and makes no session request of its own.
+   */
+  it.each([
+    [true, ['Home', 'All runs', 'New project']],
+    [undefined, ['Home', 'All runs']],
+  ] as const)('offers what the flag it is handed allows (%s), asking for no session', async (isAdmin, expected) => {
+    stubApi();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const opener = createRef<HTMLElement>();
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/runs']}>
+          <CommandPalette open isAdmin={isAdmin} onOpenChange={() => {}} returnFocusFallback={opener} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    const goTo = await screen.findByRole('group', { name: 'Go to' });
+    expect(optionNames(goTo)).toEqual(expected);
+    // Settled: the one request an empty query makes has been made.
+    await waitFor(() => expect(requestsTo('/v1/projects').length).toBeGreaterThan(0));
+    expect(requestsTo('/auth/get-session')).toHaveLength(0);
+  });
+
+  /* Outside any project, the Pages group belongs to the best match for the
+     query — `search` here — and must be filtered by the reader's access in
+     THAT project, never by their role elsewhere. Each reader holds the
+     opposite role in `checkout`, so an answer borrowed from the wrong project
+     (or an admin's, or nobody's) shows the other list. The group holds five,
+     so a Manager's fifth page is SLA rules and a Viewer's is Members. */
+  it.each([
+    [
+      'a Manager there',
+      { checkout: 'viewer', search: 'manager' } as const,
+      ['Tests · Search', 'Runs · Search', 'Packages · Search', 'Add results · Search', 'SLA rules · Search'],
+    ],
+    [
+      'a Viewer there',
+      { checkout: 'manager', search: 'viewer' } as const,
+      ['Tests · Search', 'Runs · Search', 'Packages · Search', 'SLA rules · Search', 'Members · Search'],
+    ],
+  ])("matches a searched project's pages for %s, whatever their role elsewhere", async (_, roles, expected) => {
+    stubApi();
+    renderPalette({ route: '/runs', who: { isAdmin: false, roles } });
+    const user = userEvent.setup();
+
+    await enter(user, 'search');
+    const pages = await screen.findByRole('group', { name: 'Pages' });
+    expect(optionNames(pages)).toEqual(expected);
   });
 
   it('waits 150 ms after the last keystroke before searching', () => {

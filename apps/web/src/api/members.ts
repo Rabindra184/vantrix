@@ -1,21 +1,30 @@
 import {
+  MemberListResponseSchema,
   ProjectMemberSchema,
   type AddMemberRequest,
+  type MemberListResponse,
   type ProjectMember,
   type UpdateMemberRequest,
 } from '@perfportal/contracts';
 import { apiFetch, apiFetchNoContent } from './fetch';
 
 /**
- * A project's members: who holds a role in it, and which. No list read here —
- * the Users table already carries every account's memberships, and nothing in
- * the web app shows one project's members on their own yet.
+ * A project's members: who holds a role in it, and which — the list the
+ * project's Members page shows, and the three changes an admin makes to it
+ * there and from Administration › Users' edit panel.
  *
  * A change here moves both Administration lists; see `api/admin.ts` on why
  * the caller invalidates both keys.
  */
 const membersPath = (slug: string): string => `/v1/projects/${encodeURIComponent(slug)}/members`;
 const memberPath = (slug: string, userId: string): string => `${membersPath(slug)}/${encodeURIComponent(userId)}`;
+
+/** One project's members, by name — readable by every role in the project (`members:read`). */
+export const projectMembersQueryKey = (slug: string) => ['project-members', slug] as const;
+
+export function fetchProjectMembers(slug: string): Promise<MemberListResponse> {
+  return apiFetch(MemberListResponseSchema, membersPath(slug));
+}
 
 export function addMember(slug: string, body: AddMemberRequest): Promise<ProjectMember> {
   return apiFetch(ProjectMemberSchema, membersPath(slug), {

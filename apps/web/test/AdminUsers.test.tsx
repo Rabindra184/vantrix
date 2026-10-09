@@ -705,6 +705,13 @@ async function choose(clicker: ReturnType<typeof userEvent.setup>, who: string, 
   await clicker.click(within(menu).getByRole('menuitem', { name: item }));
 }
 
+/** The signed-in admin's own Remove admin: the menu item, then the confirm. */
+async function removeOwnAdmin(clicker: ReturnType<typeof userEvent.setup>) {
+  await choose(clicker, 'Ada Admin', 'Remove admin');
+  await menuSettled();
+  await clicker.click(within(await mustDetails('admin@example.test')).getByRole('button', { name: 'Remove admin' }));
+}
+
 /**
  * The line under a person's row that carries whatever their menu opened (a
  * confirm, the Reset password block, the edit panel) or refused. `null` when
@@ -819,6 +826,8 @@ describe('AdminUsers — the row menu', () => {
     ]);
   });
 
+  /* Bea is another admin: Remove admin on anyone's row but the reader's own
+     is still one click, with nothing asked first. */
   it('applies Enable, Make admin and Remove admin at once, each to its own row’s account', async () => {
     const sent = stubApi({ users: () => Promise.resolve(json(200, { users: ROWS })) });
     renderPage();
@@ -1166,6 +1175,106 @@ describe('AdminUsers — the row menu', () => {
     expect(cyCancel).toHaveFocus();
   });
 
+  /* Your own admin rights end with this page: the one change on it a reader
+     cannot undo from here. So it asks first, where everyone else's admin flag
+     is still one click (above). */
+  it('asks before removing your own admin rights, and sends nothing until Remove admin is pressed', async () => {
+    const sent = stubApi({ users: () => Promise.resolve(json(200, { users: ROWS })) });
+    const { container } = renderPage();
+    await table();
+    const clicker = userEvent.setup();
+
+    await choose(clicker, 'Ada Admin', 'Remove admin');
+    await menuSettled();
+
+    const details = await mustDetails('admin@example.test');
+    expect(
+      within(details).getByRole('group', { name: 'Remove your admin rights? You lose Administration at once.' }),
+    ).toBeInTheDocument();
+    expect(writes(sent)).toEqual([]);
+    // Focus lands on Cancel, the safe answer, and stays once the menu has gone.
+    expect(within(details).getByRole('button', { name: 'Cancel' })).toHaveFocus();
+    // Still one primary on the page: the confirm is not a second.
+    expect([...container.querySelectorAll('button.bg-accent')]).toHaveLength(1);
+    const confirm = within(details).getByRole('button', { name: 'Remove admin' });
+    expect(confirm.className).not.toContain('bg-accent');
+
+    await clicker.click(confirm);
+
+    await waitFor(() =>
+      expect(writes(sent)).toEqual([{ url: '/v1/admin/users/user-admin', method: 'PATCH', body: { isAdmin: false } }]),
+    );
+    await waitFor(async () => expect(await detailsOf('admin@example.test')).toBeNull());
+    // The block is gone; the caret goes back to the menu it came from.
+    await waitFor(async () => expect(await triggerOf('Ada Admin')).toHaveFocus());
+  });
+
+  it('closes your own Remove admin confirm on Cancel without a request, and returns focus to the row’s menu', async () => {
+    const sent = stubApi({ users: () => Promise.resolve(json(200, { users: ROWS })) });
+    renderPage();
+    await table();
+    const clicker = userEvent.setup();
+
+    await choose(clicker, 'Ada Admin', 'Remove admin');
+    await menuSettled();
+    await clicker.click(within(await mustDetails('admin@example.test')).getByRole('button', { name: 'Cancel' }));
+
+    expect(await detailsOf('admin@example.test')).toBeNull();
+    expect(writes(sent)).toEqual([]);
+    expect(await triggerOf('Ada Admin')).toHaveFocus();
+  });
+
+  /* The commonest way this is refused: the reader is the install's last
+     admin. The refusal lands in the confirm it came from, which stays open,
+     and nothing about the session changed, so nothing beyond it is re-read. */
+  it('keeps your own Remove admin confirm open with a 409 LAST_ADMIN in it', async () => {
+    const sent = stubApi({
+      users: () => Promise.resolve(json(200, { users: ROWS })),
+      write: (s) =>
+        s.url === '/v1/admin/users/user-admin'
+          ? Promise.resolve(problem(409, 'LAST_ADMIN', 'Ada Admin is the last admin.', 'Make someone else an admin first.'))
+          : undefined,
+    });
+    renderPage();
+    await table();
+    const clicker = userEvent.setup();
+    const sessionReads = readsOf(sent, '/auth/get-session');
+
+    await removeOwnAdmin(clicker);
+
+    const details = await mustDetails('admin@example.test');
+    const alert = await within(details).findByRole('alert');
+    expect(alert).toHaveTextContent('Ada Admin is the last admin.');
+    expect(alert).toHaveTextContent('Make someone else an admin first.');
+    expect(
+      within(details).getByRole('group', { name: 'Remove your admin rights? You lose Administration at once.' }),
+    ).toBeInTheDocument();
+    expect(readsOf(sent, '/auth/get-session')).toBe(sessionReads);
+  });
+
+  /* W15: it is one of the table's blocks, not a block of its own beside them. */
+  it('opens your own Remove admin confirm as the table’s one block, closing another row’s and closed by it', async () => {
+    stubApi({ users: () => Promise.resolve(json(200, { users: ROWS })) });
+    renderPage();
+    await table();
+    const clicker = userEvent.setup();
+
+    await choose(clicker, 'Bo Flagged', 'Disable');
+    expect(await detailsOf('bo@example.test')).not.toBeNull();
+
+    await choose(clicker, 'Ada Admin', 'Remove admin');
+    expect(await detailsOf('bo@example.test')).toBeNull();
+    expect(
+      within(await mustDetails('admin@example.test')).getByRole('group', {
+        name: 'Remove your admin rights? You lose Administration at once.',
+      }),
+    ).toBeInTheDocument();
+
+    await choose(clicker, 'Cy Disabled', 'Remove');
+    expect(await detailsOf('admin@example.test')).toBeNull();
+    expect(screen.getAllByTestId('user-details')).toHaveLength(1);
+  });
+
   /* W17: your own admin flag is also your session's — the account menu offers
      Administration from it — so changing it re-reads the session. And the
      list's own refetch is then refused, which is shown as a refusal rather
@@ -1189,7 +1298,7 @@ describe('AdminUsers — the row menu', () => {
     const clicker = userEvent.setup();
     const sessionReads = readsOf(sent, '/auth/get-session');
 
-    await choose(clicker, 'Ada Admin', 'Remove admin');
+    await removeOwnAdmin(clicker);
 
     await waitFor(() => expect(readsOf(sent, '/auth/get-session')).toBe(sessionReads + 1));
     const alert = await screen.findByRole('alert');
@@ -1218,7 +1327,7 @@ describe('AdminUsers — the row menu', () => {
     await waitFor(() => expect(readsOf(sent, '/v1/projects')).toBe(1));
     const clicker = userEvent.setup();
 
-    await choose(clicker, 'Ada Admin', 'Remove admin');
+    await removeOwnAdmin(clicker);
 
     await waitFor(() => expect(readsOf(sent, '/v1/projects')).toBe(2));
   });
@@ -1270,6 +1379,8 @@ describe('AdminUsers — the row menu', () => {
 describe('AdminUsers — Edit projects and roles', () => {
   const panelOf = async (who: string, email: string) =>
     within(await mustDetails(email)).getByRole('group', { name: `${who}: projects and roles` });
+  /** Bo's Checkout line once a saved change has made him its Manager. */
+  const CHECKOUT_MANAGER = { projectSlug: 'checkout', projectName: 'Checkout', role: 'manager' as const };
 
   it('names every control in the panel differently, one membership per line', async () => {
     stubApi({ users: () => Promise.resolve(json(200, { users: ROWS })) });
@@ -1301,10 +1412,27 @@ describe('AdminUsers — Edit projects and roles', () => {
     expect(within(panel).getByRole('combobox', { name: 'Role in Search' })).toHaveValue('viewer');
     // Opening it puts the caret on its first control, and the menu closing does not take it back.
     expect(within(panel).getByRole('combobox', { name: 'Role in Checkout' })).toHaveFocus();
+
+    // A choice staged on each line gives each line a Save, named after its project.
+    await clicker.selectOptions(within(panel).getByRole('combobox', { name: 'Role in Checkout' }), 'Viewer');
+    await clicker.selectOptions(within(panel).getByRole('combobox', { name: 'Role in Search' }), 'Manager');
+    expect(within(panel).getAllByRole('button', { name: /^Save role/ })).toHaveLength(2);
+    expect(within(panel).getByRole('button', { name: 'Save role in Checkout' })).toBeInTheDocument();
+    expect(within(panel).getByRole('button', { name: 'Save role in Search' })).toBeInTheDocument();
   });
 
-  it('saves a role as it is chosen, for that person in that project, and re-reads both lists', async () => {
-    const sent = stubApi({ users: () => Promise.resolve(json(200, { users: ROWS })) });
+  /* Pick, then Save: the select only stages a choice, so a reader moving
+     through the options — a native select fires `change` on every ArrowDown —
+     sends nothing until they press Save, and then one request. */
+  it('changes a role through Save, as one PATCH for that person in that project, and re-reads both lists', async () => {
+    const list = liveUsers(ROWS);
+    const sent = stubApi({
+      users: list.answer,
+      write: (s) => {
+        if (s.method === 'PATCH') list.set(ROWS.map((u) => (u.id === FLAGGED.id ? { ...u, memberships: [CHECKOUT_MANAGER] } : u)));
+        return undefined;
+      },
+    });
     renderPage();
     await table();
     await waitFor(() => expect(readsOf(sent, '/v1/admin/projects')).toBe(1));
@@ -1313,7 +1441,13 @@ describe('AdminUsers — Edit projects and roles', () => {
 
     await choose(clicker, 'Bo Flagged', 'Edit projects and roles');
     const panel = await panelOf('Bo Flagged', 'bo@example.test');
-    await clicker.selectOptions(within(panel).getByRole('combobox', { name: 'Role in Checkout' }), 'Manager');
+    const role = within(panel).getByRole('combobox', { name: 'Role in Checkout' });
+    await clicker.selectOptions(role, 'Viewer');
+    await clicker.selectOptions(role, 'Manager');
+    // Two choices on the way, and nothing sent for either.
+    expect(writes(sent)).toEqual([]);
+
+    await clicker.click(within(panel).getByRole('button', { name: 'Save role in Checkout' }));
 
     await waitFor(() =>
       expect(writes(sent)).toEqual([
@@ -1322,18 +1456,57 @@ describe('AdminUsers — Edit projects and roles', () => {
     );
     await waitFor(() => expect(readsOf(sent, '/v1/admin/users')).toBe(usersBefore + 1));
     await waitFor(() => expect(readsOf(sent, '/v1/admin/projects')).toBe(2));
+    // The re-read list holds the new role, so there is nothing left to save.
+    await waitFor(() => expect(within(panel).queryByRole('button', { name: 'Save role in Checkout' })).toBeNull());
+    expect(role).toHaveValue('manager');
+    // The Save it was sent from has gone; the caret goes to the role it set.
+    await waitFor(() => expect(role).toHaveFocus());
     // An editor, not a confirm: it stays open for the next change.
     expect(await panelOf('Bo Flagged', 'bo@example.test')).toBeInTheDocument();
   });
 
-  it('hands the caret back to a role select once its save is done, if it was lost to the page meanwhile', async () => {
-    let answer: (response: Response) => void = () => {};
+  /* A refusal leaves the role as it was, so the choice stays staged and Save
+     stays offered: the reader can try again, or move the select back. */
+  it('shows a refused role change’s own words in the panel, keeping the choice and its Save', async () => {
     stubApi({
       users: () => Promise.resolve(json(200, { users: ROWS })),
       write: (s) =>
         s.method === 'PATCH'
+          ? Promise.resolve(problem(404, 'NOT_FOUND', 'Bo Flagged holds no role in Checkout.', 'Add them to the project instead.'))
+          : undefined,
+    });
+    renderPage();
+    await table();
+    const clicker = userEvent.setup();
+
+    await choose(clicker, 'Bo Flagged', 'Edit projects and roles');
+    const panel = await panelOf('Bo Flagged', 'bo@example.test');
+    const role = within(panel).getByRole('combobox', { name: 'Role in Checkout' });
+    await clicker.selectOptions(role, 'Manager');
+    const save = within(panel).getByRole('button', { name: 'Save role in Checkout' });
+    await clicker.click(save);
+
+    const alert = await within(panel).findByRole('alert');
+    expect(alert).toHaveTextContent('Bo Flagged holds no role in Checkout.');
+    expect(alert).toHaveTextContent('Add them to the project instead.');
+    expect(screen.getAllByRole('alert')).toHaveLength(1);
+    expect(role).toHaveValue('manager');
+    await waitFor(() => expect(save).toBeEnabled());
+    expect(save).toHaveFocus();
+  });
+
+  it('hands the caret back to a role select once its save is done, if it was lost to the page meanwhile', async () => {
+    let answer: (response: Response) => void = () => {};
+    const list = liveUsers(ROWS);
+    stubApi({
+      users: list.answer,
+      write: (s) =>
+        s.method === 'PATCH'
           ? new Promise<Response>((resolve) => {
-              answer = resolve;
+              answer = (response) => {
+                list.set(ROWS.map((u) => (u.id === FLAGGED.id ? { ...u, memberships: [CHECKOUT_MANAGER] } : u)));
+                resolve(response);
+              };
             })
           : undefined,
     });
@@ -1345,7 +1518,10 @@ describe('AdminUsers — Edit projects and roles', () => {
     const panel = await panelOf('Bo Flagged', 'bo@example.test');
     const role = within(panel).getByRole('combobox', { name: 'Role in Checkout' });
     await clicker.selectOptions(role, 'Manager');
-    await waitFor(() => expect(role).toBeDisabled());
+    const save = within(panel).getByRole('button', { name: 'Save role in Checkout' });
+    await clicker.click(save);
+    await waitFor(() => expect(save).toBeDisabled());
+    expect(role).toBeDisabled();
     // The choice in flight is what the select shows, not the stored role.
     expect(role).toHaveValue('manager');
     dropCaret();
@@ -1378,6 +1554,7 @@ describe('AdminUsers — Edit projects and roles', () => {
     const panel = await panelOf('Bo Flagged', 'bo@example.test');
     const role = within(panel).getByRole('combobox', { name: 'Role in Checkout' });
     await clicker.selectOptions(role, 'Manager');
+    await clicker.click(within(panel).getByRole('button', { name: 'Save role in Checkout' }));
     await waitFor(() => expect(role).toBeDisabled());
     const elsewhere = screen.getByText('Add user', { selector: 'summary' });
     act(() => elsewhere.focus());

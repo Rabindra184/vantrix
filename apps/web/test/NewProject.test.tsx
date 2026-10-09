@@ -4,9 +4,11 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { RouterProvider, createMemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { accessRefusal } from '@perfportal/contracts';
 import { createProject } from '../src/api/projects.js';
 import NewProject from '../src/routes/NewProject.js';
 import { NEW_PROJECT_ROUTE } from '../src/routes/paths.js';
+import { seedAccess } from './support/access';
 
 vi.mock('../src/api/projects.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../src/api/projects.js')>()),
@@ -36,6 +38,9 @@ describe('NewProject', () => {
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
     });
+    // An admin: the form is theirs alone (the describe below), and these
+    // cases are about the form.
+    seedAccess(client, { isAdmin: true });
     const router = createMemoryRouter(
       [
         { path: NEW_PROJECT_ROUTE, element: <NewProject /> },
@@ -52,6 +57,7 @@ describe('NewProject', () => {
 
   it('creates a project and sends the reader to setup', async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    seedAccess(client, { isAdmin: true });
     const router = createMemoryRouter(
       [
         { path: NEW_PROJECT_ROUTE, element: <NewProject /> },
@@ -128,6 +134,7 @@ describe('NewProject', () => {
 
   it('keeps invalid project details in the form', async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    seedAccess(client, { isAdmin: true });
     const router = createMemoryRouter([{ path: NEW_PROJECT_ROUTE, element: <NewProject /> }], {
       initialEntries: [NEW_PROJECT_ROUTE],
     });
@@ -169,5 +176,63 @@ describe('NewProject', () => {
     renderNewProject();
     expect(screen.getByRole('link', { name: 'Runs' })).toHaveAttribute('href', '/runs');
     expect(screen.getByRole('link', { name: 'Cancel' })).toHaveAttribute('href', '/');
+  });
+});
+
+/**
+ * ═══ ONLY AN ADMIN IS HANDED THE FORM ═══
+ *
+ * Creating a project is `projects:create`, which only an admin may do, and the
+ * API refuses anyone else. A non-admin who reaches this page by URL is told so
+ * in the API's own two sentences (`accessRefusal`, the function `AccessGuard`
+ * words its 403 with) instead of being handed a form whose submit would only
+ * be refused. While the session has not answered, nobody has been refused
+ * anything: neither the form nor the refusal is drawn, and the page's heading
+ * and its way back stay.
+ */
+describe('NewProject — who is handed the form', () => {
+  function renderAs(who: 'admin' | 'member' | 'pending') {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    if (who === 'pending') vi.stubGlobal('fetch', () => new Promise<Response>(() => {}));
+    else seedAccess(client, { isAdmin: who === 'admin' });
+    const router = createMemoryRouter([{ path: NEW_PROJECT_ROUTE, element: <NewProject /> }], {
+      initialEntries: [NEW_PROJECT_ROUTE],
+    });
+    return render(
+      <QueryClientProvider client={client}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    );
+  }
+  const refusal = accessRefusal('projects:create');
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('tells a member, in the API’s own words, that creating a project needs an admin', () => {
+    renderAs('member');
+    const status = screen.getByRole('status');
+    expect(status).toHaveTextContent(refusal.detail);
+    expect(status).toHaveTextContent(refusal.remediation);
+    expect(refusal.detail).toBe('Creating projects needs an admin.');
+    expect(screen.queryByLabelText('Project name')).toBeNull();
+    expect(screen.queryByRole('button', { name: /create project/i })).toBeNull();
+    // The page is still the page: its heading, and the way back.
+    expect(screen.getByRole('heading', { level: 1, name: 'New project' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Runs' })).toHaveAttribute('href', '/runs');
+  });
+
+  it('hands an admin the form and says nothing of a refusal', () => {
+    renderAs('admin');
+    expect(screen.getByLabelText('Project name')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /create project/i })).toBeInTheDocument();
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+
+  it('draws neither while the session has not answered', () => {
+    renderAs('pending');
+    expect(screen.getByRole('heading', { level: 1, name: 'New project' })).toBeInTheDocument();
+    expect(screen.queryByLabelText('Project name')).toBeNull();
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.queryByText(refusal.detail)).toBeNull();
   });
 });

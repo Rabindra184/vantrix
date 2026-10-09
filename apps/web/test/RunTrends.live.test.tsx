@@ -8,6 +8,7 @@ import type { RunProcessing, RunResponse } from '@perfportal/contracts';
 import { runQueryKey } from '../src/api/run';
 import RunTrends from '../src/routes/RunTrends';
 import type { RunWindowContext } from '../src/routes/useRunWindow';
+import { UNKNOWN_ACCESS } from './support/access';
 import useIsCompact from '../src/useIsCompact';
 
 /**
@@ -102,7 +103,7 @@ function renderTrends(
             element={
               <Outlet
                 context={
-                  { window: null, durationMs: null, liveDurationMs: null, warmupMs: null, live: null } satisfies RunWindowContext
+                  { window: null, durationMs: null, liveDurationMs: null, warmupMs: null, live: null, projectAccess: UNKNOWN_ACCESS } satisfies RunWindowContext
                 }
               />
             }
@@ -162,7 +163,7 @@ describe('RunTrends — live', () => {
               element={
                 <Outlet
                   context={
-                    { window: null, durationMs: null, liveDurationMs: null, warmupMs: null, live: null } satisfies RunWindowContext
+                    { window: null, durationMs: null, liveDurationMs: null, warmupMs: null, live: null, projectAccess: UNKNOWN_ACCESS } satisfies RunWindowContext
                   }
                 />
               }

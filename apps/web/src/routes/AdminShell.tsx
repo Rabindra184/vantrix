@@ -84,12 +84,17 @@ export default function AdminShell({
  * ═══ A REFUSAL IS NOT A STALE LIST (ruling W17) ═══
  *
  * Both pages keep a list that has loaded when a later refetch of it fails
- * (ruling W14) — except when the failure is the API refusing the session: a
- * `401` or a `403` says this session may not read the list at all now. An
- * admin who removes their own admin flag meets exactly that: the refetch the
- * change sets off answers `403 ADMIN_REQUIRED`. The page then shows the
- * refusal in the API's words, as it does on a first load, rather than a table
- * that goes on offering what would be refused.
+ * (ruling W14) — except when the failure is the API refusing the session:
+ * a `403` says this session may not read the list at all now. An admin who
+ * removes their own admin flag meets exactly that: the refetch the change
+ * sets off answers `403 ADMIN_REQUIRED`. The page then shows the refusal in
+ * the API's words, as it does on a first load, rather than a table that goes
+ * on offering what would be refused.
+ *
+ * A `401` counts too, but it does not stay drawn here: since PR 3 a 401 from
+ * any query or mutation ends the session (`queryClient.ts`), and `AuthGate`
+ * sends the reader to `/login?next=…` — the refusal may render for a moment
+ * before the redirect lands.
  */
 export function isRefusal(error: Error | null): boolean {
   return error instanceof ProblemError && (error.status === 401 || error.status === 403);
