@@ -266,8 +266,12 @@ test('an admin adds a person on Members and changes a Viewer to Member, whose ne
         // Picking stages a choice; Save sends it.
         const save = page.getByRole('button', { name: `Save role for ${viewer.name}`, exact: true });
         await expect(save).toBeVisible();
+        // Bounded: unbounded, a Save that sends nothing waits out the whole
+        // test (measured, by breaking Save) and is reported as the finally's
+        // context close, which names nothing. A healthy PATCH answers in ms.
         const answered = page.waitForResponse(
           (res) => res.request().method() === 'PATCH' && new URL(res.url()).pathname.includes('/members/'),
+          { timeout: 15_000 },
         );
         await save.click();
         expect((await answered).status()).toBe(200);
