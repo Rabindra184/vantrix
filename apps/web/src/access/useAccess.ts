@@ -22,8 +22,11 @@ import { getSession, sessionQueryKey } from '../api/session';
  *
  * Both are `useQuery` calls on the EXISTING keys with the existing fetchers,
  * so they share one cache entry with `AuthGate`, `AppShell` and the rail: on
- * an authenticated page they are cache reads, and a role the API changes
- * reaches every gated control the moment that list answers again.
+ * an authenticated page the answer is already there to draw from, and a role
+ * the API changes reaches every gated control the moment that list answers
+ * again. They are not free reads, though: neither key sets a `staleTime`, so
+ * every new observer refetches both on mount — which is why a page asks once
+ * and passes `access` down (Ruling P8).
  *
  * ═══ `can` FALSE MEANS "DO NOT DRAW", NEVER "REFUSED" ═══
  *

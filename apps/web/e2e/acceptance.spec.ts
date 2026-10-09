@@ -178,11 +178,14 @@ for (const width of [320, 414]) {
  * unexercised — the gate has already passed, the shell is drawn, and the next
  * data request is the one that comes back 401.
  *
- * `apiFetch` deliberately does NOT redirect on a 401 (`api/fetch.ts` says so at
- * length: the decision belongs to a component, not the transport). So what a
- * reader meets is whatever the page does with a `ProblemError` carrying status
- * 401 — and the thing that must NOT happen is silence over stale data, which
- * is how somebody reads numbers from a session they no longer have.
+ * `apiFetch` deliberately does NOT redirect on a 401 (`api/fetch.ts`: the
+ * transport touches no router). Since PR 3 the decision is the query client's
+ * (`queryClient.ts`): a 401 from any query or mutation ends the session, and
+ * `AuthGate` sends the reader to `/login?next=…` — so what a reader meets here
+ * is the sign-in page, not the 401 drawn in place. The assertion below still
+ * accepts either, because its claim is the older one: the thing that must NOT
+ * happen is silence over stale data, which is how somebody reads numbers from
+ * a session they no longer have.
  */
 test('a session that expires mid-read says so rather than showing stale data', async ({ page }) => {
   const admin = await seedAdmin();

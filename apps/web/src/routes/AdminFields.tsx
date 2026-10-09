@@ -8,8 +8,8 @@ import { ProblemError } from '../api/fetch';
 /**
  * The pieces the screens that manage people share — Administration › Users'
  * two forms (Add user's project rows; the row menu's blocks and Edit projects
- * and roles panel) and a project's Members page — kept apart from all of them
- * so none imports another.
+ * and roles panel) and a project's Members page — kept in a module of their
+ * own, so none of those screens owns them.
  */
 
 /**

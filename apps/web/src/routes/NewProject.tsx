@@ -121,14 +121,14 @@ export default function NewProject() {
                 />
               </FormField>
             </div>
-  
+
             {(formError !== null || mutation.isError) && (
               <div role="alert" className="rounded-lg border border-default bg-sunken p-3 text-[0.8125rem] text-primary">
                 {formError ?? problem?.detail ?? mutationError?.message}
                 {problem?.remediation && <p className="mt-1 text-muted">{problem.remediation}</p>}
               </div>
             )}
-  
+
             <div className="flex flex-wrap items-center gap-3">
               <Button type="submit" variant="primary" loading={mutation.isPending}>
                 <PlusIcon className="h-3.5 w-3.5" />

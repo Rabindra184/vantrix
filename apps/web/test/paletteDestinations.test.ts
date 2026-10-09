@@ -391,21 +391,54 @@ describe('the palette\u2019s pages follow ProjectShell', () => {
  * and `ProjectShell` is not: it is drawn only by the lazily loaded project
  * pages. While `destinations.ts` read the table out of `ProjectShell.tsx`, the
  * bundler had to bring the whole module, component and all, into the entry
- * chunk for a table and a filter (measured). The table lives in a module of
- * its own now, with no component in it, and these two scans keep it that way:
- * the palette imports it from there, and it imports nothing at run time but
- * the paths it is built from. A TYPE import is erased before the bundler sees
- * it, so only value imports count.
+ * chunk for a table and a filter (measured, from two builds' logs: Ruling
+ * P11). The table lives in a module of its own now, with no component in it.
+ *
+ * WHAT THESE SCANS CHECK IS NARROWER THAN THAT, AND SAYS SO. They read the
+ * DIRECT run-time imports of two files: the palette takes the table from
+ * `projectSections.ts` and never from `ProjectShell`, and the table loads
+ * nothing but the paths it is built from. They do not prove `ProjectShell`
+ * stays out of the entry chunk — anything else the entry reaches could import
+ * it, and only a build shows that. They keep these two files from bringing it
+ * back.
+ *
+ * A TYPE import (`import type`, `export type`) is erased before the bundler
+ * sees it, so it does not count; every other `import` does, a bare
+ * side-effect `import './x'` included, and so does an `export … from`.
  */
 describe('the palette\u2019s table comes from a module with no component in it', () => {
-  /** Every module a file imports at run time: `import type` is erased and does not count. */
+  /**
+   * Every module a file loads at run time, in source order.
+   *
+   * An `import` or `export` statement up to its first quote: for an import
+   * that is the module (a side-effect `import './x'` has nothing before it),
+   * and an export counts only when its clause ends in `from`. The clause
+   * stops at the first quote or semicolon, so it can never run on into the
+   * NEXT statement — the earlier `[\s\S]*?\sfrom` did exactly that from a
+   * side-effect import, reading only the module after it. `type` right after
+   * the keyword is erased and does not count.
+   */
   const valueImports = (code: string): string[] =>
-    [...code.matchAll(/^import\s+(type\s+)?[\s\S]*?\sfrom\s+'([^']+)';/gm)]
-      .filter((m) => m[1] === undefined)
-      .map((m) => m[2]!);
+    [...code.matchAll(/^(import|export)\s+(type\s+)?([^'";]*?)['"]([^'"]+)['"]/gm)]
+      .filter((m) => m[2] === undefined && (m[1] === 'import' || /\bfrom\s*$/.test(m[3]!)))
+      .map((m) => m[4]!);
 
   const palette = valueImports(codeOf('../src/palette/destinations.ts'));
   const table = valueImports(codeOf('../src/routes/projectSections.ts'));
+
+  it('reads a side-effect import and an export-from as loads, and only a type import as none', () => {
+    // Each of these but the two type-only lines makes the bundler fetch the
+    // module, so a scan that missed one would wave its import through.
+    const code = [
+      "import type { A } from './a';",
+      "import './side-effect';",
+      "import { b } from './b';",
+      "export { c } from './c';",
+      "export type { D } from './d';",
+      "export const E = 'not an import';",
+    ].join('\n');
+    expect(valueImports(code)).toEqual(['./side-effect', './b', './c']);
+  });
 
   it('found the imports it is meant to judge', () => {
     // A pattern that matched nothing would pass both cases below.

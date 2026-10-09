@@ -6,10 +6,13 @@ import { AlertMark } from '../components/States';
  *
  * The two sentences are `accessRefusal(action)`'s — the same function
  * `AccessGuard` words its 403 with — so a reader who reaches a page by URL is
- * told exactly what the API would have answered had they tried: what the
- * action needs, then what to do about it. Nothing here is written by hand,
- * and nothing is added: no title above them, because the first sentence
- * already names the action.
+ * told what that 403 would have said had they tried: what the action needs,
+ * then what to do about it. That is the API's answer for an admin's page and
+ * for a project the reader can see. For a project they CANNOT see it answers
+ * 404 instead, which is why not-found renders before any `NoAccess`:
+ * `ProjectShell` does it for its pages, and a page outside the shell does it
+ * itself (Ruling P8). Nothing here is written by hand, and nothing is added:
+ * no title above them, because the first sentence already names the action.
  *
  * Render it ONLY when access is known and refuses (`known && !can(action)`
  * from `useProjectAccess`, or `known && !isAdmin` from `useAdminAccess`) —
@@ -23,10 +26,13 @@ import { AlertMark } from '../components/States';
  * it — because to the reader it is the same kind of moment: this page will
  * not do what they came for. But `ErrorState` is `role="alert"`, and this is
  * not an interruption: it is the page's answer to the question the reader
- * asked by opening it. So it is `role="status"`, announced politely — the
- * same choice `RequestDetail` makes for "This run recorded no request named
- * …". `AlertMark` is the shared piece, so the status colour is still painted
- * only inside `components/States.tsx`.
+ * asked by opening it. So it is `role="status"` — the same choice
+ * `RequestDetail` makes for "This run recorded no request named …". It is
+ * mounted already holding its sentences, and a screen reader announces a live
+ * region's CHANGES, not one inserted with its content, so it is read where it
+ * sits, as the page's content, rather than announced. `AlertMark` is the
+ * shared piece, so the status colour is still painted only inside
+ * `components/States.tsx`.
  */
 export function NoAccess({ action }: { readonly action: AccessAction }) {
   const { detail, remediation } = accessRefusal(action);

@@ -47,10 +47,11 @@ import { UserActions, type Armed } from './AdminUserActions';
  * on screen with one quiet line saying it may be out of date.
  *
  * ═══ UNLESS THE REFETCH WAS REFUSED (ruling W17) ═══
- * A `401` or `403` is the API refusing this session the list (`isRefusal`),
- * and is shown as on a first load: the admin who has just removed their own
- * admin flag is told so, not handed a table whose every action would be
- * refused.
+ * A `403` is the API refusing this session the list (`isRefusal`), and is
+ * shown as on a first load: the admin who has just removed their own admin
+ * flag is told so, not handed a table whose every action would be refused.
+ * A `401` ends the session instead (`queryClient.ts`), and `AuthGate` sends
+ * the reader to sign-in rather than leaving it drawn here.
  */
 export default function AdminUsers() {
   const users = useQuery({ queryKey: adminUsersQueryKey, queryFn: fetchAdminUsers });

@@ -116,9 +116,11 @@ function synthesizeUnreadable(status: number, rawBody: string): ProblemError {
  * caller cannot accidentally override it): the session cookie is
  * `sameSite: 'strict'`, and same-origin is how this app is served.
  *
- * Does not redirect on 401, or touch the DOM/router at all — that decision
- * belongs to Task 5's router, and keeping it out is what lets this module be
- * unit-tested without a browser.
+ * Does not redirect on 401, or touch the DOM/router at all — keeping it out
+ * is what lets this module be unit-tested without a browser. The decision is
+ * the query client's (`queryClient.ts`), which ends the session on a 401 from
+ * any query or mutation, and `AuthGate`'s, which turns that into a redirect
+ * to sign-in.
  */
 export async function apiFetch<T>(schema: ZodSchema<T>, path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, { ...init, credentials: 'same-origin' });

@@ -93,8 +93,11 @@ export function roleSatisfies(held: ProjectRole, required: ProjectRole): boolean
  *
  * In order: the admin flag passes everything, whatever role its holder has
  * in this project. An admin action refuses everyone else. No role — `null`
- * for a project the person holds none in, `undefined` for one not loaded
- * yet — refuses. Otherwise the role is ranked against the action's.
+ * for a project the person holds none in, `undefined` for a response with no
+ * `role` field at all (an API older than the field) — refuses. Otherwise the
+ * role is ranked against the action's. Whether the answer is KNOWN — a list
+ * not loaded yet, say — is the caller's question, never this function's: the
+ * web's `useProjectAccess` keeps it apart as `known`.
  */
 export function canPerform(
   action: AccessAction,
