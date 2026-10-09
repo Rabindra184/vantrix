@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest';
-import { QueryClientProvider, useMutation, useQuery, type QueryClient } from '@tanstack/react-query';
+import { MutationObserver, QueryClientProvider, useMutation, useQuery, type QueryClient } from '@tanstack/react-query';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useEffect, type ReactNode } from 'react';
@@ -204,6 +204,61 @@ describe('createQueryClient — a 401 ends the session', () => {
 
     expect(where()).toBe(LOGIN);
     expect(visited).toEqual([PAGE, LOGIN]);
+  });
+});
+
+/**
+ * ═══ A 401 FROM BEFORE A RE-SIGN-IN IS ABOUT A SESSION ALREADY GONE ═══
+ *
+ * `Login` clears the whole cache before it navigates, and `QueryClient.clear()`
+ * drops a mutation still in flight WITHOUT cancelling it: the request goes on,
+ * and the cache's `onError` still runs when it fails. So a write sent under
+ * the OLD session can answer 401 after the reader has signed in again — and
+ * the handler, acting on it, would write `null` over the NEW session and send
+ * a reader who has just signed in straight back to sign-in. A query cannot
+ * arrive this late: `clear()` cancels in-flight queries silently, and a
+ * silent cancellation never reaches the cache's handler.
+ *
+ * No React here: the case is the cache, a mutation it no longer holds, and the
+ * session written after the clear, which is all `Login` leaves behind.
+ */
+describe('createQueryClient — a mutation the cache no longer holds', () => {
+  it('leaves the new session alone when a write sent before a re-sign-in answers 401', async () => {
+    let sent = 0;
+    let answer: (response: Response) => void = () => {};
+    const held = new Promise<Response>((resolve) => {
+      answer = resolve;
+    });
+    vi.stubGlobal('fetch', () => {
+      sent += 1;
+      return held;
+    });
+    const client = createQueryClient();
+    clients.push(client);
+    client.setQueryData(sessionQueryKey, { session: { id: 's1' }, user: { id: 'u1', name: 'Ada' } });
+
+    const observer = new MutationObserver(client, {
+      mutationFn: () => apiFetchNoContent('/v1/child-save', { method: 'POST' }),
+    });
+    const settled = observer.mutate().then(
+      () => null,
+      (error: unknown) => error,
+    );
+    await waitFor(() => expect(sent).toBe(1));
+
+    // What `Login` does on a successful sign-in, then the session it reads.
+    client.clear();
+    const signedInAgain = { session: { id: 's2' }, user: { id: 'u2', name: 'Bo' } };
+    client.setQueryData(sessionQueryKey, signedInAgain);
+
+    answer(await problem(401, 'UNAUTHENTICATED')());
+    // The 401 really arrived, and the cache's handler has run: `execute` awaits
+    // it before the mutation rejects.
+    const error = await settled;
+    expect(error).toBeInstanceOf(ProblemError);
+    expect((error as ProblemError).status).toBe(401);
+
+    expect(client.getQueryData(sessionQueryKey)).toEqual(signedInAgain);
   });
 });
 

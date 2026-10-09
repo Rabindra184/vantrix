@@ -1837,6 +1837,26 @@ describe('ProjectRules — what a role is offered', () => {
     expect(screen.getByText('New rule')).toBeInTheDocument();
   });
 
+  /**
+   * On a test's page this panel sits under the run list, and a heading is the
+   * only thing telling the two apart — for every reader, not only one who may
+   * add a rule. It is ONE section `<h2>` above the tables: the old card title
+   * was drawn only with the form (`rules:edit`), and as an `<h3>` after the
+   * tables, directly under the page's `<h1>`.
+   */
+  it.each([
+    ['a Viewer', VIEWER],
+    ['a Member', MEMBER],
+  ])('names the rules on a test’s page for %s, as one <h2> above the tables', async (_, who) => {
+    fetchProjectRules.mockResolvedValue({ rules: [rule({ test: null })] });
+    renderRules({ testSlug: 'payments-sweep', testName: 'Payments sweep' }, who);
+
+    const heading = await screen.findByRole('heading', { level: 2, name: 'SLA rules' });
+    expect(screen.getAllByRole('heading', { name: 'SLA rules' })).toEqual([heading]);
+    const table = await screen.findByRole('table', { name: 'Inherited SLA rules' });
+    expect(heading.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it('withholds them on a test’s page too, in both tables', async () => {
     fetchProjectRules.mockResolvedValue({
       rules: [
@@ -1893,7 +1913,7 @@ describe('ProjectRules — what a role is offered', () => {
    * what they get, inline and in its own words — never a click that did
    * nothing.
    */
-  it('answers a refused toggle with the API’s own words, under the table', async () => {
+  it('answers a refused toggle with the API’s own words, above the tables', async () => {
     const user = userEvent.setup();
     const refusal = accessRefusal('rules:edit');
     fetchProjectRules.mockResolvedValue({ rules: [rule()] });

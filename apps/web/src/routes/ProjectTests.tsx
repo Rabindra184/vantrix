@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { TestSummary } from '@perfportal/contracts';
+import type { ProjectAccess } from '../access/useAccess';
 import Badge from '../components/Badge';
 import CopyIdButton from '../components/CopyIdButton';
 import { SkeletonTable } from '../components/Skeleton';
@@ -38,16 +39,18 @@ import { runName } from '../runNumber';
  * (Project runs, Add results, New on-prem run), while `/projects/:slug/runs`
  * drew a DIFFERENT row of three and the configuration pages drew a tab strip
  * naming none of them. `ProjectShell` owns all of it, so the project's name,
- * its six sections and the one launch action are identical on every project
+ * its seven sections and the one launch action are identical on every project
  * page. The name still comes from `GET /v1/projects` rather than from the
  * first test's row, for the reason that file states: a project with no tests
  * still has a name.
  */
 export default function ProjectTests() {
-  return <ProjectShell current="tests">{({ slug }) => <Tests slug={slug} />}</ProjectShell>;
+  return (
+    <ProjectShell current="tests">{({ slug, access }) => <Tests slug={slug} access={access} />}</ProjectShell>
+  );
 }
 
-function Tests({ slug }: { readonly slug: string }) {
+function Tests({ slug, access }: { readonly slug: string; readonly access: ProjectAccess }) {
   const tests = useQuery({
     queryKey: projectTestsQueryKey(slug),
     queryFn: () => fetchProjectTests(slug),
@@ -84,10 +87,18 @@ function Tests({ slug }: { readonly slug: string }) {
            one accessible name in one document is the collision CLAUDE.md
            records for "All runs" and "New project". Both routes in are on
            screen already; the sentence names them rather than re-drawing
-           them. */
+           them.
+
+           AND IT NAMES THEM ONLY TO A READER WHO MAY USE ONE. A Viewer gets
+           neither the shell's launch nor its Add results tab, so for them the
+           second sentence would point at two things that are not on screen;
+           how a test comes to exist is everyone's. Both actions ask for
+           Member, so a reader who holds one holds the other. */
         body={
-          'A test appears here the first time PerfPortal finishes parsing a run of it. Start one ' +
-          'from New on-prem run above, or post a results bundle — Add results has the command.'
+          'A test appears here the first time PerfPortal finishes parsing a run of it.' +
+          (access.can('runner:run') || access.can('run:upload')
+            ? ' Start one from New on-prem run above, or post a results bundle — Add results has the command.'
+            : '')
         }
       />
     );

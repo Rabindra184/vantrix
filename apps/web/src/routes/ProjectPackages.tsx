@@ -203,7 +203,9 @@ function PackagesPanel({ slug, may }: { readonly slug: string; readonly may: May
 
       {packages.isPending ? (
         <LoadingState label="Loading packages…">
-          <SkeletonTable columns={6} rows={3} />
+          {/* The table's own columns: five, and Actions only with
+              `anyAction` — the same test its header and rows apply. */}
+          <SkeletonTable columns={5 + (actions ? 1 : 0)} rows={3} />
         </LoadingState>
       ) : packages.isError ? (
         <ErrorState

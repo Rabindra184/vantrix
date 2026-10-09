@@ -28,6 +28,18 @@ import { sessionQueryKey } from './api/session';
  * cleared session cannot outlive the next sign-in, because `Login` clears the
  * whole cache before it navigates away.
  *
+ * ═══ AND NEVER FOR A MUTATION THE CACHE NO LONGER HOLDS ═══
+ *
+ * That clear is also how a stale 401 could end the NEW session. `clear()`
+ * cancels the queries it drops — silently, and a silent cancellation never
+ * reaches the cache's `onError` — but it drops mutations WITHOUT cancelling
+ * them: the request goes on, and when it fails the mutation still calls its
+ * cache's handler. A write sent under the old session that answers 401 after
+ * the reader has signed in again would write `null` over the session they
+ * just made and send them back to sign-in. So the mutation handler acts only
+ * on a mutation still in the cache; one `clear()` dropped belongs to a
+ * session already gone.
+ *
  * WHAT IT LEAVES ALONE:
  *
  *   - Every other status. A 403 refuses one action to a session that is still
@@ -50,9 +62,17 @@ export function createQueryClient(): QueryClient {
   const endSessionOn401 = (error: unknown): void => {
     if (error instanceof ProblemError && error.status === 401) client.setQueryData(sessionQueryKey, null);
   };
+  const mutationCache: MutationCache = new MutationCache({
+    onError: (error, _variables, _onMutateResult, mutation) => {
+      // Dropped by `clear()` (a re-sign-in) while still in flight: its 401 is
+      // about the session that ended, not the one the cache holds now.
+      if (!mutationCache.getAll().some((held) => held === mutation)) return;
+      endSessionOn401(error);
+    },
+  });
   const client = new QueryClient({
     queryCache: new QueryCache({ onError: endSessionOn401 }),
-    mutationCache: new MutationCache({ onError: endSessionOn401 }),
+    mutationCache,
     defaultOptions: {
       queries: {
         // TanStack Query retries a failed query three times by default, with

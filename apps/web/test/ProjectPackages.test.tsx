@@ -329,6 +329,28 @@ describe('Packages — the empty and the in-between states', () => {
     ).toBeInTheDocument();
   });
 
+  /**
+   * The placeholder stands in for the table, so it has the table's columns:
+   * five, and a sixth (Actions) only when the reader may take one of the
+   * row's actions — the same `anyAction` the header and every row ask. A
+   * fixed number is right for one reader and wrong for the other.
+   */
+  it.each([
+    ['an admin', { isAdmin: true }],
+    ['a Viewer', { isAdmin: false, roles: { checkout: 'viewer' as const } }],
+  ])('draws the loading table with the columns the table has, for %s', async (_, who) => {
+    fetchPackages.mockReturnValue(new Promise(() => {}));
+    renderPage(who);
+    const header = (await screen.findByTestId('skeleton-table')).firstElementChild;
+    const placeholder = header?.children.length;
+    cleanup();
+
+    fetchPackages.mockResolvedValue({ items: [CHECKOUT] });
+    renderPage(who);
+    await screen.findAllByTestId('package-row');
+    expect(placeholder).toBe(screen.getAllByRole('columnheader').length);
+  });
+
   it('stays closed while the list is still loading, instead of flashing open', async () => {
     fetchPackages.mockReturnValue(new Promise(() => {}));
     renderPage();

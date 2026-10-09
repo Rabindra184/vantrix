@@ -179,6 +179,10 @@ test('a test’s page carries the gates that judge it, and authors new ones agai
   await signIn(page, admin);
   await page.goto('/projects/checkout/tests/payments-sweep');
 
+  // The rules are named on this page, by one section heading above them —
+  // the run list beside them is what it tells them apart from.
+  await expect(page.getByRole('heading', { level: 2, name: 'SLA rules', exact: true })).toBeVisible();
+
   // No "Applies to" select here — the page is titled after one test, and the
   // one non-default option would silently widen a rule to every OTHER test.
   await expect(page.getByRole('button', { name: 'Add rule' })).toBeVisible();

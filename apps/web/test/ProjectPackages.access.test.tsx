@@ -205,4 +205,32 @@ describe('Packages — each control asks its own action', () => {
     expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Checkout: package actions' })).toBeInTheDocument();
   });
+
+  /**
+   * The mirror of the case above, and the half the mode gate's other branch
+   * answers: an armed delete goes with Delete. Under real roles
+   * `packages:manage` and `packages:delete` are both Member, so only this
+   * stand-in can drop one and keep the other — and the row keeps its menu
+   * (New run from this package is still the reader's) while the block whose
+   * Delete package the API would refuse goes.
+   */
+  it('takes an armed delete away when packages:delete goes, leaving the row its menu', async () => {
+    const user = userEvent.setup();
+    renderAllowing(['packages:delete', 'runner:run']);
+    await screen.findByTestId('package-row');
+
+    await user.click(screen.getByRole('button', { name: 'Checkout: package actions' }));
+    await user.click(within(await screen.findByRole('menu')).getByRole('menuitem', { name: 'Delete' }));
+    const row = within(screen.getByTestId('package-row'));
+    expect(await row.findByRole('button', { name: 'Delete package' })).toBeInTheDocument();
+    expect(row.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+
+    act(() => {
+      allowed.set(['runner:run']);
+    });
+
+    expect(row.queryByRole('button', { name: 'Delete package' })).toBeNull();
+    expect(row.queryByRole('button', { name: 'Cancel' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Checkout: package actions' })).toBeInTheDocument();
+  });
 });

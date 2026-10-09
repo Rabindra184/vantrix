@@ -22,6 +22,7 @@ import { PERCENTILES, REQUESTS_AND_RESPONSES } from './runSlots';
 import { peakConcurrentUsers } from './runUsers';
 import {
   useLiveFromShell,
+  useProjectAccessFromShell,
   useRunTerminal,
   useWarmupFromShell,
   useWholeRunDomainFromShell,
@@ -57,6 +58,9 @@ export default function RunSummary() {
   const { runId } = useParams<{ runId: string }>();
   const { detail: run, terminal } = useRunTerminal(runId);
   const live = useLiveFromShell();
+  // The run's project access, asked once by `RunShell` and shared through its
+  // outlet context (Ruling P13): this page only reads `rules:edit` from it.
+  const projectAccess = useProjectAccessFromShell();
   const domainMs = useWholeRunDomainFromShell();
   const warmupMs = useWarmupFromShell() ?? undefined;
   const compact = useIsCompact();
@@ -104,7 +108,12 @@ export default function RunSummary() {
     return (
       <div className="flex flex-col gap-6">
         <LiveSummary summary={delta.summary} />
-        <PlatformGatesBar runId={runId} assertions={undefined} ran />
+        <PlatformGatesBar
+          runId={runId}
+          assertions={undefined}
+          ran
+          canEditRules={projectAccess.can('rules:edit')}
+        />
         {!compact && series.data !== undefined && (
           <OverTimeSection>
             <OverTimeCharts series={series.data} domainMs={domainMs} warmupMs={warmupMs} />
@@ -166,6 +175,7 @@ export default function RunSummary() {
         projectSlug={body.project.slug}
         assertions={body.assertions}
         ran={rulesRan(body.status, body.durationMs)}
+        canEditRules={projectAccess.can('rules:edit')}
       />
       {/* `stats.data` is what makes a target linkable: whether a name is a
           request, a group or neither is a question only `/stats` can answer.

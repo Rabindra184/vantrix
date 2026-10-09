@@ -21,6 +21,7 @@ import Button from '../components/Button';
 import Card from '../components/Card';
 import FormField, { hintId } from '../components/FormField';
 import InfoTip from '../components/InfoTip';
+import SectionHeading from '../components/SectionHeading';
 import { ErrorState, LoadingState } from '../components/States';
 import TableFrame from '../components/TableFrame';
 import { ProblemError } from '../api/fetch';
@@ -491,7 +492,10 @@ export default function ProjectRules({
    * heading's correctness is a property of the DOCUMENT, which no component
    * can see from inside itself. It stays TRUE on a test's page, where this
    * panel sits beside a run list and a title is the only thing telling the
-   * two apart.
+   * two apart — for EVERY reader, so it is one section `<h2>` drawn above the
+   * tables whatever the role, never the form card's title (which only
+   * `rules:edit` draws, and which followed the tables as an `<h3>` directly
+   * under the page's `<h1>`).
    *
    * There is no description either way (clean UI PR 4): the empty state says
    * a run with no rules gets no verdict, and the tables' info icons say which
@@ -811,6 +815,9 @@ export default function ProjectRules({
 
   return (
     <div className="flex flex-col gap-4">
+      {/* The section's name, for every role: the tables below are everyone's
+          (`rules:read`), so the heading over them is too. See `showTitle`. */}
+      {showTitle && <SectionHeading>SLA rules</SectionHeading>}
       <RulesPanel
         rules={rules}
         scopedToTest={scopedToTest}
@@ -828,19 +835,14 @@ export default function ProjectRules({
       />
 
       {/* ═══ THE FORM IS `rules:edit`'s, SO IT IS DRAWN ONLY WITH IT ═══
-          The whole card, title included: below that role it would be a
-          heading over nothing. The tables above carry their own names. */}
+          The whole card. It carries no title: the section's name is the
+          `<h2>` above the tables, drawn for every role, and the tables carry
+          their own names. */}
       {canEdit && (
       <Card
-        // `title={undefined}` rather than a conditional spread: CLAUDE.md
-        // records that the excess-property check does not reach inside a
-        // spread, so a mistyped key there is accepted in silence. `title`
-        // is optional on `Card`, so passing undefined is the same thing and
-        // stays in front of the compiler.
-        title={showTitle ? 'SLA rules' : undefined}
-        /* No description (clean UI PR 4). Which runs each set judges is the
-           two tables' own ⓘs; that a run with no rules gets no verdict is the
-           empty state, where it bites. */
+        /* No title and no description (clean UI PR 4). Which runs each set
+           judges is the two tables' own ⓘs; that a run with no rules gets no
+           verdict is the empty state, where it bites. */
       >
         {/* ═══ THE LIST LEADS; CREATING IS A CHOICE (review.md finding 12) ═══
          *
@@ -1294,15 +1296,18 @@ function RulesPanel({
     );
   }
   if (rules.data.rules.length === 0) {
-    /* ═══ THE FORM IS RIGHT THERE (review 09-13 M03) ═══
+    /* ═══ ONE LINE, NOT AN EMPTY STATE (review 09-13 M03) ═══
      *
      * A full `EmptyState` card told the reader to "add one above" directly
-     * beneath the form for adding one. An empty state earns its size when it
-     * explains an absence the reader cannot otherwise account for; this one
-     * sits under the explanation AND the remedy, both already visible.
+     * beneath the form for adding one. The list leads now (review.md 12), so
+     * this line sits ABOVE the form, and only a reader with `rules:edit` has
+     * a form at all — for them the New rule disclosure directly below is the
+     * remedy, open by default when nothing is listed; a reader below that
+     * role has no remedy to be pointed at. Neither needs a card telling them
+     * where to add one.
      *
-     * The consequence is the part worth keeping — a project with no rules gets
-     * no verdict — so it stays, as one line. */
+     * The consequence is the part worth keeping for every reader — a project
+     * with no rules gets no verdict — so it stays, as one line. */
     return (
       <p className="rounded-lg border border-default bg-sunken px-3 py-2 text-[0.8125rem] text-muted">
         No rules yet. Until this project has one, its runs complete with no release verdict.
