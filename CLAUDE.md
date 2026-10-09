@@ -207,7 +207,16 @@ FLOORS.** It was cut from the tree after PR 1, so its 221 / 3425 and
 204 / 3065 describe a tree that no longer exists. On the merged tree it is
 PR 3's floors plus its own: unit **237 / 3855 to 238 / 3860**, integration
 **215 / 3329 to 216 / 3336**, and **e2e stays 203** (609 on three engines).
-The conflict was `CLAUDE.md` alone.
+The conflict was `CLAUDE.md` alone. On the merged tree, on Node v22.19.0:
+`pnpm build`, `typecheck` and `lint` exit 0 by their own exit codes;
+`test:unit` **238 / 3860**, exit 0, zero `Errors` lines, the prediction
+exactly; and the three files this branch touches, run alone under the
+integration config against a scratch database (`perfportal_p2002`, migrated
+from scratch) and Redis db 12, **3 / 36**, exit 0. The full
+`test:integration` and `test:e2e` were not run locally: the machine sat at a
+load of 17 to 36 with 91% of swap in use and about 3,800 free pages, under
+other projects' suites. CI's `build` job on the merge is what measures
+**216 / 3336** and **203**.
 
 **PR 2's `isUniqueViolationOn` AND THIS `isIdempotencyKeyCollision` ARE ONE
 RULE, AND BOTH STAY.** Each compares `meta.target` to its index's columns as a
