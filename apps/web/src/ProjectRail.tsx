@@ -366,14 +366,31 @@ export default function ProjectRail({ isAdmin }: { readonly isAdmin: boolean | u
             `aria-live` region, so it is registered before its content ever
             changes — a transition into or out of an error, or from "out of
             date" back to normal, gets announced, not just whatever state
-            happened to be present at first paint. */}
-        <div aria-live="polite" className="shrink-0">
+            happened to be present at first paint.
+
+            ═══ BELOW `lg` THE MESSAGE WRAPS IN THE ROOM THE ROWS LEAVE ═══
+            Below `lg` this nav is one horizontal strip of `shrink-0` rows, and
+            the wrapper was `shrink-0` too, so the message kept its one-line
+            width: measured at 375px, a person on no project saw 55% of
+            "You're not on any project yet. Ask an admin to add you." and had
+            to scroll a navigation bar sideways for the rest. Below `lg` the
+            wrapper may shrink, so the sentence wraps beside Home and All runs.
+            The floor sits on the <p>, not the wrapper: a wrapper's own minimum
+            would hold an EMPTY strip's end open by that width on every phone,
+            while the <p>'s exists only while there is a message. At `lg` and up
+            nothing changes — the column has no such squeeze. */}
+        <div aria-live="polite" className="shrink-0 max-lg:shrink">
           {message != null && (
             // `lg:sr-only` when collapsed, never `hidden`: `display: none`
             // silences a live region, and a projects-failed announcement is
             // exactly the kind of transition the wrapper above exists to
             // announce whatever state the rail is drawn in.
-            <p className={cn('px-3 py-2 text-[0.75rem] leading-snug text-muted', collapsed && 'lg:sr-only')}>
+            <p
+              className={cn(
+                'px-3 py-2 text-[0.75rem] leading-snug text-muted max-lg:min-w-40',
+                collapsed && 'lg:sr-only',
+              )}
+            >
               {message}
             </p>
           )}
