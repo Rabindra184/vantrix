@@ -30,12 +30,21 @@ import { signIn } from './helpers.js';
  * absence here honest:
  *
  *   - each is asserted on a page where something proves access is known
- *     first — the API tokens page's refusal sentence (drawn only when access
- *     is known and refuses), or a gated control the same reader IS offered on
- *     that page;
- *   - each is PAIRED with the same page drawing the control for a role that
- *     may use it, under the same waits: the Member journey draws what the
- *     Viewer's hides, and the Manager's what the Member's hides.
+ *     first: the API tokens page's refusal sentence (drawn only when access
+ *     is known and refuses; every later step of that journey reads the same
+ *     cached answer); a gated control the same reader IS offered on that
+ *     page; on a run page, the rail's row for the project, which comes from
+ *     the same `GET /v1/projects` the run's access is read from; and, for the
+ *     person on no project, the no-projects sentence itself, drawn only once
+ *     the session and the list have both answered;
+ *   - each PROJECT control's absence is PAIRED with the same page drawing it
+ *     for a role that may use it, under the same waits: the Member journey
+ *     draws what the Viewer's hides, the Manager's what the Member's hides,
+ *     and the admin's the Members controls (Add member, a role, Remove from
+ *     project). New project is the exception: no journey here draws it — an
+ *     admin's offer of it is pinned by the `AppShell`, `Home` and
+ *     `AttentionCard` unit tests — so its absence here rests on the first
+ *     point alone.
  *
  * `exact: true` on every name another one contains — "Role", "Remove",
  * "Add" against "Add member" and "Add results" — because Playwright's name
@@ -262,6 +271,12 @@ test('an admin adds a person on Members and changes a Viewer to Member, whose ne
       try {
         const role = page.getByRole('combobox', { name: `Role for ${viewer.name}`, exact: true });
         await expect(role).toHaveValue('viewer');
+        // The Viewer's own journey asserts this button absent; an admin is
+        // offered it on the same row, which is what makes that absence mean
+        // the role and not a page that never drew its controls.
+        await expect(
+          page.getByRole('button', { name: `Remove from project ${viewer.name}`, exact: true }),
+        ).toBeVisible();
         await role.selectOption('member');
         // Picking stages a choice; Save sends it.
         const save = page.getByRole('button', { name: `Save role for ${viewer.name}`, exact: true });

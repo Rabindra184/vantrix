@@ -13,6 +13,7 @@ import AuthGate from '../src/AuthGate';
 import { ACTIVITY_POLL_MS, activityQueryKey, browserTimeZone } from '../src/api/activity';
 import Home from '../src/routes/Home';
 import { projectsQueryKey } from '../src/api/projects';
+import { sessionQueryKey } from '../src/api/session';
 import { ALL_RUNS_ROUTE, NEW_PROJECT_ROUTE, projectPath } from '../src/routes/paths';
 import useIsCompact from '../src/useIsCompact';
 import { projectListBody, sessionBody } from './support/access';
@@ -583,16 +584,17 @@ describe('Home — Add results follows the reader’s role', () => {
   });
 
   it('offers a viewer of that project none', async () => {
-    renderHome({
+    const { client } = renderHome({
       activity: () => json(GAP),
       session: () => json(sessionBody(false)),
       projects: () => json(projectListBody({ checkout: 'viewer', search: 'member' })),
     });
     await gapDrawn();
-    // Settled: the list has answered, so the absence is the role's, not a load.
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    });
+    // Settled: the session and the list have both answered, so access is
+    // known and the absence is the role's, not a load. A barrier on the two
+    // answers rather than a sleep, which on a busy machine is no barrier.
+    await waitFor(() => expect(client.getQueryState(sessionQueryKey)?.status).toBe('success'));
+    await waitFor(() => expect(client.getQueryState(projectsQueryKey)?.status).toBe('success'));
     expect(asked('/v1/projects')).toBeGreaterThan(0);
     expect(within(attention()).queryByRole('link', { name: 'Add results' })).toBeNull();
   });

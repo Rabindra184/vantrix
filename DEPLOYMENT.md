@@ -189,11 +189,14 @@ The same operations are `/v1/admin/users` and `/v1/projects/{slug}/members`
 in the [API](docs/api.md#accounts-passwords-and-roles).
 
 The app shows each person what their role lets them do: a Viewer is offered
-no **Add rule**, **New on-prem run** or package actions, a Member no **API
-tokens**, and only an admin sees **New project**. Someone on no project yet is
-told so, and to ask an admin. A role you change takes effect on the person's
-next page load. When an admin resets, disables or removes someone, the
-person's open page goes to sign-in on its next request.
+no **Add results**, **Add rule**, **New on-prem run**, package actions or run
+note editing, a Member no **API tokens**, and only an admin sees **New
+project**. Someone on no project yet is told so, and to ask an admin. A role
+you change reaches the person's open page at its next read of
+`GET /v1/projects`. When an admin resets or disables someone, or removes their
+account, the person's open page goes to sign-in on its next request. Removing
+someone from a project is not that: the project then answers as if it did not
+exist.
 
 ### Serving it somewhere other than localhost
 

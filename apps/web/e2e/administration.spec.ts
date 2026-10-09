@@ -177,7 +177,7 @@ test('an admin adds a Member, who changes their password, sees one project, uplo
       // the app (PR 3's `createQueryClient`): the open page goes straight to
       // sign-in, keeping where the reader was going in `?next=` — where PR 2's
       // page drew the refusal in place and waited for a reload to notice.
-      await expect(personPage).toHaveURL(/\/login\?next=%2Fprojects%2Fcheckout/);
+      await expect(personPage).toHaveURL(/\/login\?next=%2Fprojects%2Fcheckout$/);
 
       // The admin's temporary password then leads to the step again.
       await signIn(personPage, { email: person.email, password: RESET_TO });

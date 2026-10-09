@@ -83,8 +83,8 @@ DELETE /v1/projects/{slug}/tokens/{prefix}  revoke (idempotent)
 that lives on a load generator, often a shared and disposable host, should
 be able to do exactly one thing.
 
-The on-prem runner's job routes (`/v1/projects/{slug}/runner/…`) take either
-credential, and which one depends on the route:
+The on-prem runner's five job routes (`/v1/projects/{slug}/runner/…`) all
+take either credential; the scope or role each needs depends on the route:
 
 - Queuing, cancelling and retrying a job (`POST …/runner/runs`,
   `POST …/runner/runs/{jobId}/cancel`, `POST …/runner/runs/{jobId}/retry`)
@@ -210,8 +210,10 @@ for clarity only: the API refuses the request whatever the page draws. An open
 page follows a role change on its next read of `GET /v1/projects`.
 
 **A `401` from any request ends the session in the app.** A reset, a disable,
-a removal or an expired session answers `401` on the person's next request,
-and the open page goes to sign-in, with `?next=` keeping where they were. The
+removing the account or an expired session answers `401` on the person's next
+request, and the open page goes to sign-in, with `?next=` keeping where they
+were. Removing someone from a project is not one: that project then answers
+`404`, as one they never held a role in. The
 one exception is the bundle upload on **Add results**, a bare upload request
 outside the app's query layer: its `401` is shown in place.
 
