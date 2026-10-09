@@ -12,8 +12,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { hashToken, mintToken } from '@perfportal/core';
 import {
-  createAuth, createPool, createPrisma, OrgMemberRepository, PackageRepository, RunnerRepository,
-  TelemetryStore, type InboundTelemetrySample,
+  createAuth, createPool, createPrisma, OrgMemberRepository, PackageRepository, ProjectMemberRepository,
+  RunnerRepository, TelemetryStore, type InboundTelemetrySample,
 } from '@perfportal/persistence';
 import { BlobStore } from '@perfportal/storage';
 // Reached into apps/worker's BUILT output, not its TypeScript source: the
@@ -330,13 +330,64 @@ async function createAccount(email: string, name: string, role: 'admin' | 'user'
 }
 
 /** An admin, its own fresh org, and the 'checkout' project every
- *  orgId-taking seed below ingests into. */
-export async function seedAdmin(): Promise<{ email: string; password: string; orgId: string }> {
+ *  orgId-taking seed below ingests into — its id too, for a seed that gives
+ *  somebody a role in it (`seedProjectMember`). */
+export async function seedAdmin(): Promise<{ email: string; password: string; orgId: string; projectId: string }> {
   const email = `${unique('admin')}@example.test`;
   const userId = await createAccount(email, 'Admin', 'admin');
-  const { orgId } = await createOrgAndProject();
+  const { orgId, projectId } = await createOrgAndProject();
   await orgMembers.add(userId, orgId);
-  return { email, password: PASSWORD, orgId };
+  return { email, password: PASSWORD, orgId, projectId };
+}
+
+/** A project role, spelled here rather than imported: the e2e suite keeps
+ *  its own narrow types (see `run-tables.spec.ts`), and these three are what
+ *  the member repository takes. */
+export type SeededRole = 'viewer' | 'member' | 'manager';
+
+/**
+ * A person in `orgId`'s install who is NOT an admin and holds `role` in
+ * `projectId` — the reader each of PR 3's role journeys signs in as. Made
+ * the way `signInAsProjectMember` makes one in the API's own suite
+ * (`apps/api/test/support/session.ts`): the account, its membership of the
+ * install, then the project row.
+ *
+ * Created straight, not through `POST /v1/admin/users`: that route flags the
+ * account to choose a new password at first sign-in, which is
+ * `administration.spec.ts`'s journey, not these. So this person signs in to
+ * the app itself, under the password every account here shares.
+ *
+ * `name` is the display name the Members page prints and names its per-row
+ * controls after ("Role for <name>"). Choose one that shares no word with a
+ * role or a marker ("Viewer", "Admin") — the fixture-collision rule.
+ */
+export async function seedProjectMember(
+  orgId: string,
+  projectId: string,
+  role: SeededRole,
+  name: string,
+): Promise<{ email: string; password: string; name: string }> {
+  const email = `${unique(role)}@example.test`;
+  const userId = await createAccount(email, name, 'user');
+  await orgMembers.add(userId, orgId);
+  await new ProjectMemberRepository(prisma).add({ projectId, userId, role, addedBy: null });
+  return { email, password: PASSWORD, name };
+}
+
+/**
+ * A person in `orgId`'s install, not an admin, holding NO role in any of its
+ * projects: the "not on any project yet" reader, and the person an admin adds
+ * through Members' Add member. A member of the install — a different state
+ * from `seedUserWithoutOrg`'s account, which belongs to nobody's.
+ */
+export async function seedPersonInNoProject(
+  orgId: string,
+  name: string,
+): Promise<{ email: string; password: string; name: string }> {
+  const email = `${unique('noproject')}@example.test`;
+  const userId = await createAccount(email, name, 'user');
+  await orgMembers.add(userId, orgId);
+  return { email, password: PASSWORD, name };
 }
 
 /** A user with NO org_member row — Task 5's 403-after-login case. Not an

@@ -92,6 +92,21 @@ export function runComparePath(runId: string, runs?: readonly string[]): string 
 export const NO_ORG_ROUTE = '/no-organisation';
 
 /**
+ * Change your own password, from the account menu. The forced change at first
+ * sign-in has no URL of its own: `AuthGate` shows it in place of whatever was
+ * asked for.
+ */
+export const ACCOUNT_PASSWORD_ROUTE = '/account/password';
+
+/**
+ * Administration's two pages, for an install-wide admin: accounts and
+ * projects. The account menu links to the first. Neither is a `/projects/`
+ * segment, so neither can shadow a project slug.
+ */
+export const ADMIN_USERS_ROUTE = '/admin/users';
+export const ADMIN_PROJECTS_ROUTE = '/admin/projects';
+
+/**
  * One project — which is now its TESTS, not its runs.
  *
  * ═══ THIS URL CHANGED WHAT IT SHOWS, DELIBERATELY ═══
@@ -199,6 +214,17 @@ export function projectSetupPath(slug: string): string {
  */
 export function projectRulesPath(slug: string): string {
   return `${projectPath(slug)}/rules`;
+}
+
+/**
+ * The project's members: who holds a role here, and which one.
+ *
+ * Every role may read them (`members:read` asks for Viewer) and only an admin
+ * may change them (`members:manage`), so the shell offers this section to
+ * everyone in the project.
+ */
+export function projectMembersPath(slug: string): string {
+  return `${projectPath(slug)}/members`;
 }
 
 /**

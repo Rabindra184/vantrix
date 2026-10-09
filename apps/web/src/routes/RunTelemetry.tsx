@@ -8,7 +8,12 @@ import TelemetryCharts, { type TelemetryChartId } from '../charts/TelemetryChart
 import { CLOCK_SKEW_WARN_MS } from './clockSkew';
 import { formatDuration } from './format';
 import { Payload, Undrawn, type Slot } from './payload';
-import { useRunTerminal, useTimeDomainFromShell, useWindowFromShell } from './useRunWindow';
+import {
+  useProjectAccessFromShell,
+  useRunTerminal,
+  useTimeDomainFromShell,
+  useWindowFromShell,
+} from './useRunWindow';
 import DesktopOnly from './DesktopOnly';
 import { projectAccessPath } from './paths';
 import useIsCompact from '../useIsCompact';
@@ -116,6 +121,10 @@ export default function RunTelemetry({
      result; this reads a field off it. `undefined` until the run resolves, and
      the link is withheld rather than pointed at an empty slug. */
   const projectSlug = detail.data?.state === 'ready' ? detail.data.run.project.slug : undefined;
+  /* Whether that link may be drawn at all: API tokens is `tokens:manage`'s
+     page (gate by destination), asked once by `RunShell` for this run's
+     project. */
+  const projectAccess = useProjectAccessFromShell();
   const window = useWindowFromShell();
   // The same time domain the run's other pages draw on (§22.5) — the charts
   // this section draws (`only` names two or four of the six) share `run-time`
@@ -246,7 +255,12 @@ export default function RunTelemetry({
              *
              * WITHHELD, not disabled, when the slug is unknown — a run read
              * from a pod that has not resolved yet has no project to link to,
-             * and a dead link is worse than no link. */
+             * and a dead link is worse than no link.
+             *
+             * AND WITHHELD FROM A READER WHO MAY NOT MANAGE TOKENS (gate by
+             * destination): the page it opens exists to mint one, and for
+             * anyone below Manager it can only say no. The sentence above
+             * still names the permission the agent's token needs. */
             <EmptyState
               title="No generator telemetry recorded"
               body={
@@ -255,7 +269,7 @@ export default function RunTelemetry({
                 'reported for this run — the agent ships in this repository under agent/.'
               }
               action={
-                projectSlug === undefined ? undefined : (
+                projectSlug === undefined || !projectAccess.can('tokens:manage') ? undefined : (
                   <Link
                     to={projectAccessPath(projectSlug)}
                     data-testid="telemetry-setup"

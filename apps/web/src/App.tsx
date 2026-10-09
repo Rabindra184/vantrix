@@ -5,7 +5,15 @@ import AuthGate from './AuthGate';
 import Login from './routes/Login';
 import RouteFallback from './components/RouteFallback';
 import RouteErrorBoundary from './components/RouteErrorBoundary';
-import { DEFAULT_ROUTE, HOME_ROUTE, NEW_PROJECT_ROUTE, NO_ORG_ROUTE } from './routes/paths';
+import {
+  ACCOUNT_PASSWORD_ROUTE,
+  ADMIN_PROJECTS_ROUTE,
+  ADMIN_USERS_ROUTE,
+  DEFAULT_ROUTE,
+  HOME_ROUTE,
+  NEW_PROJECT_ROUTE,
+  NO_ORG_ROUTE,
+} from './routes/paths';
 
 /**
  * ═══ EVERY AUTHENTICATED ROUTE IS A SEPARATE CHUNK ═══
@@ -25,6 +33,9 @@ import { DEFAULT_ROUTE, HOME_ROUTE, NEW_PROJECT_ROUTE, NO_ORG_ROUTE } from './ro
  * `default` is the component; the two run tabs that once shared `RunDetail`'s
  * module that way are `RunSummary` now, and a module of their own.)
  */
+const AccountPassword = lazy(() => import('./routes/AccountPassword'));
+const AdminProjects = lazy(() => import('./routes/AdminProjects'));
+const AdminUsers = lazy(() => import('./routes/AdminUsers'));
 const GroupDetail = lazy(() => import('./routes/GroupDetail'));
 const Home = lazy(() => import('./routes/Home'));
 const NewProject = lazy(() => import('./routes/NewProject'));
@@ -34,6 +45,7 @@ const ProjectSetup = lazy(() => import('./routes/ProjectSetup'));
 const ProjectPackages = lazy(() => import('./routes/ProjectPackages'));
 const ProjectRulesPage = lazy(() => import('./routes/ProjectRulesPage'));
 const ProjectAccess = lazy(() => import('./routes/ProjectAccess'));
+const ProjectMembers = lazy(() => import('./routes/ProjectMembers'));
 const ProjectTests = lazy(() => import('./routes/ProjectTests'));
 const TestRuns = lazy(() => import('./routes/TestRuns'));
 const NewRunnerRun = lazy(() => import('./routes/NewRunnerRun'));
@@ -77,6 +89,16 @@ export default function App() {
                 has to stay one no project slug can be (see `NEW_PROJECT_ROUTE`),
                 and a hand-typed copy here could quietly drift back to `/new`. */}
             <Route path={NEW_PROJECT_ROUTE} element={<NewProject />} />
+            {/* The account menu's Change password. The forced change at first
+                sign-in is not this route: the gate above shows it in place of
+                whatever was asked for. */}
+            <Route path={ACCOUNT_PASSWORD_ROUTE} element={<AccountPassword />} />
+            {/* Administration, for an install-wide admin: the account menu links
+                to Users, and the two pages tab to each other. No bare `/admin`
+                — there is no page there. A session that is not an admin still
+                reaches these URLs and is shown the API's own refusal. */}
+            <Route path={ADMIN_USERS_ROUTE} element={<AdminUsers />} />
+            <Route path={ADMIN_PROJECTS_ROUTE} element={<AdminProjects />} />
             <Route path="/projects/:slug/run/new" element={<NewRunnerRun />} />
             <Route path="/projects/:slug/setup" element={<ProjectSetup />} />
             <Route path="/projects/:slug/packages" element={<ProjectPackages />} />
@@ -85,6 +107,10 @@ export default function App() {
                 unchanged on purpose — see `projectSetupPath`. */}
             <Route path="/projects/:slug/rules" element={<ProjectRulesPage />} />
             <Route path="/projects/:slug/access" element={<ProjectAccess />} />
+            {/* Who holds which role in the project: every role reads it, and an
+                admin changes it here. The tab has linked here since the
+                section table gained it (`ProjectShell`). */}
+            <Route path="/projects/:slug/members" element={<ProjectMembers />} />
             {/* `Organization → Project → Test → Run`. A project's own page is
                 its TESTS; the run list across every test moved one segment
                 deeper rather than the test list taking a child segment, so an

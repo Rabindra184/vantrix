@@ -2,6 +2,8 @@ import { useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { CreateProjectRequestSchema } from '@perfportal/contracts';
+import { NoAccess } from '../access/NoAccess';
+import { useAdminAccess } from '../access/useAccess';
 import Button, { linkButtonClasses } from '../components/Button';
 import FormField from '../components/FormField';
 import Card from '../components/Card';
@@ -12,8 +14,27 @@ import { INPUT } from '../components/tableStyles';
 import useDocumentTitle from '../useDocumentTitle';
 import { ALL_RUNS_ROUTE, DEFAULT_ROUTE, projectSetupPath } from './paths';
 
+/**
+ * The create-a-project page, whose one action — `projects:create` — only an
+ * admin may take.
+ *
+ * ═══ THE FORM IS AN ADMIN'S; A REFUSAL IS SAID, AND ONLY ONCE KNOWN ═══
+ *
+ * Nothing in the app links a non-admin here any more (the run list's heading,
+ * the home page's empty state and the palette all offer New project to an
+ * admin alone), but a URL can still be typed or followed. Handing that reader
+ * a form whose submit the API would only refuse is an offer they cannot
+ * accept, so a KNOWN non-admin reads the API's own two sentences instead
+ * (`NoAccess`, built by `accessRefusal`, which `AccessGuard` words its 403
+ * with). While the session has not answered, nobody has been refused
+ * anything: neither the form nor the refusal is drawn, and the heading and
+ * the way back are — hidden until known, and no indefinite spinner over a
+ * page that is otherwise ready. The API refuses either way; this is for
+ * clarity.
+ */
 export default function NewProject() {
   useDocumentTitle('New project');
+  const access = useAdminAccess();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [name, setName] = useState('');
@@ -62,60 +83,64 @@ export default function NewProject() {
         <h1 className="text-xl font-semibold tracking-tight">New project</h1>
       </div>
 
+      {access.known && !access.isAdmin && <NoAccess action="projects:create" />}
+
       {/* No card title and no description (clean UI PR 4): "Project details"
           restated the `<h1>` and the sentence restated the fields — the
           one-title fix review M11 made to New on-prem run. */}
-      <Card>
-        <form className="flex flex-col gap-5" onSubmit={submit}>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <FormField label="Project name" id="project-name">
-              <input
-                id="project-name"
-                className={INPUT}
-                value={name}
-                onChange={(event) => updateName(event.target.value)}
-                required
-                autoFocus
-              />
-            </FormField>
-            <FormField label="URL slug" id="project-slug">
-              <input
-                id="project-slug"
-                className={INPUT}
-                value={slug}
-                placeholder="checkout-api"
-                // `slugifyWhileTyping` on change and the FULL `slugify` on
-                // blur, never the full one on every keystroke — see those two
-                // functions for why the difference is what makes a hyphen
-                // typeable at all.
-                onChange={(event) => {
-                  setSlugTouched(true);
-                  setSlug(slugifyWhileTyping(event.target.value));
-                }}
-                onBlur={(event) => setSlug(slugify(event.target.value))}
-                required
-              />
-            </FormField>
-          </div>
-
-          {(formError !== null || mutation.isError) && (
-            <div role="alert" className="rounded-lg border border-default bg-sunken p-3 text-[0.8125rem] text-primary">
-              {formError ?? problem?.detail ?? mutationError?.message}
-              {problem?.remediation && <p className="mt-1 text-muted">{problem.remediation}</p>}
+      {access.isAdmin && (
+        <Card>
+          <form className="flex flex-col gap-5" onSubmit={submit}>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <FormField label="Project name" id="project-name">
+                <input
+                  id="project-name"
+                  className={INPUT}
+                  value={name}
+                  onChange={(event) => updateName(event.target.value)}
+                  required
+                  autoFocus
+                />
+              </FormField>
+              <FormField label="URL slug" id="project-slug">
+                <input
+                  id="project-slug"
+                  className={INPUT}
+                  value={slug}
+                  placeholder="checkout-api"
+                  // `slugifyWhileTyping` on change and the FULL `slugify` on
+                  // blur, never the full one on every keystroke — see those two
+                  // functions for why the difference is what makes a hyphen
+                  // typeable at all.
+                  onChange={(event) => {
+                    setSlugTouched(true);
+                    setSlug(slugifyWhileTyping(event.target.value));
+                  }}
+                  onBlur={(event) => setSlug(slugify(event.target.value))}
+                  required
+                />
+              </FormField>
             </div>
-          )}
 
-          <div className="flex flex-wrap items-center gap-3">
-            <Button type="submit" variant="primary" loading={mutation.isPending}>
-              <PlusIcon className="h-3.5 w-3.5" />
-              Create project
-            </Button>
-            <Link to={DEFAULT_ROUTE} className={linkButtonClasses}>
-              Cancel
-            </Link>
-          </div>
-        </form>
-      </Card>
+            {(formError !== null || mutation.isError) && (
+              <div role="alert" className="rounded-lg border border-default bg-sunken p-3 text-[0.8125rem] text-primary">
+                {formError ?? problem?.detail ?? mutationError?.message}
+                {problem?.remediation && <p className="mt-1 text-muted">{problem.remediation}</p>}
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-center gap-3">
+              <Button type="submit" variant="primary" loading={mutation.isPending}>
+                <PlusIcon className="h-3.5 w-3.5" />
+                Create project
+              </Button>
+              <Link to={DEFAULT_ROUTE} className={linkButtonClasses}>
+                Cancel
+              </Link>
+            </div>
+          </form>
+        </Card>
+      )}
     </div>
   );
 }

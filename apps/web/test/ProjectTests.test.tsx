@@ -3,8 +3,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { TestSummary } from '@perfportal/contracts';
+import type { ProjectRole, TestSummary } from '@perfportal/contracts';
 import ProjectTests from '../src/routes/ProjectTests';
+import { seedAccess } from './support/access';
 
 // `vitest.config.ts` sets no `globals`, so Testing Library's automatic
 // cleanup never registers and every `render` here would otherwise stack in the
@@ -103,8 +104,10 @@ function stubFetch({
   });
 }
 
-function renderPage() {
+/** `who` seeds who is looking (`seedAccess`); without it nothing is seeded and access stays unknown. */
+function renderPage(who?: { isAdmin: boolean; roles?: Readonly<Record<string, ProjectRole>> }) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  if (who !== undefined) seedAccess(client, who);
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={['/projects/checkout']}>
@@ -244,6 +247,27 @@ describe('ProjectTests', () => {
     expect(await screen.findByText('No tests yet')).toBeInTheDocument();
     expect(screen.getByText(/finishes parsing a run of it/)).toBeInTheDocument();
     expect(screen.queryByRole('table')).toBeNull();
+  });
+
+  /**
+   * The empty state's second sentence sends the reader to New on-prem run and
+   * Add results — the two ways a test comes to exist. A Viewer is offered
+   * neither (the shell draws no launch and no Add results tab for them), so
+   * for them it would name two things that are not on screen. The first
+   * sentence, how a test comes to exist, is everyone's.
+   */
+  it('names New on-prem run and Add results only to a reader who may use one', async () => {
+    stubFetch({ tests: { tests: [] } });
+    renderPage({ isAdmin: false, roles: { checkout: 'viewer' } });
+    expect(await screen.findByText(/finishes parsing a run of it/)).toBeInTheDocument();
+    expect(screen.queryByText(/New on-prem run above/)).toBeNull();
+    expect(screen.queryByText(/Add results has the command/)).toBeNull();
+    cleanup();
+
+    stubFetch({ tests: { tests: [] } });
+    renderPage({ isAdmin: false, roles: { checkout: 'member' } });
+    expect(await screen.findByText(/New on-prem run above/)).toBeInTheDocument();
+    expect(screen.getByText(/Add results has the command/)).toBeInTheDocument();
   });
 
   /** The server's own words, including the remediation every /v1 error carries. */

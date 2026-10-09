@@ -116,9 +116,11 @@ function synthesizeUnreadable(status: number, rawBody: string): ProblemError {
  * caller cannot accidentally override it): the session cookie is
  * `sameSite: 'strict'`, and same-origin is how this app is served.
  *
- * Does not redirect on 401, or touch the DOM/router at all — that decision
- * belongs to Task 5's router, and keeping it out is what lets this module be
- * unit-tested without a browser.
+ * Does not redirect on 401, or touch the DOM/router at all — keeping it out
+ * is what lets this module be unit-tested without a browser. The decision is
+ * the query client's (`queryClient.ts`), which ends the session on a 401 from
+ * any query or mutation, and `AuthGate`'s, which turns that into a redirect
+ * to sign-in.
  */
 export async function apiFetch<T>(schema: ZodSchema<T>, path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, { ...init, credentials: 'same-origin' });
@@ -128,4 +130,26 @@ export async function apiFetch<T>(schema: ZodSchema<T>, path: string, init?: Req
   }
 
   return schema.parse(await res.json());
+}
+
+/**
+ * `apiFetch` for a route that answers success with NO BODY — a 204, such as
+ * `PUT /v1/me/password`.
+ *
+ * `apiFetch` cannot serve one: it ends in `res.json()`, which throws on an
+ * empty body, so a change that succeeded would reject as a `SyntaxError`. This
+ * keeps `apiFetch`'s other two guarantees and drops that one: `credentials:
+ * 'same-origin'` is forced after `init`, every non-2xx rejects as a
+ * `ProblemError` through `problemFrom`, and a success's body is never read.
+ * It resolves to nothing, because there is nothing to resolve to.
+ *
+ * `deletePackage` (`./packages.ts`) predates this and spells the same three
+ * lines by hand.
+ */
+export async function apiFetchNoContent(path: string, init?: RequestInit): Promise<void> {
+  const res = await fetch(path, { ...init, credentials: 'same-origin' });
+
+  if (!res.ok) {
+    throw await problemFrom(res);
+  }
 }

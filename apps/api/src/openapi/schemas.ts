@@ -2,6 +2,18 @@ import { zodToJsonSchema } from 'zod-to-json-schema';
 import type { ZodTypeAny } from 'zod';
 import {
   ActivityResponseSchema,
+  AddMemberRequestSchema,
+  AdminProjectListResponseSchema,
+  AdminProjectSchema,
+  AdminUserListResponseSchema,
+  AdminUserSchema,
+  ChangePasswordRequestSchema,
+  CreateUserRequestSchema,
+  MemberListResponseSchema,
+  ProjectMemberSchema,
+  SetPasswordRequestSchema,
+  UpdateMemberRequestSchema,
+  UpdateUserRequestSchema,
   DistributionResponseSchema,
   ErrorSeriesResponseSchema,
   ErrorsResponseSchema,
@@ -135,6 +147,22 @@ const SOURCE: Record<string, ZodTypeAny> = {
   PackageListResponse: PackageListResponseSchema,
   CreatePackageRequest: CreatePackageRequestSchema,
   RenamePackageRequest: RenamePackageRequestSchema,
+  // ADMINISTRATION, PROJECT MEMBERS AND ONE'S OWN PASSWORD (project access,
+  // PR 2). Registered ahead of the routes that reference them: a component no
+  // operation names is still a valid document — `StatRow` and `TrendRun`
+  // above are referenced by no operation today, and the validator passes.
+  AdminUser: AdminUserSchema,
+  AdminUserListResponse: AdminUserListResponseSchema,
+  CreateUserRequest: CreateUserRequestSchema,
+  UpdateUserRequest: UpdateUserRequestSchema,
+  SetPasswordRequest: SetPasswordRequestSchema,
+  AdminProject: AdminProjectSchema,
+  AdminProjectListResponse: AdminProjectListResponseSchema,
+  ProjectMember: ProjectMemberSchema,
+  MemberListResponse: MemberListResponseSchema,
+  AddMemberRequest: AddMemberRequestSchema,
+  UpdateMemberRequest: UpdateMemberRequestSchema,
+  ChangePasswordRequest: ChangePasswordRequestSchema,
 };
 
 /**

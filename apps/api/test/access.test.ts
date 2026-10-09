@@ -3,7 +3,14 @@ import 'reflect-metadata';
 import { Controller, Delete, Get, Post, Put, type ArgumentsHost, type Type } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { ExecutionContextHost } from '@nestjs/core/helpers/execution-context-host.js';
-import { PROJECT_ROLES, type AccessRole, type ProjectRole } from '@perfportal/contracts';
+import {
+  ACCESS_ACTIONS,
+  PROJECT_ROLES,
+  canPerform,
+  type AccessAction,
+  type AccessRole,
+  type ProjectRole,
+} from '@perfportal/contracts';
 import { RunRepository, type ProjectRecord, type ProjectRepository } from '@perfportal/persistence';
 import type { PrismaClient } from '@prisma/client';
 import type { Request } from 'express';
@@ -185,6 +192,33 @@ describe('accessDecision', () => {
       expect(accessDecision({ required: 'admin', isAdmin: false, role }), String(role)).toBe('admin-required');
     }
   });
+});
+
+/**
+ * ═══ THE WEB ASKS THE QUESTION THIS GUARD ANSWERS ═══
+ *
+ * `canPerform` in `@perfportal/contracts` is what the web draws a control
+ * from; `accessDecision` is the API's statement of the rule `AccessGuard`
+ * applies to a session.
+ * They are two functions on purpose — the guard also has to tell a missing
+ * role (404) from a low one (403), which a yes/no cannot — so this pins them
+ * to the same answer for every action and every caller. A role the session
+ * has not loaded yet (`undefined`) is no role to the guard.
+ */
+describe('canPerform agrees with accessDecision', () => {
+  const EVERY_HELD: ReadonlyArray<ProjectRole | null | undefined> = [...PROJECT_ROLES, null, undefined];
+
+  for (const action of Object.keys(ACCESS_ACTIONS) as AccessAction[]) {
+    it(action, () => {
+      for (const isAdmin of [true, false]) {
+        for (const role of EVERY_HELD) {
+          const guardAllows =
+            accessDecision({ required: ACCESS_ACTIONS[action].role, isAdmin, role: role ?? null }) === 'allow';
+          expect(canPerform(action, { isAdmin, role }), `isAdmin ${isAdmin}, role ${String(role)}`).toBe(guardAllows);
+        }
+      }
+    });
+  }
 });
 
 const RUN = '3fa85f64-5717-4562-b3fc-2c963f66afa6';

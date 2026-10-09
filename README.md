@@ -163,7 +163,8 @@ put runs in.
 
 > [!IMPORTANT]
 > Leave `PERFPORTAL_ADMIN_PASSWORD` unset and the admin gets the published
-> default `PerfPortal-Setup-2026`. Change it right after signing in.
+> default `PerfPortal-Setup-2026`, and must choose a new password at first
+> sign-in before anything else.
 
 > [!NOTE]
 > The `runner` service exits with code 1 until you configure it. That is

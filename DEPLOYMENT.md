@@ -24,6 +24,7 @@ account you can sign in with immediately.
 | **CPU / RAM** | 2 vCPU and 4 GB is enough to evaluate; 4 vCPU and 8 GB for real load-test volumes |
 | **Disk** | 20 GB to start. Runs are stored as compressed bundles plus per-second metrics |
 | **Ports** | `3000` for the app. Postgres, Redis and MinIO stay on the internal network |
+| **Redis** | The bundled one is 7.x. If you run your own instead, it must be **7.0 or later**: the password-attempt throttle uses `EXPIRE … NX`, which an older server refuses |
 
 Nothing needs to be installed on the host — no Node, no pnpm, no Java. The
 image carries all of it.
@@ -88,7 +89,7 @@ Email     admin@perfportal.local
 Password  PerfPortal-Setup-2026
 ```
 
-### Change that password now
+### You choose your own password at first sign-in
 
 **The password above is written in this repository, so anybody who can reach
 your instance already knows it.** Default credentials are among the most
@@ -96,11 +97,17 @@ reliably exploited weaknesses there is — automated scanners try the published
 defaults of every product they can fingerprint, and they find new hosts within
 hours.
 
-Sign in, open the account menu, and change it. Bootstrap never re-passwords an
-account that already exists, so your change survives every later `up`.
+So the account it seeds is flagged: the first thing you see after signing in
+is **Choose a new password**, and nothing else works until you have. Until
+then every route a session could otherwise reach, except
+`PUT /v1/me/password`, answers `403 PASSWORD_CHANGE_REQUIRED`. Bootstrap never
+re-passwords an account that already exists, so your choice survives every
+later `up`. Change it again any time from the account menu
+(**Change password**).
 
 **Better: never seed it at all.** Set your own before the first deployment and
-the published default never touches your disk:
+the published default never touches your disk — and, because you chose it, you
+are not asked to change it:
 
 ```bash
 # BEFORE the first `up`; read it back with: grep ADMIN_PASSWORD infra/.env
@@ -141,33 +148,55 @@ compose file**, not at the repository root.
 `bootstrap` runs on every `up` and is idempotent: the org and project are
 upserted by slug, and an admin that exists is reused untouched.
 
+**Bootstrap flags an account it creates exactly when nobody chose its
+password** — the published default, or one it generated for `--admin-email` —
+so its first sign-in leads to *Choose a new password*, and its output says so.
+A `PERFPORTAL_ADMIN_PASSWORD` you set is yours, and is not flagged. A re-run
+never sets or clears the flag on an account that exists.
+
 ### Adding a teammate
 
-Sign-up is closed: nobody can make themselves an account. In this release an
-account is made by running bootstrap again with `--admin-email`:
+Sign-up is closed: nobody can make themselves an account. An admin adds
+people in the app: open the account menu, choose **Administration**, then
+**Users › Add user**.
 
-```bash
-docker compose -f infra/docker-compose.yml --profile onprem run --rm bootstrap \
-  pnpm --filter @perfportal/persistence run bootstrap --admin-email teammate@example.com
-```
+- Give an email, a name and a **temporary password**, and choose the projects
+  they hold a role in. Hand the password over privately: at first sign-in they
+  must choose their own before anything else.
+- **Admin** makes them an admin of the whole install, who sees every project
+  and manages accounts. Leave it off for everyone else.
+- A role is per project, and the API enforces it:
 
-What that does, today:
+  | Role | Can |
+  |---|---|
+  | **Viewer** | read the project: runs, tests, SLA rules, members |
+  | **Member** | also upload runs, start on-prem runner runs, manage packages, edit SLA rules and run notes |
+  | **Manager** | also rename and delete tests, and manage API tokens |
 
-- It creates an **admin** — every account this release can make is one. It
-  joins the same org (`PERFPORTAL_ORG_SLUG`) and sees every project in it.
-- Its password is `PERFPORTAL_ADMIN_PASSWORD` if your `infra/.env` sets one,
-  which makes it the same password your own account started with; otherwise
-  bootstrap generates a random one. Either way it is printed once, in the
-  output of that command. Hand it over privately and have your teammate change
-  it at first sign-in.
-- It also mints and prints a new API token for the project. Nothing else uses
-  it; revoke it on the project's **API tokens** page if you do not want it.
-- An address that already has an account is refused, loudly, and nothing about
-  that account changes.
+  A project someone holds no role in is invisible to them: it answers as if
+  it did not exist.
+- Each row's menu edits their projects and roles, **resets their password**
+  (a new temporary one; they are signed out everywhere and must choose again),
+  **disables** or enables them (disabling signs them out and refuses sign-in),
+  makes or removes an admin, and removes the account. The last active admin
+  cannot be demoted, disabled or removed.
+- **Administration › Projects** lists every project with its member count.
+- Each project's **Members** section lists everyone with a role in it. An
+  admin adds a person there, changes a role (pick it, then **Save**) and
+  removes someone from the project; everybody else reads the list.
 
-Per-project roles (Viewer, Member, Manager) are enforced by the API already,
-but granting them, and an admin screen for accounts, arrive in a later
-release.
+The same operations are `/v1/admin/users` and `/v1/projects/{slug}/members`
+in the [API](docs/api.md#accounts-passwords-and-roles).
+
+The app shows each person what their role lets them do: a Viewer is offered
+no **Add results**, **Add rule**, **New on-prem run**, package actions or run
+note editing, a Member no **API tokens**, and only an admin sees **New
+project**. Someone on no project yet is told so, and to ask an admin. A role
+you change reaches the person's open page at its next read of
+`GET /v1/projects`. When an admin resets or disables someone, or removes their
+account, the person's open page goes to sign-in on its next request. Removing
+someone from a project is not that: the project then answers as if it did not
+exist.
 
 ### Serving it somewhere other than localhost
 
@@ -290,6 +319,12 @@ it. Run directly, it answers every signed-in request with a 500. To go back
 past it, restore the backup you took before upgrading
 ([below](#backup-and-restore)).
 
+**An upgrade sends nobody to *Choose a new password*.** The release that adds
+that step adds its flag as `NOT NULL DEFAULT false`, so every account that
+already exists comes through unflagged — an admin still signing in with the
+published default included. If you never changed it, change it now from the
+account menu (**Change password**).
+
 ### Keep upgrading at least once a year — the metrics tables are partitioned
 
 The four tables holding time-series metrics (`run_series_bucket`,
@@ -366,6 +401,17 @@ Expected on a first boot. Fill in the two runner ids, or ignore the service.
 
 **A run stays `pending` forever.**
 The `worker` container is not running. `docker compose ... logs worker`.
+
+**Changing a password answers an error, for everybody, including the
+*Choose a new password* step.**
+Redis is down. The password-attempt throttle counts in Redis and fails
+closed: while it cannot count, `PUT /v1/me/password` answers `500` rather
+than let an attempt through uncounted. Bring Redis back
+(`docker compose ... ps redis`); nothing else needs doing.
+
+**Every page answers 403 `PASSWORD_CHANGE_REQUIRED`.**
+The account must choose a new password first. Sign in through the web app,
+which shows that step, or call `PUT /v1/me/password`.
 
 **Everything broke at once after months of uptime.**
 Check inodes, not bytes: `df -i`. Orphaned Docker volumes can exhaust them

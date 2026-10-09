@@ -8,6 +8,7 @@ import reference from './fixtures/reference-run.json';
 import { runQueryKey } from '../src/api/run';
 import RunSummary from '../src/routes/RunSummary';
 import type { RunWindowContext } from '../src/routes/useRunWindow';
+import { UNKNOWN_ACCESS } from './support/access';
 import useIsCompact from '../src/useIsCompact';
 
 /**
@@ -157,6 +158,7 @@ function renderSummary(window: RunWindowContext['window']) {
                     durationMs: READY_RUN.durationMs ?? null,
                     liveDurationMs: null, warmupMs: null,
                     live: null,
+                    projectAccess: UNKNOWN_ACCESS,
                   } satisfies RunWindowContext
                 }
               />

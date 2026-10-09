@@ -70,11 +70,17 @@ export async function createTestApp(
    *  to drive a route shape no real route carries yet. Global guards, the auth
    *  middleware and the problem filter apply to them exactly as to the rest. */
   extraControllers: Type[] = [],
+  /** Providers replaced by value before the app compiles — for a case that
+   *  needs a setting production fixes, such as a longer throttle window than
+   *  a loaded machine can be trusted to fit its requests into. */
+  overrides: ReadonlyArray<{ provide: unknown; useValue: unknown }> = [],
 ): Promise<TestContext> {
-  const moduleRef = await Test.createTestingModule({
+  let builder = Test.createTestingModule({
     imports: [AppModule],
     controllers: extraControllers,
-  }).compile();
+  });
+  for (const { provide, useValue } of overrides) builder = builder.overrideProvider(provide).useValue(useValue);
+  const moduleRef = await builder.compile();
   const app = moduleRef.createNestApplication();
 
   // Same order as main.ts, and shared with it for the same reason

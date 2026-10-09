@@ -65,8 +65,14 @@ function storeCollapsed(collapsed: boolean): void {
  * claims rather than a test being fussy. The icons here are `<svg>` with no
  * `<title>`, whose `textContent` is the empty string, which is exactly why an
  * icon is the one thing that CAN be added.
+ *
+ * `isAdmin` is the session's admin flag as `AppShell` reads it once for the
+ * whole chrome (`useIsAdmin`'s answer, `undefined` while the session has not
+ * answered). It decides only what an EMPTY project list means — see the
+ * message below. Required, with no default: a default would decide that in
+ * silence.
  */
-export default function ProjectRail() {
+export default function ProjectRail({ isAdmin }: { readonly isAdmin: boolean | undefined }) {
   const projects = useQuery({ queryKey: projectsQueryKey, queryFn: fetchProjects });
   const items = projects.data?.items ?? [];
 
@@ -102,12 +108,24 @@ export default function ProjectRail() {
   // act on, so the rows stay and the message names what actually happened
   // rather than claiming nothing loaded (the same overclaim the D-14
   // sentence fix corrected on the run page, one level up in the tree).
+  //
+  // ═══ AN EMPTY LIST IS A FACT ABOUT THE ORG, OR ABOUT THE READER ═══
+  // An admin's `GET /v1/projects` lists every project in the org, so empty
+  // means the org has none. A non-admin's lists only the projects they hold a
+  // role in, so empty means THEY are on none — and "No projects yet." would be
+  // false of the org and leave them nothing to do, so they are told what is
+  // true and who can change it (the spec's own sentence). While the flag is
+  // pending neither is said: an empty list read for nobody yet means nothing.
   const message = projects.isError
     ? items.length > 0
       ? 'Projects may be out of date.'
       : 'Projects could not be loaded.'
     : projects.isSuccess && items.length === 0
-      ? 'No projects yet.'
+      ? isAdmin === true
+        ? 'No projects yet.'
+        : isAdmin === false
+          ? "You're not on any project yet. Ask an admin to add you."
+          : null
       : null;
 
   return (
@@ -348,14 +366,31 @@ export default function ProjectRail() {
             `aria-live` region, so it is registered before its content ever
             changes — a transition into or out of an error, or from "out of
             date" back to normal, gets announced, not just whatever state
-            happened to be present at first paint. */}
-        <div aria-live="polite" className="shrink-0">
+            happened to be present at first paint.
+
+            ═══ BELOW `lg` THE MESSAGE WRAPS IN THE ROOM THE ROWS LEAVE ═══
+            Below `lg` this nav is one horizontal strip of `shrink-0` rows, and
+            the wrapper was `shrink-0` too, so the message kept its one-line
+            width: measured at 375px, a person on no project saw 55% of
+            "You're not on any project yet. Ask an admin to add you." and had
+            to scroll a navigation bar sideways for the rest. Below `lg` the
+            wrapper may shrink, so the sentence wraps beside Home and All runs.
+            The floor sits on the <p>, not the wrapper: a wrapper's own minimum
+            would hold an EMPTY strip's end open by that width on every phone,
+            while the <p>'s exists only while there is a message. At `lg` and up
+            nothing changes — the column has no such squeeze. */}
+        <div aria-live="polite" className="shrink-0 max-lg:shrink">
           {message != null && (
             // `lg:sr-only` when collapsed, never `hidden`: `display: none`
             // silences a live region, and a projects-failed announcement is
             // exactly the kind of transition the wrapper above exists to
             // announce whatever state the rail is drawn in.
-            <p className={cn('px-3 py-2 text-[0.75rem] leading-snug text-muted', collapsed && 'lg:sr-only')}>
+            <p
+              className={cn(
+                'px-3 py-2 text-[0.75rem] leading-snug text-muted max-lg:min-w-40',
+                collapsed && 'lg:sr-only',
+              )}
+            >
               {message}
             </p>
           )}

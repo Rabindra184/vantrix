@@ -15,6 +15,7 @@ import { seriesQuery, usersQuery } from '../src/api/metrics';
 import type { LiveRunState } from '../src/api/live';
 import RunReport from '../src/routes/RunReport';
 import type { RunWindowContext } from '../src/routes/useRunWindow';
+import { UNKNOWN_ACCESS } from './support/access';
 import useIsCompact from '../src/useIsCompact';
 
 /**
@@ -112,7 +113,7 @@ function renderCharts({
             element={
               <Outlet
                 context={
-                  { window: null, durationMs: null, liveDurationMs: null, warmupMs: null, live } satisfies RunWindowContext
+                  { window: null, durationMs: null, liveDurationMs: null, warmupMs: null, live, projectAccess: UNKNOWN_ACCESS } satisfies RunWindowContext
                 }
               />
             }
@@ -221,6 +222,7 @@ describe('RunReport — live', () => {
                     {
                       window: null, durationMs: null, liveDurationMs: null, warmupMs: null,
                       live: liveWith({ count: 1200 }),
+                      projectAccess: UNKNOWN_ACCESS,
                     } satisfies RunWindowContext
                   }
                 />

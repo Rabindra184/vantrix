@@ -2,6 +2,7 @@ import { useState, type FormEvent, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { TestSummary } from '@perfportal/contracts';
+import { useProjectAccess } from '../access/useAccess';
 import Button, { linkButtonClasses } from '../components/Button';
 import Card from '../components/Card';
 import { ChevronRightIcon, CompareTabIcon, LayersIcon, TestIcon } from '../components/icons';
@@ -46,6 +47,16 @@ import { projectPath, projectRunsPath, runComparePath } from './paths';
  * the same `heading` string this page renders, so the title is set once, by
  * one component, rather than by a parent and a child racing each other on
  * every render.
+ *
+ * ═══ RENAME AND DELETE ARE A MANAGER'S ═══
+ *
+ * Both are `tests:manage`, so they — and the rename form and the delete
+ * confirmation they open — are drawn only when `useProjectAccess` allows it.
+ * Asked ONCE, here: this page is not inside `ProjectShell`, so it is the
+ * page's own question, and the rules panel below is handed the same answer
+ * rather than mounting a second observer on the session and the project list.
+ * Until access is known neither control is drawn, and nothing says the reader
+ * was refused. The API refuses either way; hiding is for clarity.
  */
 export default function TestRuns() {
   const { slug = '', testSlug = '' } = useParams<{ slug: string; testSlug: string }>();
@@ -59,6 +70,8 @@ export default function TestRuns() {
 
   const projects = useQuery({ queryKey: projectsQueryKey, queryFn: fetchProjects });
   const project = projects.data?.items.find((p) => p.slug === slug) ?? null;
+  const access = useProjectAccess(slug);
+  const canManage = access.can('tests:manage');
 
   const test = useQuery({
     queryKey: projectTestQueryKey(slug, testSlug),
@@ -226,14 +239,16 @@ export default function TestRuns() {
                 document is a dangling reference — some assistive tech offers a
                 "jump to controlled element" that then goes nowhere.
                 `aria-expanded` already carries the state on its own. */}
-            <Button
-              size="sm"
-              aria-expanded={renaming}
-              aria-controls={renaming ? 'test-rename' : undefined}
-              onClick={() => setRenaming((open) => !open)}
-            >
-              {renaming ? 'Cancel rename' : 'Rename'}
-            </Button>
+            {canManage && (
+              <Button
+                size="sm"
+                aria-expanded={renaming}
+                aria-controls={renaming ? 'test-rename' : undefined}
+                onClick={() => setRenaming((open) => !open)}
+              >
+                {renaming ? 'Cancel rename' : 'Rename'}
+              </Button>
+            )}
             {/* "Project runs", never "All runs" — the rail's own org-wide row
                 already owns that name on every page. See `ProjectTests`. */}
             {/* ═══ "Delete test", NEVER BARE "Delete" ═══
@@ -245,13 +260,15 @@ export default function TestRuns() {
                 the case that caught it is the one whose fixture has a rule in
                 it, and the cases without rules passed happily. Same class as
                 the rail's "All runs" collision recorded in CLAUDE.md. */}
-            <Button
-              size="sm"
-              aria-expanded={confirmingDelete}
-              onClick={() => setConfirmingDelete((open) => !open)}
-            >
-              {confirmingDelete ? 'Keep this test' : 'Delete test'}
-            </Button>
+            {canManage && (
+              <Button
+                size="sm"
+                aria-expanded={confirmingDelete}
+                onClick={() => setConfirmingDelete((open) => !open)}
+              >
+                {confirmingDelete ? 'Keep this test' : 'Delete test'}
+              </Button>
+            )}
             <Link to={projectRunsPath(slug)} className={linkButtonClasses}>
               <LayersIcon className="h-3.5 w-3.5" />
               Project runs
@@ -271,8 +288,12 @@ export default function TestRuns() {
             Both numbers are real rather than hedged. `runCount` is the test's
             whole history (this endpoint is not paginated), and the rule count
             excludes project-wide rules, which were never this test's to
-            lose. */}
-        {confirmingDelete && (
+            lose.
+
+            Behind `canManage` as well as the button that opens it: a reader
+            demoted while it is open loses it when the project list next
+            answers, as they lose the button. */}
+        {canManage && confirmingDelete && (
           <div
             data-testid="test-delete-confirm"
             className="flex flex-col gap-3 rounded-lg border border-default bg-sunken p-4"
@@ -308,8 +329,13 @@ export default function TestRuns() {
                 {/* NEVER claims the test survived — this side cannot know. The
                     same wording discipline `TokenTable`'s failed revoke uses. */}
                 This test may still exist — deleting it did not complete.
+                {/* BOTH of the API's sentences: for a 403 the second is the
+                    one that says what to do about it. */}
                 {removal.error instanceof ProblemError && (
-                  <p className="mt-1">{removal.error.detail}</p>
+                  <>
+                    <p className="mt-1">{removal.error.detail}</p>
+                    <p className="mt-1 text-muted">{removal.error.remediation}</p>
+                  </>
                 )}
               </div>
             )}
@@ -362,7 +388,7 @@ export default function TestRuns() {
         </div>
       </header>
 
-      {renaming && (
+      {canManage && renaming && (
         <RenameForm
           projectSlug={slug}
           test={row}
@@ -433,6 +459,7 @@ export default function TestRuns() {
       <ProjectRules
         key={`rules:${slug}/${testSlug}`}
         slug={slug}
+        access={access}
         testSlug={testSlug}
         testName={row.name}
       />

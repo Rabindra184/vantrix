@@ -2,6 +2,7 @@ import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from 'rea
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Package, PackageKind } from '@perfportal/contracts';
+import type { ProjectAccess } from '../access/useAccess';
 import Button from '../components/Button';
 import Card from '../components/Card';
 import CopyIdButton from '../components/CopyIdButton';
@@ -68,10 +69,47 @@ import ProjectShell from './ProjectShell';
 export default function ProjectPackages() {
   return (
     <ProjectShell current="packages">
-      {({ slug }) => <PackagesPanel key={`packages:${slug}`} slug={slug} />}
+      {({ slug, access }) => (
+        <PackagesPanel key={`packages:${slug}`} slug={slug} may={mayFrom(access)} />
+      )}
     </ProjectShell>
   );
 }
+
+/**
+ * ═══ WHAT THE READER MAY CHANGE, EACH CONTROL BY THE ACTION IT TAKES ═══
+ *
+ * Every role reads packages; changing one is gated, and each control asks for
+ * the action the API guards it with:
+ *
+ *   New package, Upload, Rename   `packages:manage`
+ *   Delete                        `packages:delete`
+ *   New run from this package     `runner:run` — gate by destination: the
+ *                                 form it opens exists to start a run
+ *
+ * Asked once, from the shell's answer (one question per page), and handed to
+ * the table row and the phone card alike — both draw `PackageActions`, so the
+ * rule lives in one place for both layouts. Hidden until known: every flag is
+ * false until access is, so nothing is offered before it is. There is nothing
+ * to REFUSE on this page — reading it is every role's — so a reader below
+ * these sees the packages and no `NoAccess` sentence.
+ */
+interface May {
+  readonly manage: boolean;
+  readonly delete: boolean;
+  readonly startRun: boolean;
+}
+
+function mayFrom(access: ProjectAccess): May {
+  return {
+    manage: access.can('packages:manage'),
+    delete: access.can('packages:delete'),
+    startRun: access.can('runner:run'),
+  };
+}
+
+/** Whether a row has any action to draw at all — and so whether the Actions column has anything to hold. */
+const anyAction = (may: May): boolean => may.manage || may.delete || may.startRun;
 
 const FORMAT_LABEL: Readonly<Record<PackageKind, string>> = {
   gatling_jar: 'Jar',
@@ -100,7 +138,7 @@ const plural = (n: number, word: string): string => `${String(n)} ${word}${n ===
 const usedBy = (usage: Package['usage']): string =>
   `${plural(usage.tests, 'test')} · ${plural(usage.runs, 'run')}`;
 
-function PackagesPanel({ slug }: { readonly slug: string }) {
+function PackagesPanel({ slug, may }: { readonly slug: string; readonly may: May }) {
   const packages = useQuery({
     queryKey: packagesQueryKey(slug),
     queryFn: () => fetchPackages(slug),
@@ -140,28 +178,34 @@ function PackagesPanel({ slug }: { readonly slug: string }) {
     [items, needle],
   );
 
+  const actions = anyAction(may);
+
   return (
     <div className="flex flex-col gap-4">
-      <Card as="div">
-        <details
-          open={formOpen ?? settledAndEmpty}
-          onToggle={(event) => setFormOpen(event.currentTarget.open)}
-          className="group"
-        >
-          <summary className="cursor-pointer list-none text-[0.8125rem] font-medium text-primary marker:hidden">
-            {/* "New package", NOT "Create package": the submit button inside
-                carries that name, and two controls with one accessible name in
-                one form is the duplicate-name defect this repo has paid for
-                three times. */}
-            New package
-          </summary>
-          <NewPackageForm slug={slug} />
-        </details>
-      </Card>
+      {may.manage && (
+        <Card as="div">
+          <details
+            open={formOpen ?? settledAndEmpty}
+            onToggle={(event) => setFormOpen(event.currentTarget.open)}
+            className="group"
+          >
+            <summary className="cursor-pointer list-none text-[0.8125rem] font-medium text-primary marker:hidden">
+              {/* "New package", NOT "Create package": the submit button inside
+                  carries that name, and two controls with one accessible name in
+                  one form is the duplicate-name defect this repo has paid for
+                  three times. */}
+              New package
+            </summary>
+            <NewPackageForm slug={slug} />
+          </details>
+        </Card>
+      )}
 
       {packages.isPending ? (
         <LoadingState label="Loading packages…">
-          <SkeletonTable columns={6} rows={3} />
+          {/* The table's own columns: five, and Actions only with
+              `anyAction` — the same test its header and rows apply. */}
+          <SkeletonTable columns={5 + (actions ? 1 : 0)} rows={3} />
         </LoadingState>
       ) : packages.isError ? (
         <ErrorState
@@ -174,9 +218,16 @@ function PackagesPanel({ slug }: { readonly slug: string }) {
           }
         />
       ) : (items ?? []).length === 0 ? (
+        /* The body points at New package above, so it is said only to a reader
+           who is shown it: to anyone else "create one above" names a control
+           that is not there. */
         <EmptyState
           title="No packages yet"
-          body="Create one above, or start a run with a jar upload — the jar becomes a package either way."
+          body={
+            may.manage
+              ? 'Create one above, or start a run with a jar upload — the jar becomes a package either way.'
+              : undefined
+          }
         />
       ) : (
         <>
@@ -204,6 +255,7 @@ function PackagesPanel({ slug }: { readonly slug: string }) {
                     pkg={pkg}
                     armed={armed}
                     onArm={setArmed}
+                    may={may}
                   />
                 ))}
               </ul>
@@ -219,7 +271,9 @@ function PackagesPanel({ slug }: { readonly slug: string }) {
                     <th className={TH}>Used by</th>
                     <th className={TH}>File</th>
                     <th className={TH}>Last upload</th>
-                    <th className={TH}>Actions</th>
+                    {/* A column holds something or is not drawn: for a
+                        reader offered no action, every cell would be empty. */}
+                    {actions && <th className={TH}>Actions</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -230,6 +284,7 @@ function PackagesPanel({ slug }: { readonly slug: string }) {
                       pkg={pkg}
                       armed={armed}
                       onArm={setArmed}
+                      may={may}
                     />
                   ))}
                 </tbody>
@@ -357,6 +412,7 @@ interface RowProps {
   readonly pkg: Package;
   readonly armed: Armed | null;
   readonly onArm: (next: Armed | null) => void;
+  readonly may: May;
 }
 
 /**
@@ -402,7 +458,7 @@ function NameCell({ pkg, size }: { readonly pkg: Package; readonly size: 'row' |
   );
 }
 
-function PackageRow({ slug, pkg, armed, onArm }: RowProps) {
+function PackageRow({ slug, pkg, armed, onArm, may }: RowProps) {
   return (
     <tr data-testid="package-row" data-package-id={pkg.id} className={ROW}>
       <th scope="row" className={TH_ROW}>
@@ -416,9 +472,13 @@ function PackageRow({ slug, pkg, armed, onArm }: RowProps) {
       <td className={`${TD} whitespace-nowrap`}>
         <LastUpload pkg={pkg} />
       </td>
-      <td className={TD}>
-        <PackageActions slug={slug} pkg={pkg} armed={armed} onArm={onArm} />
-      </td>
+      {/* The cell goes with its column: `PackagesPanel` draws the Actions
+          header by the same `anyAction`. */}
+      {anyAction(may) && (
+        <td className={TD}>
+          <PackageActions slug={slug} pkg={pkg} armed={armed} onArm={onArm} may={may} />
+        </td>
+      )}
     </tr>
   );
 }
@@ -429,7 +489,7 @@ function PackageRow({ slug, pkg, armed, onArm }: RowProps) {
  * that is the point of the row. The testids are the table row's own: a compact
  * layout is not a reason for a spec to have to know which one it is looking at.
  */
-function PackageCard({ slug, pkg, armed, onArm }: RowProps) {
+function PackageCard({ slug, pkg, armed, onArm, may }: RowProps) {
   return (
     <li
       data-testid="package-row"
@@ -454,7 +514,7 @@ function PackageCard({ slug, pkg, armed, onArm }: RowProps) {
           <LastUpload pkg={pkg} />
         </dd>
       </dl>
-      <PackageActions slug={slug} pkg={pkg} armed={armed} onArm={onArm} />
+      {anyAction(may) && <PackageActions slug={slug} pkg={pkg} armed={armed} onArm={onArm} may={may} />}
     </li>
   );
 }
@@ -486,14 +546,21 @@ function PackageActions({
   pkg,
   armed,
   onArm,
+  may,
 }: {
   readonly slug: string;
   readonly pkg: Package;
   readonly armed: Armed | null;
   readonly onArm: (next: Armed | null) => void;
+  /** What the reader may do — see `May`. A control, and an armed block behind one, is drawn only with its flag. */
+  readonly may: May;
 }) {
   const queryClient = useQueryClient();
-  const mode = armed?.id === pkg.id ? armed.mode : null;
+  /* An armed block goes with the control that arms it: a role that drops
+     while a rename or a delete is open (Review Focus 3) takes the block away
+     rather than leaving a Save or a Delete package the API would refuse. */
+  const mode =
+    armed?.id === pkg.id && (armed.mode === 'rename' ? may.manage : may.delete) ? armed.mode : null;
   const refresh = () => queryClient.invalidateQueries({ queryKey: packagesQueryKey(slug) });
 
   const fileInput = useRef<HTMLInputElement>(null);
@@ -589,33 +656,42 @@ function PackageActions({
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-2">
-        <input
-          ref={fileInput}
-          type="file"
-          hidden
-          data-testid={`package-file-${pkg.id}`}
-          accept={PACKAGE_ACCEPT[pkg.kind]}
-          onChange={(event) => {
-            const file = event.target.files?.[0];
-            // Cleared so choosing the same file again — after fixing it — is a
-            // change the browser reports.
-            event.target.value = '';
-            if (file !== undefined) upload.mutate(file);
-          }}
-        />
-        {/* The accessible name CONTAINS the visible word (WCAG 2.5.3) and names
-            the row, so a page of packages is not a page of buttons called
-            "Upload". */}
-        <Button
-          size="sm"
-          aria-label={`Upload a file to ${pkg.name}`}
-          loading={uploading}
-          onClick={() => fileInput.current?.click()}
-        >
-          {!uploading && <UploadIcon className="h-3.5 w-3.5" />}
-          Upload
-        </Button>
+        {may.manage && (
+          <>
+            <input
+              ref={fileInput}
+              type="file"
+              hidden
+              data-testid={`package-file-${pkg.id}`}
+              accept={PACKAGE_ACCEPT[pkg.kind]}
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                // Cleared so choosing the same file again — after fixing it — is a
+                // change the browser reports.
+                event.target.value = '';
+                if (file !== undefined) upload.mutate(file);
+              }}
+            />
+            {/* The accessible name CONTAINS the visible word (WCAG 2.5.3) and names
+                the row, so a page of packages is not a page of buttons called
+                "Upload". */}
+            <Button
+              size="sm"
+              aria-label={`Upload a file to ${pkg.name}`}
+              loading={uploading}
+              onClick={() => fileInput.current?.click()}
+            >
+              {!uploading && <UploadIcon className="h-3.5 w-3.5" />}
+              Upload
+            </Button>
+          </>
+        )}
 
+        {/* NEVER A MENU WITH NO ITEM LEFT IN IT — a trigger that opens onto
+            nothing is a control that does nothing. Each action `anyAction`
+            counts puts an item in this menu, and this component is drawn only
+            when `anyAction` holds (the row's cell and the card both ask it),
+            so a menu drawn here always holds at least one. */}
         <DropdownMenu modal={false}>
           <DropdownMenuTrigger asChild>
             {/* NAMED AFTER ITS ROW — `ChartActions` and `ProjectRules` name
@@ -639,12 +715,10 @@ function PackageActions({
               cases that wait the menu out, and a macrotask more, would notice
               Radix changing its mind; a guard written here was measured and
               was unwitnessed — removing it failed nothing. */}
+          {/* Each item only with its own action (see `May`); the separator
+              only between two groups that are both there. */}
           <DropdownMenuContent align="end" className="w-[17rem]">
-            <DropdownMenuItem
-              onSelect={() => arm('rename')}
-            >
-              Rename
-            </DropdownMenuItem>
+            {may.manage && <DropdownMenuItem onSelect={() => arm('rename')}>Rename</DropdownMenuItem>}
             {/* ═══ NO NEW RUN FROM A PACKAGE WITH NOTHING TO RUN ═══
                 The form only offers packages that have a file, and a link
                 naming one without falls back to the first that does — so this
@@ -653,40 +727,48 @@ function PackageActions({
                 with its reason in text tied to it: the Delete item's pattern
                 below, for the same reason. Not a link while disabled — a
                 disabled item that still carried an `href` would still go
-                somewhere for anything that follows it. */}
-            {pkg.current === null ? (
-              <>
-                <p id={newRunReasonId} className="px-2 pb-1 text-[0.75rem] leading-snug text-muted">
-                  Upload a file to it first.
-                </p>
-                <DropdownMenuItem disabled aria-describedby={newRunReasonId}>
-                  New run from this package
+                somewhere for anything that follows it.
+
+                And not at all for a reader who may not start a run: the form
+                it opens exists to start one (gate by destination). */}
+            {may.startRun &&
+              (pkg.current === null ? (
+                <>
+                  <p id={newRunReasonId} className="px-2 pb-1 text-[0.75rem] leading-snug text-muted">
+                    Upload a file to it first.
+                  </p>
+                  <DropdownMenuItem disabled aria-describedby={newRunReasonId}>
+                    New run from this package
+                  </DropdownMenuItem>
+                </>
+              ) : (
+                <DropdownMenuItem asChild>
+                  <Link to={projectNewRunnerRunPath(slug, pkg.id)}>New run from this package</Link>
                 </DropdownMenuItem>
-              </>
-            ) : (
-              <DropdownMenuItem asChild>
-                <Link to={projectNewRunnerRunPath(slug, pkg.id)}>New run from this package</Link>
-              </DropdownMenuItem>
-            )}
-            <DropdownMenuSeparator />
+              ))}
+            {(may.manage || may.startRun) && may.delete && <DropdownMenuSeparator />}
             {/* ═══ THE REASON IS TEXT, NOT A TOOLTIP ═══
                 `ChartActions`' rule for a disabled item. A `title` is invisible
                 on touch and unreachable by keyboard, and a menu hides the item
                 until it is opened, so a refusal that cannot be read is not an
                 explanation. `aria-describedby` ties the line to the item it is
                 about, which a bare paragraph inside a menu does not. */}
-            {active > 0 && (
-              <p id={reasonId} className="px-2 pb-1 text-[0.75rem] leading-snug text-muted">
-                {`${plural(active, 'run')} of it ${active === 1 ? 'is' : 'are'} queued or running`}
-              </p>
+            {may.delete && (
+              <>
+                {active > 0 && (
+                  <p id={reasonId} className="px-2 pb-1 text-[0.75rem] leading-snug text-muted">
+                    {`${plural(active, 'run')} of it ${active === 1 ? 'is' : 'are'} queued or running`}
+                  </p>
+                )}
+                <DropdownMenuItem
+                  disabled={active > 0}
+                  aria-describedby={active > 0 ? reasonId : undefined}
+                  onSelect={() => arm('delete')}
+                >
+                  Delete
+                </DropdownMenuItem>
+              </>
             )}
-            <DropdownMenuItem
-              disabled={active > 0}
-              aria-describedby={active > 0 ? reasonId : undefined}
-              onSelect={() => arm('delete')}
-            >
-              Delete
-            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

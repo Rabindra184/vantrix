@@ -2,21 +2,27 @@ import { SetMetadata } from '@nestjs/common';
 import type { AccessAction } from '@perfportal/contracts';
 
 /*
- * ═══ THREE WAYS A ROUTE STATES WHO MAY CALL IT ═══
+ * ═══ FOUR WAYS A ROUTE STATES WHO MAY CALL IT ═══
  * (docs/superpowers/specs/2026-10-07-project-access-design.md, section 2)
  *
- * Every route carries exactly one of the three below, or `@Public` (the
+ * Every route carries exactly one of the four below, or `@Public` (the
  * health probes). The route walk in `access-routes.integration.test.ts` reads
  * these keys off Nest's metadata, the way `openapi.integration.test.ts` reads
- * `PATH_METADATA`, and fails any route carrying none of the four, or more
+ * `PATH_METADATA`, and fails any route carrying none of the five, or more
  * than one — so a route cannot ship without saying who it is for. Only
- * `@Requires` changes what a request gets back; the other two are statements
- * for that walk, and `AccessGuard` does not read them.
+ * `@Requires` changes what a request gets back; the other three are
+ * statements for that walk, and `AccessGuard` does not read them.
+ *
+ * `@AllowedBeforePasswordChange`, at the bottom, is not one of the four: it
+ * says nothing about who may call a route, only that a session which must
+ * still choose its password may.
  */
 
 export const REQUIRES_KEY = 'perfportal:requires';
 export const BEARER_ONLY_KEY = 'perfportal:bearer-only';
 export const NOT_PROJECT_SCOPED_KEY = 'perfportal:not-project-scoped';
+export const OWN_ACCOUNT_KEY = 'perfportal:own-account';
+export const ALLOWED_BEFORE_PASSWORD_CHANGE_KEY = 'perfportal:allowed-before-password-change';
 
 /**
  * A per-project route, and the action it performs. `AccessGuard` looks the
@@ -46,3 +52,27 @@ export const BearerOnly = () => SetMetadata(BEARER_ONLY_KEY, true);
  * statement for the route walk, not a check.
  */
 export const NotProjectScoped = () => SetMetadata(NOT_PROJECT_SCOPED_KEY, true);
+
+/**
+ * A route that acts only on the caller's OWN account (`PUT /v1/me/password`).
+ * It takes no action and names no project, so `AccessGuard` judges nothing
+ * on it; what keeps it to a person is `SessionOnlyGuard`, which the route
+ * walk requires every `@OwnAccount` route to carry — a bearer token names
+ * nobody, so it has no own account. Like `@NotProjectScoped`, a statement for
+ * that walk, not a check.
+ */
+export const OwnAccount = () => SetMetadata(OWN_ACCOUNT_KEY, true);
+
+/**
+ * The password gate's allow-list. `PasswordChangeGuard` refuses a session
+ * whose `user.mustChangePassword` is set on every route that does NOT carry
+ * this, with 403 PASSWORD_CHANGE_REQUIRED. Read off the HANDLER only, never
+ * the class, so a controller cannot open every route it holds at once; the
+ * route walk pins the set of routes carrying it.
+ *
+ * A decorator rather than a list of paths in the middleware: PR 1 measured
+ * path matching in front of Better Auth bypassed by dot-segments and by the
+ * Host and X-Forwarded-Proto headers. Metadata is attached to the handler
+ * Nest has already routed to, so there is no path to spell differently.
+ */
+export const AllowedBeforePasswordChange = () => SetMetadata(ALLOWED_BEFORE_PASSWORD_CHANGE_KEY, true);

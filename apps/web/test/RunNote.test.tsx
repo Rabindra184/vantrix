@@ -83,23 +83,31 @@ function stubPendingPut(): (body: { note: string | null }) => void {
  * shows the saved note at once rather than flashing the old state until the
  * refetch lands.
  */
-function Harness() {
+/*
+ * `canEdit` is `RunShell`'s answer to "may this reader edit run notes here"
+ * (`run:note`). True by default: every case before the role cases further
+ * down is about the note a reader who MAY edit it sees.
+ */
+function Harness({ canEdit = true }: { readonly canEdit?: boolean }) {
   const detail = useQuery<RunDetail>({
     queryKey: runQueryKey(RUN_ID),
     queryFn: () => Promise.reject(new Error('the harness never fetches')),
     enabled: false,
   }).data;
-  return <RunNote runId={RUN_ID} note={detail?.run.note} />;
+  return <RunNote runId={RUN_ID} note={detail?.run.note} canEdit={canEdit} />;
 }
 
-function mount(note: RunNoteValue | null) {
+/** Mounts the note; `rerender(canEdit)` hands the SAME tree a new answer, as a role change does. */
+function mount(note: RunNoteValue | null, canEdit = true) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   client.setQueryData<RunDetail>(runQueryKey(RUN_ID), { state: 'ready', run: { ...RUN, note } });
-  render(
+  const tree = (may: boolean) => (
     <QueryClientProvider client={client}>
-      <Harness />
-    </QueryClientProvider>,
+      <Harness canEdit={may} />
+    </QueryClientProvider>
   );
+  const view = render(tree(canEdit));
+  return { rerender: (may: boolean) => view.rerender(tree(may)) };
 }
 
 describe('RunNote — reading', () => {
@@ -248,6 +256,88 @@ describe('RunNote — writing', () => {
 
     await screen.findByRole('alert');
     expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Run note' }));
+  });
+});
+
+/**
+ * ═══ ONLY A ROLE THAT MAY EDIT NOTES IS OFFERED TO (project access, PR 3) ═══
+ *
+ * `run:note` asks for Member. A Viewer — or anyone while access is not known,
+ * or on a run with no project to ask about — reads the note and is offered no
+ * way to change it: no Add a note, no Edit note, and so no Save or Remove
+ * note behind them. The API refuses the write either way; hiding is for
+ * clarity, so a reader is not handed a button whose click answers 403.
+ */
+describe('RunNote — only a reader who may edit notes is offered to', () => {
+  it('shows an existing note read-only: its words and who wrote it, and no control to change it', () => {
+    mount(NOTE, false);
+    expect(screen.getByTestId('run-note-text')).toHaveTextContent('baseline after the cache change');
+    expect(screen.getByTestId('run-note-attribution')).toHaveTextContent(
+      `Edited by Asha · ${formatInstant(NOTE.updatedAt!)}`,
+    );
+    expect(screen.queryByRole('button', { name: 'Edit note' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Add a note' })).toBeNull();
+    // Nothing to press at all: the clamp toggle is drawn only for a note
+    // that overflows, which jsdom's 0-by-0 layout never does.
+    expect(screen.queryAllByRole('button')).toEqual([]);
+  });
+
+  it('draws nothing for a run with no note, rather than an empty region', () => {
+    mount(null, false);
+    expect(screen.queryByRole('button', { name: 'Add a note' })).toBeNull();
+    expect(screen.queryByTestId('run-note')).toBeNull();
+  });
+
+  it('offers Add a note and Edit note to a reader who may', () => {
+    mount(null, true);
+    expect(screen.getByRole('button', { name: 'Add a note' })).toBeInTheDocument();
+    cleanup();
+    mount(NOTE, true);
+    expect(screen.getByRole('button', { name: 'Edit note' })).toBeInTheDocument();
+  });
+
+  /** Review Focus 3: a role that drops under an open page hides the control — the open editor with it. */
+  it('takes an open editor away, Save and Remove note with it, when the right to edit goes', async () => {
+    const { rerender } = mount(NOTE, true);
+    await userEvent.click(screen.getByRole('button', { name: 'Edit note' }));
+    await userEvent.clear(screen.getByRole('textbox', { name: 'Run note' }));
+    expect(screen.getByRole('button', { name: 'Remove note' })).toBeInTheDocument();
+
+    rerender(false);
+
+    expect(screen.queryByRole('textbox', { name: 'Run note' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Remove note' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
+    expect(screen.getByTestId('run-note-text')).toHaveTextContent('baseline after the cache change');
+  });
+
+  /**
+   * Review Focus 3's other half: an editor opened before the role dropped
+   * answers a refused save with the API's OWN refusal — both of its sentences,
+   * what the action needs and what to do about it — never in silence.
+   */
+  it('shows a refused save in the API’s own two sentences', async () => {
+    stubPut(() =>
+      json(
+        {
+          type: 'about:blank',
+          title: 'Forbidden',
+          status: 403,
+          detail: 'Editing run notes needs the Member role in this project.',
+          code: 'ROLE_REQUIRED',
+          remediation: 'Ask an admin to change your role.',
+        },
+        403,
+      ),
+    );
+    mount(NOTE, true);
+    await userEvent.click(screen.getByRole('button', { name: 'Edit note' }));
+    await userEvent.type(screen.getByRole('textbox', { name: 'Run note' }), '!');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Editing run notes needs the Member role in this project.');
+    expect(alert).toHaveTextContent('Ask an admin to change your role.');
   });
 });
 

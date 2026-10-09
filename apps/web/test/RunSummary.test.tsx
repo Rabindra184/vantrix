@@ -2,14 +2,17 @@
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Outlet, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { Assertion, RunResponse, ToolAssertion, UsersResponse } from '@perfportal/contracts';
+import type { Assertion, ProjectRole, RunResponse, ToolAssertion, UsersResponse } from '@perfportal/contracts';
 import reference from './fixtures/reference-run.json';
+import { projectAccess, type ProjectAccess } from '../src/access/useAccess';
 import { runQueryKey } from '../src/api/run';
 import RunSummary from '../src/routes/RunSummary';
 import { peakConcurrentUsers } from '../src/routes/runUsers';
 import { useWholeRunDomainFromShell, type RunWindowContext } from '../src/routes/useRunWindow';
+import { UNKNOWN_ACCESS } from './support/access';
 import useIsCompact from '../src/useIsCompact';
 
 vi.mock('../src/useIsCompact.js', () => ({ default: vi.fn(() => false) }));
@@ -142,6 +145,7 @@ function renderSummary({
   statsStatus = 200,
   assertions,
   toolAssertions,
+  access = UNKNOWN_ACCESS,
 }: {
   url?: string;
   window?: RunWindowContext['window'];
@@ -153,6 +157,8 @@ function renderSummary({
   statsStatus?: number;
   assertions?: readonly Assertion[];
   toolAssertions?: readonly ToolAssertion[];
+  /** The run's project access, as `RunShell` would share it. */
+  access?: ProjectAccess;
 } = {}) {
   const seen = stubFetch(statsBody, statsStatus);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -166,7 +172,7 @@ function renderSummary({
             path="/runs/:runId"
             element={
               <Outlet
-                context={{ window, durationMs: run.durationMs ?? null, liveDurationMs: null, warmupMs: null, live: null } satisfies RunWindowContext}
+                context={{ window, durationMs: run.durationMs ?? null, liveDurationMs: null, warmupMs: null, live: null, projectAccess: access } satisfies RunWindowContext}
               />
             }
           >
@@ -298,7 +304,7 @@ describe('RunSummary — always the whole run', () => {
         <Routes>
           <Route
             path="/r"
-            element={<Outlet context={{ window: { fromMs: 10_000, toMs: 20_000, bucketWidthMs: 1_000 }, durationMs: 63161, liveDurationMs: null, warmupMs: null, live: null } satisfies RunWindowContext} />}
+            element={<Outlet context={{ window: { fromMs: 10_000, toMs: 20_000, bucketWidthMs: 1_000 }, durationMs: 63161, liveDurationMs: null, warmupMs: null, live: null, projectAccess: UNKNOWN_ACCESS } satisfies RunWindowContext} />}
           >
             <Route index element={<Probe />} />
           </Route>
@@ -306,5 +312,47 @@ describe('RunSummary — always the whole run', () => {
       </MemoryRouter>,
     );
     expect(domain).toEqual([0, 63161]);
+  });
+});
+
+/**
+ * ═══ THE WAY TO ADD A RULE FOLLOWS THE RUN'S PROJECT ACCESS (project access, PR 3) ═══
+ *
+ * A run whose project has no SLA rule says so in its Platform gates bar, and
+ * used to invite every reader to add one — a Viewer included, whose click
+ * lands on a rules page with no New rule. `PlatformGatesBar` takes the answer
+ * as a required prop; what this pins is the seam: the Summary reads it from
+ * the access `RunShell` shares (its outlet context), asked of `rules:edit`.
+ * The readers are built by `projectAccess`, the hook's own decision, so none
+ * can drift into an answer the real one never gives. A Viewer is the reader
+ * just below `rules:edit`, which asks for Member.
+ */
+describe('RunSummary — the way to add a rule follows the run’s project access', () => {
+  const reader = (role: ProjectRole): ProjectAccess => projectAccess(false, [{ slug: 'checkout', role }], 'checkout');
+
+  async function openGates() {
+    await userEvent.click(await screen.findByRole('button', { name: 'Platform gates' }));
+    return screen.getByTestId('section-platform-gates');
+  }
+
+  it('tells a Viewer only that no rule judged the run', async () => {
+    renderSummary({ access: reader('viewer') });
+    const gates = await openGates();
+    expect(within(gates).getByText('No SLA rules judged this run.')).toBeVisible();
+    expect(within(gates).queryByText(/adding one affects future runs/i)).toBeNull();
+    expect(within(gates).queryByRole('link', { name: 'Configure SLA rules' })).toBeNull();
+  });
+
+  it.each([
+    ['a Member', reader('member')],
+    ['an admin with no row in the project', projectAccess(true, [{ slug: 'checkout', role: null }], 'checkout')],
+  ])('offers %s the way to add one', async (_, access) => {
+    renderSummary({ access });
+    const gates = await openGates();
+    expect(within(gates).getByText(/adding one affects future runs/i)).toBeVisible();
+    expect(within(gates).getByRole('link', { name: 'Configure SLA rules' })).toHaveAttribute(
+      'href',
+      '/projects/checkout/rules',
+    );
   });
 });

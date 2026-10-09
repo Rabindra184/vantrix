@@ -54,6 +54,13 @@ export interface Tenant {
    * and absent mean opposite things; see TenantScope.projectIds.
    */
   projectIds?: readonly string[];
+  /**
+   * A session's `user.mustChangePassword`: this person has to choose a new
+   * password before doing anything else, and `PasswordChangeGuard` refuses
+   * them every route but the one that does it. Always set for a session;
+   * absent for a bearer token, which names nobody and so has no password.
+   */
+  mustChangePassword?: boolean;
   tokenId: string;
   scopes: string[];
 }

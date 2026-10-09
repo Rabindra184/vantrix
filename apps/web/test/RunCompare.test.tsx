@@ -8,6 +8,7 @@ import { runQueryKey } from '../src/api/run';
 import RunCompare from '../src/routes/RunCompare';
 import { runMinuteLabel } from '../src/charts/transforms/runLabel';
 import type { RunWindowContext } from '../src/routes/useRunWindow';
+import { UNKNOWN_ACCESS } from './support/access';
 
 /**
  * MINOR 5. `/runs/:runId/compare` is a sixth `<Outlet/>` child under
@@ -98,7 +99,7 @@ function renderCompare(
             element={
               <Outlet
                 context={
-                  { window: null, durationMs: null, liveDurationMs: null, warmupMs: null, live: null } satisfies RunWindowContext
+                  { window: null, durationMs: null, liveDurationMs: null, warmupMs: null, live: null, projectAccess: UNKNOWN_ACCESS } satisfies RunWindowContext
                 }
               />
             }

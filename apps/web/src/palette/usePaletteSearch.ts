@@ -1,7 +1,8 @@
 import { hashKey, useQuery } from '@tanstack/react-query';
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import type { OrgTestSummary, RunListResponse } from '@perfportal/contracts';
+import { projectAccess } from '../access/useAccess';
 import { ProblemError } from '../api/fetch';
 import { fetchProjects, projectsQueryKey } from '../api/projects';
 import { fetchRunByNumber, searchRuns } from '../api/runs';
@@ -13,6 +14,7 @@ import {
   matchProjects,
   type Destination,
   type ProjectRef,
+  type ProjectWithAccess,
 } from './destinations';
 import { parsePaletteQuery, type PaletteQuery } from './parseQuery';
 import { useDebouncedValue } from './useDebouncedValue';
@@ -205,8 +207,16 @@ function remoteGroup<T>(enabled: boolean, query: QueryLike<readonly T[]>): Group
  * read under the rail's own key so inside the app it is a cache hit. Tests,
  * Runs and Run-by-number are server searches, each its own query: one failing
  * or lagging leaves the others alone.
+ *
+ * `isAdmin` is the session's admin flag, read ONCE by `AppShell` and handed
+ * down through the trigger and the dialog (`useIsAdmin`'s answer: `undefined`
+ * while the session has not answered). Not read here: this hook mounts every
+ * time the palette opens, and an observer of its own on the session — which
+ * carries no `staleTime` — would ask `/auth/get-session` again on every open
+ * to learn what the header already knows. REQUIRED, with no default, for the
+ * reason `goToDestinations` gives.
  */
-export function usePaletteSearch(raw: string): PaletteGroups {
+export function usePaletteSearch(raw: string, isAdmin: boolean | undefined): PaletteGroups {
   const [debounced, flush] = useDebouncedValue(raw, PALETTE_DEBOUNCE_MS);
   const query = useMemo(() => parsePaletteQuery(debounced), [debounced]);
   const { text, runNumber } = query;
@@ -247,19 +257,42 @@ export function usePaletteSearch(raw: string): PaletteGroups {
   const currentSlug = currentProjectSlug(useLocation().pathname);
 
   const projectList = useQuery({ queryKey: projectsQueryKey, queryFn: fetchProjects });
+  const listed = projectList.data?.items;
   const projectRefs = useMemo(
-    () => projectList.data?.items.map((p): ProjectRef => ({ slug: p.slug, name: p.name })),
-    [projectList.data],
+    () => listed?.map((p): ProjectRef => ({ slug: p.slug, name: p.name })),
+    [listed],
+  );
+
+  /* ═══ A PROJECT'S PAGES ARE THE ONES ITS STRIP OFFERS THIS READER ═══
+
+     Which of a project's pages the palette offers is the strip's rule
+     (`visibleSections`), asked with the reader's access in THAT project — and
+     the palette may be about a project the reader is not inside (the best
+     match for what they typed), so it cannot borrow a page's hook. It asks
+     `projectAccess` instead: the decision `useProjectAccess` makes, from the
+     same two answers, the admin flag it was handed and the project list this
+     hook already reads. Until those are known nothing gated is offered,
+     exactly as the strip draws nothing gated.
+
+     `withAccess` is the ONE place a project and its access are paired, and
+     both come from the same slug — which is the whole of what keeps a
+     project's pages from being filtered by another project's answer. */
+  const withAccess = useCallback(
+    (project: ProjectRef): ProjectWithAccess => ({
+      project,
+      access: projectAccess(isAdmin, listed, project.slug),
+    }),
+    [isAdmin, listed],
   );
 
   /* The project the reader is inside, named from the project list when it has
      arrived and by its slug until then: a name the reader can read now beats
      waiting on a request to say "Tests · Checkout". */
-  const current = useMemo((): ProjectRef | null => {
+  const current = useMemo((): ProjectWithAccess | null => {
     if (currentSlug === null) return null;
     const name = projectRefs?.find((p) => p.slug === currentSlug)?.name ?? currentSlug;
-    return { slug: currentSlug, name };
-  }, [currentSlug, projectRefs]);
+    return withAccess({ slug: currentSlug, name });
+  }, [currentSlug, projectRefs, withAccess]);
 
   const tests = useQuery({
     queryKey: keys.tests,
@@ -292,16 +325,20 @@ export function usePaletteSearch(raw: string): PaletteGroups {
   })();
 
   /* Pages belong to the project the reader is in, else to the best project
-     match. Inside a project they need nothing fetched. Outside one they depend
-     on the project list, and when that has failed they are an error too — the
-     Projects group's failure line speaks for both, because a page cannot be
-     matched to a project nobody could list. */
+     match. Inside a project they need nothing fetched to be matched — which
+     of them are offered waits on access, as the strip's tabs do. Outside one
+     they depend on the project list, and when that has failed they are an
+     error too — the Projects group's failure line speaks for both, because a
+     page cannot be matched to a project nobody could list. */
   const pagesGroup = ((): GroupState<Destination> => {
     if (!searching) return { items: [], status: 'idle' };
     if (current !== null) return { items: matchPages(text, current), status: 'ready' };
     if (projectRefs !== undefined) {
-      const candidate = matchProjects(text, projectRefs, 1)[0] ?? null;
-      return { items: matchPages(text, candidate), status: 'ready' };
+      const candidate = matchProjects(text, projectRefs, 1)[0];
+      return {
+        items: matchPages(text, candidate === undefined ? null : withAccess(candidate)),
+        status: 'ready',
+      };
     }
     return { items: [], status: projectList.isError ? 'error' : 'loading' };
   })();
@@ -326,7 +363,7 @@ export function usePaletteSearch(raw: string): PaletteGroups {
   const settled = groups.every((g) => g.status !== 'loading');
   return {
     query,
-    goTo: typed === '' && !searching ? goToDestinations(current) : [],
+    goTo: typed === '' && !searching ? goToDestinations(current, isAdmin) : [],
     projects: projectsGroup,
     pages: pagesGroup,
     tests: testsGroup,

@@ -14,7 +14,7 @@ afterEach(cleanup);
  * it with ONE request in flight instead of two, so a red test names its own
  * cause instead of implicating the run list's own fetching.
  */
-function renderShell() {
+function renderShell(session: unknown = {}) {
   vi.stubGlobal('fetch', (input: RequestInfo) =>
     Promise.resolve(
       String(input).includes('/v1/projects')
@@ -22,7 +22,9 @@ function renderShell() {
             JSON.stringify({ code: 'INTERNAL', detail: 'boom', remediation: 'Retry later.' }),
             { status: 500, headers: { 'Content-Type': 'application/problem+json' } },
           )
-        : new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }),
+        : String(input).includes('/auth/get-session')
+          ? new Response(JSON.stringify(session), { status: 200, headers: { 'Content-Type': 'application/json' } })
+          : new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }),
     ),
   );
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -104,6 +106,124 @@ describe('AppShell', () => {
     const header = screen.getByRole('banner');
     expect(within(header).getByRole('link', { name: 'PerfPortal' })).toHaveAttribute('href', '/');
     expect(within(header).queryByRole('link', { name: 'Home' })).toBeNull();
+  });
+});
+
+/**
+ * ═══ THE MENU'S ADMIN FLAG COMES FROM THE SESSION, AND ONLY `'admin'` IS ONE ═══
+ *
+ * `AccountMenu.test.tsx` hands the menu its `isAdmin`, so it proves the menu
+ * reads the prop and nothing about where the prop comes from. These read it
+ * off the session the shell is given — Better Auth's admin plugin's
+ * `user.role` — including a session with no role at all, which an API older
+ * than the plugin sends.
+ */
+describe('AppShell — the account menu’s Administration item', () => {
+  const sessionOf = (user: Record<string, unknown>) => ({
+    session: { id: 's1' },
+    user: { id: 'u1', name: 'Ada', email: 'ada@perfportal.test', ...user },
+  });
+
+  async function openMenu(session: unknown) {
+    const user = userEvent.setup();
+    renderShell(session);
+    // The menu's name carries the identity once the session has been read.
+    await screen.findByRole('button', { name: 'Account: Ada' });
+    await user.click(screen.getByTestId('account-menu-trigger'));
+    await screen.findByRole('menuitem', { name: 'Change password' });
+  }
+
+  it('offers Administration to an admin', async () => {
+    await openMenu(sessionOf({ role: 'admin' }));
+    expect(screen.getByRole('menuitem', { name: 'Administration' })).toHaveAttribute('href', '/admin/users');
+  });
+
+  it.each([
+    ['an ordinary account', sessionOf({ role: 'user' })],
+    ['a session with no role', sessionOf({})],
+  ])('offers no Administration to %s', async (_who, session) => {
+    await openMenu(session);
+    expect(screen.queryByRole('menuitem', { name: 'Administration' })).toBeNull();
+  });
+});
+
+/**
+ * ═══ ONE READ OF THE FLAG, HANDED TO THE RAIL AND THE PALETTE ═══
+ *
+ * The shell reads the admin flag once (`useIsAdmin`, the web's one definition
+ * of it) and hands it to the rail and to the search palette. Their own tests
+ * HAND THEMSELVES the flag, so they prove each reads the prop and nothing
+ * about where the prop comes from; these read it off the session the shell is
+ * given, on an org whose project list answers empty — where the rail's
+ * sentence and the palette's New project both turn on it.
+ */
+describe('AppShell — the admin flag reaches the rail and the palette', () => {
+  const hadScrollIntoView = 'scrollIntoView' in Element.prototype;
+  beforeEach(() => {
+    // cmdk scrolls its highlighted row into view and measures its list:
+    // jsdom has neither, and either one missing throws inside an effect.
+    if (!hadScrollIntoView) Element.prototype.scrollIntoView = () => {};
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe(): void {}
+        unobserve(): void {}
+        disconnect(): void {}
+      },
+    );
+  });
+  afterEach(() => {
+    if (!hadScrollIntoView) delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+    vi.unstubAllGlobals();
+  });
+
+  function renderOnEmptyOrg(role: 'admin' | 'user') {
+    vi.stubGlobal('fetch', (input: RequestInfo) => {
+      const url = String(input);
+      const body = url.includes('/v1/projects')
+        ? { items: [] }
+        : url.includes('/auth/get-session')
+          ? { session: { id: 's1' }, user: { id: 'u1', name: 'Ada', email: 'ada@perfportal.test', role } }
+          : {};
+      return Promise.resolve(
+        new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+      );
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/runs']}>
+          <Routes>
+            <Route element={<AppShell />}>
+              <Route path="/runs" element={<p>page content stand-in</p>} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  }
+
+  async function goToOptions(): Promise<string[]> {
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+    const goTo = await screen.findByRole('group', { name: 'Go to' });
+    return within(goTo)
+      .getAllByRole('option')
+      .map((option) => option.textContent ?? '');
+  }
+
+  it('tells an admin the org has no projects, and offers them New project', async () => {
+    renderOnEmptyOrg('admin');
+    expect(await screen.findByText('No projects yet.')).toBeInTheDocument();
+    expect(await goToOptions()).toEqual(['Home', 'All runs', 'New project']);
+  });
+
+  it('tells a person on no project to ask an admin, and offers them no New project', async () => {
+    renderOnEmptyOrg('user');
+    expect(
+      await screen.findByText("You're not on any project yet. Ask an admin to add you."),
+    ).toBeInTheDocument();
+    expect(await goToOptions()).toEqual(['Home', 'All runs']);
   });
 });
 

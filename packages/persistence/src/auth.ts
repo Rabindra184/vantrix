@@ -82,8 +82,20 @@ export function cookiesAreSecure(baseUrl: string, allowInsecure = false): boolea
   return !(host === 'localhost' || host === '127.0.0.1' || host === '[::1]');
 }
 
-/** The admin plugin's options, written once: the call and the type below both read them. */
-const ADMIN_OPTIONS = { defaultRole: 'user', adminRoles: ['admin'] } satisfies AdminOptions;
+/**
+ * The admin plugin's options, written once: the call and the type below both read them.
+ *
+ * `bannedUserMessage` is what a disabled person reads when they try to sign
+ * in (403 BANNED_USER). The plugin's own default — "You have been banned from
+ * this application. Please contact support…" — is the wrong word and the
+ * wrong door: the product calls a ban "disabled", and the person to ask is an
+ * admin of this install, not a support desk.
+ */
+const ADMIN_OPTIONS = {
+  defaultRole: 'user',
+  adminRoles: ['admin'],
+  bannedUserMessage: 'This account is disabled. Ask an admin to enable it.',
+} satisfies AdminOptions;
 
 /**
  * The admin plugin exactly as `createAuth` configures it, as an INTERFACE so
@@ -101,24 +113,47 @@ function adminPlugin(): AdminPlugin {
 }
 
 /**
- * Refuses the admin plugin's own HTTP routes, inside Better Auth's pipeline.
- * Only `onRequest`'s use of its context is declared, so the type is nameable
- * without reaching into `@better-auth/core`.
+ * Refuses, over HTTP, the Better Auth routes this product reaches only
+ * server-side, inside Better Auth's pipeline. Only `onRequest`'s use of its
+ * context is declared, so the type is nameable without reaching into
+ * `@better-auth/core`.
  */
-export interface RefuseAdminHttpPlugin {
-  id: 'refuse-admin-http';
+export interface RefuseServerOnlyRoutesPlugin {
+  id: 'refuse-server-only-routes';
   onRequest(request: Request, ctx: { baseURL: string }): Promise<{ response: Response } | undefined>;
 }
 
 /**
- * ═══ THE ADMIN PLUGIN'S HTTP ROUTES ARE A SECOND ADMIN API, SO THEY 404 ═══
+ * The Better Auth routes under the base path that answer 404 over HTTP, each
+ * with everything beneath it. Server-side `auth.api.*` calls still reach them.
+ */
+const SERVER_ONLY_ROUTES = ['/admin', '/change-password', '/verify-password'] as const;
+
+/**
+ * ═══ ROUTES THIS PRODUCT CALLS SERVER-SIDE ONLY, SO OVER HTTP THEY 404 ═══
  *
- * The admin plugin is registered for its SERVER-SIDE calls (bootstrap, and the
- * `/v1/admin` routes to come). Its HTTP surface — list-users, create-user,
- * set-role, ban-user, impersonate-user and the rest — would otherwise answer
- * any admin's cookie: an undocumented admin API in Better Auth's shapes rather
- * than problem+json, beside the one place admin operations are meant to go
- * and be recorded.
+ * `/auth/admin/*`. The admin plugin is registered for its SERVER-SIDE calls
+ * (bootstrap, and the `/v1/admin` routes to come). Its HTTP surface —
+ * list-users, create-user, set-role, ban-user, impersonate-user and the rest —
+ * would otherwise answer any admin's cookie: an undocumented admin API in
+ * Better Auth's shapes rather than problem+json, beside the one place admin
+ * operations are meant to go and be recorded.
+ *
+ * `/auth/change-password`. `PUT /v1/me/password` is the one way to change
+ * one's own password: it calls this same endpoint server-side, refuses a new
+ * password equal to the current one, throttles attempts per account, and
+ * clears `mustChangePassword`. The HTTP route does none of the last three, so
+ * left open a person told to replace an admin's temporary password could go
+ * temporary → X here and X → temporary through `/v1`, and end unflagged on the
+ * password the admin chose.
+ *
+ * `/auth/verify-password`. Better Auth marks it `metadata.scope: "server"`,
+ * which is NOT its `SERVER_ONLY` flag — better-call's router skips only the
+ * latter — so it is served over HTTP. It answers the signed-in person's right
+ * password 200 and a wrong one 400 INVALID_PASSWORD: a current-password oracle
+ * for anyone holding the cookie, a flagged session's included, with none of the
+ * per-account throttle `PUT /v1/me/password` carries. Measured before this
+ * line existed: exactly those two answers. Nothing in the product calls it.
  *
  * ═══ WHY HERE, AND NOT IN FRONT OF THE HANDLER ═══
  *
@@ -143,7 +178,8 @@ export interface RefuseAdminHttpPlugin {
  * LAST among the plugins because a plugin may replace the request, and it
  * checks the one the router will see. Server-side `auth.api.*` calls never
  * reach it: those invoke an endpoint directly and skip the router entirely,
- * which is why bootstrap and the test fixtures can still create accounts.
+ * which is why bootstrap and the test fixtures can still create accounts, and
+ * `PUT /v1/me/password` can still change a password.
  *
  * The base path is read from the context exactly as the router derives its
  * own (`new URL(ctx.baseURL).pathname`), so there is no second copy of
@@ -153,9 +189,9 @@ export interface RefuseAdminHttpPlugin {
  * gives a path it does not serve, so these routes read as absent rather than
  * present-and-forbidden.
  */
-function refuseAdminHttp(): RefuseAdminHttpPlugin {
+function refuseServerOnlyRoutes(): RefuseServerOnlyRoutesPlugin {
   return {
-    id: 'refuse-admin-http',
+    id: 'refuse-server-only-routes',
     async onRequest(request, ctx) {
       const basePath = new URL(ctx.baseURL).pathname.replace(/\/+$/, '');
       let path: string;
@@ -164,10 +200,12 @@ function refuseAdminHttp(): RefuseAdminHttpPlugin {
       } catch {
         return { response: new Response(null, { status: 404 }) };
       }
-      const admin = `${basePath}/admin`.toLowerCase();
       const lower = path.toLowerCase();
-      if (lower === admin || lower.startsWith(`${admin}/`)) {
-        return { response: new Response(null, { status: 404 }) };
+      for (const route of SERVER_ONLY_ROUTES) {
+        const refused = `${basePath}${route}`.toLowerCase();
+        if (lower === refused || lower.startsWith(`${refused}/`)) {
+          return { response: new Response(null, { status: 404 }) };
+        }
       }
       return undefined;
     },
@@ -203,9 +241,10 @@ function refuseAdminHttp(): RefuseAdminHttpPlugin {
  * the first admin with nobody signed in.
  *
  * The plugin's own HTTP routes (`/auth/admin/*`) are a second admin API this
- * product does not offer; `refuseAdminHttp`, registered after it, answers
- * them 404 inside Better Auth's own pipeline, on the very request the router
- * routes. The plugin is here for its server-side calls and for the
+ * product does not offer; `refuseServerOnlyRoutes`, registered after it,
+ * answers them 404 inside Better Auth's own pipeline, on the very request the
+ * router routes — and `/auth/change-password` and `/auth/verify-password` too,
+ * for `PUT /v1/me/password` (see `SERVER_ONLY_ROUTES`). The plugin is here for its server-side calls and for the
  * columns it owns: `user.role` (the admin flag is exactly `'admin'`, every
  * other account `'user'`), `banned`/`banReason`/`banExpires`, and
  * `session.impersonatedBy`.
@@ -226,9 +265,22 @@ export function createAuth(opts: {
     trustedOrigins: [opts.baseUrl],
     database: prismaAdapter(createPrisma(opts.databaseUrl), { provider: 'postgresql' }),
     emailAndPassword: { enabled: true, disableSignUp: true },
-    // refuseAdminHttp LAST: a plugin's onRequest may replace the request, and
-    // the refusal has to judge the one the router will actually route.
-    plugins: [adminPlugin(), refuseAdminHttp()],
+    // `mustChangePassword` rides on every `getSession().user`, which is how a
+    // gate can read it with no second query. `input: false` is what keeps it
+    // out of the person's own hands: `/auth/update-user` refuses a true value
+    // (FIELD_NOT_ALLOWED) and drops a false one, so nobody can clear their own
+    // flag. A server-side `auth.api.createUser` may still set it through its
+    // `data`, which bypasses `input`. `session-auth.integration.test.ts` pins
+    // both halves.
+    user: {
+      additionalFields: {
+        mustChangePassword: { type: 'boolean', defaultValue: false, input: false },
+      },
+    },
+    // refuseServerOnlyRoutes LAST: a plugin's onRequest may replace the
+    // request, and the refusal has to judge the one the router will actually
+    // route.
+    plugins: [adminPlugin(), refuseServerOnlyRoutes()],
     // NO `cookieCache`, and that is load-bearing: with it off, every
     // `getSession` reads the user row, so `user.role` — the admin flag — is
     // current on every request, and a demoted admin is an ordinary account on

@@ -4,9 +4,11 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { ProjectRole } from '@perfportal/contracts';
 import { fetchProjects } from '../src/api/projects.js';
 import { fetchRunnerJobs } from '../src/api/runner.js';
 import ProjectSetup from '../src/routes/ProjectSetup.js';
+import { seedAccess } from './support/access';
 
 /**
  * ═══ REVIEW M15 — THE PAGE THAT WAS FOUR PAGES ═══
@@ -43,6 +45,7 @@ const fetchRunnerJobsMock = vi.mocked(fetchRunnerJobs);
 
 afterEach(() => {
   cleanup();
+  vi.unstubAllGlobals();
   fetchProjectsMock.mockClear();
   fetchRunnerJobsMock.mockClear();
 });
@@ -81,10 +84,17 @@ function job(status: string, agedMs: number) {
   } as unknown as Awaited<ReturnType<typeof fetchRunnerJobs>>['items'][number];
 }
 
-function renderPage() {
+function renderPage(
+  // An admin by default: every claim here before the token-link cases is
+  // about the page a reader who MAY add results sees — and the shell offers
+  // this section's tab, which `ready` waits on, only once access is known and
+  // allows `run:upload`. `null` seeds nothing.
+  who: { isAdmin: boolean; roles?: Readonly<Record<string, ProjectRole>> } | null = { isAdmin: true },
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
+  if (who !== null) seedAccess(client, who);
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={['/projects/alpha/setup']}>
@@ -566,5 +576,156 @@ describe('ProjectSetup — the workflows are choices before they are documents',
 
     // The picker itself — the assertion the interim case was written to fail on.
     expect(document.querySelector('input[type="file"]')).not.toBeNull();
+  });
+});
+
+/**
+ * ═══ ADDING RESULTS FOLLOWS THE ROLE (project access, PR 3) ═══
+ *
+ * Two of this page's controls take an action the API guards: the Import
+ * card's picker uploads a run (`run:upload`), and the Run a test card's "New
+ * on-prem run" opens a form that starts one (`runner:run` — gate by
+ * destination). Each is drawn only when the reader may take it. A reader who
+ * may do NEITHER — a Viewer who typed the URL — is told why, in the API's own
+ * words, in place of the three cards: every card here is a way in, and a page
+ * of ways in that each end in a 403 is the refusal said three times worse.
+ *
+ * Hidden until known: while access is pending nothing gated is drawn and
+ * nobody is refused — the cards and their documentation stay, without the
+ * two controls.
+ */
+describe('ProjectSetup — adding results follows the role', () => {
+  /** The file input that IS the picker — the one control this page uploads with. */
+  const picker = () => document.querySelector('input[type="file"]');
+  /** The Run a test card's own launch link — not the shell's, which `ProjectShell` gates and tests. */
+  const cardLaunch = async () =>
+    within(await entry('Run a test')).queryByRole('link', { name: /new on-prem run/i });
+
+  it('refuses a viewer the page in the API’s own words, in place of the three choices', async () => {
+    renderPage({ isAdmin: false, roles: { alpha: 'viewer' } });
+
+    // By its words, then up to its region, so another `status` on the page
+    // could not answer in its place.
+    const refusal = (await screen.findByText('Uploading runs needs the Member role in this project.')).closest(
+      '[role="status"]',
+    );
+    expect(refusal).not.toBeNull();
+    expect(refusal).toHaveTextContent('Ask an admin to change your role.');
+
+    for (const name of ['Import results', 'Run a test', 'Configure CI']) {
+      expect(screen.queryByRole('heading', { name, level: 2 })).toBeNull();
+    }
+    expect(picker()).toBeNull();
+    // The runner's job list feeds only the Run a test card, which is not drawn.
+    expect(fetchRunnerJobsMock).not.toHaveBeenCalled();
+  });
+
+  it('offers a member the picker and the launch', async () => {
+    renderPage({ isAdmin: false, roles: { alpha: 'member' } });
+    await within(await entry('Run a test')).findByText(/runner availability unknown/i);
+
+    expect(within(await entry('Import results')).getByTestId('bundle-upload')).toBeInTheDocument();
+    expect(picker()).not.toBeNull();
+    expect(await cardLaunch()).toHaveAttribute('href', '/projects/alpha/run/new');
+    expect(screen.queryByText(/needs the .* role/)).toBeNull();
+  });
+
+  /** Review Focus 1: an admin may do everything, whatever role their own row holds. */
+  it('offers an admin holding only a Viewer row the picker and the launch', async () => {
+    renderPage({ isAdmin: true, roles: { alpha: 'viewer' } });
+    await within(await entry('Run a test')).findByText(/runner availability unknown/i);
+
+    expect(picker()).not.toBeNull();
+    expect(await cardLaunch()).toHaveAttribute('href', '/projects/alpha/run/new');
+  });
+
+  /** Review Focus 2: while the session is held nothing is known — no control, and no refusal either. */
+  it('draws neither control, and refuses nobody, while access is pending', async () => {
+    vi.stubGlobal('fetch', () => new Promise<Response>(() => {}));
+    renderPage(null);
+    await within(await entry('Run a test')).findByText(/runner availability unknown/i);
+
+    for (const name of ['Import results', 'Run a test', 'Configure CI']) {
+      expect(screen.getByRole('heading', { name, level: 2 })).toBeInTheDocument();
+    }
+    expect(picker()).toBeNull();
+    expect(await cardLaunch()).toBeNull();
+    expect(screen.queryByText(/needs the .* role/)).toBeNull();
+  });
+});
+
+/**
+ * ═══ A LINK TO API TOKENS IS A MANAGER'S (project access, PR 3) ═══
+ *
+ * Gate by destination: the API tokens page exists to manage tokens, which is
+ * `tokens:manage`, so each of this page's three ways there — Import's and CI's
+ * "Create one", and the runner card's "Create a runner token" — is drawn only
+ * for a reader who may. Anyone else would follow it to a page that can only
+ * tell them no.
+ */
+describe('ProjectSetup — the links to API tokens follow the role', () => {
+  /**
+   * Every link THIS PAGE draws to API tokens — outside the shell's nav, whose
+   * own API tokens tab is `ProjectShell`'s to gate and is tested there.
+   */
+  const tokenLinks = () =>
+    screen
+      .queryAllByRole('link')
+      .filter((a) => a.getAttribute('href') === '/projects/alpha/access' && a.closest('nav') === null);
+
+  /**
+   * Settled: the runner card's link waits on the job list (see `needsSetup`),
+   * so its absence means something only once that list has answered — the
+   * "unknown" headline is what an answered empty list says.
+   */
+  async function settled() {
+    await within(await entry('Run a test')).findByText(/runner availability unknown/i);
+  }
+
+  it('draws none of the three for a member', async () => {
+    renderPage({ isAdmin: false, roles: { alpha: 'member' } });
+    await settled();
+
+    expect(tokenLinks()).toEqual([]);
+    expect(screen.queryByRole('link', { name: 'Create one' })).toBeNull();
+    expect(screen.queryByTestId('runner-setup')).toBeNull();
+    // The prerequisite is still named where it applies; only the way there goes.
+    expect(within(await entry('Import results')).getByText('PERFPORTAL_TOKEN')).toBeInTheDocument();
+  });
+
+  /**
+   * A VIEWER IS REFUSED THE PAGE, SO THERE IS NO PREREQUISITE TO NAME. This
+   * row used to wait on the runner card and read `PERFPORTAL_TOKEN` off the
+   * Import card, as the member's does; a Viewer may neither upload nor start a
+   * run, so the cards are replaced by the API's refusal (see "adding results
+   * follows the role" above). What this case still claims is its own: none of
+   * the three ways to API tokens is drawn — asserted once that refusal is on
+   * screen, so the absence is not read off a page still loading.
+   */
+  it('draws none of the three for a viewer, who is refused the page instead', async () => {
+    renderPage({ isAdmin: false, roles: { alpha: 'viewer' } });
+    await screen.findByText('Uploading runs needs the Member role in this project.');
+
+    expect(tokenLinks()).toEqual([]);
+    expect(screen.queryByRole('link', { name: 'Create one' })).toBeNull();
+    expect(screen.queryByTestId('runner-setup')).toBeNull();
+  });
+
+  it('draws all three for a manager', async () => {
+    renderPage({ isAdmin: false, roles: { alpha: 'manager' } });
+    await settled();
+
+    expect(tokenLinks()).toHaveLength(3);
+    expect(screen.getByTestId('runner-setup')).toHaveAttribute('href', '/projects/alpha/access');
+  });
+
+  /** Review Focus 2: while the session is held nothing is known, so none is drawn — and nobody is refused. */
+  it('draws none while access is pending', async () => {
+    vi.stubGlobal('fetch', () => new Promise<Response>(() => {}));
+    renderPage(null);
+    await settled();
+
+    expect(tokenLinks()).toEqual([]);
+    expect(screen.queryByText(/needs the .* role/)).toBeNull();
   });
 });

@@ -820,6 +820,10 @@ model User {
   banned              Boolean?        @default(false)
   banReason           String?
   banExpires          DateTime?
+  /// The person must choose a new password before anything else: set on an
+  /// account whose password its owner did not choose. A Better Auth additional
+  /// field (`input: false` in createAuth), so camelCase like its neighbours.
+  mustChangePassword  Boolean         @default(false)
   sessions            Session[]
   accounts            Account[]
   orgMembers          OrgMember[]

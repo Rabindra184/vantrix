@@ -2,6 +2,7 @@ import { useCallback, useMemo } from 'react';
 import { useOutletContext, useSearchParams } from 'react-router-dom';
 import { useQuery, type UseQueryOptions, type UseQueryResult } from '@tanstack/react-query';
 import type { Window } from '@perfportal/contracts';
+import type { ProjectAccess } from '../access/useAccess';
 import type { LiveRunState } from '../api/live';
 import { fetchRun, runQueryKey, type RunDetail } from '../api/run';
 import { parseWindow, serialiseWindow } from './window';
@@ -98,6 +99,21 @@ export interface RunWindowContext {
    * stream.
    */
   readonly live: LiveRunState | null;
+  /**
+   * What the reader may do in the RUN'S project — `useProjectAccess` asked
+   * once, in the shell, for `identity.project?.slug`.
+   *
+   * On the context for the reason `live` is: the sections are `<Outlet/>`
+   * children with no prop channel from the shell, and one that asked again
+   * would mount another observer on the session and the project list (each
+   * refetching on mount) to learn what the shell already knows. A control in
+   * a section that a role gates — the telemetry page's link to API tokens —
+   * reads it here.
+   *
+   * REQUIRED, like every field here: the shell is the one producer, and a
+   * section reading an absent answer would hide or show in silence.
+   */
+  readonly projectAccess: ProjectAccess;
 }
 
 /** The window the shell parsed. Every tab reads it; none re-derives it. */
@@ -108,6 +124,11 @@ export const useWindowFromShell = (): Window | null =>
  *  from here; none opens a second socket for the run it is already under. */
 export const useLiveFromShell = (): LiveRunState | null =>
   useOutletContext<RunWindowContext>().live;
+
+/** The reader's access in the run's project, as `RunShell` asked it. Every
+ *  section reads it from here; none asks `useProjectAccess` again. */
+export const useProjectAccessFromShell = (): ProjectAccess =>
+  useOutletContext<RunWindowContext>().projectAccess;
 
 /**
  * ONE HOOK FOR THE `run` READ EVERY TAB (AND `RunDetail` ITSELF) NEEDS.

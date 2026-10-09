@@ -122,7 +122,7 @@ describe('OpenAPI document', () => {
   // `/rules/{ruleId}` — the PATCH and DELETE beside it work on the id in
   // that very response. Nothing about the rule is deferred; what is deferred
   // is only the next RUN it will judge, which is not this resource.
-  it('never declares a 201 response on any operation except token minting, opening a live run, creating a project, creating an SLA rule, queueing or retrying a runner job, and creating a package, which really do create synchronously', async () => {
+  it('never declares a 201 response on any operation except token minting, opening a live run, creating a project, creating an SLA rule, queueing or retrying a runner job, creating a package, and creating an account, which really do create synchronously', async () => {
     const doc = await fetchDoc();
     const CREATES_SYNCHRONOUSLY = [
       { path: '/v1/projects/{slug}/tokens', method: 'post' },
@@ -151,6 +151,19 @@ describe('OpenAPI document', () => {
       // the document said 200; what changed is that the document stopped
       // saying otherwise. Cancel, beside it, creates nothing and answers 200.
       { path: '/v1/projects/{slug}/runner/runs/{jobId}/retry', method: 'post' },
+      // The account is the resource created, and it is complete and
+      // addressable the moment the response is sent: the handler awaits Better
+      // Auth's create, then the org membership and every project role in one
+      // transaction, then READS THE ROW BACK and answers it. GET
+      // /v1/admin/users lists it at once, and PATCH, PUT and DELETE work on the
+      // id in that very response — admin.integration.test.ts drives both.
+      { path: '/v1/admin/users', method: 'post' },
+      // The membership is the resource created, and it is complete and
+      // addressable the moment the response is sent: the handler awaits the
+      // INSERT, then READS THE ROW BACK and answers it. GET .../members lists
+      // it at once, and PATCH and DELETE work on the person in that very
+      // response — members.integration.test.ts drives all three.
+      { path: '/v1/projects/{slug}/members', method: 'post' },
     ];
     for (const { path, method, op } of operations(doc)) {
       if (CREATES_SYNCHRONOUSLY.some((c) => c.path === path && c.method === method)) {
@@ -382,6 +395,33 @@ describe('OpenAPI document', () => {
       expect(get, `GET ${path} must be declared`).toBeTruthy();
       // No override at all: it inherits the document-level "either credential".
       expect(get?.security, `GET ${path} must not narrow to one credential`).toBeUndefined();
+    }
+  });
+
+  /**
+   * The on-prem runner's job API takes EITHER credential, all five routes.
+   * Start, cancel and retry used to override to bearerAuth alone, while their
+   * handlers carry `@Requires('runner:run')` and no `SessionOnlyGuard` or
+   * `@BearerOnly` — and the New on-prem run page calls all three with a
+   * session cookie. So the document told a generated client a session could
+   * not do what the product's own page does, and each operation's opening
+   * sentence ("A signed-in session needs the Member role…") contradicted its
+   * own security block. No override at all: they inherit the document-level
+   * default, as their two GETs already did.
+   */
+  it('lets every runner job operation take either credential — the New on-prem run page uses a session', async () => {
+    const doc = await fetchDoc();
+
+    for (const [path, method] of [
+      ['/v1/projects/{slug}/runner/runs', 'post'],
+      ['/v1/projects/{slug}/runner/runs', 'get'],
+      ['/v1/projects/{slug}/runner/runs/{jobId}/cancel', 'post'],
+      ['/v1/projects/{slug}/runner/runs/{jobId}/logs', 'get'],
+      ['/v1/projects/{slug}/runner/runs/{jobId}/retry', 'post'],
+    ] as const) {
+      const op = doc.paths?.[path]?.[method] as { security?: unknown[] } | undefined;
+      expect(op, `${method.toUpperCase()} ${path} must be declared`).toBeTruthy();
+      expect(op?.security, `${method.toUpperCase()} ${path} must not narrow to one credential`).toBeUndefined();
     }
   });
 
