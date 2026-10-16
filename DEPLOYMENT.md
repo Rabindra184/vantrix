@@ -319,6 +319,16 @@ it. Run directly, it answers every signed-in request with a 500. To go back
 past it, restore the backup you took before upgrading
 ([below](#backup-and-restore)).
 
+**Upgrading past exact statistics: migrate, then the API, then the worker.**
+Under Compose one `up` replaces them together and the order takes care of
+itself; it matters when you replace processes one at a time. A run the new
+worker processes stores its histograms in a new format (`sparse-ms-v2`), and
+an API still on the old image cannot read it: that run's Statistics answers a
+500 until the API is replaced. The other way round is safe — an old worker
+under a new API writes rows the new API reads correctly, and only that run's
+"exact" label is wrong (it says exact over estimated figures). So never let a
+new worker get ahead of the API.
+
 **An upgrade sends nobody to *Choose a new password*.** The release that adds
 that step adds its flag as `NOT NULL DEFAULT false`, so every account that
 already exists comes through unflagged — an admin still signing in with the
