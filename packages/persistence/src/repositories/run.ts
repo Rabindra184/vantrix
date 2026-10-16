@@ -419,7 +419,7 @@ export function runScopeStatOn(stat: string, run: string): string {
  * the clamp branch installed it at every assembler: the rollup, the bucket
  * split, the evaluator's fallback and `/stats`. The list was the one reader
  * left holding the raw value, because it deliberately reads the FROZEN
- * column rather than re-quantiling a sketch per row.
+ * column rather than recomputing each row from its stored data.
  *
  * That trade is right and is untouched here: the clamp needs no sketch. It is
  * `Math.min(Math.max(v, min), max)` against two columns already on the row, so
@@ -1207,10 +1207,11 @@ export class RunRepository {
         r.run_number AS "runNumber",
         -- THE TRIAGE NUMBERS. Without them a reader had to OPEN every run to
         -- learn whether it was interesting, which is what a list exists to
-        -- answer. The frozen percentiles column rather than the sketch: a
-        -- list row is a scan target, and re-quantiling 25 sketches per page to
-        -- move a column by fractions of a millisecond is not a trade this
-        -- surface wants. (No backticks in here -- this is a template literal,
+        -- answer. The frozen percentiles column rather than the stored
+        -- histograms: a list row is a scan target, and deserializing and
+        -- walking 25 histograms per page to recompute what the column already
+        -- holds (exactly, on a run written since 2026-10-15; a clamped sketch
+        -- estimate on a legacy one) is not a trade this surface wants. (No backticks in here -- this is a template literal,
         -- and one of those ends the string; CLAUDE.md records the same cut on
         -- TRENDS_SQL.)
         s.count AS "statCount", s.error_rate AS "statErrorRate",

@@ -159,7 +159,9 @@ function measure(target: AssertionTarget, row: StatRollup): number | null {
         case 'mean': return row.meanMs;
         case 'stddev': return row.stddevMs;
         // Exact, from both statuses' histograms — Gatling's assertion reads the
-        // all-responses population. Arbitrary ranks (99.9) are answerable
+        // all-responses population. `mergedHistogram` hands back the merge
+        // `finish` already built for this row, so a run declaring hundreds of
+        // percentile assertions does not re-merge and re-sort per assertion. Arbitrary ranks (99.9) are answerable
         // because the histograms are kept, not only the configured columns.
         //
         // The rank is a raw decoded double the log carries unchecked, and

@@ -29,11 +29,28 @@ export interface StatRollup {
   histogramKo: Histogram;
 }
 
-/** A fresh merge of both statuses — never mutates either input. */
+const merges = new WeakMap<Histogram, { ko: Histogram; okVersion: number; koVersion: number; all: Histogram }>();
+
+/**
+ * The merge of both statuses — never mutates either input.
+ *
+ * MEMOISED and FROZEN. One live tick asked for the same merge three times
+ * per rollup (`finish`, `toEvaluableStats`, every percentile Gatling
+ * assertion), and each fresh merge then paid its own key sort; at 300,000
+ * distinct values that was most of a tick. A repeat call for the same two
+ * histograms, neither written since (`Histogram#version`), returns the merge
+ * already built, sorted keys and all. It is frozen because it is now shared:
+ * a caller that wrote to it would change every other caller's answer, so a
+ * write throws instead. A caller that needs to accumulate builds its own.
+ */
 export function mergedHistogram(ok: Histogram, ko: Histogram): Histogram {
+  const hit = merges.get(ok);
+  if (hit && hit.ko === ko && hit.okVersion === ok.version && hit.koVersion === ko.version) return hit.all;
   const all = new Histogram();
   all.merge(ok);
   all.merge(ko);
+  all.freeze();
+  merges.set(ok, { ko, okVersion: ok.version, koVersion: ko.version, all });
   return all;
 }
 
@@ -43,10 +60,11 @@ export function mergedHistogram(ok: Histogram, ko: Histogram): Histogram {
  */
 export function percentilesOf(h: Histogram, set: readonly number[]): Record<string, number> {
   const out: Record<string, number> = {};
-  for (const p of set) {
-    const v = h.percentile(p);
+  const values = h.percentiles(set); // one walk for the whole set
+  set.forEach((p, i) => {
+    const v = values[i];
     if (v !== undefined) out[`p${p}`] = v;
-  }
+  });
   return out;
 }
 
@@ -74,20 +92,22 @@ export class RollupBuilder {
      */
     clone?: boolean;
   }): StatRollup {
-    // ONE population for every figure on the row. Count, extremes, mean,
-    // standard deviation and percentiles all come from this merge, so a row
-    // describes one set of values and no figure can sit outside another's range.
-    const all = mergedHistogram(this.#histOk, this.#histKo);
-    const count = all.total;
-    const okCount = this.#histOk.total;
-    const mean = count === 0 ? 0 : all.sum / count;
-    // Population variance, E[x²] − E[x]², floored at 0 against rounding.
-    const variance = count === 0 ? 0 : Math.max(0, all.sumOfSquares() / count - mean * mean);
     const copy = (h: Histogram): Histogram => {
       const c = new Histogram();
       c.merge(h);
       return c;
     };
+    const histogramOk = opts.clone ? copy(this.#histOk) : this.#histOk;
+    const histogramKo = opts.clone ? copy(this.#histKo) : this.#histKo;
+    // ONE population for every figure on the row. Count, extremes, mean,
+    // standard deviation and percentiles all come from this merge, so a row
+    // describes one set of values and no figure can sit outside another's range.
+    // Merged from the histograms the row RETURNS, so `toEvaluableStats` and
+    // the Gatling assertions asking for this row's merge get this one back.
+    const all = mergedHistogram(histogramOk, histogramKo);
+    const count = all.total;
+    const okCount = histogramOk.total;
+    const mean = count === 0 ? 0 : all.sum / count;
     return {
       scope: opts.scope,
       name: opts.name,
@@ -99,11 +119,11 @@ export class RollupBuilder {
       minMs: all.min,
       maxMs: all.max,
       meanMs: mean,
-      stddevMs: Math.sqrt(variance),
+      stddevMs: Math.sqrt(all.variance()), // population, two-pass — see Histogram#variance
       percentiles: percentilesOf(all, opts.percentiles),
       throughputRps: opts.windowMs === 0 ? 0 : (count / opts.windowMs) * 1000,
-      histogramOk: opts.clone ? copy(this.#histOk) : this.#histOk,
-      histogramKo: opts.clone ? copy(this.#histKo) : this.#histKo,
+      histogramOk,
+      histogramKo,
     };
   }
 }

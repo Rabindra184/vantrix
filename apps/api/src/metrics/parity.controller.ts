@@ -193,7 +193,12 @@ export class ParityController {
       return Math.round((sum / ownWidthMs) * 1000);
     };
 
-    // y is quantile(0.95).toInt - TRUNCATED, not rounded.
+    // y is quantile(0.95).toInt - TRUNCATED, not rounded, as Gatling does it.
+    // For an exact (`sparse-ms-v2`) row the truncation is a NO-OP: a
+    // nearest-rank p95 is an observed response time, and those are integer
+    // milliseconds. It only changes a value on a LEGACY sketch row, whose
+    // estimate was fractional — kept for those until the backfill rewrites
+    // them, and harmless on the rest.
     // Gatling emits a point per status-filtered digest that exists in a bucket,
     // so a bucket with both successes and failures yields TWO points - one on
     // each series. Routing a mixed bucket to a single series drops the KO point
@@ -201,12 +206,12 @@ export class ParityController {
     //
     // The gate is presence of the status-filtered digest (percentiles.p95 !==
     // undefined), not okCount/koCount. Those counters are fed on the request's
-    // END edge (buckets.ts), while the sketches - and this p95 - are fed on the
+    // END edge (buckets.ts), while the histograms - and this p95 - are fed on the
     // START edge, so they can disagree about which bucket a straddling request
     // belongs to. Gatling's own gate
     // (LogFileData.timeAgainstGlobalNumberOfRequestsPerSec) is "does a digest
     // exist for this bucket", not a response count - matching that means
-    // reading it off the same start-edge sketch the value comes from.
+    // reading it off the same start-edge histogram the value comes from.
     const ok: [number, number][] = [];
     const ko: [number, number][] = [];
     for (const b of own) {

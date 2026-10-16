@@ -1,6 +1,7 @@
 import type { Bucket } from './buckets.js';
 import { BUCKET_PERCENTILES } from './engine.js';
-import { mergedHistogram, percentilesOf } from './rollup.js';
+import { Histogram } from './histogram.js';
+import { percentilesOf } from './rollup.js';
 
 /** A bucket's latency fields, as both the batch writer and the live publisher need them. */
 export interface BucketLatency {
@@ -27,7 +28,13 @@ export interface BucketLatency {
  * percentile is worse than an absent one.
  */
 export function bucketLatency(b: Pick<Bucket, 'histogramOk' | 'histogramKo'>): BucketLatency {
-  const all = mergedHistogram(b.histogramOk, b.histogramKo);
+  // A fresh merge, deliberately NOT `mergedHistogram`'s memoised one: a live
+  // run's buckets are long-lived accumulators, and a memo keyed on each would
+  // keep a second copy of every bucket's histogram for the life of the run,
+  // for a merge that nothing else asks for.
+  const all = new Histogram();
+  all.merge(b.histogramOk);
+  all.merge(b.histogramKo);
   return {
     minMs: all.min,
     maxMs: all.max,

@@ -72,7 +72,7 @@ const MAP = {
  *
  * Keyed on the percentile map being non-empty, and deliberately NOT on
  * `okCount`. Those are different edges: `okCount` counts requests that ENDED
- * OK in this second, while the percentile sketches are fed on the START edge
+ * OK in this second, while the percentile histograms are fed on the START edge
  * to match Gatling. They disagree, and the reference run contains the case —
  * the bucket at 63 s has `okCount: 1` and `startedOkCount: 0` with an empty
  * `percentilesOk`, because the request it counts started in the previous

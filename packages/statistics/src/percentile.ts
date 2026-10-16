@@ -52,9 +52,10 @@
  * So the rule is per ASSEMBLER instead, and it is the one a reader checks:
  * **a percentile is clamped against the same min and max reported beside it.**
  * `storedPercentiles` (`stored-percentiles.ts`) recomputes a LEGACY row's
- * percentile from its stored sketch against a row already assembled. (The
- * metrics controller's own two copies of that recomputation, for /stats and
- * trends, are the other callers until they move onto that one rule.) `RollupBuilder.finish`, `bucketLatency`,
+ * percentile from its stored sketch against a row already assembled, and it
+ * is the only one: the metrics controller's /stats and trends reads used to
+ * carry their own copies of that recomputation and now call
+ * `storedPercentiles` instead. `RollupBuilder.finish`, `bucketLatency`,
  * `tool-assertions.ts` and `packages/sla`'s `resolveMetric` were callers too
  * until they moved to exact histograms: a nearest-rank value is an observation
  * the row made, so it is inside that row's range by construction and they call

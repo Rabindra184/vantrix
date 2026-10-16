@@ -23,7 +23,8 @@ import { runName, runTag } from '../../runNumber';
  *     into one 2000 ms bucket is sound for counts, which sum. It is not sound
  *     for quantiles: the 95th percentile of a union is not the mean, the max,
  *     or any function of the two buckets' 95th percentiles — recovering it
- *     needs the underlying sketches, and `SeriesBucket` carries quantiles.
+ *     needs the underlying histograms, and `SeriesBucket` carries only the
+ *     percentiles computed from them.
  *     Resampling here would have produced a number wrong by an unbounded
  *     amount that looks entirely plausible on a chart.
  *
@@ -125,7 +126,7 @@ export const compareUnit = (metric: CompareMetric): string => (IS_RATE[metric] ?
  * for it.
  *
  * The emptiness test is still the map's own, for the reason
- * `transforms/percentiles.ts` argues at length: the sketches are fed on the
+ * `transforms/percentiles.ts` argues at length: the histograms are fed on the
  * START edge while `okCount` counts ends, so the two disagree, and the map
  * actually read is the only thing that cannot disagree with itself.
  *
@@ -149,9 +150,11 @@ function valueOf(
   const raw = bucket.percentiles[metric];
   // CLAMPED, as the run page clamps the same quantity. The scope here is the
   // BUCKET rather than the run — its percentiles and its `minMs`/`maxMs` come
-  // from one sketch over one slice — so the invariant is the same one a
-  // narrower window down: an estimate cannot lie outside the sample it was
-  // taken from. `max` above is deliberately read BEFORE this, and is exact.
+  // from one population over one slice. A bucket written since 2026-10-15
+  // holds exact nearest-rank values, already inside that range, so the clamp
+  // is a no-op for it; a LEGACY bucket holds sketch estimates, which can lie
+  // outside the sample they were taken from, and is still projected back.
+  // `max` above is deliberately read BEFORE this, and is exact.
   return raw === undefined ? null : clampPercentile(raw, bucket);
 }
 

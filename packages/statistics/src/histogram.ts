@@ -66,8 +66,44 @@ export class Histogram {
   #min = Number.POSITIVE_INFINITY;
   #max = Number.NEGATIVE_INFINITY;
   #overflowCount = 0;
+  /**
+   * The keys in ascending order, computed once and kept until a write adds a
+   * key. Sorting is the whole cost of a percentile here — a 300,000-key sort
+   * against a walk that is linear — and every percentile, the variance, the
+   * serializer and the distribution bins all want the same order. `null`
+   * means stale. Only a NEW key invalidates it; a count increment on a key
+   * already present changes no order.
+   */
+  #sortedKeys: number[] | null = null;
+  /**
+   * Bumped by every write. Lets a caller memoise a value derived from this
+   * histogram (`mergedHistogram`) and know when it has gone stale.
+   */
+  #version = 0;
+  /** A shared, memoised merge is read-only: writing to it would corrupt every reader. */
+  #frozen = false;
 
   constructor() {}
+
+  /** Monotonic write counter — see `#version`. */
+  get version(): number { return this.#version; }
+
+  /**
+   * Makes further `accept`/`merge` throw. For a histogram handed to more than
+   * one reader (a memoised merge), where a write would silently change every
+   * other reader's answer.
+   */
+  freeze(): this { this.#frozen = true; return this; }
+
+  #write(): void {
+    if (this.#frozen) throw new Error('Histogram: this histogram is a shared, read-only merge');
+    this.#version++;
+  }
+
+  #keys(): number[] {
+    if (this.#sortedKeys === null) this.#sortedKeys = [...this.#bins.keys()].sort((a, b) => a - b);
+    return this.#sortedKeys;
+  }
 
   /** True unless this histogram was read from `sparse-ms-v1` bytes. */
   get exact(): boolean { return this.#exact; }
@@ -75,6 +111,7 @@ export class Histogram {
   /** Negative durations are a upstream data fault; clamp to 0 rather than corrupt the key space. */
   accept(valueMs: number): void {
     const v = Math.max(0, Math.round(valueMs));
+    this.#write();
     this.#total++;
     this.#sum += v;
     if (v < this.#min) this.#min = v;
@@ -83,11 +120,18 @@ export class Histogram {
       this.#overflowCount++;
       return;
     }
-    this.#bins.set(v, (this.#bins.get(v) ?? 0) + 1);
+    const prev = this.#bins.get(v);
+    if (prev === undefined) this.#sortedKeys = null;
+    this.#bins.set(v, (prev ?? 0) + 1);
   }
 
   merge(other: Histogram): void {
-    for (const [v, c] of other.#bins) this.#bins.set(v, (this.#bins.get(v) ?? 0) + c);
+    this.#write();
+    for (const [v, c] of other.#bins) {
+      const prev = this.#bins.get(v);
+      if (prev === undefined) this.#sortedKeys = null;
+      this.#bins.set(v, (prev ?? 0) + c);
+    }
     this.#total += other.#total;
     this.#sum += other.#sum;
     this.#overflowCount += other.#overflowCount;
@@ -110,9 +154,7 @@ export class Histogram {
 
   /** Ascending by value. */
   *entries(): IterableIterator<readonly [number, number]> {
-    for (const v of [...this.#bins.keys()].sort((a, b) => a - b)) {
-      yield [v, this.#bins.get(v) as number] as const;
-    }
+    for (const v of this.#keys()) yield [v, this.#bins.get(v) as number] as const;
   }
 
   /**
@@ -152,29 +194,75 @@ export class Histogram {
    * every percentile would throw away answers we have.
    */
   percentile(p: number): number | undefined {
-    const index = nearestRankIndex(p, this.#total);
-    if (index < 0) return undefined;
-    // Every counted observation sits below a legacy cap; the overflow is the tail.
-    if (index >= this.#total - this.#overflowCount) return undefined;
-    let seen = 0;
-    for (const [value, count] of this.entries()) {
-      seen += count;
-      if (seen > index) return value;
-    }
-    return this.max;
+    return this.percentiles([p])[0];
   }
 
   /**
-   * `Σ(value² × count)`, for an exact standard deviation over any merged set.
+   * Every percentile of `set` in ONE cumulative walk over the sorted keys,
+   * answered in the caller's order. Same values as asking `percentile` rank
+   * by rank — the oracle tests hold both to a sort of the raw values — at the
+   * cost of one walk rather than one per rank.
    *
-   * A walk rather than a running total, so it stays correct through `merge` and
-   * `deserialize` without a third field to keep in step. The bins are the
-   * state; everything else is derived from them.
+   * Throws a RangeError for a rank outside [0, 100] exactly as `percentile`
+   * always has (`nearestRankIndex`), except on an empty histogram, which
+   * answers `undefined` for every rank before any rank is checked.
    */
-  sumOfSquares(): number {
-    let total = 0;
-    for (const [value, count] of this.entries()) total += value * value * count;
-    return total;
+  percentiles(set: readonly number[]): (number | undefined)[] {
+    const out: (number | undefined)[] = set.map(() => undefined);
+    // Every counted observation sits below a legacy cap; the overflow is the tail.
+    const answerable = this.#total - this.#overflowCount;
+    const targets: { index: number; slot: number }[] = [];
+    for (let slot = 0; slot < set.length; slot++) {
+      const index = nearestRankIndex(set[slot] as number, this.#total);
+      if (index < 0 || index >= answerable) continue;
+      targets.push({ index, slot });
+    }
+    if (targets.length === 0) return out;
+    targets.sort((a, b) => a.index - b.index);
+    let t = 0;
+    let seen = 0;
+    for (const value of this.#keys()) {
+      seen += this.#bins.get(value) as number;
+      while (t < targets.length && seen > (targets[t] as { index: number }).index) {
+        out[(targets[t] as { slot: number }).slot] = value;
+        t++;
+      }
+      if (t === targets.length) break;
+    }
+    for (; t < targets.length; t++) out[(targets[t] as { slot: number }).slot] = this.max;
+    return out;
+  }
+
+  /**
+   * The POPULATION variance (÷ n), in two passes: the mean from the exact
+   * sum first, then `Σ count·(value − mean)²` over the sorted bins.
+   *
+   * ═══ NOT `Σx²/n − mean²`, WHICH THIS REPLACED ═══
+   *
+   * That one-pass form subtracts two numbers near `mean²` to get a small
+   * one, and on values far from zero and close together — a long group
+   * duration, 200,000 observations in 300000–300019 ms — it measured 2.5e-7
+   * relative error in the standard deviation against a two-pass oracle.
+   * The PR 3 verifier compares within 1e-9. Here every deviation is small
+   * before it is squared, so nothing large cancels.
+   *
+   * Walked in SORTED order so the answer depends only on the bins, never on
+   * the order they were inserted or merged in: the batch row, a full-extent
+   * window and a live snapshot of one run agree to the bit.
+   *
+   * A legacy v1 overflow bin's observations are in `total` and `sum` but not
+   * in the bins, so for such a row the deviation omits their spread — the
+   * same class of loss as its unrecoverable percentiles.
+   */
+  variance(): number {
+    if (this.#total === 0) return 0;
+    const mean = this.#sum / this.#total;
+    let dev = 0;
+    for (const value of this.#keys()) {
+      const d = value - mean;
+      dev += (this.#bins.get(value) as number) * d * d;
+    }
+    return dev / this.#total;
   }
 
   snapshot(): HistogramSnapshot {

@@ -61,10 +61,6 @@ export function rollupFromHistograms(
   all.merge(ko);
 
   const mean = all.sum / count;
-  // Σx²/n − mean². Clamped at zero because floating-point cancellation can
-  // make an exactly-uniform sample come out fractionally negative, and
-  // Math.sqrt of that is NaN.
-  const variance = Math.max(0, all.sumOfSquares() / count - mean * mean);
 
   return {
     count,
@@ -74,7 +70,10 @@ export function rollupFromHistograms(
     minMs: all.min,
     maxMs: all.max,
     meanMs: mean,
-    stddevMs: Math.sqrt(variance),
+    // Population, two-pass over the sorted bins (Histogram#variance) — the
+    // same computation the batch row makes, so a full-extent window agrees
+    // with it to the bit.
+    stddevMs: Math.sqrt(all.variance()),
     // A zero-length window cannot arrive through the API — `from >= to` is a
     // 400 — but a rate of Infinity leaking into a response is worse than a
     // guard nobody trips.
@@ -90,13 +89,15 @@ export function rollupFromHistograms(
  * New histograms (`sparse-ms-v2`) are uncapped and never overflow, so every
  * rank is answered exactly. Legacy v1 rows can still carry an overflow bin;
  * the ranks it hides stay absent, never 0, and `StatisticsTable` renders the
- * missing key as a dash while count, min, max, mean and deviation stay exact.
+ * missing key as a dash while count, min, max and mean stay exact. (The
+ * deviation omits the overflowed observations' spread — `Histogram#variance`.)
  */
 function recoverablePercentiles(all: Histogram, percentiles: readonly number[]): Record<string, number> {
   const out: Record<string, number> = {};
-  for (const p of percentiles) {
-    const value = all.percentile(p);
+  const values = all.percentiles(percentiles); // one walk for the whole set
+  percentiles.forEach((p, i) => {
+    const value = values[i];
     if (value !== undefined) out[`p${p}`] = value; // absent, never 0, for a legacy overflowed rank
-  }
+  });
   return out;
 }
