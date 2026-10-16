@@ -61,7 +61,13 @@ export class RunsService {
    * run. `verdictChanges` is a second indexed lookup
    * (`run_verdict_change_run_id_idx`): what the exact recompute changed.
    * `verification` is the run's verification row, by primary key: what the
-   * run header's mark says (null when the run has no row yet). The three
+   * run header's mark says. With no row yet it is `pending` for a run that
+   * HAS statistics (the verifier has not reached it) and null for one that
+   * has none — a failed run, or an incomplete one nothing processed, which
+   * the verifier never checks and the run header must not call
+   * "Verifying…" for ever. That is a fourth lookup, an existence probe on
+   * run_stat, the half of the verifier's own definition of a verifiable run
+   * (VERIFIABLE_RUN_SQL) the run's status does not already answer. The
    * lookups are independent, so they run together.
    */
   async lifecycleOf(run: RunRecord): Promise<{
@@ -73,7 +79,7 @@ export class RunsService {
     verdictChanges: VerdictChange[];
     verification: VerificationSummary | null;
   }> {
-    const [job, changes, verification] = await Promise.all([
+    const [job, changes, verification, stat] = await Promise.all([
       this.prisma.runnerJob.findFirst({
         // The run's own project as well: the runner writes `run_id` only for a
         // run it opened in the job's own project, so this never narrows a real
@@ -95,6 +101,9 @@ export class RunsService {
         where: { runId: run.id },
         select: { status: true, unverifiableReason: true },
       }),
+      // Whether the run has any statistics for the verifier to check: the
+      // first row of its own index, no more.
+      this.prisma.runStat.findFirst({ where: { runId: run.id }, select: { runId: true } }),
     ]);
     const iso = (at: Date | null): string | null => (at === null ? null : at.toISOString());
     return {
@@ -106,7 +115,7 @@ export class RunsService {
       runnerJobId: job?.id ?? null,
       statsMethod: run.statsMethod,
       verdictChanges: changes.flatMap((c) => verdictChangeOf(run.id, c)),
-      verification: verificationSummaryOf(verification),
+      verification: verificationSummaryOf(verification, stat !== null),
     };
   }
 
@@ -289,16 +298,19 @@ function verdictChangeOf(
 }
 
 /**
- * The run header's verification mark, from the stored row. `null` when the
- * run has no row yet. The two columns are held to the contract's words by
- * `run_verification`'s CHECK constraints; a row that somehow does not parse
- * reads as no row rather than failing the whole run response — the rule
- * `verdictChangeOf` above follows for a stored snapshot.
+ * The run header's verification mark, from the stored row. With no row: a
+ * run with statistics is `pending` (the verifier has not reached it yet), and
+ * one with none answers null — not verifiable, so no mark at all. The two
+ * columns are held to the contract's words by `run_verification`'s CHECK
+ * constraints; a row that somehow does not parse reads as no row rather than
+ * failing the whole run response — the rule `verdictChangeOf` above follows
+ * for a stored snapshot.
  */
 function verificationSummaryOf(
   row: { status: string; unverifiableReason: string | null } | null,
+  hasStats: boolean,
 ): VerificationSummary | null {
-  if (row === null) return null;
+  if (row === null) return hasStats ? { status: 'pending', reason: null } : null;
   const parsed = VerificationSummarySchema.safeParse({ status: row.status, reason: row.unverifiableReason });
   return parsed.success ? parsed.data : null;
 }

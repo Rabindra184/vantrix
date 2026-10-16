@@ -37,9 +37,16 @@ export function unverifiableReasonText(reason: UnverifiableReason | null): strin
  * A pending, parsing or running run is still being measured, and a failed one
  * produced no statistics at all — "Verifying…" over either is a claim about
  * figures that do not exist. `complete` and `incomplete` both keep theirs (an
- * incomplete run's are what arrived), so both are marked. A terminal run with
- * no verification row yet reads as Verifying… — the verifier has not reached
- * it.
+ * incomplete run's are what arrived), so both are marked.
+ *
+ * ═══ NO SUMMARY, NO MARK ═══
+ *
+ * The API answers `pending` for a run with statistics the verifier has not
+ * reached yet, and null for a run with none — an incomplete run nothing
+ * processed is the common one, and the verifier never checks it. Drawing
+ * "Verifying…" there would say it for ever, while Administration › Data
+ * integrity rightly leaves the run out. So null (or an absent field, from an
+ * API older than this one) draws nothing.
  *
  * ═══ THE MARK IS A BUTTON, AND THE PANEL LOADS ON OPEN ═══
  *
@@ -62,11 +69,12 @@ export default function VerificationMark({
 }: {
   readonly runId: string;
   readonly status: RunStatus;
-  /** The identity's summary; `null`/`undefined` (no row yet) reads as pending. */
+  /** The identity's summary; `null`/`undefined` (not verifiable) draws no mark. */
   readonly summary: VerificationSummary | null | undefined;
 }) {
   if (status !== 'complete' && status !== 'incomplete') return null;
-  const state = summary?.status ?? 'pending';
+  if (summary == null) return null;
+  const state = summary.status;
   const mark = VERIFICATION[state];
   return (
     <span className="inline-flex items-center gap-1">
@@ -94,7 +102,7 @@ export default function VerificationMark({
         </Popover.Portal>
       </Popover.Root>
       {state === 'unverifiable' && (
-        <InfoTip label="Why this run is not verified">{unverifiableReasonText(summary?.reason ?? null)}</InfoTip>
+        <InfoTip label="Why this run is not verified">{unverifiableReasonText(summary.reason)}</InfoTip>
       )}
     </span>
   );

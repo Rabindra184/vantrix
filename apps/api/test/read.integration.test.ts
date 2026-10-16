@@ -15,6 +15,8 @@ import {
   VerificationSchema,
 } from '@perfportal/contracts';
 import { nearestRankIndex } from '@perfportal/statistics';
+import { CONFIG } from '../src/auth/auth.module.js';
+import { loadConfig } from '../src/config.js';
 import { createTestApp, type TestContext } from './support/app.js';
 import { runPipelineFor } from './support/pipeline.js';
 // Relative cross-package import, the precedent parity.e2e.test.ts sets:
@@ -269,16 +271,46 @@ describe('GET /v1/runs/:id — verification', () => {
     expect(pending.body.verification).toEqual({ status: 'mismatch', reason: null });
   });
 
-  it('sends null for a run with no verification row yet, in both bodies', async () => {
+  /**
+   * ═══ NO ROW: PENDING WITH STATISTICS, NULL WITHOUT ═══
+   *
+   * A run with statistics the verifier has not reached yet is pending; a run
+   * with none is not verifiable, and the header draws no mark for null. An
+   * incomplete run nothing processed is the common one: the verifier never
+   * gives it a row, so "pending" there would read "Verifying…" for ever.
+   * Both builders, each with and without statistics.
+   */
+  it('sends pending for a run with statistics and no row, and null for one with none, in both bodies', async () => {
     ctx = await createTestApp();
     const id = await ingested();
     const done = await readAs(`/v1/runs/${id}`);
     expect(done.status).toBe(200);
-    expect(done.body).toHaveProperty('verification', null);
+    expect(done.body.verification).toEqual({ status: 'pending', reason: null });
+
     const pendingId = await postWithoutProcessing();
     const pending = await readAs(`/v1/runs/${pendingId}`);
     expect(pending.status).toBe(202);
     expect(pending.body).toHaveProperty('verification', null);
+    // The same 202 builder, once the run carries a stat row.
+    await ctx.pool.query(
+      `INSERT INTO run_stat (id, run_id, org_id, project_id, scope, name, family, count, ok_count, ko_count,
+                             error_rate, min_ms, max_ms, mean_ms, stddev_ms, throughput_rps, percentiles)
+       SELECT gen_random_uuid(), $2, org_id, project_id, scope, name, family, count, ok_count, ko_count,
+              error_rate, min_ms, max_ms, mean_ms, stddev_ms, throughput_rps, percentiles
+         FROM run_stat WHERE run_id = $1 AND scope = 'run'`,
+      [id, pendingId],
+    );
+    const withStats = await readAs(`/v1/runs/${pendingId}`);
+    expect(withStats.status).toBe(202);
+    expect(withStats.body.verification).toEqual({ status: 'pending', reason: null });
+
+    // An incomplete run nothing processed: finished, no statistics, a 200.
+    const swept = await postWithoutProcessing();
+    await ctx.pool.query(`UPDATE run SET status = 'incomplete', ingested_at = now() WHERE id = $1`, [swept]);
+    const incomplete = await readAs(`/v1/runs/${swept}`);
+    expect(incomplete.status).toBe(200);
+    expect(incomplete.body.status).toBe('incomplete');
+    expect(incomplete.body).toHaveProperty('verification', null);
   });
 });
 
@@ -296,8 +328,11 @@ describe('GET /v1/runs/:id/verification', () => {
   };
 
   it('answers the whole record: status, when, by which verifier, the mismatches and the retention date', async () => {
-    ctx = await createTestApp();
+    ctx = await createTestApp(
+      {}, [], [{ provide: CONFIG, useValue: loadConfig({ ...process.env, RAW_LOG_RETENTION_DAYS: '90' }) }],
+    );
     const id = await ingested();
+    await ctx.pool.query(`UPDATE run SET ingested_at = '2026-10-16T09:00:00Z' WHERE id = $1`, [id]);
     await recordVerification(id, {
       status: 'mismatch',
       checkedAt: '2026-10-16T09:00:00.000Z',
@@ -315,15 +350,20 @@ describe('GET /v1/runs/:id/verification', () => {
       verifierVersion: 1,
       figuresChecked: 4120,
       mismatches: [MISMATCH],
-      // The UTC calendar day the column holds, on a machine in any zone.
+      // The ingest's UTC day plus 90 days, on a machine in any zone.
       rawLogRetainedUntil: '2027-01-14',
       rawLogDeleted: false,
     });
   });
 
+  /** Nothing recorded — but the retention date is the run's, not the
+   *  check's: derived from its ingest, so a run not checked yet has one too. */
   it('answers pending with nothing recorded for a run with no row yet', async () => {
-    ctx = await createTestApp();
+    ctx = await createTestApp(
+      {}, [], [{ provide: CONFIG, useValue: loadConfig({ ...process.env, RAW_LOG_RETENTION_DAYS: '90' }) }],
+    );
     const id = await ingested();
+    await ctx.pool.query(`UPDATE run SET ingested_at = '2026-10-16T09:00:00Z' WHERE id = $1`, [id]);
     const res = await readAs(`/v1/runs/${id}/verification`);
     expect(res.status).toBe(200);
     expect(VerificationSchema.parse(res.body)).toEqual({
@@ -333,7 +373,7 @@ describe('GET /v1/runs/:id/verification', () => {
       verifierVersion: null,
       figuresChecked: 0,
       mismatches: [],
-      rawLogRetainedUntil: null,
+      rawLogRetainedUntil: '2027-01-14',
       rawLogDeleted: false,
     });
   });
@@ -346,12 +386,40 @@ describe('GET /v1/runs/:id/verification', () => {
   it('says the raw log is deleted from the run\'s own stamp, whatever the verification found', async () => {
     ctx = await createTestApp();
     const id = await ingested();
-    await recordVerification(id, { status: 'verified', checkedAt: '2026-10-16T09:00:00Z', verifierVersion: 1, figuresChecked: 10 });
+    await recordVerification(id, {
+      status: 'verified', checkedAt: '2026-10-16T09:00:00Z', verifierVersion: 1, figuresChecked: 10,
+      // Stored at verify time, before the log went: it describes nothing now.
+      retainedUntil: '2027-01-14',
+    });
     await ctx.pool.query(`UPDATE run SET raw_log_deleted_at = now() WHERE id = $1`, [id]);
     const res = await readAs(`/v1/runs/${id}/verification`);
     expect(res.status).toBe(200);
     const body = VerificationSchema.parse(res.body);
-    expect([body.status, body.rawLogDeleted]).toEqual(['verified', true]);
+    expect([body.status, body.rawLogDeleted, body.rawLogRetainedUntil]).toEqual(['verified', true, null]);
+  });
+
+  /**
+   * ═══ THE RETENTION DATE FOLLOWS THE CURRENT SETTING ═══
+   *
+   * Derived when read, from the run's ingest and the deployment's setting,
+   * never from the column the verifier stored once: an operator who changes
+   * RAW_LOG_RETENTION_DAYS gets the new date, and 0 (kept for ever) gets
+   * none. The ingest is at 23:30 UTC, which is the NEXT day east of UTC: the
+   * answer is the UTC day's.
+   */
+  it.each([
+    ['30', '2026-11-15'],
+    ['0', null],
+  ])('answers the retention date under RAW_LOG_RETENTION_DAYS=%s, whatever the stored column says', async (days, until) => {
+    ctx = await createTestApp(
+      {}, [], [{ provide: CONFIG, useValue: loadConfig({ ...process.env, RAW_LOG_RETENTION_DAYS: days }) }],
+    );
+    const id = await ingested();
+    await ctx.pool.query(`UPDATE run SET ingested_at = '2026-10-16T23:30:00Z' WHERE id = $1`, [id]);
+    await recordVerification(id, { status: 'verified', checkedAt: '2026-10-17T09:00:00Z', verifierVersion: 1, retainedUntil: '2099-01-01' });
+    const res = await readAs(`/v1/runs/${id}/verification`);
+    expect(res.status).toBe(200);
+    expect(VerificationSchema.parse(res.body).rawLogRetainedUntil).toBe(until);
   });
 
   it('refuses a malformed id with 400 INVALID_ID', async () => {

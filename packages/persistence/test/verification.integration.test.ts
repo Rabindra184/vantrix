@@ -32,6 +32,8 @@ interface SeedOptions {
   ingestedAt?: Date | null;
   /** Defaults to a real-looking digest; '' is a live run that never assembled one. */
   bundleSha256?: string;
+  /** Defaults to the column's own default, 'exact-v1'. */
+  statsMethod?: 'estimated' | 'exact-v1';
 }
 
 async function seedRun(opts: SeedOptions = {}): Promise<string> {
@@ -47,6 +49,7 @@ async function seedRun(opts: SeedOptions = {}): Promise<string> {
       startedAt: STARTED_AT,
       startedOn: STARTED_ON,
       engineOptions: {},
+      statsMethod: opts.statsMethod,
       ingestedAt: opts.ingestedAt === undefined ? new Date() : opts.ingestedAt,
       // Prisma reads undefined as not provided, so the column default applies.
       createdAt: opts.createdAt,
@@ -58,17 +61,38 @@ async function seedRun(opts: SeedOptions = {}): Promise<string> {
   return run.id;
 }
 
+/**
+ * One stat row in the exact engine's format (sparse-ms-v2, no sketch), so a
+ * seeded run reads as exact by NOT_EXACT_RUN_SQL unless its label says
+ * estimated — the shape every run ingested since exact statistics carries.
+ */
 async function insertStat(runId: string, org: string, project: string, scope: string, name: string): Promise<void> {
   await pool.query(
     `INSERT INTO run_stat
        (id, run_id, org_id, project_id, scope, name, family,
         count, ok_count, ko_count, error_rate,
-        min_ms, max_ms, mean_ms, stddev_ms, throughput_rps, percentiles)
+        min_ms, max_ms, mean_ms, stddev_ms, throughput_rps, percentiles, histogram_kind)
      VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, 'response_time',
              3, 2, 1, 0.3333333333333333, 10, 30, 20, 8.16496580927726, 1.5,
-             '{"p50": 20, "p99.9": 30}'::jsonb)`,
+             '{"p50": 20, "p99.9": 30}'::jsonb, 'sparse-ms-v2')`,
     [runId, org, project, scope, name],
   );
+}
+
+/** A verified row at `version` — what the verifier leaves on a run it checked. */
+async function verified(id: string, version = 1): Promise<void> {
+  await new VerificationRepository(pool).record(id, {
+    status: 'verified',
+    verifierVersion: version,
+    figuresChecked: 1,
+    mismatches: [],
+    rawLogRetainedUntil: null,
+  });
+}
+
+/** retentionDue's ids at verifier version 1, one page of `limit`. */
+async function dueIds(repo: VerificationRepository, days = 30, limit = 100): Promise<string[]> {
+  return (await repo.retentionDue(days, 1, null, limit)).runs.map((r) => r.id);
 }
 
 const MISMATCH: FigureMismatch = {
@@ -219,6 +243,30 @@ describe('VerificationRepository.candidatePage', () => {
     expect((await repo.candidatePage(2, null, 100)).ids).toEqual([kept]);
   });
 
+  /**
+   * ═══ A NOT_EXACT ROW IS TAKEN BACK ONCE A RECOMPUTE MADE THE RUN EXACT ═══
+   *
+   * markUnverifiable stamps the current version, so nothing in the version
+   * test selects that row again. A recompute that made the run exact while
+   * verification was switched off — or whose request was lost — would leave
+   * it reading "estimates" for good without this clause.
+   */
+  it('selects an exact run still carrying a not_exact row at the current version', async () => {
+    const repo = new VerificationRepository(pool);
+    const recomputed = await seedRun({ statsMethod: 'exact-v1' });
+    await repo.markUnverifiable(recomputed, 'not_exact', 2);
+    expect((await repo.candidatePage(2, null, 100)).ids).toEqual([recomputed]);
+  });
+
+  it('does not select an estimated run carrying a not_exact row: it is still not exact', async () => {
+    const repo = new VerificationRepository(pool);
+    const estimated = await seedRun({ statsMethod: 'estimated' });
+    await repo.markUnverifiable(estimated, 'not_exact', 2);
+    // A positive beside the absence: the same run with no row IS selected.
+    const fresh = await seedRun({ statsMethod: 'estimated' });
+    expect((await repo.candidatePage(2, null, 100)).ids).toEqual([fresh]);
+  });
+
   it('pages newest first through a created_at tie without skipping or repeating', async () => {
     const repo = new VerificationRepository(pool);
     const t = new Date('2026-08-07T12:00:00.000Z');
@@ -251,8 +299,10 @@ describe('VerificationRepository: raw-log retention', () => {
     await repo.markRawLogDeleted(deleted);
     const noBundle = await seedRun({ ingestedAt: new Date(now - 40 * DAY), bundleSha256: '' });
     const neverIngested = await seedRun({ status: 'running', ingestedAt: null });
+    // Checked against their logs, so nothing but the clock keeps them.
+    for (const id of [due, justDue, notYet, justNotYet, noBundle]) await verified(id);
 
-    const rows = await repo.retentionDue(30, 100);
+    const rows = (await repo.retentionDue(30, 1, null, 100)).runs;
     expect(rows.map((r) => r.id).sort()).toEqual([due, justDue].sort());
     for (const id of [notYet, justNotYet, deleted, noBundle, neverIngested]) {
       expect(rows.map((r) => r.id)).not.toContain(id);
@@ -264,18 +314,52 @@ describe('VerificationRepository: raw-log retention', () => {
 
   it('keeps raw logs for ever when the retention is 0', async () => {
     const repo = new VerificationRepository(pool);
-    await seedRun({ ingestedAt: new Date(Date.now() - 400 * DAY) });
-    expect(await repo.retentionDue(0, 100)).toEqual([]);
+    await verified(await seedRun({ ingestedAt: new Date(Date.now() - 400 * DAY) }));
+    expect(await repo.retentionDue(0, 1, null, 100)).toEqual({ runs: [], next: null });
     // A positive beside the absence: the same run IS due under a real retention.
-    expect(await repo.retentionDue(30, 100)).toHaveLength(1);
+    expect(await dueIds(repo)).toHaveLength(1);
   });
 
-  it('respects the limit, oldest first', async () => {
+  /**
+   * Keyset-paged on (ingested_at, id), oldest first: a run whose delete keeps
+   * failing is behind the cursor once its page is walked, so it cannot hold
+   * every run after it. A tie on ingested_at is neither skipped nor repeated.
+   */
+  it('pages oldest first through an ingested_at tie, without skipping or repeating', async () => {
     const repo = new VerificationRepository(pool);
     const now = Date.now();
+    const t = new Date(now - 50 * DAY);
     const oldest = await seedRun({ ingestedAt: new Date(now - 60 * DAY) });
-    await seedRun({ ingestedAt: new Date(now - 50 * DAY) });
-    expect((await repo.retentionDue(30, 1)).map((r) => r.id)).toEqual([oldest]);
+    const tieA = await seedRun({ ingestedAt: t });
+    const tieB = await seedRun({ ingestedAt: t });
+    const newest = await seedRun({ ingestedAt: new Date(now - 40 * DAY) });
+    for (const id of [oldest, tieA, tieB, newest]) await verified(id);
+    const [lo, hi] = tieA < tieB ? [tieA, tieB] : [tieB, tieA];
+
+    const first = await repo.retentionDue(30, 1, null, 2);
+    expect(first.runs.map((r) => r.id)).toEqual([oldest, lo]);
+    expect(first.next).toEqual({ ingestedAt: t, id: lo });
+    const second = await repo.retentionDue(30, 1, first.next, 2);
+    expect(second.runs.map((r) => r.id)).toEqual([hi, newest]);
+    const third = await repo.retentionDue(30, 1, second.next, 2);
+    expect(third).toEqual({ runs: [], next: null });
+  });
+
+  it('answers isRetentionDue for one run by the same definition', async () => {
+    const repo = new VerificationRepository(pool);
+    const old = new Date(Date.now() - 40 * DAY);
+    const due = await seedRun({ ingestedAt: old });
+    await verified(due);
+    const pending = await seedRun({ ingestedAt: old });
+    await repo.markPending(pending);
+    const young = await seedRun();
+    await verified(young);
+    expect(await repo.isRetentionDue(due, 30, 1)).toBe(true);
+    expect(await repo.isRetentionDue(pending, 30, 1)).toBe(false);
+    expect(await repo.isRetentionDue(young, 30, 1)).toBe(false);
+    expect(await repo.isRetentionDue(due, 0, 1)).toBe(false);
+    // A newer verifier still has to check it against its log.
+    expect(await repo.isRetentionDue(due, 30, 2)).toBe(false);
   });
 
   it('a never-verified run becomes unverifiable when its raw log is deleted; a verified one stays verified', async () => {
@@ -315,8 +399,8 @@ describe('VerificationRepository: a deleted raw log settles a run, and only a ve
     const noStats = await seedRun({ stats: false, ingestedAt: new Date(Date.now() - 40 * DAY) });
     const before = await repo.summary(orgId);
 
-    // Both are due: retentionDue does not ask whether a run was verifiable.
-    expect((await repo.retentionDue(30, 100)).map((r) => r.id).sort()).toEqual([failed, noStats].sort());
+    // Both are due: neither has figures any verify or recompute will read.
+    expect((await dueIds(repo)).sort()).toEqual([failed, noStats].sort());
     await repo.markRawLogDeleted(failed);
     await repo.markRawLogDeleted(noStats);
 

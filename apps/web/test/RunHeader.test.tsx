@@ -422,9 +422,16 @@ describe('RunHeader — the verification mark', () => {
     expect(screen.getByTestId('run-status').parentElement).toContainElement(mark);
   });
 
-  it('reads a finished run with no verification yet as verifying', () => {
-    renderHeader({ ...RUN, verification: null });
+  it('reads a finished run the verifier has not reached as verifying', () => {
+    renderHeader({ ...RUN, verification: { status: 'pending', reason: null } });
     expect(screen.getByTestId('run-verification')).toHaveTextContent('Verifying…');
+  });
+
+  /** null is the API's "not verifiable": a run with no statistics, which
+   *  would otherwise read "Verifying…" for ever. */
+  it('draws no mark for a finished run that is not verifiable', () => {
+    renderHeader({ ...RUN, verification: null });
+    expect(screen.queryByTestId('run-verification')).toBeNull();
   });
 
   it('draws no mark for a run still running', () => {

@@ -1271,9 +1271,12 @@ const paths: Record<string, PathItemObject> = {
         'stored and recomputed value; an error-table mismatch names the error message in ' +
         '"family"), "unverifiable" with a "reason" when it could not be checked, and "pending" ' +
         'until it has been — a run with no verification yet answers "pending" with nothing ' +
-        'recorded. "rawLogRetainedUntil" is the calendar day (UTC) the raw log is kept until, ' +
-        'null for kept for ever or not yet checked; "rawLogDeleted" is whether retention has ' +
-        'already removed it. A run outside the caller\'s organisation or project answers 404.',
+        'recorded. "rawLogRetainedUntil" is the calendar day (UTC) retention may delete the raw ' +
+        'log under the deployment\'s current setting — the ingest\'s day plus the retention — ' +
+        'and null once it is deleted or when raw logs are kept for ever; retention keeps the log ' +
+        'past that day while the run is still to be verified or recomputed, or its verification ' +
+        'found a mismatch. "rawLogDeleted" is whether retention has already removed it. A run ' +
+        'outside the caller\'s organisation or project answers 404.',
       parameters: [parameters['RunId']!],
       responses: {
         '200': {

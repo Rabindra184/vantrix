@@ -119,8 +119,12 @@ export type FigureMismatch = z.infer<typeof FigureMismatchSchema>;
 /**
  * `GET /v1/runs/{id}/verification`: the whole verification record. A run with
  * no row yet answers `pending` with nothing recorded. `rawLogRetainedUntil`
- * is a CALENDAR DAY (the column is a date), null for "kept for ever" or for a
- * run never checked; `rawLogDeleted` says whether retention has already
+ * is a CALENDAR DAY (UTC): the day retention may delete the raw log under the
+ * deployment's CURRENT setting — the ingest's day plus the retention — and
+ * null once the log is deleted or when logs are kept for ever. Derived when
+ * read, so it follows a changed setting. Retention keeps the log past that day
+ * while the run is still to be verified or recomputed, or its verification
+ * found a mismatch. `rawLogDeleted` says whether retention has already
  * removed it, which is what makes a never-verified run unverifiable for good.
  */
 export const VerificationSchema = z.object({
@@ -410,10 +414,12 @@ export const RunIdentitySchema = z.object({
    *  above give. */
   verdictChanges: z.array(VerdictChangeSchema).optional(),
   /** Whether this run's stored figures were checked against its raw log,
-   *  and what that found. NULL when the run has no verification row yet — a
-   *  run that is not verifiable, or one the verifier has not reached (a
-   *  reader treats it as pending). OPTIONAL as well as nullable, for the
-   *  rolling-deploy reason the stamps above give. */
+   *  and what that found: `pending` for a run with statistics the verifier
+   *  has not reached yet. NULL means NOT VERIFIABLE — a run with no
+   *  statistics to check (a failed run, or an incomplete one nothing
+   *  processed), which a reader draws no verification mark for. OPTIONAL as
+   *  well as nullable, for the rolling-deploy reason the stamps above give;
+   *  an absent field is read the same way as null. */
   verification: VerificationSummarySchema.nullable().optional(),
   /** The note a person wrote on this run (run-note.ts), or null for none.
    *  OPTIONAL as well as nullable, for the rolling-deploy reason the lifecycle

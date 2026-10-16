@@ -1,5 +1,6 @@
-import type { BundleSource, CanonicalEvent } from '@perfportal/core';
+import { retainedUntil, type BundleSource, type CanonicalEvent } from '@perfportal/core';
 import {
+  NOT_EXACT_RUN_SQL,
   ProjectRepository,
   readStoredFigures,
   RunRepository,
@@ -28,21 +29,17 @@ import { openRunSource, RawLogMissingError } from '../pipeline/run-source.js';
 export type VerifyOutcome = 'verified' | 'mismatch' | 'locked' | 'gone' | 'not_eligible' | UnverifiableReason;
 
 /**
- * The run's statistics were not all written by the exact engine: labelled
- * estimated, or carrying a stat row in an older format (a sketch, or a
- * histogram kind before sparse-ms-v2) — the same per-row test the recompute
- * selection makes. Such a run cannot be held to the raw log figure for
- * figure; checking it would report a flood of mismatches that say only
- * "estimated", which PR 2 already says.
+ * Whether the run's statistics were all written by the exact engine, by
+ * persistence's ONE definition (NOT_EXACT_RUN_SQL — the recompute selects by
+ * it, and the verify scan takes a not_exact row back by it). A run that is
+ * not exact cannot be held to the raw log figure for figure; checking it
+ * would report a flood of mismatches that say only "estimated", which PR 2
+ * already says.
  *
- * Reads the run as r. No backticks in here: it is interpolated into a
- * template literal, and one of those ends the string.
+ * No backticks in here: it is a template literal, and one ends the string.
  */
 const NOT_EXACT_SQL = `
-  SELECT r.stats_method = 'estimated'
-      OR EXISTS (SELECT 1 FROM run_stat s
-                  WHERE s.run_id = r.id
-                    AND (s.sketch IS NOT NULL OR s.histogram_kind IS DISTINCT FROM 'sparse-ms-v2')) AS not_exact,
+  SELECT ${NOT_EXACT_RUN_SQL} AS not_exact,
          EXISTS (SELECT 1 FROM run_stat s WHERE s.run_id = r.id) AS has_stats
     FROM run r WHERE r.id = $1::uuid`;
 
@@ -168,7 +165,10 @@ export class VerifyService {
       verifierVersion: VERIFIER_VERSION,
       figuresChecked,
       mismatches,
-      rawLogRetainedUntil: retainedUntil(run, this.config.rawLogRetentionDays),
+      // core's one rule, the one the API derives the date by when it reads it.
+      // ingested_at is the retention clock, and every terminal writer stamps
+      // it: now stands in only for a row somehow missing it.
+      rawLogRetainedUntil: retainedUntil(run.ingestedAt ?? new Date(), this.config.rawLogRetentionDays),
     });
     if (status === 'mismatch') {
       // ONE line: the list is on the row, and the Data integrity page shows it.
@@ -211,18 +211,6 @@ function sourceFailure(err: unknown): UnverifiableReason | null {
     return 'raw_log_unreadable';
   }
   return null;
-}
-
-/**
- * The ingest's UTC calendar day plus the retention, as the UTC midnight that
- * starts that day; null when raw logs are kept for ever. `ingested_at` is the
- * retention clock (`retentionDue` reads the same column), and every terminal
- * writer stamps it — `now` stands in only for a row somehow missing it.
- */
-function retainedUntil(run: RunRecord, days: number): Date | null {
-  if (days === 0) return null;
-  const ingested = run.ingestedAt ?? new Date();
-  return new Date(Date.UTC(ingested.getUTCFullYear(), ingested.getUTCMonth(), ingested.getUTCDate() + days));
 }
 
 /**

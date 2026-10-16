@@ -84,8 +84,17 @@ describe('VerificationMark — the mark', () => {
     expect(VERIFICATION.unverifiable.label).toBe('Not verified');
   });
 
-  it('reads a terminal run with no verification row yet as verifying', () => {
-    renderMark('complete', null);
+  /** The API answers `pending` for a run the verifier has not reached; null
+   *  means the run has no statistics to verify. "Verifying…" there would be
+   *  said for ever — an incomplete run nothing processed never gets a row. */
+  it.each([null, undefined])('draws nothing for a terminal run that is not verifiable (summary %s)', (summary) => {
+    renderMark('incomplete', summary);
+    expect(screen.queryByTestId('run-verification')).toBeNull();
+    expect(screen.queryByText(/verif/i)).toBeNull();
+  });
+
+  it('reads a pending summary as verifying', () => {
+    renderMark('complete', { status: 'pending', reason: null });
     expect(trigger()).toHaveTextContent('Verifying…');
   });
 

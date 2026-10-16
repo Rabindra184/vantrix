@@ -24,3 +24,22 @@ export function parseRawLogRetentionDays(value: string | undefined): number {
   }
   return Number(text);
 }
+
+/**
+ * ═══ THE DAY A RUN'S RAW LOG FALLS DUE FOR DELETION ═══
+ *
+ * The UTC calendar day of the ingest, plus `days`, as the UTC midnight that
+ * starts that day; null when raw logs are kept for ever (`days` of 0).
+ * `ingested_at` is the retention clock the sweeper reads too.
+ *
+ * ONE rule, used by two processes: the worker stores it on the verification
+ * row, and the API derives it at READ time from the deployment's CURRENT
+ * setting — a date stored once at verify time goes stale when the setting
+ * changes. It is the day retention may delete the log, not a promise that it
+ * will: a run still to be verified or recomputed, or whose verification found
+ * a mismatch, keeps its log past it.
+ */
+export function retainedUntil(ingestedAt: Date, days: number): Date | null {
+  if (days === 0) return null;
+  return new Date(Date.UTC(ingestedAt.getUTCFullYear(), ingestedAt.getUTCMonth(), ingestedAt.getUTCDate() + days));
+}

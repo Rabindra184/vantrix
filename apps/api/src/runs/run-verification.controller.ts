@@ -1,8 +1,11 @@
-import { Controller, Get, Param, Req } from '@nestjs/common';
+import { Controller, Get, Inject, Param, Req } from '@nestjs/common';
 import { VerificationSchema, type Verification } from '@perfportal/contracts';
+import { retainedUntil } from '@perfportal/core';
 import { RunRepository, VerificationRepository } from '@perfportal/persistence';
 import type { Request } from 'express';
 import { Requires } from '../auth/access.decorator.js';
+import { CONFIG } from '../auth/auth.module.js';
+import type { AppConfig } from '../config.js';
 import { Scopes } from '../auth/scopes.decorator.js';
 import { runNotFound, uuidParam } from '../common/validation.js';
 
@@ -26,12 +29,23 @@ import { runNotFound, uuidParam } from '../common/validation.js';
  * checked yet" is the honest answer to a typed URL. `rawLogDeleted` is the
  * RUN's own stamp, not the row's reason: a run verified before retention
  * removed its log stays verified and still says the log is gone.
+ *
+ * ═══ THE RETENTION DATE IS DERIVED HERE, NOT READ ═══
+ *
+ * `rawLogRetainedUntil` is the day retention may delete the log under the
+ * deployment's CURRENT setting: null once the log is gone or when logs are
+ * kept for ever, otherwise the ingest's UTC day plus the days — core's
+ * `retainedUntil`, the one rule the worker stores the column by. The stored
+ * column was computed once, at verify time, and goes stale the moment the
+ * operator changes RAW_LOG_RETENTION_DAYS or retention deletes the log; it is
+ * not read.
  */
 @Controller('/v1/runs/:id')
 export class RunVerificationController {
   constructor(
     private readonly runs: RunRepository,
     private readonly verifications: VerificationRepository,
+    @Inject(CONFIG) private readonly config: AppConfig,
   ) {}
 
   @Get('verification')
@@ -52,10 +66,19 @@ export class RunVerificationController {
       verifierVersion: row?.verifierVersion ?? null,
       figuresChecked: row?.figuresChecked ?? 0,
       mismatches: row?.mismatches ?? [],
-      // The UTC calendar day `VerificationRepository.find` read the date
-      // column as — never through a local-zone Date, which would move it.
-      rawLogRetainedUntil: row?.rawLogRetainedUntil?.toISOString().slice(0, 10) ?? null,
+      rawLogRetainedUntil: retentionDay(run.rawLogDeletedAt, run.ingestedAt, this.config.rawLogRetentionDays),
       rawLogDeleted: run.rawLogDeletedAt !== null,
     });
   }
+}
+
+/**
+ * The day retention may delete this run's raw log, as the calendar day the
+ * contract carries: null once it is deleted, when logs are kept for ever, or
+ * for a run with no ingest yet (nothing starts its clock). A UTC day from a
+ * UTC midnight — never through a local-zone Date, which would move it.
+ */
+function retentionDay(deletedAt: Date | null, ingestedAt: Date | null, days: number): string | null {
+  if (deletedAt !== null || ingestedAt === null) return null;
+  return retainedUntil(ingestedAt, days)?.toISOString().slice(0, 10) ?? null;
 }

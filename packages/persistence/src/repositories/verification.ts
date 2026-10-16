@@ -1,5 +1,5 @@
 import type pg from 'pg';
-import type { CandidateCursor, CandidatePage } from './recompute.js';
+import { CANDIDATE_PREDICATE_SQL, NOT_EXACT_RUN_SQL, type CandidateCursor, type CandidatePage } from './recompute.js';
 
 /** Held to these four words by run_verification_status_check. */
 export type VerificationStatus = 'pending' | 'verified' | 'mismatch' | 'unverifiable';
@@ -82,6 +82,88 @@ interface VerificationRow {
 const VERIFIABLE_RUN_SQL = `
   r.status IN ('complete', 'incomplete')
   AND EXISTS (SELECT 1 FROM run_stat s WHERE s.run_id = r.id)`;
+
+/**
+ * ═══ THE ONE DEFINITION OF A RUN THE VERIFIER STILL HAS TO CHECK ═══
+ *
+ * A verifiable run whose raw log is still stored, and whose verification row
+ * is missing, pending, recorded by no version or by a version older than
+ * `version` (a placeholder such as $1: the caller passes VERIFIER_VERSION,
+ * which persistence cannot import), or — the stale case — marked
+ * unverifiable/not_exact while its statistics are now exact. That last one is
+ * a run a recompute made exact AFTER the verifier had refused it: nothing else
+ * reliably asks for it again (verification may have been switched off while
+ * the backfill ran, or the request after the recompute may have been lost),
+ * and without this clause it would read "estimates" for good.
+ *
+ * Read by the scan (candidatePage) AND by retention (retentionDue), which
+ * must never delete a log the scan is still going to read. The absent-row arm
+ * stays scoped by VERIFIABLE_RUN_SQL: a failed run, or one with no
+ * statistics, never gets a row, and must not look like a run waiting for one.
+ *
+ * Reads the run as r and its verification row as v (LEFT JOINed).
+ * Parenthesised, so it can be negated. No backticks in here.
+ */
+export function verifyCandidateSql(version: string): string {
+  return `
+  (
+    (${VERIFIABLE_RUN_SQL})
+    AND r.raw_log_deleted_at IS NULL
+    AND (
+      v.run_id IS NULL
+      OR v.status = 'pending'
+      OR v.verifier_version IS NULL
+      OR v.verifier_version < ${version}
+      OR (v.status = 'unverifiable' AND v.unverifiable_reason = 'not_exact' AND NOT ${NOT_EXACT_RUN_SQL})
+    )
+  )`;
+}
+
+/**
+ * ═══ A RAW LOG RETENTION MAY DELETE ═══
+ *
+ * Past retention (ingested more than `days` ago — ingested_at is the
+ * retention clock: every terminal writer stamps it), still stored, carrying an
+ * assembled bundle (a live run that never assembled one has the '' sentinel
+ * and no object to delete), and needed by nothing:
+ *
+ *  - not a verify candidate (verifyCandidateSql): a log is deleted only once
+ *    the run has been checked against it, or once it never can be;
+ *  - not a recompute candidate (CANDIDATE_PREDICATE_SQL): an estimated run's
+ *    log is what its exact statistics will be computed from. A run the
+ *    recompute retired (recompute_error) is no candidate, and its log goes;
+ *  - not a mismatch: a mismatched run's log is the evidence for the defect,
+ *    and a fixed verifier, or a recompute, needs it.
+ *
+ * A failed run, or one with no statistics, is none of those and is deletable.
+ * `days` and `version` are placeholders. Reads r and v (LEFT JOINed).
+ * No backticks in here.
+ */
+function retentionDueSql(days: string, version: string): string {
+  return `
+  r.ingested_at IS NOT NULL
+  AND r.ingested_at < now() - make_interval(days => ${days}::int)
+  AND r.raw_log_deleted_at IS NULL
+  AND r.bundle_sha256 <> ''
+  AND NOT ${verifyCandidateSql(version)}
+  AND NOT (${CANDIDATE_PREDICATE_SQL})
+  AND v.status IS DISTINCT FROM 'mismatch'`;
+}
+
+/**
+ * Where one page of retention-due runs ended: the last row's
+ * (ingested_at, id). timestamptz(3), so a JS Date carries it exactly.
+ */
+export interface RetentionCursor {
+  ingestedAt: Date;
+  id: string;
+}
+
+export interface RetentionPage {
+  runs: { id: string; bundleKey: string }[];
+  /** The cursor for the next page; null when this page was the last. */
+  next: RetentionCursor | null;
+}
 
 /**
  * `raw_log_retained_until` is a date column, and node-postgres would parse it
@@ -223,8 +305,9 @@ export class VerificationRepository {
   /**
    * ═══ ONE PAGE OF RUNS TO VERIFY, KEYSET-PAGED ON (created_at, id) ═══
    *
-   * A verifiable run whose row is missing, pending, or recorded by a verifier
-   * older than `version`. Newest first, ties broken by id — the shape
+   * verifyCandidateSql's runs: a verifiable run whose row is missing,
+   * pending, recorded by a verifier older than `version`, or a stale
+   * not_exact on a run since made exact. Newest first, ties broken by id — the shape
    * RecomputeRepository.candidatePage argues for, so a run created in the
    * same millisecond as the cursor is neither skipped nor repeated.
    *
@@ -239,11 +322,7 @@ export class VerificationRepository {
     limit: number,
   ): Promise<CandidatePage> {
     const params: unknown[] = [version];
-    const where = [
-      VERIFIABLE_RUN_SQL,
-      'r.raw_log_deleted_at IS NULL',
-      `(v.run_id IS NULL OR v.status = 'pending' OR v.verifier_version IS NULL OR v.verifier_version < $1)`,
-    ];
+    const where = [verifyCandidateSql('$1')];
     if (after !== null) {
       params.push(after.createdAt, after.id);
       where.push(`(r.created_at, r.id) < ($${params.length - 1}::timestamptz, $${params.length}::uuid)`);
@@ -264,26 +343,59 @@ export class VerificationRepository {
   }
 
   /**
-   * Runs whose raw log is past retention and still stored: ingested more than
-   * `days` days ago, carrying an assembled bundle (a live run that never
-   * assembled one has the '' sentinel and no object to delete), and not yet
-   * deleted. Oldest first. `days` of 0 (or less) keeps raw logs for ever.
+   * ═══ ONE PAGE OF RUNS WHOSE RAW LOG RETENTION MAY DELETE ═══
    *
-   * ingested_at is the retention clock: every terminal writer stamps it.
+   * retentionDueSql's runs, oldest first, keyset-paged on (ingested_at, id):
+   * a run whose delete keeps failing does not hold every run behind it, the
+   * sweeper walks on past it to the next page. `days` of 0 (or less) keeps
+   * raw logs for ever. `version` is the verifier's current version, which
+   * decides whether a run still has to be checked against its log.
    */
-  async retentionDue(days: number, limit: number): Promise<{ id: string; bundleKey: string }[]> {
-    if (!(days > 0)) return [];
-    const { rows } = await this.pool.query<{ id: string; bundle_key: string }>(
-      `SELECT id, bundle_key FROM run
-        WHERE ingested_at IS NOT NULL
-          AND ingested_at < now() - make_interval(days => $1::int)
-          AND raw_log_deleted_at IS NULL
-          AND bundle_sha256 <> ''
-        ORDER BY ingested_at, id
-        LIMIT $2`,
-      [days, limit],
+  async retentionDue(
+    days: number,
+    version: number,
+    after: RetentionCursor | null,
+    limit: number,
+  ): Promise<RetentionPage> {
+    if (!(days > 0)) return { runs: [], next: null };
+    const params: unknown[] = [days, version];
+    const where = [retentionDueSql('$1', '$2')];
+    if (after !== null) {
+      params.push(after.ingestedAt, after.id);
+      where.push(`(r.ingested_at, r.id) > ($${params.length - 1}::timestamptz, $${params.length}::uuid)`);
+    }
+    params.push(limit);
+    const { rows } = await this.pool.query<{ id: string; bundle_key: string; ingested_at: Date }>(
+      `SELECT r.id, r.bundle_key, r.ingested_at
+         FROM run r LEFT JOIN run_verification v ON v.run_id = r.id
+        WHERE ${where.join(' AND ')}
+        ORDER BY r.ingested_at, r.id
+        LIMIT $${params.length}`,
+      params,
     );
-    return rows.map((r) => ({ id: r.id, bundleKey: r.bundle_key }));
+    const last = rows[rows.length - 1];
+    return {
+      runs: rows.map((r) => ({ id: r.id, bundleKey: r.bundle_key })),
+      next: rows.length === limit && last ? { ingestedAt: last.ingested_at, id: last.id } : null,
+    };
+  }
+
+  /**
+   * Whether ONE run is still due, by the same definition retentionDue pages
+   * by. The sweeper asks it again once it holds the run's lock: a page is read
+   * before any lock is taken, and in between a scan or a version bump may have
+   * marked the run pending — deleting it then would leave a run the verifier
+   * was about to check settled as unverifiable/raw_log_deleted instead.
+   */
+  async isRetentionDue(runId: string, days: number, version: number): Promise<boolean> {
+    if (!(days > 0)) return false;
+    const { rows } = await this.pool.query<{ due: boolean }>(
+      `SELECT (${retentionDueSql('$2', '$3')}) AS due
+         FROM run r LEFT JOIN run_verification v ON v.run_id = r.id
+        WHERE r.id = $1::uuid`,
+      [runId, days, version],
+    );
+    return rows[0]?.due === true;
   }
 
   /**
@@ -292,8 +404,8 @@ export class VerificationRepository {
    * for that reason. A run already checked keeps its outcome: whether its
    * figures agreed with the raw log was settled while the log existed.
    *
-   * Only a VERIFIABLE run gets a row. retentionDue selects any old run with a
-   * bundle, a failed one or one with no statistics included; giving those an
+   * Only a VERIFIABLE run gets a row. retentionDue selects a failed run, or
+   * one with no statistics, as readily as a verified one; giving those an
    * unverifiable row would count runs in the summary, and list them as
    * problems, that never had figures to verify. The stamp itself is
    * unconditional: the log is gone whatever the run was.
