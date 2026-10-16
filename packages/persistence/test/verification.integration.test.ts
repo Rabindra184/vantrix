@@ -123,6 +123,8 @@ describe('VerificationRepository: recording', () => {
       rawLogRetainedUntil: null,
     });
 
+    // A stale Gatling-differences list must not survive a new check.
+    await pool.query(`UPDATE run_verification SET gatling_differences = '["stale"]'::jsonb WHERE run_id = $1`, [runId]);
     const retained = new Date('2026-11-15T00:00:00Z');
     await repo.record(runId, {
       status: 'mismatch',
@@ -141,6 +143,7 @@ describe('VerificationRepository: recording', () => {
       { ...MISMATCH, population: null, bucket: null, table: 'run', figure: 'duration_ms', stored: '1', recomputed: null },
     ]);
     expect(found?.unverifiableReason).toBeNull();
+    expect(found?.gatlingDifferences).toEqual([]);
     expect(found?.rawLogRetainedUntil?.toISOString().slice(0, 10)).toBe('2026-11-15');
   });
 
@@ -165,8 +168,11 @@ describe('VerificationRepository: recording', () => {
   it('marks a run unverifiable with its reason and version', async () => {
     const runId = await seedRun();
     const repo = new VerificationRepository(pool);
+    await repo.markPending(runId);
+    await pool.query(`UPDATE run_verification SET gatling_differences = '["stale"]'::jsonb WHERE run_id = $1`, [runId]);
     await repo.markUnverifiable(runId, 'raw_log_unreadable', 2);
     const found = await repo.find(runId);
+    expect(found?.gatlingDifferences).toEqual([]);
     expect(found?.status).toBe('unverifiable');
     expect(found?.unverifiableReason).toBe('raw_log_unreadable');
     expect(found?.verifierVersion).toBe(2);
@@ -298,6 +304,67 @@ describe('VerificationRepository: raw-log retention', () => {
     );
     expect(rows).toHaveLength(3);
     for (const r of rows) expect(r.raw_log_deleted_at).toBeInstanceOf(Date);
+  });
+});
+
+describe('VerificationRepository: a deleted raw log settles a run, and only a verifiable one', () => {
+  it('gives a run that was never verifiable no row when its raw log is deleted, but still stamps it', async () => {
+    const repo = new VerificationRepository(pool);
+    const counted = await seedRun(); // verifiable, no row: pending in the summary
+    const failed = await seedRun({ status: 'failed', stats: false, ingestedAt: new Date(Date.now() - 40 * DAY) });
+    const noStats = await seedRun({ stats: false, ingestedAt: new Date(Date.now() - 40 * DAY) });
+    const before = await repo.summary(orgId);
+
+    // Both are due: retentionDue does not ask whether a run was verifiable.
+    expect((await repo.retentionDue(30, 100)).map((r) => r.id).sort()).toEqual([failed, noStats].sort());
+    await repo.markRawLogDeleted(failed);
+    await repo.markRawLogDeleted(noStats);
+
+    expect(await repo.find(failed)).toBeNull();
+    expect(await repo.find(noStats)).toBeNull();
+    expect(await repo.summary(orgId)).toEqual(before);
+    expect(before).toEqual({ verified: 0, mismatch: 0, unverifiable: 0, pending: 1 });
+    expect(await repo.problems(orgId, 10)).toEqual([]);
+    const { rows } = await pool.query<{ raw_log_deleted_at: Date | null }>(
+      `SELECT raw_log_deleted_at FROM run WHERE id = ANY($1::uuid[])`,
+      [[failed, noStats]],
+    );
+    for (const r of rows) expect(r.raw_log_deleted_at).toBeInstanceOf(Date);
+    // A positive beside the absences: the verifiable run still IS settled.
+    await repo.markRawLogDeleted(counted);
+    expect((await repo.find(counted))?.status).toBe('unverifiable');
+  });
+
+  it('markPending settles a deleted-log run as unverifiable rather than leaving it pending for ever', async () => {
+    const repo = new VerificationRepository(pool);
+    const deleteLog = (id: string) => pool.query(`UPDATE run SET raw_log_deleted_at = now() WHERE id = $1`, [id]);
+    const noRow = await seedRun();
+    await deleteLog(noRow);
+    const wasPending = await seedRun();
+    await repo.markPending(wasPending);
+    await deleteLog(wasPending);
+    const verified = await seedRun();
+    await repo.record(verified, { status: 'verified', verifierVersion: 1, figuresChecked: 4, mismatches: [], rawLogRetainedUntil: null });
+    await repo.markRawLogDeleted(verified);
+    const failed = await seedRun({ status: 'failed', stats: false });
+    await deleteLog(failed);
+
+    for (const id of [noRow, wasPending, verified, failed]) await repo.markPending(id);
+
+    for (const id of [noRow, wasPending]) {
+      const found = await repo.find(id);
+      expect(found?.status).toBe('unverifiable');
+      expect(found?.unverifiableReason).toBe('raw_log_deleted');
+    }
+    // Settled while its log existed: nothing can re-check it, so it keeps its outcome.
+    expect(await repo.find(verified)).toMatchObject({ status: 'verified', figuresChecked: 4 });
+    expect(await repo.find(failed)).toBeNull();
+    expect(await repo.summary(orgId)).toEqual({ verified: 1, mismatch: 0, unverifiable: 2, pending: 0 });
+
+    // A run whose log is kept is still queued as before.
+    const kept = await seedRun();
+    await repo.markPending(kept);
+    expect((await repo.find(kept))?.status).toBe('pending');
   });
 });
 

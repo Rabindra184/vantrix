@@ -120,14 +120,34 @@ export class VerificationRepository {
    * Upsert: a run (re)queued for verification. Everything the last check
    * recorded is cleared, except how long its raw log is retained — that is a
    * fact about the stored object, not about the check.
+   *
+   * ═══ A RUN WHOSE RAW LOG IS GONE IS NEVER LEFT PENDING ═══
+   *
+   * candidatePage never selects it again, so a pending row there would sit in
+   * the summary's pending count for ever. Instead it is settled the way
+   * markRawLogDeleted settles it: a verifiable run with no row, or with a
+   * pending one, becomes unverifiable/raw_log_deleted; a verified, mismatched
+   * or already-unverifiable row is left alone, because its outcome was decided
+   * while the log still existed and nothing can re-check it now. A deleted-log
+   * run that was never verifiable gets no row at all, as in markRawLogDeleted.
    */
   async markPending(runId: string): Promise<void> {
     await this.pool.query(
-      `INSERT INTO run_verification (run_id, status) VALUES ($1::uuid, 'pending')
+      `WITH target AS (
+         SELECT r.id, r.raw_log_deleted_at IS NOT NULL AS gone, (${VERIFIABLE_RUN_SQL}) AS verifiable
+           FROM run r WHERE r.id = $1::uuid
+       )
+       INSERT INTO run_verification (run_id, status, checked_at, unverifiable_reason)
+       SELECT id,
+              CASE WHEN gone THEN 'unverifiable' ELSE 'pending' END,
+              CASE WHEN gone THEN now() END,
+              CASE WHEN gone THEN 'raw_log_deleted' END
+         FROM target WHERE NOT gone OR verifiable
        ON CONFLICT (run_id) DO UPDATE SET
-         status = 'pending', checked_at = NULL, verifier_version = NULL,
+         status = EXCLUDED.status, checked_at = EXCLUDED.checked_at, verifier_version = NULL,
          figures_checked = 0, mismatches = '[]'::jsonb, gatling_differences = '[]'::jsonb,
-         unverifiable_reason = NULL`,
+         unverifiable_reason = EXCLUDED.unverifiable_reason
+        WHERE EXCLUDED.status = 'pending' OR run_verification.status = 'pending'`,
       [runId],
     );
   }
@@ -142,6 +162,7 @@ export class VerificationRepository {
          status = EXCLUDED.status, checked_at = EXCLUDED.checked_at,
          verifier_version = EXCLUDED.verifier_version, figures_checked = EXCLUDED.figures_checked,
          mismatches = EXCLUDED.mismatches, unverifiable_reason = NULL,
+         gatling_differences = '[]'::jsonb,
          raw_log_retained_until = EXCLUDED.raw_log_retained_until`,
       [
         runId,
@@ -160,7 +181,8 @@ export class VerificationRepository {
        VALUES ($1::uuid, 'unverifiable', now(), $3, $2)
        ON CONFLICT (run_id) DO UPDATE SET
          status = 'unverifiable', checked_at = now(), verifier_version = EXCLUDED.verifier_version,
-         figures_checked = 0, mismatches = '[]'::jsonb, unverifiable_reason = EXCLUDED.unverifiable_reason`,
+         figures_checked = 0, mismatches = '[]'::jsonb, gatling_differences = '[]'::jsonb,
+         unverifiable_reason = EXCLUDED.unverifiable_reason`,
       [runId, reason, verifierVersion],
     );
   }
@@ -254,6 +276,12 @@ export class VerificationRepository {
    * that was never verified (no row, or a pending one) becomes unverifiable
    * for that reason. A run already checked keeps its outcome: whether its
    * figures agreed with the raw log was settled while the log existed.
+   *
+   * Only a VERIFIABLE run gets a row. retentionDue selects any old run with a
+   * bundle, a failed one or one with no statistics included; giving those an
+   * unverifiable row would count runs in the summary, and list them as
+   * problems, that never had figures to verify. The stamp itself is
+   * unconditional: the log is gone whatever the run was.
    */
   async markRawLogDeleted(runId: string): Promise<void> {
     await this.pool.query(
@@ -263,10 +291,12 @@ export class VerificationRepository {
          RETURNING id
        )
        INSERT INTO run_verification (run_id, status, checked_at, unverifiable_reason)
-       SELECT id, 'unverifiable', now(), 'raw_log_deleted' FROM stamped
+       SELECT r.id, 'unverifiable', now(), 'raw_log_deleted'
+         FROM stamped JOIN run r ON r.id = stamped.id
+        WHERE ${VERIFIABLE_RUN_SQL}
        ON CONFLICT (run_id) DO UPDATE SET
          status = 'unverifiable', checked_at = now(), unverifiable_reason = 'raw_log_deleted',
-         figures_checked = 0, mismatches = '[]'::jsonb
+         figures_checked = 0, mismatches = '[]'::jsonb, gatling_differences = '[]'::jsonb
         WHERE run_verification.status = 'pending'`,
       [runId],
     );
