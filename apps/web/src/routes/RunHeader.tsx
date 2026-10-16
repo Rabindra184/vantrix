@@ -415,8 +415,13 @@ export default function RunHeader({
             only place the verdict appears, and it stays. Omitted while
             `verdict` is `undefined`; `null` renders `VERDICT['none']`, a real,
             evaluated absence. `shrink-0` so a long simulation name never
-            squeezes it. */}
-        <div className="flex shrink-0 flex-wrap items-center gap-2">
+            squeezes it, and `max-w-full` so that it can still wrap: with the
+            verification mark it holds THREE badges on the Report, and at a 32px
+            root their one-line width outgrew the header and pushed the whole
+            document sideways (`acceptance.spec.ts`' 200% text case). A
+            `shrink-0` item sizes to its max-content, so only a cap makes its
+            own `flex-wrap` ever wrap. */}
+        <div className="flex max-w-full shrink-0 flex-wrap items-center gap-2">
           <NamedBadge mark={STATUS[status]} testId="run-status" />
           {verdict !== undefined && <NamedBadge mark={VERDICT[verdict ?? 'none']} testId="run-verdict" />}
           {/* Whether the run's stored figures agree with its raw log — a
