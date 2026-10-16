@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { bandsFrom } from '../src/indicators.js';
-import { RollupBuilder } from '../src/rollup.js';
+import { Histogram } from '../src/histogram.js';
+import { mergedHistogram, RollupBuilder } from '../src/rollup.js';
 
 describe('RollupBuilder', () => {
   it('computes exact counts, min, max, mean and population stddev', () => {
@@ -143,5 +144,54 @@ describe('RollupBuilder histograms', () => {
     expect(bandsFrom(r.histogramOk, r.koCount, { lowerMs: 800, higherMs: 1200 })).toEqual({
       under: 848, between: 0, over: 23, failed: 24,
     });
+  });
+});
+
+/**
+ * `mergedHistogram` is memoised so a row's merge is built once and shared by
+ * `finish`, `toEvaluableStats` and the Gatling assertions. A memo is only
+ * correct while it notices writes, and a SHARED merge is only safe while
+ * nobody can write to it — so both halves are pinned here, beside the reuse.
+ */
+describe('mergedHistogram', () => {
+  const pair = () => {
+    const ok = new Histogram();
+    const ko = new Histogram();
+    for (const v of [10, 20, 30]) ok.accept(v);
+    ko.accept(400);
+    return { ok, ko };
+  };
+
+  it('hands back the merge already built for the same two unwritten histograms', () => {
+    const { ok, ko } = pair();
+    expect(mergedHistogram(ok, ko)).toBe(mergedHistogram(ok, ko));
+  });
+
+  it('rebuilds the merge once either input has been written to', () => {
+    const { ok, ko } = pair();
+    expect(mergedHistogram(ok, ko).max).toBe(400);
+    ko.accept(900);
+    expect(mergedHistogram(ok, ko).max).toBe(900);
+    ok.accept(1);
+    expect(mergedHistogram(ok, ko).min).toBe(1);
+    expect(mergedHistogram(ok, ko).total).toBe(6);
+  });
+
+  it('refuses a write to the shared merge rather than change every reader', () => {
+    const { ok, ko } = pair();
+    const all = mergedHistogram(ok, ko);
+    expect(() => all.accept(5)).toThrow(/read-only/);
+    expect(() => all.merge(new Histogram())).toThrow(/read-only/);
+    expect(all.total).toBe(4);
+  });
+
+  it('is the merge a finished row hands to whoever asks for it next', () => {
+    const b = new RollupBuilder();
+    for (const v of [10, 20, 30]) b.add(v, true);
+    b.add(400, false);
+    const r = b.finish({ scope: 'run', name: '', family: 'response_time', windowMs: 1000, percentiles: [50], clone: true });
+    const all = mergedHistogram(r.histogramOk, r.histogramKo);
+    expect(mergedHistogram(r.histogramOk, r.histogramKo)).toBe(all);
+    expect(all.total).toBe(r.count);
   });
 });
