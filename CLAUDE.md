@@ -173,19 +173,35 @@ Gatling's own assertions is PR 4's) and the histogram BYTES (an encoding; the
 figures derived from them are verified). `VERIFIER_VERSION` (1) is bumped when
 the rules change, and a run verified by an older one is a candidate again.
 
-**ITS INDEPENDENCE IS A LINT RULE, NOT A CONVENTION.** `eslint.config.js`
-forbids `packages/verify` (source AND tests) importing `@perfportal/statistics`
-by name or by a relative path into its tree, and its source the database layer
-too — a verifier that reached for the engine's own rank function would agree
-with exactly the bug it exists to catch. `lint-rules-compose.test.ts` guards
-that the blocks compose.
+**ITS INDEPENDENCE IS A LINT RULE AND A SOURCE SCAN, NOT A CONVENTION.**
+`eslint.config.js` forbids `packages/verify` (source AND tests) importing
+`@perfportal/statistics` by name or by a relative path into its tree, and its
+source the database layer too — a verifier that reached for the engine's own
+rank function would agree with exactly the bug it exists to catch.
+`lint-rules-compose.test.ts` guards that the blocks compose. **The lint rule
+alone had a hole**, measured by the final review: `no-restricted-imports` does
+not see a DYNAMIC `import()`, so `await import('../../statistics/src/rank.js')`
+in `packages/verify/src` linted clean (and the root `node_modules` holds the
+engine, so even a bare dynamic specifier resolves).
+`packages/verify/test/independence.test.ts` reads every specifier in the
+package — static `from`, side-effect `import '…'`, `import(…)`, `require(…)`,
+comments stripped — and fails on one naming the engine or persistence, with a
+vacuity floor on the specifiers it found.
 
 **A `verify` QUEUE, CONCURRENCY 1, BEHIND INGEST — RECOMPUTE'S SHAPE.**
-Requested after every successful ingest and every `recomputed` outcome
-(`enqueueVerification` marks the row `pending` FIRST, so the header reads
-"Verifying…", then adds the job — the other order lets the answer land under
-the pending write), and found by a scan every `VERIFY_SCAN_INTERVAL_MS` (10
-min) that keyset-pages every candidate and re-queues failed jobs. Ingest work
+Requested after every successful ingest and every `recomputed` outcome of the
+worker's queue (`enqueueVerification` marks the row `pending` FIRST, so the
+header reads "Verifying…", then adds the job — the other order lets the answer
+land under the pending write; the `pnpm recompute` CLI only marks the row
+pending and leaves the job to the scan), and found by a scan every
+`VERIFY_SCAN_INTERVAL_MS` (10 min; empty, zero or negative is the default, one
+helper shared with `RECOMPUTE_SCAN_INTERVAL_MS`) that keyset-pages every
+candidate and re-queues failed jobs. A candidate is one `verifyCandidateSql`
+(persistence): verifiable, log not deleted, and no row, a pending one, an older
+`VERIFIER_VERSION`, or a stale `not_exact` on a run that is exact now — the
+last because `not_exact` is stamped at the current version, so a run marked
+before its recompute (verify deferred while the backfill ran, or a lost
+request) would otherwise read "estimates" for good (final review I2). Ingest work
 waiting/active/delayed pushes a job back 5 s; a run whose advisory lock is held
 (an ingest, a recompute, a live fold) is `locked` and waits 30 s — the lock is
 held from before the log is opened until the stored rows are read, so a
@@ -202,15 +218,40 @@ checked BEFORE the log is opened, because verifying estimates would report a
 flood of mismatches that say only "estimated"). `BUNDLE_TOO_LARGE` and
 transport failures are rethrown, never recorded.
 
-**RAW LOGS ARE DELETED AFTER 90 DAYS BY DEFAULT, AND THE FIRST SWEEP AFTER AN
-UPGRADE DELETES EVERYTHING ALREADY OLDER.** `RAW_LOG_RETENTION_DAYS` (empty is
-90, `0` is for ever, anything not a whole number of days stops the worker AND
-the API at startup — `parseRawLogRetentionDays` in `@perfportal/core` is the
-one rule). The sweeper's retention pass deletes the object, then stamps
-`run.raw_log_deleted_at`; it try-locks each run and skips one somebody holds.
-A run already verified (or mismatched) KEEPS that answer; a never-verified one
-becomes `unverifiable`/`raw_log_deleted` for good. DEPLOYMENT.md says to set
-`0` before upgrading an install with older history.
+**A RAW LOG IS DELETED AFTER 90 DAYS BY DEFAULT, BUT ONLY ONCE NOTHING NEEDS
+IT.** `RAW_LOG_RETENTION_DAYS` (empty is 90, `0` is for ever, anything not a
+whole number of days from 0 to 36500 stops the worker AND the API at startup —
+`parseRawLogRetentionDays` in `@perfportal/core` is the one rule; the bound is
+there because `99999999999` overflowed `make_interval` on every sweep and made
+`Date.UTC` an Invalid Date). `retentionDue` selects a run past retention only
+when it is NOT a verify candidate (verified, or settled unverifiable), NOT a
+recompute candidate (`CANDIDATE_PREDICATE_SQL`: estimated and not retired with
+a `recompute_error`), and NOT `mismatch` — a mismatched run's log is the
+evidence, and a fixed verifier or a recompute needs it. The absent-row
+protection is scoped by `VERIFIABLE_RUN_SQL`, so a failed run or one with no
+statistics (never verifiable, never a row) is still deleted on schedule. The
+pass keyset-pages `(ingested_at, id)` to the end in every sweep (100 runs that
+keep failing no longer stall the rest), try-locks each run, re-checks
+`isRetentionDue` UNDER the lock (a scan or a version bump may have made it a
+candidate since the page was read), deletes the object, then stamps
+`run.raw_log_deleted_at`; a `#sweeping` guard stops two sweeps overlapping. A
+`markPending` landing between the re-check and the stamp is the residual window
+(only the scan can produce it, and the outcome is honest: pending becomes
+`unverifiable`/`raw_log_deleted`), documented rather than locked. So setting `0`
+before upgrading is OPTIONAL now, and `VERIFY_ENABLED=false` keeps the logs the
+backlog needs — those runs read "Verifying…" meanwhile.
+
+**A RUN WITH NO STATISTICS DRAWS NO MARK, AND THE RETENTION DATE IS DERIVED
+WHEN READ.** `lifecycleOf` probes for one `run_stat` row: no verification row
+answers `pending` with statistics and `null` without, and `VerificationMark`
+draws nothing for a null (or absent) summary — before the fix wave an
+incomplete run nothing processed read "Verifying…" for ever while Data
+integrity correctly left it out (final review I1). `rawLogRetainedUntil` on
+`GET /v1/runs/{id}/verification` is derived from the run's `ingested_at` and
+the API's CURRENT setting (core's `retainedUntil`): null once the log is
+deleted or under `0`, and answered for a run not yet checked too. The stored
+column is still written and is no longer read — it went stale after a
+deletion and after a changed setting (I4).
 
 **THE REAL RUNS, ON A SCRATCH DATABASE** (`perfportal_verify_real`, Redis db
 12, bucket `perfportal-verify-real`, API :3752, this tree's worker and runner):
@@ -234,7 +275,9 @@ becomes `unverifiable`/`raw_log_deleted` for good. DEPLOYMENT.md says to set
     empty), both `raw_log_deleted_at` set; the verified run stayed `verified`
     (API `rawLogDeleted: true`, the panel reads "deleted") and the other read
     `unverifiable`/`raw_log_deleted`. Re-verifying either afterwards answers
-    `raw_log_deleted` and changes neither row.
+    `raw_log_deleted` and changes neither row. **That second half is the
+    pre-fix-wave behaviour, recorded as what ran:** since the final fix wave a
+    run with no verification row is a verify candidate and keeps its log.
   - Gatling's own assertion line agreed with the stored request p95 on the
     plugin run (Search 1891 = 1891) and not on the runner run (2106 against a
     stored, verified 2077): Gatling's report percentile is its t-digest, PR 4's
@@ -250,7 +293,8 @@ which is exactly what an upgrade reads until the backfill reaches each run (the
 recompute marks it pending, so it is verified again). After `RecomputeService`
 over the same read-only store (26 recomputed): **26 `verified`, 0 mismatch, 0
 unverifiable, 3 `not_eligible`** (the failed run and two incomplete runs with no
-statistics) — **570,860 figures** (102 to 32,426 a run, runs of 1 to 1,724
+statistics — the two incomplete ones read "Verifying…" in the run header
+before the fix wave, which is how final review I1 was found) — **570,860 figures** (102 to 32,426 a run, runs of 1 to 1,724
 requests), the 29 verifications in 733 ms. The copy was dropped and the
 developer database read back identical: 29 runs, 346 `run_stat` rows, 37
 migrations, the same md5 over every run's id/status/verdict and every
@@ -258,15 +302,23 @@ migrations, the same md5 over every run's id/status/verdict and every
 
 **KNOWN AND LEFT:**
 
-  - Retention does not wait for verification or for the backfill: a run past
-    retention is deleted on the first sweep whether or not it was ever checked
-    or recomputed. DEPLOYMENT.md's remedy is `0` before upgrading; a product
-    answer (skip runs still `pending`, `not_exact` or a recompute candidate) is
-    a design decision.
-  - A verified run whose log is later deleted keeps the `raw_log_retained_until`
-    computed at verification (2027-01-14 above, after a deletion on day 0 under
-    a retention lowered since). The panel reads `rawLogDeleted` first and says
-    "deleted"; only the API body carries the stale date.
+  - FIXED BY THE FINAL FIX WAVE, which this entry once listed as open:
+    retention not waiting for verification or the backfill (it waits now,
+    above), and a stale `raw_log_retained_until` after a deletion (the date is
+    derived when read, above).
+  - The Compare overlay's data table carries no ≈ for an estimated run's
+    percentiles; the overlay's series name, the matrix headers and the summary
+    tiles do. Out of PR 3's brief, recorded.
+  - Left by the final review, each argued there: the verification panel's
+    non-modal popover loops Tab inside itself (Escape closes it and returns
+    focus, tested); the muted "not verified" badge colour is not in
+    `palette.test.ts` (it is `--color-text-muted`, held to AA as text); the
+    `stats` test's throughput expectation echoes the code (the fixture
+    cross-check is the independent one); the recompute CLI's `markPending` is
+    untested (`verifyCandidateSql`'s stale-`not_exact` arm makes it
+    belt-and-braces, and that arm is tested); a stored mismatch list the
+    contract refuses answers 500 on `/verification` (only the worker writes
+    it, from typed values — the controller's docstring says why).
   - The worker ignored SIGTERM for 30 s at teardown and took a SIGKILL by PID,
     as this file records.
 
