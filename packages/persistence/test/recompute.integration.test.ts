@@ -131,13 +131,34 @@ describe('RecomputeRepository', () => {
   });
 
   it('counts progress per org: total runs with statistics, remaining candidates, failed', async () => {
-    const done = await seedRunWithStatRow({ statsMethod: 'exact-v1', sketch: false, histogramKind: 'sparse-ms-v2' });
-    const todo = await seedRunWithStatRow({ statsMethod: 'estimated' });
+    await seedRunWithStatRow({ statsMethod: 'exact-v1', sketch: false, histogramKind: 'sparse-ms-v2' });
+    await seedRunWithStatRow({ statsMethod: 'estimated' });
     const lost = await seedRunWithStatRow({ statsMethod: 'estimated' });
     await new RecomputeRepository(pool).markFailed(lost, 'raw_log_missing');
     expect(await new RecomputeRepository(pool).progress(orgId)).toEqual({ total: 3, remaining: 1, failed: 1 });
-    void done;
-    void todo;
+  });
+
+  it('counts an exact-labelled run over legacy rows, marked failed, as failed', async () => {
+    // Never recomputed again, so it keeps its legacy figures whatever its
+    // label says. A count that filtered failures by label would lose it from
+    // remaining (the error excludes it) AND from failed.
+    const mislabelled = await seedRunWithStatRow({ statsMethod: 'exact-v1', sketch: true, histogramKind: 'sparse-ms-v1' });
+    await new RecomputeRepository(pool).markFailed(mislabelled, 'parse_failed');
+    expect(await new RecomputeRepository(pool).progress(orgId)).toEqual({ total: 1, remaining: 0, failed: 1 });
+  });
+
+  it('selects an exact-labelled run on either half of the legacy-format test alone', async () => {
+    // Each half of the format branch, with the other half false, so neither
+    // can be dropped without a case going red.
+    const legacyKindOnly = await seedRunWithStatRow({ statsMethod: 'exact-v1', sketch: false, histogramKind: 'sparse-ms-v1' });
+    const sketchOnly = await seedRunWithStatRow({ statsMethod: 'exact-v1', sketch: true, histogramKind: 'sparse-ms-v2' });
+    // A NULL kind is legacy too: an equality test would read it as unknown
+    // and skip the run, which is why the predicate says IS DISTINCT FROM.
+    const nullKind = await seedRunWithStatRow({ statsMethod: 'exact-v1', sketch: false, histogramKind: null });
+    const exact = await seedRunWithStatRow({ statsMethod: 'exact-v1', sketch: false, histogramKind: 'sparse-ms-v2' });
+    const ids = await new RecomputeRepository(pool).candidates({}, 100);
+    expect(ids.sort()).toEqual([legacyKindOnly, sketchOnly, nullKind].sort());
+    expect(ids).not.toContain(exact);
   });
 
   it('filters candidates by project slug and by run id', async () => {

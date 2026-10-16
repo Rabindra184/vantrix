@@ -83,13 +83,21 @@ export class RecomputeRepository {
   /**
    * For one org's finished runs: how many carry statistics at all, how many
    * of those still need recomputing, and how many were given up on.
+   *
+   * FAILED IS EVERY RUN WITH STATISTICS AND A recompute_error, WHATEVER ITS
+   * LABEL. An errored run is never selected again, so it keeps its legacy
+   * figures for good — including an exact-v1 label over legacy rows, which a
+   * label-only count would drop from both remaining and failed.
    */
   async progress(orgId: string): Promise<{ total: number; remaining: number; failed: number }> {
     const { rows } = await this.pool.query<{ total: string; remaining: string; failed: string }>(
       `SELECT
          count(*) FILTER (WHERE EXISTS (SELECT 1 FROM run_stat s WHERE s.run_id = r.id)) AS total,
          count(*) FILTER (WHERE ${CANDIDATE_PREDICATE_SQL}) AS remaining,
-         count(*) FILTER (WHERE r.recompute_error IS NOT NULL AND r.stats_method = 'estimated') AS failed
+         count(*) FILTER (
+           WHERE r.recompute_error IS NOT NULL
+             AND EXISTS (SELECT 1 FROM run_stat s WHERE s.run_id = r.id)
+         ) AS failed
        FROM run r WHERE r.org_id = $1::uuid AND r.status IN ('complete', 'incomplete')`,
       [orgId],
     );
