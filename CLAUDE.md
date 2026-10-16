@@ -128,9 +128,9 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **247 files / 3958 tests**, it
+`nvm use` first, and if a run reports fewer than **247 files / 3967 tests**, it
 did not run everything — nor did an integration run reporting fewer than
-**225 files / 3459 tests**, an e2e run fewer than **204**, or a
+**225 files / 3466 tests**, an e2e run fewer than **204**, or a
 `pnpm test:e2e:cross` run fewer than **612** (204 on each of three engines).
 (Update those numbers when a sub-project adds suites, or the next reader
 calibrates against a stale floor and a silently-skipped run looks like a
@@ -166,7 +166,92 @@ THREE integration files — `apps/worker/test/recompute.integration` (16),
 (13) — and `api/admin` 3, `api/read` 3, `pipeline` 2: **220 / 3391 to
 225 / 3459**. **e2e stays 204** (612 on three engines): no spec changed. Each
 total was predicted from per-file `vitest list` counts on `origin/main` and on
-the branch, and each measured exactly that.
+the branch, and each measured exactly that. **Its final fix wave**, after the
+whole-branch review, added no file and 9 unit cases (`VerdictChanged` 2,
+`recompute-args` 2, and one each in `RequestDetail`, `GroupDetail`,
+`RunStats`, `RecomputeProgress` and `worker/config`): **247 / 3958 to
+247 / 3967**. Integration gains the three `.ts` ones plus
+`worker/recompute.integration` 3 and `persistence/recompute.integration` 1:
+**225 / 3459 to 225 / 3466**. **e2e stays 204.**
+
+**A JS DATE BOUND TO A `date` COLUMN IS RENDERED IN THE PROCESS'S ZONE, AND
+WEST OF UTC THAT IS THE DAY BEFORE.** `run_started_on` is the run's UTC
+calendar date — `startedOnFrom` derives it so and Prisma reads it back as UTC
+midnight — but the metric writer, the recompute's delete and every reader bound
+that Date straight to node-postgres, which renders it in local time:
+`TZ=America/New_York` turns 2026-10-16T00:00Z into 2026-10-15. A worker there
+put a run's buckets on the wrong day, and a RECOMPUTE there was worse — its
+DELETE missed the legacy rows on the right day while its INSERT wrote new ones
+on the wrong one, leaving two engines' rows under one run labelled exact. It is
+invisible east of UTC (this machine is Asia/Kolkata) and in UTC (CI), so no
+suite here could have seen it. `partitionDay` (`packages/persistence/src/metrics/partition-day.ts`)
+binds the UTC day as `YYYY-MM-DD` text in all three, the shape `telemetry.ts`'
+`sampledOn` already used. The case pins `process.env.TZ` to New York INSIDE
+itself, asserts the flip took, ingests in the file's own zone first and
+recomputes in New York — and restores the zone in a `finally`, because
+integration files share a worker process. Red-verified four ways: the Date
+back in persist and delete (rows on both days, 6 keys against 3), in the delete
+alone (`duplicate key value violates unique constraint
+"run_series_bucket_2026_08_pkey"`), in persist alone (the same counts on the
+wrong day), and in the reader alone (`expected 0 to be greater than 0`). **An
+install that ran its worker west of UTC before this already has rows on the
+previous day**; this does not move them, and a reader now looks on the UTC day.
+
+**"VERDICT CHANGED" WAS SAID FOR EVERY CHANGED OUTCOME.** A `run_verdict_change`
+row is written when a rule's OUTCOME moves, and one rule can flip while another
+already failed the run — verdict failed before and after. The line now says
+"Verdict changed by exact statistics" only when some change has
+`oldVerdict !== newVerdict`, and "An SLA rule's outcome changed with exact
+statistics" otherwise, with the same ⓘ.
+
+**AN IDENTITY NOT YET READ IS NOT AN ESTIMATED ONE.** The drill-downs passed
+`isExact(run?.statsMethod)`, and `/stats` and the run are separate queries —
+so an EXACT run's percentile headings read "approximately" until its identity
+arrived, and for ever if that read failed. No mark until the run is known. The
+case holds the run's own read open with a promise it resolves later, which is
+the only way to see the window.
+
+**A LIMIT LOWERED AFTER INGEST IS NOT A FACT ABOUT THE LOG.** A recompute opened
+with the project's `maxDecompressedBundleBytes` alone, so a project that
+lowered it retired every older run as `parse_failed` for good. It opens with
+the larger of the project's and the worker's, and a `BUNDLE_TOO_LARGE` refusal
+is rethrown rather than recorded — raising the limit fixes it.
+
+**COMPOSE PASSES AN UNSET VARIABLE AS AN EMPTY STRING, AND `Number('')` IS 0.**
+`PERFPORTAL_RECOMPUTE_ENABLED` and `PERFPORTAL_RECOMPUTE_SCAN_INTERVAL_MS` now
+reach the worker through `app_env` as `${…:-}`, so an operator who sets
+neither hands it `""`. `RECOMPUTE_ENABLED` already read `""` as on;
+`RECOMPUTE_SCAN_INTERVAL_MS` went through `numberOr`, which passes `""` through
+as 0 — a 0 ms interval, the continuous rescan the NaN guard beside it exists to
+prevent. Blank is unset for that variable now (`numberOr` itself is unchanged:
+`LIVE_TICK_MS` has a case pinning `""` to its floor). Red-verified: the case
+reads `expected +0 to be 600000` without it.
+
+**AND THE REST, EACH SMALL:** `markFailed` labels the run `estimated` in the
+same UPDATE, so an exact-labelled run over legacy rows that cannot be
+recomputed reads ≈; an estimated run with no p95 shows `—`, not `≈ —`; the
+progress line is plain text, not `role="status"` (a count changing every ten
+seconds re-announces itself on every Administration page); the CLI says running
+beside the worker is safe (the usage had said to stop it) and prints
+`<id>: <outcome>`; `RawLogMissingError` says "no verified log" (a sweeper that
+crashed between storing an object and recording its checksum leaves bytes
+nothing vouches for); a comment in `recompute()` says why a lost lock session
+is safe (every row it writes carries a unique key, so an overlapping second
+writer rolls back).
+
+**WHAT THE FIX WAVE RAN**, on Node v22.19.0 against `perfportal_backfill`,
+Redis db 13 (flushed before each integration run) and e2e port 3740, every
+total predicted first: `pnpm build`, `typecheck` (every `.tsbuildinfo`
+deleted first) and `lint` exit 0 by their own exit codes; `test:unit`
+**247 / 3967**, exit 0, zero `Errors` lines (load 3.2). `test:integration`
+COLLECTED **225 / 3466** at load 9.6 and exited 1 on ONE case, a P1001
+"Can't reach database server" in `persistence/activity.integration` — a file
+this diff cannot reach, 15 of 15 alone; re-run at load 2.1 it read
+**225 / 3466, exit 0, zero failures**. `PERFPORTAL_E2E_PORT=3740 pnpm test:e2e
+--workers=2` read back `Running 204 tests using 2 workers`, **204 passed,
+exit 0**. `node infra/test/env-example-covers-compose.mjs` exits 0 (1 before
+`.env.example` gained the two variables), and both `docker compose config
+--quiet` forms exit 0 with only the three documented variables exported.
 
 **EVERY RUN STORED BEFORE EXACT STATISTICS IS RECOMPUTED FROM ITS OWN RAW LOG,
 IN ONE TRANSACTION PER RUN.** `RecomputeService` takes the run's ingest
@@ -197,14 +282,17 @@ assertion is paired with its old row by snapshot id; where the OUTCOME
 differs, `run_verdict_change` gets the snapshot, old and new outcome, old and
 new value and old and new run verdict. Both identity builders serve
 `verdictChanges`, and the run page draws "Verdict changed by exact
-statistics" beside the release gate with an ⓘ listing each rule. A changed
-VALUE with the same outcome writes no row.
+statistics" beside the release gate when some change moved the run's verdict,
+or "An SLA rule's outcome changed with exact statistics" when only an outcome
+moved, with an ⓘ listing each rule. A changed VALUE with the same outcome
+writes no row.
 
 **A RUN THAT CANNOT BE RECOMPUTED IS RETIRED WITH A REASON AND KEEPS ITS
 ESTIMATES.** `raw_log_missing` (no verified log: empty `bundle_sha256`, or the
 object is gone), `checksum_mismatch`, `parse_failed`; anything else — an
-object-store timeout among them — is rethrown, so the run stays selectable.
-An errored run is never selected again, keeps `estimated`, and its
+object-store timeout among them, and a `BUNDLE_TOO_LARGE` refusal — is
+rethrown, so the run stays selectable. An errored run is never selected again,
+is labelled `estimated` (`markFailed` sets it in the same UPDATE), and its
 percentiles carry **≈** (the p95 tile, every percentile column heading on the
 Report and both drill-downs, the groups list's p95 headings). Admins see
 "N of M runs" while any remain, with the failed count.
@@ -219,9 +307,9 @@ a fixed newest-500 window would have stranded every run behind a job that
 stays queued — and a job that failed all three attempts, whose run is still a
 candidate, is retried and `console.warn`ed with its run id. Both were the
 Task 4 review's Importants, each red-verified (`expected +0 to be 1`).
-`RECOMPUTE_ENABLED=false` (exactly that string) defers it; **the compose file
-does not pass that variable through**, so `DEPLOYMENT.md` gives an override
-file. `pnpm recompute [--project <slug>] [--run <id>]` does the same work in
+`RECOMPUTE_ENABLED=false` (exactly that string) defers it; compose passes it
+and `RECOMPUTE_SCAN_INTERVAL_MS` from `PERFPORTAL_RECOMPUTE_*` in `infra/.env`,
+empty when unset, and the worker reads empty as its default. `pnpm recompute [--project <slug>] [--run <id>]` does the same work in
 the foreground, one keyset pass; `--project` spans orgs and prints how many
 projects and orgs it matched first.
 
@@ -301,7 +389,11 @@ recreated and migrated before the shutdown timing), Redis db 13 and e2e port
     `DEPLOYMENT.md` was NOT run in a container; the override file's effect
     was checked with `docker compose config` (the worker gets
     `RECOMPUTE_ENABLED: "false"`, and without it no service carries the
-    variable).
+    variable). **[Superseded by the final fix wave: compose passes the
+    variable itself now. `docker compose config` gives the worker
+    `RECOMPUTE_ENABLED: "false"` with `PERFPORTAL_RECOMPUTE_ENABLED=false`
+    and `""` with nothing set, and `config --quiet` exits 0 for the base and
+    `onprem` profiles with only the three documented variables exported.]**
 
 The exact-statistics engine branch (`feat/exact-statistics-engine`, PR 1 of
 `docs/superpowers/specs/2026-10-15-exact-statistics-design.md`, plan
@@ -19922,6 +20014,14 @@ of `20260817000000_run_timestamps_are_timestamptz`; `telemetry_sample`'s always
 were. The remaining bare-`timestamp` columns (`org`, `project`, `api_token`,
 `org_member`, Better Auth's own tables) are read only through Prisma today —
 put a raw-pool read on one and it is the same bug again.
+
+**A `date` partition key is bound as `YYYY-MM-DD` text, never as a Date.**
+The same node-postgres rule, one column type over: a Date parameter is
+rendered in the process's zone, and a `date` column takes whatever day that
+local rendering names — so west of UTC, UTC midnight becomes the day before.
+`partitionDay` (`packages/persistence/src/metrics/partition-day.ts`) is the one
+spelling for `run_started_on`, and `telemetry.ts`' `sampledOn` for
+`sampled_on`. A new query against a partitioned table goes through one of them.
 
 **A test for a timezone bug must SET the timezone, and prove it took.** Node
 honours `process.env.TZ` changed after startup, so the case can flip to
