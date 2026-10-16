@@ -128,9 +128,9 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **242 files / 3918 tests**, it
+`nvm use` first, and if a run reports fewer than **247 files / 3958 tests**, it
 did not run everything — nor did an integration run reporting fewer than
-**220 files / 3391 tests**, an e2e run fewer than **204**, or a
+**225 files / 3459 tests**, an e2e run fewer than **204**, or a
 `pnpm test:e2e:cross` run fewer than **612** (204 on each of three engines).
 (Update those numbers when a sub-project adds suites, or the next reader
 calibrates against a stale floor and a silently-skipped run looks like a
@@ -150,6 +150,158 @@ still Chromium and still 102; `pnpm test:e2e:cross` was 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The exact-statistics backfill branch (`feat/exact-statistics-backfill`, PR 2
+of `docs/superpowers/specs/2026-10-15-exact-statistics-design.md`, plan
+`docs/superpowers/plans/2026-10-16-exact-statistics-pr2-backfill.md`) added
+FIVE unit files — `apps/worker/test/recompute-args.test.ts` (11),
+`run-source.test.ts` (5), and in `apps/web/test` `RecomputeProgress` (4),
+`VerdictChanged` (3) and `Approx` (2) — and 15 cases elsewhere
+(`contracts` 4, `contracts/admin` 2, `worker/config` 2, and one each in
+`AdminUsers`, `GroupDetail`, `RequestDetail`, `RunDecisionBand`, `RunReport`,
+`RunStats` and `StatisticsTable`): unit **242 / 3918 to 247 / 3958**.
+Integration gains the two new `.ts` unit files and the `.ts` cases (24) plus
+THREE integration files — `apps/worker/test/recompute.integration` (16),
+`recompute-queue.integration` (7) and `packages/persistence/test/recompute.integration`
+(13) — and `api/admin` 3, `api/read` 3, `pipeline` 2: **220 / 3391 to
+225 / 3459**. **e2e stays 204** (612 on three engines): no spec changed. Each
+total was predicted from per-file `vitest list` counts on `origin/main` and on
+the branch, and each measured exactly that.
+
+**EVERY RUN STORED BEFORE EXACT STATISTICS IS RECOMPUTED FROM ITS OWN RAW LOG,
+IN ONE TRANSACTION PER RUN.** `RecomputeService` takes the run's ingest
+advisory lock (`pg_try_advisory_lock`; held elsewhere → `locked`), opens the
+stored bytes through `openRunSource` — the ONE reader the pipeline uses too
+(`apps/worker/src/pipeline/run-source.ts`), so a live run's raw
+`simulation.log` and an upload's archive open the same way — runs the engine,
+and rewrites `run_stat` and the metric buckets, re-evaluates the run's SLA
+assertions against their FROZEN `rule_snapshot` (never the current
+`sla_rule`), re-inserts them, and sets `stats_method = 'exact-v1'` and
+`recomputed_at`. It keeps the run's status, number, test, note, timestamps,
+engine options and snapshots — the preservation case compares the whole `run`
+row minus the rewritten columns — and publishes no `run_terminal`.
+
+**A CANDIDATE IS SELECTED BY LABEL OR BY STORED FORMAT, AS PR 1 SAID IT HAD
+TO BE.** `CANDIDATE_PREDICATE_SQL` (`packages/persistence/src/repositories/recompute.ts`):
+complete or incomplete, no `recompute_error`, some `run_stat` row, and either
+`stats_method = 'estimated'` OR a row with a sketch or a `histogram_kind`
+other than `sparse-ms-v2`. The label alone misses a run created before PR 1's
+migration and parsed after it. One string feeds the selection AND the admin
+progress count, so the two cannot disagree. Migration
+`20261016120000_exact_statistics_backfill` relabels a run with no statistics
+`exact-v1` (vacuous: it has no figure to be estimated), adds
+`recompute_error`/`recomputed_at` and `run_verdict_change`.
+
+**A CHANGED OUTCOME IS RECORDED, NOT SILENTLY REWRITTEN.** Each re-evaluated
+assertion is paired with its old row by snapshot id; where the OUTCOME
+differs, `run_verdict_change` gets the snapshot, old and new outcome, old and
+new value and old and new run verdict. Both identity builders serve
+`verdictChanges`, and the run page draws "Verdict changed by exact
+statistics" beside the release gate with an ⓘ listing each rule. A changed
+VALUE with the same outcome writes no row.
+
+**A RUN THAT CANNOT BE RECOMPUTED IS RETIRED WITH A REASON AND KEEPS ITS
+ESTIMATES.** `raw_log_missing` (no verified log: empty `bundle_sha256`, or the
+object is gone), `checksum_mismatch`, `parse_failed`; anything else — an
+object-store timeout among them — is rethrown, so the run stays selectable.
+An errored run is never selected again, keeps `estimated`, and its
+percentiles carry **≈** (the p95 tile, every percentile column heading on the
+Report and both drill-downs, the groups list's p95 headings). Admins see
+"N of M runs" while any remain, with the failed count.
+
+**THE QUEUE YIELDS TO INGEST, RE-QUEUES WHAT FAILED, AND PAGES EVERY
+CANDIDATE.** A `recompute` queue at concurrency 1: before each job it reads
+the `ingest` queue's waiting, active and delayed counts and, if any is
+non-zero, moves itself 5 s into the future (`DelayedError`); a `locked` run
+waits 30 s. The scan (every `RECOMPUTE_SCAN_INTERVAL_MS`, default 10 min, never
+overlapping itself) keyset-pages `(created_at, id)` through EVERY candidate —
+a fixed newest-500 window would have stranded every run behind a job that
+stays queued — and a job that failed all three attempts, whose run is still a
+candidate, is retried and `console.warn`ed with its run id. Both were the
+Task 4 review's Importants, each red-verified (`expected +0 to be 1`).
+`RECOMPUTE_ENABLED=false` (exactly that string) defers it; **the compose file
+does not pass that variable through**, so `DEPLOYMENT.md` gives an override
+file. `pnpm recompute [--project <slug>] [--run <id>]` does the same work in
+the foreground, one keyset pass; `--project` spans orgs and prints how many
+projects and orgs it matched first.
+
+**THE REAL BACKFILL, ON A COPY OF THE DEVELOPER DATABASE, THROUGH THE CLI.**
+`pg_dump perfportal` into `perfportal_pr2_copy` (29 runs, 346 `run_stat`
+rows, 24 assertions, 37 migrations — PR 1's not yet applied), then
+`prisma migrate deploy`: both exact-statistics migrations, **26 runs
+`estimated` and 3 relabelled `exact-v1`** (the failed run and two incomplete
+runs with no statistics). `RecomputeRepository` counted **26 candidates**,
+progress `{ total: 26, remaining: 26, failed: 0 }`. `pnpm recompute` against
+the copy, reading the developer bucket (the worker process was never started
+on the copy — its sweeper and fold owner can write to that bucket):
+
+  - **26 recomputed, 0 raw_log_missing, 0 checksum_mismatch, 0 parse_failed,
+    0 locked**, exit 0, in **3.25 s wall** including pnpm and Node start-up —
+    about 480 runs a minute, on runs of 1 to 1,718 requests; a soak log will
+    be slower. Afterwards progress read `remaining: 0`, every `run_stat` row
+    `sparse-ms-v2` with no sketch, `recomputed_at` on all 26.
+  - **0 verdict changes, and that is the data, not a gap**: the copy's only
+    rules are p95 ≤ 2000 ms (12 assertions, actual 645–1526, all `passed`
+    before and after) and error rate ≤ 1% (12, all `failed`, exact before and
+    after). All 24 assertions were re-inserted; the 12 p95 actuals moved to
+    integers (645.59 → 646, 727.90 → 721, 1525.68 → 1526 …). Every run's
+    verdict, test, number, note and engine options read back identical.
+  - Run-scope p95 before, after, and nearest rank (`ceil(p·n/100)`, integer)
+    from the raw log decoded with `parseSimulationLog`:
+
+```
+  run                          n     before         after   raw log
+  ge-parity upload           1718    671.94          671     671   (p99 10407.25 -> 10417 = 10417)
+  gatling-demo upload        1718   1525.68         1526    1526   (p99 10617.50 -> 10513 = 10513)
+  gatling-demo live, incompl  185    658.63          664     664
+  web-demo live               895    671.94          678     678
+```
+
+  - `pnpm recompute --run <a recomputed id>`: `Recomputed 0 runs …`, exit 0.
+    `--project gatling-demo`: "matches 1 project across 1 org", 0 runs.
+    `--project no-such-slug`: exit 1, "No project has the slug …".
+  - The failure reasons on real objects: one run pointed at a missing key and
+    one given a wrong checksum, both relabelled `estimated`, then
+    `--project web-demo` → `raw_log_missing` and `checksum_mismatch`, both
+    kept `estimated`, progress `failed: 2`.
+
+The copy was dropped, and the developer database read back unchanged: 29
+runs, 346 `run_stat` rows, 24 assertions, 37 migrations, the same md5 over
+every run's id/status/verdict/checksum and every `run_stat` row's counts and
+percentiles, and still no `stats_method` column.
+
+**THE WORKER'S SLOW SIGTERM PREDATES THIS BRANCH.** Idle worker on the
+scratch database and Redis db 13, SIGTERM by PID, a 60 s cap then SIGKILL:
+
+```
+  this branch, RECOMPUTE_ENABLED=false    60.6 s  SIGKILL, exit 137
+  this branch, unset (enabled)            60.4 s  SIGKILL, exit 137
+  origin/main, RECOMPUTE_ENABLED=false    60.3 s  SIGKILL, exit 137
+  origin/main, unset                      60.3 s  SIGKILL, exit 137
+```
+
+All four outlive the cap identically, so the recompute queue neither causes
+nor worsens it — this file already records the worker ignoring SIGTERM for
+20–30 s and taking a SIGKILL by PID. Cause not traced; it is its own branch.
+
+**WHAT WAS RUN**, on Node v22.19.0, against `perfportal_backfill` (dropped,
+recreated and migrated before the shutdown timing), Redis db 13 and e2e port
+3740, with no `dist/main.js` running and every `.tsbuildinfo` outside
+`node_modules` deleted before `typecheck`:
+
+  - `pnpm build`, `typecheck` and `lint` exit 0 by their own exit codes.
+  - `test:unit` **247 / 3958**, exit 0, zero `Errors` lines (load 3.9, swap
+    75% used).
+  - `test:integration` **225 / 3459, exit 0, zero failures** (load 7.2 at
+    start, 919 s).
+  - `PERFPORTAL_E2E_PORT=3740 pnpm test:e2e --workers=2` read back `Running
+    204 tests using 2 workers`, **204 passed, exit 0**; `--list` collects
+    204, and 612 with `PERFPORTAL_E2E_BROWSERS=all`.
+  - The `docker compose run --rm worker pnpm recompute` form in
+    `DEPLOYMENT.md` was NOT run in a container; the override file's effect
+    was checked with `docker compose config` (the worker gets
+    `RECOMPUTE_ENABLED: "false"`, and without it no service carries the
+    variable).
 
 The exact-statistics engine branch (`feat/exact-statistics-engine`, PR 1 of
 `docs/superpowers/specs/2026-10-15-exact-statistics-design.md`, plan
