@@ -356,6 +356,10 @@ export async function respondWithRun(
         // From `lifecycleOf` for the same reason: a run recomputed while a
         // reader polls it must not lose its changes between the two bodies.
         verdictChanges: lifecycle.verdictChanges,
+        // From `lifecycleOf` too: the run header's verification mark reads
+        // this, and a run re-verified while a reader polls it must say the
+        // same thing in both bodies.
+        verification: lifecycle.verification,
         // THE LIVE HALF of the run note, for the reason the lifecycle stamps
         // above give: a note written while a run streams is read through THIS
         // body, and one sent only by toResponse would vanish until it ended.

@@ -203,6 +203,7 @@ const ACCESS_BY_ROUTE: Readonly<Record<string, Access>> = {
   'GET /v1/runs/:id/scatter': 'project:read',
   'GET /v1/runs/:id/trends': 'project:read',
   'GET /v1/runs/:id/events': 'project:read',
+  'GET /v1/runs/:id/verification': 'project:read',
   'PUT /v1/runs/:id/note': 'run:note',
 
   'GET /v1/projects/:slug/tests': 'project:read',
@@ -247,6 +248,7 @@ const ACCESS_BY_ROUTE: Readonly<Record<string, Access>> = {
   'DELETE /v1/admin/users/:userId': 'users:manage',
   'GET /v1/admin/projects': 'users:manage',
   'GET /v1/admin/recompute': 'users:manage',
+  'GET /v1/admin/data-integrity': 'users:manage',
 };
 
 /** Where the run routes live. A run names its project through the run row. */

@@ -1,9 +1,10 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Put, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Inject, Param, Patch, Post, Put, Req, UseGuards } from '@nestjs/common';
 import {
   AdminProjectListResponseSchema,
   AdminUserListResponseSchema,
   AdminUserSchema,
   CreateUserRequestSchema,
+  DataIntegritySchema,
   PASSWORD_MAX_LENGTH,
   PASSWORD_MIN_LENGTH,
   RecomputeProgressSchema,
@@ -12,6 +13,7 @@ import {
   type AdminProjectListResponse,
   type AdminUser,
   type AdminUserListResponse,
+  type DataIntegrity,
   type RecomputeProgress,
 } from '@perfportal/contracts';
 import {
@@ -19,14 +21,20 @@ import {
   ProjectRepository,
   RecomputeRepository,
   UserRepository,
+  VerificationRepository,
   type OrgUserRow,
 } from '@perfportal/persistence';
 import { fromNodeHeaders } from 'better-auth/node';
 import type { Request } from 'express';
 import { Requires } from '../auth/access.decorator.js';
+import { CONFIG } from '../auth/auth.module.js';
 import { SessionOnlyGuard } from '../auth/session-only.guard.js';
 import { badRequest, firstIssue, userNotFound } from '../common/validation.js';
+import type { AppConfig } from '../config.js';
 import { AdminUsersService } from './admin-users.service.js';
+
+/** How many failed verifications the data-integrity page lists; the counts above it are whole. */
+const PROBLEM_LIMIT = 100;
 
 function toAdminUser(row: OrgUserRow): AdminUser {
   return AdminUserSchema.parse({
@@ -70,6 +78,8 @@ export class AdminController {
     private readonly projectMembers: ProjectMemberRepository,
     private readonly service: AdminUsersService,
     private readonly recompute: RecomputeRepository,
+    private readonly verifications: VerificationRepository,
+    @Inject(CONFIG) private readonly config: AppConfig,
   ) {}
 
   /** Every account with a membership of this org, by name. */
@@ -202,6 +212,31 @@ export class AdminController {
   @Requires('users:manage')
   async recomputeProgress(@Req() req: Request): Promise<RecomputeProgress> {
     return RecomputeProgressSchema.parse(await this.recompute.progress(req.tenant!.orgId));
+  }
+
+  /**
+   * Administration › Data integrity for this org: the backfill's progress
+   * (the route above's own answer), the org's verifiable runs by
+   * verification status, the mismatched and unverifiable runs — most recently
+   * checked first, at most `PROBLEM_LIMIT` — and the raw-log retention the
+   * worker applies, stated read-only. Every count and every listed run is the
+   * caller's own org's: each repository call is scoped by it.
+   */
+  @Get('data-integrity')
+  @Requires('users:manage')
+  async dataIntegrity(@Req() req: Request): Promise<DataIntegrity> {
+    const orgId = req.tenant!.orgId;
+    const [recompute, verification, problems] = await Promise.all([
+      this.recompute.progress(orgId),
+      this.verifications.summary(orgId),
+      this.verifications.problems(orgId, PROBLEM_LIMIT),
+    ]);
+    return DataIntegritySchema.parse({
+      recompute,
+      verification,
+      problems: problems.map((p) => ({ ...p, checkedAt: p.checkedAt?.toISOString() ?? null })),
+      rawLogRetentionDays: this.config.rawLogRetentionDays,
+    });
   }
 
   /** The org-scoped lookup every `:userId` starts with: not in this org is 404. */

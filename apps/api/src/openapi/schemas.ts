@@ -9,6 +9,10 @@ import {
   AdminUserSchema,
   RecomputeProgressSchema,
   VerdictChangeSchema,
+  DataIntegritySchema,
+  FigureMismatchSchema,
+  VerificationSchema,
+  VerificationSummarySchema,
   ChangePasswordRequestSchema,
   CreateUserRequestSchema,
   MemberListResponseSchema,
@@ -165,6 +169,13 @@ const SOURCE: Record<string, ZodTypeAny> = {
   // them; registered here so the shape has a name of its own).
   RecomputeProgress: RecomputeProgressSchema,
   VerdictChange: VerdictChangeSchema,
+  // EXACT STATISTICS, PR 3: a run's verification (the run responses embed
+  // its summary; `GET /v1/runs/{id}/verification` answers the whole record)
+  // and an admin's data-integrity summary.
+  VerificationSummary: VerificationSummarySchema,
+  FigureMismatch: FigureMismatchSchema,
+  Verification: VerificationSchema,
+  DataIntegrity: DataIntegritySchema,
   ProjectMember: ProjectMemberSchema,
   MemberListResponse: MemberListResponseSchema,
   AddMemberRequest: AddMemberRequestSchema,

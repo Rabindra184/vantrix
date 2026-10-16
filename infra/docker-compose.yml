@@ -145,7 +145,11 @@ services:
       # them for ever). All three are passed as EMPTY when unset, and the
       # worker reads empty as its default (90 days; on; every 10 minutes). A
       # retention that is not a whole number of days stops the worker naming
-      # the variable, rather than deleting logs on a guessed schedule.
+      # the variable, rather than deleting logs on a guessed schedule. The API
+      # reads RAW_LOG_RETENTION_DAYS too, by the same rule
+      # (`parseRawLogRetentionDays` in @perfportal/core), only to state it on
+      # Administration › Data integrity -- and refuses the same bad values, so
+      # the page can never state a setting the worker does not apply.
       RAW_LOG_RETENTION_DAYS: ${PERFPORTAL_RAW_LOG_RETENTION_DAYS:-}
       VERIFY_ENABLED: ${PERFPORTAL_VERIFY_ENABLED:-}
       VERIFY_SCAN_INTERVAL_MS: ${PERFPORTAL_VERIFY_SCAN_INTERVAL_MS:-}

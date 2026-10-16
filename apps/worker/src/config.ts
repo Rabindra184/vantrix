@@ -1,3 +1,5 @@
+import { parseRawLogRetentionDays } from '@perfportal/core';
+
 export interface WorkerConfig {
   databaseUrl: string;
   redisUrl: string;
@@ -141,22 +143,6 @@ export interface WorkerConfig {
 }
 
 /**
- * A whole, non-negative number of days, or the default when unset or blank
- * (compose passes an unset variable as an EMPTY string). Anything else stops
- * the worker naming the variable — see `rawLogRetentionDays`.
- */
-function retentionDays(value: string | undefined, fallback: number): number {
-  const text = value?.trim() ?? '';
-  if (text === '') return fallback;
-  if (!/^\d+$/.test(text)) {
-    throw new Error(
-      `RAW_LOG_RETENTION_DAYS must be a whole number of days (0 keeps raw logs for ever); got "${value}"`,
-    );
-  }
-  return Number(text);
-}
-
-/**
  * `Number(x)` on a non-numeric string is `NaN`, and `NaN` defeats both of
  * this config's own guards silently: `Math.max(1000, NaN)` is `NaN` (so
  * `setInterval(fn, NaN)` becomes an effectively-zero-delay timer, the
@@ -211,7 +197,7 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv = process.env): WorkerCo
     // continuous rescan by another road. (Not changed in numberOr itself:
     // LIVE_TICK_MS has a case pinning '' to its floor.)
     recomputeScanIntervalMs: numberOr(env.RECOMPUTE_SCAN_INTERVAL_MS?.trim() || undefined, 600_000),
-    rawLogRetentionDays: retentionDays(env.RAW_LOG_RETENTION_DAYS, 90),
+    rawLogRetentionDays: parseRawLogRetentionDays(env.RAW_LOG_RETENTION_DAYS),
     // `=== 'false'` and blank-is-default: recompute's two rules, for the same reasons.
     verifyEnabled: env.VERIFY_ENABLED !== 'false',
     verifyScanIntervalMs: numberOr(env.VERIFY_SCAN_INTERVAL_MS?.trim() || undefined, 600_000),

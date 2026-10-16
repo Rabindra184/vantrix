@@ -12,6 +12,7 @@ import {
   RunListResponseSchema,
   SeriesResponseSchema,
   StatsResponseSchema,
+  VerificationSchema,
 } from '@perfportal/contracts';
 import { nearestRankIndex } from '@perfportal/statistics';
 import { createTestApp, type TestContext } from './support/app.js';
@@ -204,6 +205,188 @@ describe('GET /v1/runs/:id', () => {
     const res = await readAs(`/v1/runs/${id}`);
     expect(res.status).toBe(200);
     expect(res.body.verdictChanges).toEqual([CHANGE]);
+  });
+});
+
+/**
+ * A verification row, written the way the verifier writes one, so the reads
+ * below meet a row only a real read can surface.
+ */
+async function recordVerification(
+  runId: string,
+  row: {
+    status: 'pending' | 'verified' | 'mismatch' | 'unverifiable';
+    reason?: string | null;
+    checkedAt?: string | null;
+    verifierVersion?: number | null;
+    figuresChecked?: number;
+    mismatches?: unknown[];
+    retainedUntil?: string | null;
+  },
+): Promise<void> {
+  await ctx.pool.query(
+    `INSERT INTO run_verification
+       (run_id, status, checked_at, verifier_version, figures_checked, mismatches,
+        unverifiable_reason, raw_log_retained_until)
+     VALUES ($1::uuid, $2, $3::timestamptz, $4, $5, $6::jsonb, $7, $8::date)
+     ON CONFLICT (run_id) DO UPDATE SET
+       status = EXCLUDED.status, checked_at = EXCLUDED.checked_at,
+       verifier_version = EXCLUDED.verifier_version, figures_checked = EXCLUDED.figures_checked,
+       mismatches = EXCLUDED.mismatches, unverifiable_reason = EXCLUDED.unverifiable_reason,
+       raw_log_retained_until = EXCLUDED.raw_log_retained_until`,
+    [
+      runId,
+      row.status,
+      row.checkedAt ?? null,
+      row.verifierVersion ?? null,
+      row.figuresChecked ?? 0,
+      JSON.stringify(row.mismatches ?? []),
+      row.reason ?? null,
+      row.retainedUntil ?? null,
+    ],
+  );
+}
+
+describe('GET /v1/runs/:id — verification', () => {
+  /**
+   * Both identity builders, for the reason statsMethod's case gives: a field
+   * sent by only one is missing exactly while a reader watches the run. An
+   * UNVERIFIABLE row with a reason is the value only a real read produces —
+   * a builder hard-coding pending, or dropping the reason, fails it.
+   */
+  it('sends the verification summary on the run in both the 202 and the finished response', async () => {
+    ctx = await createTestApp();
+    const id = await ingested();
+    await recordVerification(id, { status: 'unverifiable', reason: 'raw_log_deleted', checkedAt: '2026-10-16T09:00:00Z' });
+    const done = await readAs(`/v1/runs/${id}`);
+    expect(done.status).toBe(200);
+    expect(done.body.verification).toEqual({ status: 'unverifiable', reason: 'raw_log_deleted' });
+
+    const pendingId = await postWithoutProcessing();
+    await recordVerification(pendingId, { status: 'mismatch', checkedAt: '2026-10-16T09:00:00Z' });
+    const pending = await readAs(`/v1/runs/${pendingId}`);
+    expect(pending.status).toBe(202);
+    expect(pending.body.verification).toEqual({ status: 'mismatch', reason: null });
+  });
+
+  it('sends null for a run with no verification row yet, in both bodies', async () => {
+    ctx = await createTestApp();
+    const id = await ingested();
+    const done = await readAs(`/v1/runs/${id}`);
+    expect(done.status).toBe(200);
+    expect(done.body).toHaveProperty('verification', null);
+    const pendingId = await postWithoutProcessing();
+    const pending = await readAs(`/v1/runs/${pendingId}`);
+    expect(pending.status).toBe(202);
+    expect(pending.body).toHaveProperty('verification', null);
+  });
+});
+
+describe('GET /v1/runs/:id/verification', () => {
+  const MISMATCH = {
+    scope: 'request',
+    name: 'Search',
+    family: 'response_time',
+    population: 'all',
+    bucket: null,
+    table: 'run_stat',
+    figure: 'p95',
+    stored: 812,
+    recomputed: 790,
+  };
+
+  it('answers the whole record: status, when, by which verifier, the mismatches and the retention date', async () => {
+    ctx = await createTestApp();
+    const id = await ingested();
+    await recordVerification(id, {
+      status: 'mismatch',
+      checkedAt: '2026-10-16T09:00:00.000Z',
+      verifierVersion: 1,
+      figuresChecked: 4120,
+      mismatches: [MISMATCH],
+      retainedUntil: '2027-01-14',
+    });
+    const res = await readAs(`/v1/runs/${id}/verification`);
+    expect(res.status).toBe(200);
+    expect(VerificationSchema.parse(res.body)).toEqual({
+      status: 'mismatch',
+      reason: null,
+      checkedAt: '2026-10-16T09:00:00.000Z',
+      verifierVersion: 1,
+      figuresChecked: 4120,
+      mismatches: [MISMATCH],
+      // The UTC calendar day the column holds, on a machine in any zone.
+      rawLogRetainedUntil: '2027-01-14',
+      rawLogDeleted: false,
+    });
+  });
+
+  it('answers pending with nothing recorded for a run with no row yet', async () => {
+    ctx = await createTestApp();
+    const id = await ingested();
+    const res = await readAs(`/v1/runs/${id}/verification`);
+    expect(res.status).toBe(200);
+    expect(VerificationSchema.parse(res.body)).toEqual({
+      status: 'pending',
+      reason: null,
+      checkedAt: null,
+      verifierVersion: null,
+      figuresChecked: 0,
+      mismatches: [],
+      rawLogRetainedUntil: null,
+      rawLogDeleted: false,
+    });
+  });
+
+  /**
+   * `rawLogDeleted` is the RUN's stamp, not the verification's reason: a run
+   * verified before retention removed its log keeps "verified" and still
+   * says the log is gone.
+   */
+  it('says the raw log is deleted from the run\'s own stamp, whatever the verification found', async () => {
+    ctx = await createTestApp();
+    const id = await ingested();
+    await recordVerification(id, { status: 'verified', checkedAt: '2026-10-16T09:00:00Z', verifierVersion: 1, figuresChecked: 10 });
+    await ctx.pool.query(`UPDATE run SET raw_log_deleted_at = now() WHERE id = $1`, [id]);
+    const res = await readAs(`/v1/runs/${id}/verification`);
+    expect(res.status).toBe(200);
+    const body = VerificationSchema.parse(res.body);
+    expect([body.status, body.rawLogDeleted]).toEqual(['verified', true]);
+  });
+
+  it('refuses a malformed id with 400 INVALID_ID', async () => {
+    ctx = await createTestApp();
+    const res = await readAs('/v1/runs/not-a-uuid/verification');
+    expect([res.status, res.body.code]).toEqual([400, 'INVALID_ID']);
+  });
+
+  /**
+   * Another org's run answers the missing run's own 404, as every run-scoped
+   * read does — and its verification row is there, so a 404 is the lookup
+   * refusing it rather than the absence of anything to show.
+   */
+  it('answers 404 for a run in another org, and for a run that does not exist', async () => {
+    ctx = await createTestApp();
+    const elsewhere = await ctx.prisma.org.create({ data: { slug: `other-${randomUUID().slice(0, 8)}`, name: 'Other' } });
+    const project = await ctx.prisma.project.create({ data: { orgId: elsewhere.id, slug: 'aardvark', name: 'Aardvark' } });
+    const run = await ctx.prisma.run.create({
+      data: {
+        orgId: elsewhere.id,
+        projectId: project.id,
+        status: 'complete',
+        verdict: 'not_evaluated',
+        tool: 'gatling',
+        bundleKey: `runs/${project.id}/${randomUUID()}.tgz`,
+        bundleSha256: 'a'.repeat(64),
+        bundleBytes: 1n,
+        startedAt: new Date('2026-10-07T09:00:00Z'),
+        startedOn: new Date('2026-10-07T00:00:00Z'),
+        engineOptions: {},
+      },
+    });
+    await recordVerification(run.id, { status: 'verified', checkedAt: '2026-10-16T09:00:00Z' });
+    expect((await readAs(`/v1/runs/${run.id}/verification`)).status).toBe(404);
+    expect((await readAs(`/v1/runs/${randomUUID()}/verification`)).status).toBe(404);
   });
 });
 

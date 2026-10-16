@@ -71,6 +71,70 @@ export const VerdictChangeSchema = z.object({
 });
 export type VerdictChange = z.infer<typeof VerdictChangeSchema>;
 
+/*
+ * ═══ A RUN'S VERIFICATION — ITS STORED FIGURES CHECKED AGAINST ITS RAW LOG ═══
+ * (docs/superpowers/plans/2026-10-16-exact-statistics-pr3-verifier.md)
+ *
+ * The four statuses and four reasons are the words `run_verification`'s two
+ * CHECK constraints hold the stored columns to, so an enum here describes
+ * what the database can hold rather than narrowing it.
+ */
+export const VerificationStatusSchema = z.enum(['pending', 'verified', 'mismatch', 'unverifiable']);
+export type VerificationStatus = z.infer<typeof VerificationStatusSchema>;
+
+/** Why a run could not be verified; null for every status but `unverifiable`. */
+export const UnverifiableReasonSchema = z.enum(['raw_log_deleted', 'raw_log_missing', 'raw_log_unreadable', 'not_exact']);
+export type UnverifiableReason = z.infer<typeof UnverifiableReasonSchema>;
+
+/** What the run header's mark reads: the status, and why when unverifiable. */
+export const VerificationSummarySchema = z.object({
+  status: VerificationStatusSchema,
+  reason: UnverifiableReasonSchema.nullable(),
+});
+export type VerificationSummary = z.infer<typeof VerificationSummarySchema>;
+
+/**
+ * One stored figure the verifier re-derived from the raw log and got a
+ * different answer for — `FigureMismatch` in
+ * packages/persistence/src/repositories/verification.ts, field for field.
+ *
+ * `family` is a plain string, not the statistics-family enum: an error-table
+ * mismatch carries the error MESSAGE there. `stored`/`recomputed` are a number
+ * for a measurement, a string for a text figure, and null on the side that
+ * has no such row ('row' figures).
+ */
+export const FigureMismatchSchema = z.object({
+  scope: z.string(),
+  name: z.string(),
+  family: z.string(),
+  population: z.enum(['all', 'ok', 'ko']).nullable(),
+  bucket: z.number().nullable(),
+  table: z.enum(['run_stat', 'run_series_bucket', 'run_error', 'run_error_bucket', 'run_user_bucket', 'run']),
+  figure: z.string(),
+  stored: z.union([z.number(), z.string()]).nullable(),
+  recomputed: z.union([z.number(), z.string()]).nullable(),
+});
+export type FigureMismatch = z.infer<typeof FigureMismatchSchema>;
+
+/**
+ * `GET /v1/runs/{id}/verification`: the whole verification record. A run with
+ * no row yet answers `pending` with nothing recorded. `rawLogRetainedUntil`
+ * is a CALENDAR DAY (the column is a date), null for "kept for ever" or for a
+ * run never checked; `rawLogDeleted` says whether retention has already
+ * removed it, which is what makes a never-verified run unverifiable for good.
+ */
+export const VerificationSchema = z.object({
+  status: VerificationStatusSchema,
+  reason: UnverifiableReasonSchema.nullable(),
+  checkedAt: z.string().datetime().nullable(),
+  verifierVersion: z.number().int().nullable(),
+  figuresChecked: z.number().int().nonnegative(),
+  mismatches: z.array(FigureMismatchSchema),
+  rawLogRetainedUntil: z.string().date().nullable(),
+  rawLogDeleted: z.boolean(),
+});
+export type Verification = z.infer<typeof VerificationSchema>;
+
 export const AssertionSchema = z.object({
   ruleId: z.string().uuid(),
   outcome: AssertionOutcomeSchema,
@@ -345,6 +409,12 @@ export const RunIdentitySchema = z.object({
    *  was never recomputed. OPTIONAL for the rolling-deploy reason the stamps
    *  above give. */
   verdictChanges: z.array(VerdictChangeSchema).optional(),
+  /** Whether this run's stored figures were checked against its raw log,
+   *  and what that found. NULL when the run has no verification row yet — a
+   *  run that is not verifiable, or one the verifier has not reached (a
+   *  reader treats it as pending). OPTIONAL as well as nullable, for the
+   *  rolling-deploy reason the stamps above give. */
+  verification: VerificationSummarySchema.nullable().optional(),
   /** The note a person wrote on this run (run-note.ts), or null for none.
    *  OPTIONAL as well as nullable, for the rolling-deploy reason the lifecycle
    *  stamps above give: a required field blanks the run page against an API

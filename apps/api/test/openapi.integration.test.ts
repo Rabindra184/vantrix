@@ -546,6 +546,30 @@ describe('OpenAPI document', () => {
    * against any document at all, including the defect it was written for. It
    * sends the read token and requires that at least one probe got past auth.
    */
+  /**
+   * Exact statistics, PR 3: a run's verification takes either credential like
+   * every run-scoped read; the data-integrity summary is an admin's, and
+   * session-only like every /v1/admin operation. Each answers its own named
+   * schema, so a generated client gets a type rather than an inline blob.
+   */
+  it('documents a run\'s verification and the data-integrity summary, each with its schema', async () => {
+    const doc = await fetchDoc();
+    const verification = doc.paths?.['/v1/runs/{id}/verification']?.get;
+    expect((verification as { operationId?: string } | undefined)?.operationId).toBe('getRunVerification');
+    expect(verification?.security).toBeUndefined();
+    expect(JSON.stringify(verification?.responses?.['200'])).toContain('#/components/schemas/Verification"');
+    expect(Object.keys(verification?.responses ?? {})).toEqual(expect.arrayContaining(['200', '400', '404']));
+
+    const integrity = doc.paths?.['/v1/admin/data-integrity']?.get;
+    expect((integrity as { operationId?: string } | undefined)?.operationId).toBe('getDataIntegrity');
+    expect(integrity?.security).toEqual([{ cookieAuth: [] }]);
+    expect(JSON.stringify(integrity?.responses?.['200'])).toContain('#/components/schemas/DataIntegrity"');
+
+    for (const name of ['Verification', 'VerificationSummary', 'FigureMismatch', 'DataIntegrity']) {
+      expect(doc.components?.schemas?.[name], name).toBeDefined();
+    }
+  });
+
   it('answers no path-param GET with a status its own OpenAPI operation does not declare', async () => {
     const doc = await fetchDoc();
     const auth = { Authorization: `Bearer ${ctx.readToken}` };
