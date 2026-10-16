@@ -357,3 +357,53 @@ describe('MetricWriter#deleteForRun', () => {
     expect(await countsFor(second)).toEqual(one);
   });
 });
+
+describe('RecomputeRepository#candidatePage', () => {
+  async function at(runId: string, createdAt: string): Promise<void> {
+    await pool.query(`UPDATE run SET created_at = $2::timestamptz WHERE id = $1`, [runId, createdAt]);
+  }
+
+  it('walks every candidate exactly once, newest first, across pages that split a shared created_at', async () => {
+    const newest = await seedRunWithStatRow();
+    const tieA = await seedRunWithStatRow();
+    const tieB = await seedRunWithStatRow();
+    const older = await seedRunWithStatRow();
+    const oldest = await seedRunWithStatRow();
+    const notACandidate = await seedRunWithStatRow({ statsMethod: 'exact-v1', sketch: false, histogramKind: 'sparse-ms-v2' });
+    await at(newest, '2026-08-07T10:00:03.000Z');
+    // Same millisecond: only the id orders them, and limit 2 puts the page
+    // boundary between them.
+    await at(tieA, '2026-08-07T10:00:02.000Z');
+    await at(tieB, '2026-08-07T10:00:02.000Z');
+    await at(notACandidate, '2026-08-07T10:00:01.500Z');
+    await at(older, '2026-08-07T10:00:01.000Z');
+    await at(oldest, '2026-08-07T10:00:00.000Z');
+
+    const repo = new RecomputeRepository(pool);
+    const pages: string[][] = [];
+    let page = await repo.candidatePage({}, 2);
+    pages.push(page.ids);
+    while (page.next) {
+      page = await repo.candidatePage({}, 2, page.next);
+      pages.push(page.ids);
+      expect(pages.length).toBeLessThan(10); // a cursor that never advances must not hang the suite
+    }
+
+    const walked = pages.flat();
+    const [tieFirst, tieSecond] = [tieA, tieB].sort().reverse();
+    expect(walked).toEqual([newest, tieFirst, tieSecond, older, oldest]);
+    expect(new Set(walked).size).toBe(walked.length);
+    // The tie really was split across a page boundary, which is the case a
+    // cursor on created_at alone gets wrong.
+    expect(pages[0]).toEqual([newest, tieFirst]);
+    expect(pages[1]).toEqual([tieSecond, older]);
+    expect(pages[2]).toEqual([oldest]);
+  });
+
+  it('answers next = null for a page that came back short, and for no candidates at all', async () => {
+    const repo = new RecomputeRepository(pool);
+    expect(await repo.candidatePage({}, 2)).toEqual({ ids: [], next: null });
+    const only = await seedRunWithStatRow();
+    expect(await repo.candidatePage({}, 2)).toEqual({ ids: [only], next: null });
+  });
+});

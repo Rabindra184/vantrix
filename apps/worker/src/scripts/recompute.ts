@@ -11,7 +11,12 @@
  * Usage: see `RECOMPUTE_USAGE`, printed on any bad argument.
  */
 import 'reflect-metadata';
-import { createPool, createPrisma, RecomputeRepository } from '@perfportal/persistence';
+import {
+  createPool,
+  createPrisma,
+  RecomputeRepository,
+  type CandidateCursor,
+} from '@perfportal/persistence';
 import { BlobStore } from '@perfportal/storage';
 import { loadWorkerConfig } from '../config.js';
 import { parseRecomputeArgs, RECOMPUTE_USAGE, type RecomputeArgs } from '../recompute/recompute-args.js';
@@ -58,32 +63,39 @@ async function main(): Promise<void> {
     const repo = new RecomputeRepository(pool);
     const service = new RecomputeService(config, prisma, pool, new BlobStore(config.blob));
     const counts = new Map<RecomputeOutcome, number>();
-    // Every run this process has already handled. A recomputed or failed run
-    // leaves the candidate set by itself; a LOCKED one does not, so without
-    // this the loop would ask for it again for ever. The limit grows with it
-    // so a page full of locked runs cannot hide the ones behind them.
-    const seen = new Set<string>();
-    for (;;) {
-      const batch = (await repo.candidates(
-        { projectSlug: args.projectSlug, runId: args.runId },
-        BATCH + seen.size,
-      )).filter((id) => !seen.has(id));
-      if (batch.length === 0) break;
-      for (const runId of batch) {
-        seen.add(runId);
-        const outcome = await service.recompute(runId);
-        counts.set(outcome, (counts.get(outcome) ?? 0) + 1);
-        console.log(`Recomputed ${runId} (${outcome})`);
-      }
-    }
-
     const n = (o: RecomputeOutcome) => counts.get(o) ?? 0;
-    const failed = n('raw_log_missing') + n('checksum_mismatch') + n('parse_failed');
-    console.log(
-      `Recomputed ${n('recomputed')} runs; ${failed} could not be ` +
-        `(raw_log_missing: ${n('raw_log_missing')}, checksum_mismatch: ${n('checksum_mismatch')}, ` +
-        `parse_failed: ${n('parse_failed')}); ${n('locked')} were locked and are left for the worker.`,
-    );
+    try {
+      // ONE PASS, keyset-paged: the cursor is a position, so the runs this
+      // loop recomputes (which leave the candidate set) do not move it, and a
+      // LOCKED run -- which stays a candidate -- is behind it and is not
+      // asked for again. A loop that re-read the newest page would ask for a
+      // locked run for ever.
+      let after: CandidateCursor | undefined;
+      for (;;) {
+        const page = await repo.candidatePage(
+          { projectSlug: args.projectSlug, runId: args.runId },
+          BATCH,
+          after,
+        );
+        for (const runId of page.ids) {
+          const outcome = await service.recompute(runId);
+          counts.set(outcome, (counts.get(outcome) ?? 0) + 1);
+          console.log(`Recomputed ${runId} (${outcome})`);
+        }
+        if (page.next === null) break;
+        after = page.next;
+      }
+    } finally {
+      // Printed on an unexpected error too, before main()'s catch reports it:
+      // an operator who loses the run half-way still needs to know what the
+      // half that finished did.
+      const failed = n('raw_log_missing') + n('checksum_mismatch') + n('parse_failed');
+      console.log(
+        `Recomputed ${n('recomputed')} runs; ${failed} could not be ` +
+          `(raw_log_missing: ${n('raw_log_missing')}, checksum_mismatch: ${n('checksum_mismatch')}, ` +
+          `parse_failed: ${n('parse_failed')}); ${n('locked')} were locked and are left for the worker.`,
+      );
+    }
   } finally {
     await pool.end();
     await prisma.$disconnect();

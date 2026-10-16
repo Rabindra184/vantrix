@@ -12,6 +12,22 @@ export interface RecomputeFilter {
   runId?: string;
 }
 
+/**
+ * Where one page of candidates ended: the last row's (created_at, id), the
+ * order the selection is sorted in. `created_at` is timestamptz(3), so a JS
+ * Date carries it exactly and the cursor round-trips without losing a row.
+ */
+export interface CandidateCursor {
+  createdAt: Date;
+  id: string;
+}
+
+export interface CandidatePage {
+  ids: string[];
+  /** The cursor to pass for the next page; null when this page was the last. */
+  next: CandidateCursor | null;
+}
+
 export interface VerdictChangeRecord {
   ruleSnapshot: unknown;
   oldOutcome: string;
@@ -55,8 +71,30 @@ export const CANDIDATE_PREDICATE_SQL = `
 export class RecomputeRepository {
   constructor(private readonly pool: pg.Pool) {}
 
-  /** Newest first, at most `limit` ids. */
+  /** Newest first, at most `limit` ids: the first page of `candidatePage`. */
   async candidates(filter: RecomputeFilter, limit: number): Promise<string[]> {
+    return (await this.candidatePage(filter, limit)).ids;
+  }
+
+  /**
+   * ═══ ONE PAGE OF CANDIDATES, KEYSET-PAGED ON (created_at, id) ═══
+   *
+   * Newest first. `after` is the previous page's `next`; the predicate is a
+   * row comparison, so two runs created in the same millisecond are ordered by
+   * id and neither is skipped nor repeated. Without a cursor, a caller that
+   * can only ever see the newest `limit` candidates is stuck behind them for
+   * as long as they stay candidates -- a run whose recompute keeps failing
+   * transiently does, and it would hide every older run for ever.
+   *
+   * `next` is null when the page came back short, so a caller loops until it
+   * is null and has seen every candidate that existed when it started (rows
+   * that become candidates mid-walk may or may not be on a later page).
+   */
+  async candidatePage(
+    filter: RecomputeFilter,
+    limit: number,
+    after?: CandidateCursor,
+  ): Promise<CandidatePage> {
     const where: string[] = [CANDIDATE_PREDICATE_SQL];
     const params: unknown[] = [];
     if (filter.orgId !== undefined) {
@@ -71,13 +109,21 @@ export class RecomputeRepository {
       params.push(filter.projectSlug);
       where.push(`r.project_id IN (SELECT p.id FROM project p WHERE p.slug = $${params.length})`);
     }
+    if (after !== undefined) {
+      params.push(after.createdAt, after.id);
+      where.push(`(r.created_at, r.id) < ($${params.length - 1}::timestamptz, $${params.length}::uuid)`);
+    }
     params.push(limit);
-    const { rows } = await this.pool.query<{ id: string }>(
-      `SELECT r.id FROM run r WHERE ${where.join(' AND ')}
-        ORDER BY r.created_at DESC LIMIT $${params.length}`,
+    const { rows } = await this.pool.query<{ id: string; created_at: Date }>(
+      `SELECT r.id, r.created_at FROM run r WHERE ${where.join(' AND ')}
+        ORDER BY r.created_at DESC, r.id DESC LIMIT $${params.length}`,
       params,
     );
-    return rows.map((r) => r.id);
+    const last = rows[rows.length - 1];
+    return {
+      ids: rows.map((r) => r.id),
+      next: rows.length === limit && last ? { createdAt: last.created_at, id: last.id } : null,
+    };
   }
 
   /**

@@ -1,5 +1,5 @@
 import { INGEST_QUEUE } from '@perfportal/core';
-import type { RecomputeRepository } from '@perfportal/persistence';
+import type { CandidateCursor, RecomputeRepository } from '@perfportal/persistence';
 import { DelayedError, Queue, Worker, type Job, type Processor } from 'bullmq';
 import type { WorkerConfig } from '../config.js';
 import type { RecomputeOutcome, RecomputeService } from './recompute.service.js';
@@ -16,7 +16,8 @@ export interface RecomputeJobData {
  * run id, and a completed job left behind would make a later `add` with that
  * id a silent no-op -- harmless today, because a recomputed run is no longer
  * a candidate, but the dedupe should rest on the run's state, not on history.
- * Failed jobs are kept (up to 1000) so an operator can read why.
+ * Failed jobs are kept (up to 1000) so an operator can read why, and the
+ * next scan retries a failed job whose run is still a candidate.
  */
 const RECOMPUTE_JOB_OPTIONS = {
   removeOnComplete: true,
@@ -104,32 +105,69 @@ export function startRecomputeConsumer(
 }
 
 /**
- * Queues every current candidate (up to `batch`, newest first), keyed by run
- * id so a run already queued is not queued twice. Returns how many it ADDED.
+ * Queues every current candidate, walking ALL of them in pages of `batch`
+ * (newest first, keyset-paged), keyed by run id so a run already queued is
+ * not queued twice. Returns how many it added or re-queued.
  *
- * `batch` bounds one scan, not the backlog: a recomputed run stops being a
- * candidate, so the next scan's newest `batch` are the next ones down.
+ * ═══ EVERY PAGE, NOT THE NEWEST ONE ═══
+ *
+ * A run stays a candidate until its recompute succeeds or records an error,
+ * so a scan that only ever looked at the newest `batch` would be stuck behind
+ * them for as long as they stayed -- and a run whose recompute keeps failing
+ * transiently stays for ever. Paging is what lets an older run through.
+ *
+ * ═══ A FAILED JOB IS RE-QUEUED, NOT LEFT AS A TOMBSTONE ═══
+ *
+ * The job id IS the run id, and a job that exhausted its attempts sits in the
+ * failed set (`removeOnFail`) under that id -- so `add` would silently refuse
+ * the run for as long as BullMQ kept the record, after any outage long enough
+ * to outlast three attempts. A failed job of a run that is STILL a candidate
+ * is retried with its attempts reset, and said so in the log every time, so a
+ * run that fails on every scan is visible rather than silently stranded.
  */
 export async function enqueueCandidates(
   queue: Queue,
   repo: RecomputeRepository,
   batch = 500,
 ): Promise<number> {
-  const ids = await repo.candidates({}, batch);
+  let added = 0;
+  let after: CandidateCursor | undefined;
+  for (;;) {
+    const page = await repo.candidatePage({}, batch, after);
+    added += await enqueuePage(queue, page.ids);
+    if (page.next === null) break;
+    after = page.next;
+  }
+  return added;
+}
+
+async function enqueuePage(queue: Queue, ids: readonly string[]): Promise<number> {
   if (ids.length === 0) return 0;
   // Asked first, because `add` with an id that exists returns the existing
   // job without saying so -- there is no other way to count what was new.
   const existing = await Promise.all(ids.map((id) => queue.getJob(id)));
-  const fresh = ids.filter((_, i) => existing[i] === undefined);
-  if (fresh.length === 0) return 0;
-  await queue.addBulk(
-    fresh.map((runId) => ({
-      name: 'recompute',
-      data: { runId },
-      opts: { ...RECOMPUTE_JOB_OPTIONS, jobId: runId },
-    })),
-  );
-  return fresh.length;
+  const fresh: string[] = [];
+  let requeued = 0;
+  for (const [i, runId] of ids.entries()) {
+    const job = existing[i];
+    if (job === undefined) {
+      fresh.push(runId);
+    } else if ((await job.getState()) === 'failed') {
+      await job.retry('failed', { resetAttemptsMade: true });
+      console.warn(`recompute: re-queued run ${runId}, whose last attempts all failed: ${job.failedReason}`);
+      requeued += 1;
+    }
+  }
+  if (fresh.length > 0) {
+    await queue.addBulk(
+      fresh.map((runId) => ({
+        name: 'recompute',
+        data: { runId },
+        opts: { ...RECOMPUTE_JOB_OPTIONS, jobId: runId },
+      })),
+    );
+  }
+  return fresh.length + requeued;
 }
 
 export interface ScanLog {

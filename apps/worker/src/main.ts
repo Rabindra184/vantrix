@@ -57,6 +57,7 @@ const PIPELINE_PRISMA_CLIENTS_PER_JOB = 1;
 const FOLD_OWNER_CLAIM_PRISMA_CLIENTS = 1;
 const PRISMA_HEADROOM = 1;
 // The recompute consumer (concurrency 1) reads a run and its project through Prisma, one query at a time.
+// Reserved even when RECOMPUTE_ENABLED=false: one idle connection's worth of budget, not worth a branch.
 const RECOMPUTE_PRISMA_CLIENTS = 1;
 const prisma = createPrisma(config.databaseUrl, {
   connectionLimit:
@@ -110,6 +111,7 @@ const SWEEPER_CLIENTS = 1;
 // `RecomputeService.recompute` holds the run's lock client and, inside it, its write transaction's: two at once.
 const RECOMPUTE_CLIENTS = 2;
 // The recompute scheduler's candidate query, which can run beside a recompute.
+// Both recompute terms are reserved even when RECOMPUTE_ENABLED=false (a ceiling, not an allocation).
 const RECOMPUTE_SCAN_CLIENTS = 1;
 const pool = createPool(config.databaseUrl, {
   max:

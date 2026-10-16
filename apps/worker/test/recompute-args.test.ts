@@ -44,12 +44,14 @@ describe('parseRecomputeArgs', () => {
 });
 
 describe('createRecomputeScan', () => {
-  function fakes(candidates: () => Promise<string[]>) {
+  function fakes(ids: () => Promise<string[]>) {
     const queue = {
       getJob: vi.fn(async () => undefined),
       addBulk: vi.fn(async (jobs: unknown[]) => jobs),
     } as unknown as Queue;
-    const repo = { candidates: vi.fn(candidates) } as unknown as RecomputeRepository;
+    const repo = {
+      candidatePage: vi.fn(async () => ({ ids: await ids(), next: null })),
+    } as unknown as RecomputeRepository;
     const log = { info: vi.fn(), error: vi.fn() };
     return { queue, repo, log };
   }
@@ -64,7 +66,7 @@ describe('createRecomputeScan', () => {
     release([]);
     await first;
 
-    expect(repo.candidates).toHaveBeenCalledTimes(1);
+    expect(repo.candidatePage).toHaveBeenCalledTimes(1);
   });
 
   it('logs a failed scan instead of rejecting, and runs again on the next tick', async () => {
@@ -77,7 +79,7 @@ describe('createRecomputeScan', () => {
     await expect(scan()).resolves.toBeUndefined();
 
     expect(log.error).toHaveBeenCalledTimes(2);
-    expect(repo.candidates).toHaveBeenCalledTimes(2);
+    expect(repo.candidatePage).toHaveBeenCalledTimes(2);
   });
 
   it('logs how many runs it queued', async () => {

@@ -5,10 +5,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
+import { INGEST_QUEUE } from '@perfportal/core';
 import { createPool, createPrisma, RecomputeRepository } from '@perfportal/persistence';
 import { BlobStore } from '@perfportal/storage';
 import { Queue, type Worker } from 'bullmq';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { loadWorkerConfig } from '../src/config.js';
 import { PipelineService, RUN_INGEST_LOCK_NAMESPACE } from '../src/pipeline/pipeline.service.js';
 import {
@@ -29,7 +30,7 @@ const prisma = createPrisma(config.databaseUrl);
 const blobs = new BlobStore(config.blob);
 const connection = { connection: { url: config.redisUrl } };
 const recomputeQueue = new Queue(RECOMPUTE_QUEUE, connection);
-const ingestQueue = new Queue('ingest', connection);
+const ingestQueue = new Queue(INGEST_QUEUE, connection);
 
 let bundle: Buffer;
 let consumer: Worker | undefined;
@@ -58,6 +59,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await consumer?.close();
   consumer = undefined;
   await recomputeQueue.obliterate({ force: true });
@@ -130,6 +132,19 @@ describe('enqueueCandidates', () => {
     expect(jobs.map((j) => j.data.runId).sort()).toEqual([...ids].sort());
   });
 
+  it('pages past a newest run that stays queued, so an older candidate is still enqueued', async () => {
+    const [older, newest] = await seedLegacyRuns(2);
+    await pool.query(`UPDATE run SET created_at = '2026-08-07T10:00:00Z' WHERE id = $1`, [older]);
+    await pool.query(`UPDATE run SET created_at = '2026-08-07T11:00:00Z' WHERE id = $1`, [newest]);
+    // The newest is already queued (a run that stays a candidate: one being
+    // retried, or one whose recompute keeps failing).
+    await recomputeQueue.add('recompute', { runId: newest }, { jobId: newest });
+
+    // batch = 1: the newest run fills the first page on its own.
+    expect(await enqueueCandidates(recomputeQueue, new RecomputeRepository(pool), 1)).toBe(1);
+    expect(await recomputeQueue.getJob(older!)).toBeDefined();
+  });
+
   it('adds nothing when no run needs recomputing', async () => {
     expect(await enqueueCandidates(recomputeQueue, new RecomputeRepository(pool))).toBe(0);
   });
@@ -167,6 +182,34 @@ describe('startRecomputeConsumer', () => {
     await ingestJob.remove();
     await until(`run ${id} to become exact-v1`, async () => (await statsMethod(id!)) === 'exact-v1');
   });
+
+  it('re-queues a run whose job failed every attempt, on the next scan, and then recomputes it', async () => {
+    const [id] = await seedLegacyRuns(1);
+    const failing = vi
+      .spyOn(RecomputeService.prototype, 'recompute')
+      .mockRejectedValue(new Error('object store unreachable'));
+    await enqueueCandidates(recomputeQueue, new RecomputeRepository(pool));
+    startConsumer();
+
+    // attempts: 3 with exponential backoff from 5 s: about 15 s to exhaust.
+    const job = await until(
+      'the recompute job to fail every attempt',
+      async () => {
+        const j = await recomputeQueue.getJob(id!);
+        return j && (await j.getState()) === 'failed' ? j : null;
+      },
+      45_000,
+    );
+    expect(job.attemptsMade).toBe(3);
+    expect(failing).toHaveBeenCalledTimes(3);
+    expect(await statsMethod(id!)).toBe('estimated');
+
+    failing.mockRestore();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    expect(await enqueueCandidates(recomputeQueue, new RecomputeRepository(pool))).toBe(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining(id!));
+    await until(`run ${id} to become exact-v1`, async () => (await statsMethod(id!)) === 'exact-v1');
+  }, 90_000);
 
   it('delays a locked run rather than failing it, and recomputes it once the lock is free', async () => {
     const [id] = await seedLegacyRuns(1);
