@@ -151,6 +151,125 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The exact-statistics verifier branch (`feat/exact-statistics-verifier`, PR 3
+of `docs/superpowers/specs/2026-10-15-exact-statistics-design.md`, plan
+`docs/superpowers/plans/2026-10-16-exact-statistics-pr3-verifier.md`).
+**Floors: measured after the final fix wave** (unit, integration, e2e and
+e2e:cross — the controller fills them here and in the paragraph above).
+
+**EVERY RUN IS CHECKED FIGURE BY FIGURE AGAINST ITS OWN RAW LOG, BY CODE THAT
+SHARES NOTHING WITH THE ENGINE THAT WROTE IT.** `packages/verify` decodes the
+stored `simulation.log` with the shared decoder (`@perfportal/plugin-gatling`)
+and recomputes, from sorted value arrays, every `run_stat` row (count, ok, ko,
+error rate, min, max, mean, population stddev, throughput, every configured
+percentile), every `run_series_bucket` (started/ended/ok/ko counts, min, max,
+mean, the fixed band set over all, OK and KO), `run_error` (top 200 plus the
+other row), `run_error_bucket` (top 5 plus other, the run series' width),
+`run_user_bucket`, and the run's `duration_ms`/`activity_ms` — Appendix A of
+the plan is the contract, read out of the engine. Counts, extremes and
+percentiles compare EXACTLY; mean, stddev, throughput and error rate within
+relative 1e-9. **NOT verified, on purpose:** `tool_assertions` (re-checking
+Gatling's own assertions is PR 4's) and the histogram BYTES (an encoding; the
+figures derived from them are verified). `VERIFIER_VERSION` (1) is bumped when
+the rules change, and a run verified by an older one is a candidate again.
+
+**ITS INDEPENDENCE IS A LINT RULE, NOT A CONVENTION.** `eslint.config.js`
+forbids `packages/verify` (source AND tests) importing `@perfportal/statistics`
+by name or by a relative path into its tree, and its source the database layer
+too — a verifier that reached for the engine's own rank function would agree
+with exactly the bug it exists to catch. `lint-rules-compose.test.ts` guards
+that the blocks compose.
+
+**A `verify` QUEUE, CONCURRENCY 1, BEHIND INGEST — RECOMPUTE'S SHAPE.**
+Requested after every successful ingest and every `recomputed` outcome
+(`enqueueVerification` marks the row `pending` FIRST, so the header reads
+"Verifying…", then adds the job — the other order lets the answer land under
+the pending write), and found by a scan every `VERIFY_SCAN_INTERVAL_MS` (10
+min) that keyset-pages every candidate and re-queues failed jobs. Ingest work
+waiting/active/delayed pushes a job back 5 s; a run whose advisory lock is held
+(an ingest, a recompute, a live fold) is `locked` and waits 30 s — the lock is
+held from before the log is opened until the stored rows are read, so a
+rewrite lands wholly before or after and a correct run can never read as a
+mismatch. A mismatch writes the row and ONE `console.error` line naming the
+run and the count; the row lists each figure with stored and recomputed values.
+`VERIFY_ENABLED=false` (exactly) defers it.
+
+**UNVERIFIABLE HAS FOUR REASONS, AND TWO ARE DEVIATIONS FROM THE SPEC.**
+`raw_log_deleted` and `raw_log_missing` (the spec's), `raw_log_unreadable` (a
+checksum or parse failure is neither deleted nor missing) and `not_exact` (a
+run labelled estimated, or carrying any sketch / pre-`sparse-ms-v2` row —
+checked BEFORE the log is opened, because verifying estimates would report a
+flood of mismatches that say only "estimated"). `BUNDLE_TOO_LARGE` and
+transport failures are rethrown, never recorded.
+
+**RAW LOGS ARE DELETED AFTER 90 DAYS BY DEFAULT, AND THE FIRST SWEEP AFTER AN
+UPGRADE DELETES EVERYTHING ALREADY OLDER.** `RAW_LOG_RETENTION_DAYS` (empty is
+90, `0` is for ever, anything not a whole number of days stops the worker AND
+the API at startup — `parseRawLogRetentionDays` in `@perfportal/core` is the
+one rule). The sweeper's retention pass deletes the object, then stamps
+`run.raw_log_deleted_at`; it try-locks each run and skips one somebody holds.
+A run already verified (or mismatched) KEEPS that answer; a never-verified one
+becomes `unverifiable`/`raw_log_deleted` for good. DEPLOYMENT.md says to set
+`0` before upgrading an install with older history.
+
+**THE REAL RUNS, ON A SCRATCH DATABASE** (`perfportal_verify_real`, Redis db
+12, bucket `perfportal-verify-real`, API :3752, this tree's worker and runner):
+
+  - `ParitySimulation` through the Gradle plugin, live (run `d91c9f0c`) and
+    through the on-prem runner as a `gatling_bundle` (run `30b26dd0`): both
+    `complete`, 895 requests, 14 `run_stat` rows, and both **`verified`, 0
+    mismatches — 21,564 and 21,644 figures**, `raw_log_retained_until`
+    2027-01-14, the API's `verification` and `/verification` agreeing.
+  - One stored figure corrupted on each and re-verified, each `mismatch` naming
+    exactly that figure: `run_stat` run-scope `p95` stored 677 / recomputed 676
+    (population `all`); `run_stat` request `Search` `count` 161 / 160 (and only
+    that — ok/ko, error rate and throughput are stored columns, not derived);
+    and, through the RUNNING worker's queue, `run_series_bucket` run-scope
+    bucket 30000 `ok_count` 14 / 13, with the worker's
+    `verify: run 30b26dd0-… has 1 mismatch against its raw log` line. Each
+    restored value re-verified `verified`.
+  - Retention: `RAW_LOG_RETENTION_DAYS=1`, both runs' `ingested_at` moved back
+    two days (one with its verification row deleted, standing in for a run
+    never verified): within one 10 s sweep both objects were gone (bucket
+    empty), both `raw_log_deleted_at` set; the verified run stayed `verified`
+    (API `rawLogDeleted: true`, the panel reads "deleted") and the other read
+    `unverifiable`/`raw_log_deleted`. Re-verifying either afterwards answers
+    `raw_log_deleted` and changes neither row.
+  - Gatling's own assertion line agreed with the stored request p95 on the
+    plugin run (Search 1891 = 1891) and not on the runner run (2106 against a
+    stored, verified 2077): Gatling's report percentile is its t-digest, PR 4's
+    subject, and not a verifier finding.
+
+**THE COPY OF THE DEVELOPER DATABASE, THROUGH A SCRIPT, READING THE BUCKET
+READ-ONLY** (a `Proxy` over `BlobStore` refusing everything but `get` and
+`exists`): `pg_dump perfportal` into `perfportal_verify_copy` (29 runs, 346
+`run_stat` rows, 37 migrations), `prisma migrate deploy` (40), then
+`VerifyService.verify` for every run: **26 `not_exact`, 3 `not_eligible`** — the
+copy had not had PR 2's backfill, so every run with statistics was estimated,
+which is exactly what an upgrade reads until the backfill reaches each run (the
+recompute marks it pending, so it is verified again). After `RecomputeService`
+over the same read-only store (26 recomputed): **26 `verified`, 0 mismatch, 0
+unverifiable, 3 `not_eligible`** (the failed run and two incomplete runs with no
+statistics) — **570,860 figures** (102 to 32,426 a run, runs of 1 to 1,724
+requests), the 29 verifications in 733 ms. The copy was dropped and the
+developer database read back identical: 29 runs, 346 `run_stat` rows, 37
+migrations, the same md5 over every run's id/status/verdict and every
+`run_stat` row's counts and percentiles, no `run_verification` table.
+
+**KNOWN AND LEFT:**
+
+  - Retention does not wait for verification or for the backfill: a run past
+    retention is deleted on the first sweep whether or not it was ever checked
+    or recomputed. DEPLOYMENT.md's remedy is `0` before upgrading; a product
+    answer (skip runs still `pending`, `not_exact` or a recompute candidate) is
+    a design decision.
+  - A verified run whose log is later deleted keeps the `raw_log_retained_until`
+    computed at verification (2027-01-14 above, after a deletion on day 0 under
+    a retention lowered since). The panel reads `rawLogDeleted` first and says
+    "deleted"; only the API body carries the stale date.
+  - The worker ignored SIGTERM for 30 s at teardown and took a SIGKILL by PID,
+    as this file records.
+
 The exact-statistics backfill branch (`feat/exact-statistics-backfill`, PR 2
 of `docs/superpowers/specs/2026-10-15-exact-statistics-design.md`, plan
 `docs/superpowers/plans/2026-10-16-exact-statistics-pr2-backfill.md`) added

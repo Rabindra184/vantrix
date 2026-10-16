@@ -4,6 +4,14 @@ Run the whole platform on one machine with Docker. A fresh deployment comes up
 with a database, an object store, an org, a project, an API token and an admin
 account you can sign in with immediately.
 
+> **Raw logs are deleted after 90 days by default.** From the release that
+> verifies every run, the worker deletes each run's stored `simulation.log` 90
+> days after its ingest — including, on the first sweep after you upgrade,
+> every log that is **already** older than that. Its figures stay; what goes
+> is the ability to re-verify or recompute it. To keep raw logs,
+> set `PERFPORTAL_RAW_LOG_RETENTION_DAYS=0` in `infra/.env` **before** you
+> upgrade. See [Raw logs and verification](#raw-logs-and-verification).
+
 - [Requirements](#requirements)
 - [Quick start](#quick-start)
 - [First sign-in](#first-sign-in)
@@ -275,6 +283,42 @@ first boot. Fill them in, then:
 docker compose -f infra/docker-compose.yml --profile onprem up -d runner
 ```
 
+### Raw logs and verification
+
+| Variable | Notes |
+|---|---|
+| `PERFPORTAL_RAW_LOG_RETENTION_DAYS` | Days after ingest a run's raw log is kept. **Empty means 90.** `0` keeps raw logs for ever. Anything that is not a whole number of days stops the worker (and the API) at startup, naming the variable |
+| `PERFPORTAL_VERIFY_ENABLED` | Empty means on. `false` (exactly that word) defers verification; the backlog is checked once it is switched back on |
+| `PERFPORTAL_VERIFY_SCAN_INTERVAL_MS` | How often the worker looks for runs still to verify. Empty means every 10 minutes (600000) |
+
+After every upload and every recompute the worker re-reads the run's stored
+`simulation.log` and checks every stored figure against it — each statistic
+for the run, every request and group, every time-series bucket, the error
+tables and the virtual-user series. The run header then reads **✓ Verified**,
+**Verifying…**, **✕ Verification failed** (the panel lists each figure with
+its stored and recomputed value) or **Not verified** with the reason, and
+**Administration › Data integrity** lists failures and unverifiable runs and
+states the retention setting.
+
+**Deleting a raw log is irreversible, and the worker does it on its own.**
+The sweeper deletes every log past retention, oldest first, up to 100 per
+sweep (every 30 seconds). A run that was already verified keeps its ✓; a run
+that was **never** verified becomes **Not verified — the raw log was deleted
+before this run was checked**, permanently. A run still carrying estimated
+figures (≈) can no longer be recomputed once its log is gone.
+
+So, on an install with history older than the retention:
+
+1. Before upgrading, set `PERFPORTAL_RAW_LOG_RETENTION_DAYS=0`.
+2. Upgrade, and let the backfill and verification finish — Administration ›
+   Data integrity shows both.
+3. Then set the retention you want and `up` again.
+
+`PERFPORTAL_VERIFY_ENABLED=false` does **not** stop the deletion: with
+verification deferred and retention on, every run that ages past the
+retention while deferred is never checked. Defer verification only together
+with `PERFPORTAL_RAW_LOG_RETENTION_DAYS=0`.
+
 ---
 
 ## Before you expose it
@@ -318,6 +362,14 @@ not start at all: its `bootstrap` reads that column, fails, and `api` waits on
 it. Run directly, it answers every signed-in request with a 500. To go back
 past it, restore the backup you took before upgrading
 ([below](#backup-and-restore)).
+
+**Upgrading to run verification starts deleting raw logs older than 90
+days.** That release adds `PERFPORTAL_RAW_LOG_RETENTION_DAYS`, empty means 90,
+and the first sweep after the upgrade deletes every stored log already past
+it — before the verifier or the exact-statistics backfill has reached those
+runs. If you want them checked (or recomputed), set
+`PERFPORTAL_RAW_LOG_RETENTION_DAYS=0` before upgrading and choose a retention
+afterwards; see [Raw logs and verification](#raw-logs-and-verification).
 
 **Upgrading past exact statistics: migrate, then the API, then the worker.**
 Under Compose one `up` replaces them together and the order takes care of
