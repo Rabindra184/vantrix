@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
-import type { CanonicalEvent } from '@perfportal/core';
+import { INGEST_QUEUE, type CanonicalEvent } from '@perfportal/core';
 import { createPool, createPrisma, VerificationRepository } from '@perfportal/persistence';
 import { GatlingPlugin, parseSimulationLog } from '@perfportal/plugin-gatling';
 import { BlobStore } from '@perfportal/storage';
@@ -33,6 +33,11 @@ const blobs = new BlobStore(config.blob);
 const connection = { connection: { url: config.redisUrl } };
 const verifyQueue = new Queue(VERIFY_QUEUE, connection);
 const recomputeQueue = new Queue(RECOMPUTE_QUEUE, connection);
+// The recompute consumer yields to ANY waiting, active or delayed ingest job,
+// so an ingest job another integration file left on this Redis index would
+// park the recompute case for ever. Emptied around every case, as
+// recompute-queue.integration does.
+const ingestQueue = new Queue(INGEST_QUEUE, connection);
 const verifications = new VerificationRepository(pool);
 
 let bundle: Buffer;
@@ -54,6 +59,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   await verifyQueue.obliterate({ force: true });
   await recomputeQueue.obliterate({ force: true });
+  await ingestQueue.obliterate({ force: true });
 });
 
 afterEach(async () => {
@@ -62,11 +68,13 @@ afterEach(async () => {
   consumer = undefined;
   await verifyQueue.obliterate({ force: true });
   await recomputeQueue.obliterate({ force: true });
+  await ingestQueue.obliterate({ force: true });
 });
 
 afterAll(async () => {
   await verifyQueue.close();
   await recomputeQueue.close();
+  await ingestQueue.close();
   await pool.end();
   await prisma.$disconnect();
 });
