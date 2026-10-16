@@ -246,6 +246,7 @@ const ACCESS_BY_ROUTE: Readonly<Record<string, Access>> = {
   'PUT /v1/admin/users/:userId/password': 'users:manage',
   'DELETE /v1/admin/users/:userId': 'users:manage',
   'GET /v1/admin/projects': 'users:manage',
+  'GET /v1/admin/recompute': 'users:manage',
 };
 
 /** Where the run routes live. A run names its project through the run row. */

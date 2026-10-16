@@ -126,6 +126,85 @@ describe('GET /v1/runs/:id', () => {
     expect(res.status).toBe(200);
     expect(res.body.statsMethod).toBe('estimated');
   });
+
+  /**
+   * One verdict change, written the way the recompute writes it, so the two
+   * builders are read against a row only a real read can surface.
+   */
+  const RULE = { scope: 'run', targetName: null, family: 'response_time', metric: 'p95', comparator: 'lte', threshold: 800 };
+  async function recordChange(runId: string, ruleSnapshot: unknown = RULE, changedAt = new Date('2026-10-16T09:00:00.000Z')): Promise<void> {
+    const run = await ctx.prisma.run.findUniqueOrThrow({ where: { id: runId }, select: { orgId: true, projectId: true } });
+    await ctx.prisma.runVerdictChange.create({
+      data: {
+        runId,
+        orgId: run.orgId,
+        projectId: run.projectId,
+        ruleSnapshot: ruleSnapshot as object,
+        oldOutcome: 'passed',
+        newOutcome: 'failed',
+        oldValue: 790.4,
+        newValue: 812,
+        oldVerdict: 'passed',
+        newVerdict: 'failed',
+        changedAt,
+      },
+    });
+  }
+  const CHANGE = {
+    rule: RULE,
+    oldOutcome: 'passed',
+    newOutcome: 'failed',
+    oldValue: 790.4,
+    newValue: 812,
+    oldVerdict: 'passed',
+    newVerdict: 'failed',
+    changedAt: '2026-10-16T09:00:00.000Z',
+  };
+
+  /**
+   * Both identity builders, for the reason statsMethod's case gives: a field
+   * sent by only one is missing exactly while a reader watches the run.
+   */
+  it('sends verdictChanges on the run in both the 202 and the finished response', async () => {
+    ctx = await createTestApp();
+    const id = await ingested();
+    await recordChange(id);
+    const done = await readAs(`/v1/runs/${id}`);
+    expect(done.status).toBe(200);
+    expect(done.body.verdictChanges).toEqual([CHANGE]);
+
+    const pendingId = await postWithoutProcessing();
+    await recordChange(pendingId);
+    const pending = await readAs(`/v1/runs/${pendingId}`);
+    expect(pending.status).toBe(202);
+    expect(pending.body.verdictChanges).toEqual([CHANGE]);
+  });
+
+  it('sends an empty verdictChanges for a run no recompute changed', async () => {
+    ctx = await createTestApp();
+    const id = await ingested();
+    const done = await readAs(`/v1/runs/${id}`);
+    expect(done.body.verdictChanges).toEqual([]);
+    const pendingId = await postWithoutProcessing();
+    const pending = await readAs(`/v1/runs/${pendingId}`);
+    expect(pending.status).toBe(202);
+    expect(pending.body.verdictChanges).toEqual([]);
+  });
+
+  /**
+   * A stored snapshot is JSON nothing validated at write time. One that does
+   * not read as a rule is dropped from the list — the rest of the run, and
+   * the rest of the list, still answer — rather than failing the read.
+   */
+  it('drops a verdict change whose stored rule does not parse, and keeps the rest in the order recorded', async () => {
+    ctx = await createTestApp();
+    const id = await ingested();
+    await recordChange(id, { scope: 'galaxy' }, new Date('2026-10-16T08:00:00.000Z'));
+    await recordChange(id);
+    const res = await readAs(`/v1/runs/${id}`);
+    expect(res.status).toBe(200);
+    expect(res.body.verdictChanges).toEqual([CHANGE]);
+  });
 });
 
 describe('GET /v1/runs/:id/stats', () => {

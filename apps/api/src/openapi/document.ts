@@ -2802,6 +2802,30 @@ const paths: Record<string, PathItemObject> = {
     },
   },
 
+  '/v1/admin/recompute': {
+    get: {
+      operationId: 'getRecomputeProgress',
+      summary: 'How far recomputing this organisation\'s runs exactly has got',
+      tags: ['admin'],
+      security: [{ cookieAuth: [] }],
+      description:
+        sessionAccessSentence('users:manage') + ' ' +
+        'Counts this organisation\'s finished runs for the exact-statistics backfill: "total" ' +
+        'is every run that carries statistics, "remaining" the ones still holding estimated ' +
+        'statistics that the worker will recompute, and "failed" the ones it gave up on — their ' +
+        'raw log was missing, did not match its checksum, or did not parse — which keep their ' +
+        'estimated figures. No other organisation\'s runs are counted.',
+      responses: {
+        '200': {
+          description: 'The backfill\'s progress in this organisation.',
+          content: json(schemaRef('RecomputeProgress')),
+        },
+        '401': ref('Unauthorized'),
+        '403': ref('SessionRequired'),
+      },
+    },
+  },
+
   '/v1/telemetry': {
     post: {
       operationId: 'postTelemetry',

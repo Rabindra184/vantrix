@@ -7,6 +7,8 @@ import {
   AdminProjectSchema,
   AdminUserListResponseSchema,
   AdminUserSchema,
+  RecomputeProgressSchema,
+  VerdictChangeSchema,
   ChangePasswordRequestSchema,
   CreateUserRequestSchema,
   MemberListResponseSchema,
@@ -158,6 +160,11 @@ const SOURCE: Record<string, ZodTypeAny> = {
   SetPasswordRequest: SetPasswordRequestSchema,
   AdminProject: AdminProjectSchema,
   AdminProjectListResponse: AdminProjectListResponseSchema,
+  // EXACT STATISTICS, PR 2: the backfill's progress for an admin, and the
+  // verdict changes a recompute leaves on a run (the run responses embed
+  // them; registered here so the shape has a name of its own).
+  RecomputeProgress: RecomputeProgressSchema,
+  VerdictChange: VerdictChangeSchema,
   ProjectMember: ProjectMemberSchema,
   MemberListResponse: MemberListResponseSchema,
   AddMemberRequest: AddMemberRequestSchema,

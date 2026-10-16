@@ -161,3 +161,16 @@ export const AdminProjectListResponseSchema = z.object({
   projects: z.array(AdminProjectSchema),
 });
 export type AdminProjectListResponse = z.infer<typeof AdminProjectListResponseSchema>;
+
+/**
+ * `GET /v1/admin/recompute`: how far the exact-statistics backfill has got in
+ * the caller's org. `total` is every finished run that carries statistics,
+ * `remaining` the ones still estimated and not given up on, `failed` the ones
+ * a recompute gave up on (they keep their estimated figures for good).
+ */
+export const RecomputeProgressSchema = z.object({
+  total: z.number().int().nonnegative(),
+  remaining: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+});
+export type RecomputeProgress = z.infer<typeof RecomputeProgressSchema>;

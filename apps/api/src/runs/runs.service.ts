@@ -1,5 +1,12 @@
 import { Injectable } from '@nestjs/common';
-import type { RunNote, RunResponse, ToolAssertionOutcome } from '@perfportal/contracts';
+import {
+  AssertionRuleSchema,
+  VerdictChangeSchema,
+  type RunNote,
+  type RunResponse,
+  type ToolAssertionOutcome,
+  type VerdictChange,
+} from '@perfportal/contracts';
 import { MetricReader, RunRepository, type RunRecord } from '@perfportal/persistence';
 import { PrismaClient } from '@prisma/client';
 import { statusForCode } from '../common/problem.js';
@@ -49,7 +56,8 @@ export class RunsService {
    * produced the run's statistics); `queuedAt` and `runnerJobId` are one
    * indexed lookup (`runner_job_run_id_idx`) for the runner job that produced
    * the run, if any. A run has at most one: a retry makes a new job AND a new
-   * run.
+   * run. `verdictChanges` is a second indexed lookup
+   * (`run_verdict_change_run_id_idx`): what the exact recompute changed.
    */
   async lifecycleOf(run: RunRecord): Promise<{
     parsingStartedAt: string | null;
@@ -57,6 +65,7 @@ export class RunsService {
     queuedAt: string | null;
     runnerJobId: string | null;
     statsMethod: RunRecord['statsMethod'];
+    verdictChanges: VerdictChange[];
   }> {
     const job = await this.prisma.runnerJob.findFirst({
       // The run's own project as well: the runner writes `run_id` only for a
@@ -65,6 +74,12 @@ export class RunsService {
       where: { runId: run.id, projectId: run.projectId },
       orderBy: { createdAt: 'asc' },
       select: { id: true, createdAt: true },
+    });
+    // Through Prisma, not `RecomputeRepository.verdictChanges`: this service
+    // holds no pg pool, and the order is that method's own (changed_at, id).
+    const changes = await this.prisma.runVerdictChange.findMany({
+      where: { runId: run.id },
+      orderBy: [{ changedAt: 'asc' }, { id: 'asc' }],
     });
     const iso = (at: Date | null): string | null => (at === null ? null : at.toISOString());
     return {
@@ -75,6 +90,7 @@ export class RunsService {
       // a runner job, and so any events? — at no extra query.
       runnerJobId: job?.id ?? null,
       statsMethod: run.statsMethod,
+      verdictChanges: changes.flatMap((c) => verdictChangeOf(run.id, c)),
     };
   }
 
@@ -124,6 +140,7 @@ export class RunsService {
       queuedAt: lifecycle.queuedAt,
       runnerJobId: lifecycle.runnerJobId,
       statsMethod: lifecycle.statsMethod,
+      verdictChanges: lifecycle.verdictChanges,
       note: noteOf(run),
       // Appendix A G-05. Already evaluated at ingest against the rollups the
       // engine had in hand, so this is a projection, not a computation — and
@@ -206,4 +223,50 @@ export function noteOf(run: RunRecord): RunNote | null {
     updatedAt: run.noteUpdatedAt === null ? null : run.noteUpdatedAt.toISOString(),
     updatedBy: run.noteAuthorName === null ? null : { name: run.noteAuthorName },
   };
+}
+
+/**
+ * One stored verdict change in the contract's shape, or nothing.
+ *
+ * ═══ A SNAPSHOT THAT IS NOT A RULE IS DROPPED, NOT A 500 ═══
+ *
+ * `rule_snapshot` is JSON that nothing validates on its way in. A row whose
+ * snapshot does not read as a rule cannot be described to a reader, and
+ * failing the whole run response over it would take the run page down for
+ * one unrenderable line — so it is left out of the list and logged. The rest
+ * of the row is the recompute's own writing and the contract checks it too;
+ * a row failing for any reason takes the same path.
+ */
+function verdictChangeOf(
+  runId: string,
+  row: {
+    id: string;
+    ruleSnapshot: unknown;
+    oldOutcome: string;
+    newOutcome: string;
+    oldValue: number | null;
+    newValue: number | null;
+    oldVerdict: string;
+    newVerdict: string;
+    changedAt: Date;
+  },
+): VerdictChange[] {
+  const drop = (issues: unknown): VerdictChange[] => {
+    console.warn(`dropping verdict change ${row.id} of run ${runId}: it does not parse`, issues);
+    return [];
+  };
+  const rule = AssertionRuleSchema.safeParse(row.ruleSnapshot);
+  if (!rule.success) return drop(rule.error.issues);
+  const change = VerdictChangeSchema.safeParse({
+    rule: rule.data,
+    oldOutcome: row.oldOutcome,
+    newOutcome: row.newOutcome,
+    oldValue: row.oldValue,
+    newValue: row.newValue,
+    oldVerdict: row.oldVerdict,
+    newVerdict: row.newVerdict,
+    changedAt: row.changedAt.toISOString(),
+  });
+  if (!change.success) return drop(change.error.issues);
+  return [change.data];
 }

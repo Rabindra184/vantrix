@@ -5,6 +5,7 @@ import {
   RunIdentitySchema,
   RunResponseSchema,
   TrendRunSchema,
+  VerdictChangeSchema,
 } from '../src/index.js';
 
 describe('IngestMetadataSchema', () => {
@@ -201,6 +202,44 @@ describe('RunResponseSchema test identity', () => {
     expect(RunIdentitySchema.safeParse({ ...base, statsMethod: 'exact-v1' }).success).toBe(true);
     expect(RunIdentitySchema.safeParse(base).success).toBe(true);
     expect(RunIdentitySchema.safeParse({ ...base, statsMethod: 'sketch' }).success).toBe(false);
+  });
+
+  /**
+   * `verdictChanges` lists every SLA assertion a recompute of the run's
+   * statistics changed. OPTIONAL for the rolling-deploy reason `statsMethod`
+   * gives: the browser drops a body that fails this schema, so a required
+   * field would blank the run page against an API pod that predates it.
+   */
+  const change = {
+    rule: { scope: 'run', targetName: null, family: 'response_time', metric: 'p95', comparator: 'lte', threshold: 800 },
+    oldOutcome: 'passed',
+    newOutcome: 'failed',
+    oldValue: 790.4,
+    newValue: 812,
+    oldVerdict: 'passed',
+    newVerdict: 'failed',
+    changedAt: '2026-10-16T09:00:00.000Z',
+  };
+
+  it('accepts a run identity without verdictChanges (rolling deploy)', () => {
+    expect(RunIdentitySchema.parse(base).verdictChanges).toBeUndefined();
+  });
+
+  it('accepts a run identity carrying a populated verdictChanges list', () => {
+    const parsed = RunIdentitySchema.parse({ ...base, verdictChanges: [change] });
+    expect(parsed.verdictChanges).toEqual([change]);
+    expect(RunIdentitySchema.parse({ ...base, verdictChanges: [] }).verdictChanges).toEqual([]);
+  });
+
+  it('refuses a verdict change with an outcome outside the three', () => {
+    expect(VerdictChangeSchema.safeParse({ ...change, newOutcome: 'breached' }).success).toBe(false);
+    expect(VerdictChangeSchema.safeParse({ ...change, oldVerdict: 'unknown' }).success).toBe(false);
+    expect(RunIdentitySchema.safeParse({ ...base, verdictChanges: [{ ...change, oldOutcome: 'error' }] }).success).toBe(false);
+  });
+
+  it('keeps a not_applicable side as a null value, and refuses a rule that is not a rule', () => {
+    expect(VerdictChangeSchema.safeParse({ ...change, oldOutcome: 'not_applicable', oldValue: null }).success).toBe(true);
+    expect(VerdictChangeSchema.safeParse({ ...change, rule: { scope: 'run' } }).success).toBe(false);
   });
 
   /**

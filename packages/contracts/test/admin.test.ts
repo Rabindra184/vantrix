@@ -6,6 +6,7 @@ import {
   AdminUserSchema,
   CreateUserRequestSchema,
   PROJECT_ROLES,
+  RecomputeProgressSchema,
   SetPasswordRequestSchema,
   UpdateUserRequestSchema,
   type CreateUserRequestInput,
@@ -221,5 +222,19 @@ describe('AdminProjectSchema', () => {
     expect(AdminProjectSchema.parse(project)).toEqual(project);
     expect(AdminProjectListResponseSchema.parse({ projects: [project] })).toEqual({ projects: [project] });
     expect(AdminProjectSchema.safeParse({ ...project, memberCount: -1 }).success).toBe(false);
+  });
+});
+
+describe('RecomputeProgressSchema', () => {
+  it('accepts three non-negative whole counts', () => {
+    const progress = { total: 12, remaining: 3, failed: 1 };
+    expect(RecomputeProgressSchema.parse(progress)).toEqual(progress);
+    expect(RecomputeProgressSchema.parse({ total: 0, remaining: 0, failed: 0 })).toEqual({ total: 0, remaining: 0, failed: 0 });
+  });
+
+  it('refuses a negative count, a fraction, and a missing one', () => {
+    expect(RecomputeProgressSchema.safeParse({ total: 12, remaining: -1, failed: 0 }).success).toBe(false);
+    expect(RecomputeProgressSchema.safeParse({ total: 1.5, remaining: 0, failed: 0 }).success).toBe(false);
+    expect(RecomputeProgressSchema.safeParse({ total: 1, remaining: 0 }).success).toBe(false);
   });
 });
