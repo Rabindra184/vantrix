@@ -537,7 +537,12 @@ describe('windowed buckets', () => {
     const stored = rows.find((r) => r.startOffsetMs === busiest!.startOffsetMs);
 
     expect(busiest!.startedOkCount).toBeGreaterThan(0);
-    expect(stored!.histogramOk!.quantile(0.95)).toBe(busiest!.histogramOk.quantile(0.95));
+    // Defined on both sides: the bucket started OK requests (asserted above),
+    // and a new histogram has no overflow bin to hide the rank in — so an
+    // `undefined` here would be a lost observation, not a legacy omission.
+    const expected = busiest!.histogramOk.percentile(95);
+    expect(expected).toBeDefined();
+    expect(stored!.histogramOk!.percentile(95)).toBe(expected);
   });
 
   it('returns only the buckets inside the range, half-open at the top', async () => {

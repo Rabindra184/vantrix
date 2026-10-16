@@ -236,24 +236,60 @@ describe('GET /v1/runs/:id/stats — windowed', () => {
 
   /**
    * A `group_duration` row measures a group's WALL-CLOCK span, so
-   * `group("Browse") { during(5.minutes) { … } }` — ordinary Gatling — puts
-   * every observation past the 120 s histogram cap on a run whose slowest
-   * REQUEST is milliseconds. `Histogram#quantile` refuses a rank in the
-   * overflow bin, correctly, and that refusal used to escape the handler: a
-   * 500 on a brushed read of a run whose UNWINDOWED page renders fine,
-   * because that path reads the uncapped sketch instead.
+   * `group("Browse") { during(5.minutes) { … } }` — ordinary Gatling — put
+   * every observation past the LEGACY 120 s histogram cap on a run whose
+   * slowest REQUEST is milliseconds. Runs ingested before 2026-10-15 still
+   * carry those `sparse-ms-v1` bytes with an overflow bin, and
+   * `Histogram#percentile` answers `undefined` for a rank hidden in it. That
+   * refusal once escaped the handler as a 500 on a brushed read of a run
+   * whose UNWINDOWED page renders fine, because that path reads the sketch.
    *
    * The histograms are written straight onto the stored buckets rather than
    * ingested: producing one through the fixture would mean a five-minute
    * simulation, and the subject here is what the ENDPOINT does with a bucket
-   * it has to merge, not how the bucket came to be.
+   * it has to merge, not how the bucket came to be. They are the exact bytes
+   * the pre-2026-10-15 writer produced (`legacyV1ForTests`) — a new
+   * histogram has no overflow bin and cannot be serialized with one.
    */
-  it('answers a window whose observations exceed the histogram cap, rather than failing the read', async () => {
+  it('answers a window whose legacy observations exceed the histogram cap, rather than failing the read', async () => {
+    ctx = await createTestApp();
+    const id = await ingested();
+
+    const over = Histogram.legacyV1ForTests(Array<number>(8).fill(300_700));
+    await ctx.pool.query(
+      'UPDATE run_series_bucket SET histogram_ok = $2, histogram_ko = $3 WHERE run_id = $1',
+      [id, Buffer.from(over), Buffer.from(Histogram.legacyV1ForTests([]))],
+    );
+
+    const res = await stats(id, '?from=0&to=2147483647');
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+
+    const row = runRowOf(StatsResponseSchema.parse(res.body));
+    // The MEASURED columns survive and are exact — the v1 writer recorded
+    // min, max and sum before folding an observation into the bin.
+    expect(row.maxMs).toBe(300_700);
+    // The ESTIMATED ones are absent, never 0: a fabricated p95 would sort to
+    // the top of a column of durations as though it were the fastest row.
+    expect(row.percentiles).toEqual({});
+
+    // And the unwindowed read was never affected, which is the asymmetry that
+    // made this worth finding: one page worked and the other returned 500.
+    expect((await stats(id)).status).toBe(200);
+  });
+
+  /**
+   * The same 300.7 s observations, written by the NEW code: `sparse-ms-v2`
+   * is uncapped, so a windowed read answers every rank exactly instead of
+   * omitting it. The pair with the case above is the point — legacy bytes
+   * lose the estimated columns, new bytes lose nothing.
+   */
+  it('answers a window over new, uncapped histograms with the exact over-120 s value', async () => {
     ctx = await createTestApp();
     const id = await ingested();
 
     const over = new Histogram();
     for (let i = 0; i < 8; i += 1) over.accept(300_700);
+    expect(over.overflowCount).toBe(0);
     await ctx.pool.query(
       'UPDATE run_series_bucket SET histogram_ok = $2, histogram_ko = $3 WHERE run_id = $1',
       [id, Buffer.from(over.serialize()), Buffer.from(new Histogram().serialize())],
@@ -263,16 +299,9 @@ describe('GET /v1/runs/:id/stats — windowed', () => {
     expect(res.status, JSON.stringify(res.body)).toBe(200);
 
     const row = runRowOf(StatsResponseSchema.parse(res.body));
-    // The MEASURED columns survive and are exact — `accept` records min, max
-    // and sum before folding an observation into the bin.
     expect(row.maxMs).toBe(300_700);
-    // The ESTIMATED ones are absent, never 0: a fabricated p95 would sort to
-    // the top of a column of durations as though it were the fastest row.
-    expect(row.percentiles).toEqual({});
-
-    // And the unwindowed read was never affected, which is the asymmetry that
-    // made this worth finding: one page worked and the other returned 500.
-    expect((await stats(id)).status).toBe(200);
+    expect(row.percentiles.p50).toBe(300_700);
+    expect(row.percentiles.p99).toBe(300_700);
   });
 
   /**
@@ -303,10 +332,10 @@ describe('GET /v1/runs/:id/stats — windowed', () => {
     ctx = await createTestApp();
     const id = await ingested();
 
-    const over = new Histogram();
-    for (let i = 0; i < 8; i += 1) over.accept(300_700);
-    const blob = Buffer.from(over.serialize());
-    const empty = Buffer.from(new Histogram().serialize());
+    // Legacy v1 bytes: only a run ingested before 2026-10-15 can carry the
+    // overflow bin `countBelow` refuses to cross.
+    const blob = Buffer.from(Histogram.legacyV1ForTests(Array<number>(8).fill(300_700)));
+    const empty = Buffer.from(Histogram.legacyV1ForTests([]));
     // Both stores, so the two paths meet the same data and any difference in
     // their answers is the handler's rather than the fixture's.
     await ctx.pool.query(
