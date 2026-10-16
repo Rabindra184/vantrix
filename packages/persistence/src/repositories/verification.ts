@@ -152,6 +152,21 @@ export class VerificationRepository {
     );
   }
 
+  /**
+   * Whether the run is one markPending may be called for: finished, with
+   * statistics to check. The same definition candidatePage selects by, so a
+   * caller that queues a run outside the scan (the pipeline, a recompute) can
+   * never leave a pending row no verification will ever settle — a failed run
+   * has no figures, and its verify job would answer not_eligible for ever.
+   */
+  async isVerifiable(runId: string): Promise<boolean> {
+    const { rows } = await this.pool.query<{ ok: boolean }>(
+      `SELECT (${VERIFIABLE_RUN_SQL}) AS ok FROM run r WHERE r.id = $1::uuid`,
+      [runId],
+    );
+    return rows[0]?.ok === true;
+  }
+
   async record(runId: string, r: VerificationResult): Promise<void> {
     await this.pool.query(
       `INSERT INTO run_verification

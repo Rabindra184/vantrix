@@ -15,6 +15,7 @@ import {
   createPool,
   createPrisma,
   RecomputeRepository,
+  VerificationRepository,
   type CandidateCursor,
 } from '@perfportal/persistence';
 import { BlobStore } from '@perfportal/storage';
@@ -66,6 +67,7 @@ async function main(): Promise<void> {
     }
 
     const repo = new RecomputeRepository(pool);
+    const verifications = new VerificationRepository(pool);
     const service = new RecomputeService(config, prisma, pool, new BlobStore(config.blob));
     const counts = new Map<RecomputeOutcome, number>();
     const n = (o: RecomputeOutcome) => counts.get(o) ?? 0;
@@ -84,6 +86,12 @@ async function main(): Promise<void> {
         );
         for (const runId of page.ids) {
           const outcome = await service.recompute(runId);
+          // Every figure the run's last verification checked was just
+          // rewritten. A pending row is what the worker's verify scan
+          // selects, so the run is verified again without this process
+          // needing the queue -- and without it, a run the verifier had
+          // marked not_exact would never be selected again.
+          if (outcome === 'recomputed') await verifications.markPending(runId);
           counts.set(outcome, (counts.get(outcome) ?? 0) + 1);
           console.log(recomputeLine(runId, outcome));
         }

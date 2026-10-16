@@ -5,8 +5,10 @@ import type { Redis } from 'ioredis';
 import type pg from 'pg';
 import { truncateToWholeRecords } from '@perfportal/plugin-gatling';
 import type { BlobStore, LiveChunkStore } from '@perfportal/storage';
+import { VerificationRepository } from '@perfportal/persistence';
 import type { WorkerConfig } from './config.js';
 import { holdClient } from './held-client.js';
+import { RUN_INGEST_LOCK_NAMESPACE } from './pipeline/pipeline.service.js';
 
 /**
  * Recovers the three inconsistencies the ingest/parse/stream paths can
@@ -84,7 +86,77 @@ export class Sweeper {
     this.#queue = new Queue('ingest', { connection: { url: config.redisUrl } });
   }
 
+  /**
+   * The stale-run recovery below, then the raw-log retention pass — AFTER the
+   * recovery's transaction has committed and released its client, never
+   * inside it: the retention pass deletes objects from the bucket, and object
+   * store latency must not hold row locks (the reason `#assembleAbandoned`
+   * runs after COMMIT too).
+   */
   async sweep(): Promise<number> {
+    const swept = await this.#recoverStale();
+    await this.#retainRawLogs();
+    return swept;
+  }
+
+  /**
+   * ═══ RAW LOGS PAST RETENTION ARE DELETED, AND THE RUN SAYS SO ═══
+   *
+   * `rawLogRetentionDays` of 0 keeps every raw log for ever, and this pass
+   * does nothing at all. Otherwise each run whose ingest is older than the
+   * retention has its stored object deleted and then its row stamped
+   * (`markRawLogDeleted`, which also settles a never-verified run as
+   * unverifiable/raw_log_deleted — a verified run keeps its answer). Object
+   * first, row second: a row stamped over an object that a failed delete left
+   * behind would claim a log gone that is still billed for, and never be
+   * selected again to finish the job; the other order is retried next sweep.
+   *
+   * ═══ NEVER UNDER A RUN SOMEBODY IS WORKING ON ═══
+   *
+   * A verify or a recompute holds the run's advisory lock for as long as it
+   * reads the log. Deleting the object under it would turn a clean
+   * verification into raw_log_missing. So each run is taken with a TRY-lock
+   * on that lock, held across the delete and the stamp; a run already held is
+   * skipped and comes up again on the next sweep. An object already missing
+   * counts as deleted: S3's DeleteObject answers success for an absent key.
+   *
+   * One run's failure is logged and the rest go on: a bucket that refuses one
+   * delete must not stop retention for every other run, and the failed one is
+   * still selected next time.
+   */
+  async #retainRawLogs(): Promise<void> {
+    const days = this.config.rawLogRetentionDays;
+    if (!(days > 0)) return;
+    const verifications = new VerificationRepository(this.pool);
+    for (const run of await verifications.retentionDue(days, 100)) {
+      const held = holdClient(await this.pool.connect());
+      const client = held.client;
+      let broken: Error | undefined;
+      try {
+        const { rows } = await client.query<{ got: boolean }>(
+          'SELECT pg_try_advisory_lock($1, hashtext($2)) AS got',
+          [RUN_INGEST_LOCK_NAMESPACE, run.id],
+        );
+        if (!rows[0]?.got) continue;
+        try {
+          await this.blobs.delete(run.bundleKey);
+          await verifications.markRawLogDeleted(run.id);
+        } catch (err) {
+          console.error(`sweeper: could not delete run ${run.id}'s raw log; the next sweep will try again:`, err);
+        } finally {
+          try {
+            await client.query('SELECT pg_advisory_unlock($1, hashtext($2))', [RUN_INGEST_LOCK_NAMESPACE, run.id]);
+          } catch (err) {
+            broken = err instanceof Error ? err : new Error(String(err));
+          }
+        }
+      } finally {
+        held.release(broken);
+      }
+    }
+  }
+
+  async #recoverStale(): Promise<number> {
     // Held, not merely checked out: this client is kept across a whole
     // transaction and the assembly after it, and a connection that dies in
     // that time -- a database restart, a failover -- would otherwise emit an

@@ -80,6 +80,14 @@ export class PipelineService {
     private readonly prisma: PrismaClient,
     private readonly pool: pg.Pool,
     private readonly blobs: BlobStore,
+    /**
+     * Asks for a finished run to be verified against its raw log
+     * (`verify/verify-queue.ts`'s `enqueueVerification`). Optional: a worker
+     * with verification switched off, and every test that is not about it,
+     * passes nothing. Called on the SUCCESS path only — a failed run has no
+     * statistics, and a pending verification of it would never be settled.
+     */
+    private readonly requestVerification?: (runId: string) => Promise<void>,
   ) {}
 
   /**
@@ -257,6 +265,25 @@ export class PipelineService {
     }
 
     await this.#publish(runId);
+    await this.#requestVerification(runId);
+  }
+
+  /**
+   * ═══ A VERIFICATION THAT CANNOT BE QUEUED DOES NOT FAIL THE INGEST ═══
+   *
+   * The run is committed and published by now; throwing here would hand the
+   * consumer a "failed" job for a run that is perfectly complete, and its
+   * retry would find the run terminal and do nothing. Logged instead: the
+   * verify scan selects any verifiable run with no verification (or a pending
+   * one), so a request lost here is picked up within one scan interval.
+   */
+  async #requestVerification(runId: string): Promise<void> {
+    if (!this.requestVerification) return;
+    try {
+      await this.requestVerification(runId);
+    } catch (err) {
+      console.error(`run ${runId}: could not queue its verification; the next verify scan will pick it up:`, err);
+    }
   }
 
   async #ingest(run: RunRecord): Promise<void> {

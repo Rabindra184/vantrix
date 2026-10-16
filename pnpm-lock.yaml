@@ -298,6 +298,9 @@ importers:
       '@perfportal/storage':
         specifier: workspace:*
         version: link:../../packages/storage
+      '@perfportal/verify':
+        specifier: workspace:*
+        version: link:../../packages/verify
       bullmq:
         specifier: ^5.34.0
         version: 5.81.3

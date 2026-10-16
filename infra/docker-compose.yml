@@ -138,6 +138,17 @@ services:
       # (on; every 10 minutes) -- `apps/worker/src/config.ts` and its test.
       RECOMPUTE_ENABLED: ${PERFPORTAL_RECOMPUTE_ENABLED:-}
       RECOMPUTE_SCAN_INTERVAL_MS: ${PERFPORTAL_RECOMPUTE_SCAN_INTERVAL_MS:-}
+      # ═══ VERIFICATION AND RAW-LOG RETENTION (the worker reads these) ═══
+      #
+      # The worker checks every run's stored figures against its raw log, and
+      # deletes raw logs older than the retention (days after ingest; 0 keeps
+      # them for ever). All three are passed as EMPTY when unset, and the
+      # worker reads empty as its default (90 days; on; every 10 minutes). A
+      # retention that is not a whole number of days stops the worker naming
+      # the variable, rather than deleting logs on a guessed schedule.
+      RAW_LOG_RETENTION_DAYS: ${PERFPORTAL_RAW_LOG_RETENTION_DAYS:-}
+      VERIFY_ENABLED: ${PERFPORTAL_VERIFY_ENABLED:-}
+      VERIFY_SCAN_INTERVAL_MS: ${PERFPORTAL_VERIFY_SCAN_INTERVAL_MS:-}
       RUNNER_ARTIFACT_DIR: /var/lib/perfportal/runner-artifacts
       RUNNER_WORK_DIR: /var/lib/perfportal/runner-work
       RUNNER_LOG_DIR: /var/log/perfportal/runner

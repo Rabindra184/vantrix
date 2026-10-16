@@ -36,6 +36,14 @@ export interface RecomputeConsumerOptions {
   ingestBusyDelayMs?: number;
   /** Test seam; production uses the 30 s default. */
   lockedDelayMs?: number;
+  /**
+   * Asks for a run to be verified once its statistics are rewritten
+   * (`enqueueVerification`). A recompute replaces every figure the last
+   * verification checked, so the run is verified again; only a `recomputed`
+   * outcome asks — nothing else wrote a row. Optional, for a worker with
+   * verification switched off.
+   */
+  requestVerification?: (runId: string) => Promise<void>;
 }
 
 /**
@@ -100,6 +108,13 @@ export function startRecomputeConsumer(
     }
     const outcome = await service.recompute(job.data.runId);
     if (outcome === 'locked') return later(job, token, lockedDelay);
+    if (outcome === 'recomputed' && options.requestVerification) {
+      // Not thrown: the recompute committed, and a retry of this job would
+      // find the run already exact. The verify scan picks up a lost request.
+      await options.requestVerification(job.data.runId).catch((err: unknown) => {
+        console.error(`recompute: could not queue run ${job.data.runId}'s verification; the next verify scan will pick it up:`, err);
+      });
+    }
     return outcome;
   });
 }

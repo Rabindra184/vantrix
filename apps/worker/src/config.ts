@@ -119,6 +119,41 @@ export interface WorkerConfig {
    * picked up well inside a working hour.
    */
   recomputeScanIntervalMs: number;
+  /**
+   * How many days a run's raw log is kept after its ingest, before the
+   * sweeper deletes it. `0` keeps raw logs for ever. Ninety by default: long
+   * enough to re-verify, recompute or re-download a run inside a quarter.
+   *
+   * REFUSED AT STARTUP when it is not a whole number of days, never guessed:
+   * a value that fell back to the default would delete raw logs on a schedule
+   * the operator did not choose (a `-1` written to mean "for ever" would
+   * become ninety days, and a log once deleted cannot be had back).
+   */
+  rawLogRetentionDays: number;
+  /**
+   * Whether this worker verifies runs against their raw logs
+   * (`verify/verify-queue.ts`). On unless `VERIFY_ENABLED` is EXACTLY
+   * `false`, for the reason `recomputeEnabled` gives.
+   */
+  verifyEnabled: boolean;
+  /** How often the scheduler looks for runs still to verify. Ten minutes, as recompute's. */
+  verifyScanIntervalMs: number;
+}
+
+/**
+ * A whole, non-negative number of days, or the default when unset or blank
+ * (compose passes an unset variable as an EMPTY string). Anything else stops
+ * the worker naming the variable — see `rawLogRetentionDays`.
+ */
+function retentionDays(value: string | undefined, fallback: number): number {
+  const text = value?.trim() ?? '';
+  if (text === '') return fallback;
+  if (!/^\d+$/.test(text)) {
+    throw new Error(
+      `RAW_LOG_RETENTION_DAYS must be a whole number of days (0 keeps raw logs for ever); got "${value}"`,
+    );
+  }
+  return Number(text);
 }
 
 /**
@@ -176,5 +211,9 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv = process.env): WorkerCo
     // continuous rescan by another road. (Not changed in numberOr itself:
     // LIVE_TICK_MS has a case pinning '' to its floor.)
     recomputeScanIntervalMs: numberOr(env.RECOMPUTE_SCAN_INTERVAL_MS?.trim() || undefined, 600_000),
+    rawLogRetentionDays: retentionDays(env.RAW_LOG_RETENTION_DAYS, 90),
+    // `=== 'false'` and blank-is-default: recompute's two rules, for the same reasons.
+    verifyEnabled: env.VERIFY_ENABLED !== 'false',
+    verifyScanIntervalMs: numberOr(env.VERIFY_SCAN_INTERVAL_MS?.trim() || undefined, 600_000),
   };
 }
