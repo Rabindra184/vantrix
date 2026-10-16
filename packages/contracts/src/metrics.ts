@@ -384,6 +384,11 @@ export const TrendRunSchema = z.object({
    *  (run-number.ts). Nullable and optional for the reason the blocks above
    *  give. */
   runNumber: RunNumberSchema.nullable().optional(),
+  /** Which engine produced this run's figures (`RunIdentity.statsMethod`):
+   *  a trend table marks an `'estimated'` run's percentiles with ≈. Optional
+   *  for the reason the blocks above give; absent reads as "not known to be
+   *  exact". */
+  statsMethod: z.enum(['estimated', 'exact-v1']).optional(),
 });
 export type TrendRun = z.infer<typeof TrendRunSchema>;
 

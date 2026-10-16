@@ -565,6 +565,13 @@ export const RunListResponseSchema = z.object({
        * one to ignore" and nothing more.
        */
       note: z.string().nullable().optional(),
+      /**
+       * Which engine produced this run's figures — `RunIdentity.statsMethod`,
+       * for a row. An `'estimated'` run's p95 cell carries ≈. OPTIONAL for the
+       * rolling-deploy reason the block above gives; absent reads as "not
+       * known to be exact".
+       */
+      statsMethod: z.enum(['estimated', 'exact-v1']).optional(),
     }),
   ),
   nextCursor: z.string().nullable(),

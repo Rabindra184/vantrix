@@ -669,6 +669,26 @@ describe('GET /v1/projects/:slug/runs', () => {
     expect(second.body.items[0].id).not.toBe(first.body.items[0].id);
   });
 
+  /**
+   * A list row carries its run's statsMethod, so the run list can mark an
+   * estimated run's p95 with ≈. Both values, because 'exact-v1' is the
+   * column's DEFAULT and a mapper that hard-coded it would pass the first
+   * half alone.
+   */
+  it('sends each row’s own statsMethod', async () => {
+    ctx = await createTestApp();
+    const estimated = await ingested();
+    const exact = await ingested();
+    await ctx.pool.query(`UPDATE run SET stats_method = 'estimated' WHERE id = $1`, [estimated]);
+
+    const res = await request(ctx.app.getHttpServer()).get('/v1/projects/checkout/runs').set(auth());
+    const byId = new Map(
+      RunListResponseSchema.parse(res.body).items.map((item) => [item.id, item.statsMethod]),
+    );
+    expect(byId.get(estimated)).toBe('estimated');
+    expect(byId.get(exact)).toBe('exact-v1');
+  });
+
   it('orders by the real run start when known, not by upload/ingest order', async () => {
     // A same-value fixture (upload order agrees with tool-start order) would
     // pass under either the old ORDER BY started_at or the new coalesce —

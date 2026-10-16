@@ -119,11 +119,13 @@ function toSummary(row: OrgTestRow): OrgTestSummary {
             durationMs: run.durationMs,
             checks: checkTally(run.toolAssertions),
             p95Ms: run.p95Ms,
+            statsMethod: run.statsMethod,
           },
     p95History: row.p95History.map((point) => ({
       runId: point.runId,
       runNumber: point.runNumber,
       p95Ms: point.p95Ms,
+      statsMethod: point.statsMethod,
     })),
   };
 }

@@ -170,6 +170,7 @@ export class MetricsController {
         tool: r.tool,
         simulation: r.simulation,
         runNumber: r.runNumber,
+        statsMethod: r.statsMethod,
         count: r.count,
         okCount: r.okCount,
         koCount: r.koCount,

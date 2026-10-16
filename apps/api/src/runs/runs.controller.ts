@@ -281,6 +281,8 @@ function toListItem(r: RunListItem): RunListResponse['items'][number] {
     metrics: r.metrics,
     // The TEXT alone: the author and time belong to the run's own page.
     note: r.note,
+    // Which engine produced the row's p95, so the list can mark an estimate.
+    statsMethod: r.statsMethod,
   };
 }
 
