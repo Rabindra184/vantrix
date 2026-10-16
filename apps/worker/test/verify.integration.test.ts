@@ -261,7 +261,7 @@ describe('VerifyService', () => {
       corrupt: `UPDATE run SET activity_ms = activity_ms + 1 WHERE id = $1`,
       read: `SELECT activity_ms AS v FROM run WHERE id = $1`,
     },
-  ])('reports a mismatch naming $table.$figure with its stored and recomputed values', async ({ table, figure, corrupt, read }) => {
+  ])('reports a mismatch naming $table / $figure with its stored and recomputed values', async ({ table, figure, corrupt, read }) => {
     const { runId } = await ingested();
     const { rows: before } = await pool.query<{ v: number }>(read, [runId]);
     const truth = before[0]!.v;

@@ -19,8 +19,9 @@ import { describe, expect, it } from 'vitest';
  * source and tests itself — static `from`, side-effect `import '…'`, dynamic
  * `import(…)` and `require(…)` — so the rule holds whichever spelling is used.
  *
- * Comments are stripped first: this package's docstrings name the engine and
- * the database layer while explaining why they are out of bounds, and prose
+ * Comments are stripped first, and that is load-bearing rather than
+ * defensive — measured: with the strip replaced by the identity the case fails
+ * on ONE false breach, the dynamic import quoted in this very docstring. Prose
  * about the rule is not a breach of it. A specifier is matched only inside the
  * syntax that can import, never as a bare word.
  */
