@@ -408,3 +408,27 @@ describe('RunHeader — the note slot', () => {
     expect(screen.getByTestId('run-metadata')).not.toContainElement(screen.getByTestId('note-slot'));
   });
 });
+
+describe('RunHeader — the verification mark', () => {
+  /**
+   * WIRING FROM THE IDENTITY. `RunShell` hands the header the run's identity
+   * whole, so the summary the API puts on it is all the mark needs — beside
+   * the status, and absent while the run is still being measured.
+   */
+  it('draws the identity’s verification beside the status', () => {
+    renderHeader({ ...RUN, verification: { status: 'mismatch', reason: null } });
+    const mark = screen.getByTestId('run-verification');
+    expect(mark).toHaveTextContent('Verification failed');
+    expect(screen.getByTestId('run-status').parentElement).toContainElement(mark);
+  });
+
+  it('reads a finished run with no verification yet as verifying', () => {
+    renderHeader({ ...RUN, verification: null });
+    expect(screen.getByTestId('run-verification')).toHaveTextContent('Verifying…');
+  });
+
+  it('draws no mark for a run still running', () => {
+    renderHeader({ ...RUN, status: 'running', verification: { status: 'verified', reason: null } });
+    expect(screen.queryByTestId('run-verification')).toBeNull();
+  });
+});

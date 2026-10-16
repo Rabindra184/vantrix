@@ -7,6 +7,7 @@ import { formatDuration, formatInstant } from './format';
 import { STATUS, VERDICT, type Mark } from './marks';
 import { projectPath, projectTestPath } from './paths';
 import { runName } from '../runNumber';
+import VerificationMark from './VerificationMark';
 
 /**
  * The bordered box the metadata sits in, at each of the two widths that draw
@@ -418,6 +419,10 @@ export default function RunHeader({
         <div className="flex shrink-0 flex-wrap items-center gap-2">
           <NamedBadge mark={STATUS[status]} testId="run-status" />
           {verdict !== undefined && <NamedBadge mark={VERDICT[verdict ?? 'none']} testId="run-verdict" />}
+          {/* Whether the run's stored figures agree with its raw log — a
+              button opening the verification panel, drawn only for a run
+              that has statistics (`VerificationMark`). */}
+          <VerificationMark runId={identity.id} status={status} summary={identity.verification} />
         </div>
       </div>
 
