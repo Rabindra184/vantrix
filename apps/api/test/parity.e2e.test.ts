@@ -571,36 +571,34 @@ describe('Appendix A — Gatling report parity rows (PT-*)', () => {
       const ownWidthMs = inferWidthMs(series.body.buckets.map((b: { startOffsetMs: number }) => b.startOffsetMs));
       const pinnedBucket = okBuckets[0] as { startOffsetMs: number; percentilesOk: { p95: number } };
       const expectedX = expectedRate(pinnedBucket.startOffsetMs, ownWidthMs, globalSeries.body.buckets);
-      expect(scatter.body.ok).toContainEqual([expectedX, Math.trunc(pinnedBucket.percentilesOk.p95)]);
+      expect(scatter.body.ok).toContainEqual([expectedX, pinnedBucket.percentilesOk.p95]);
 
-      // y matches Math.trunc of the bucket's own OK p95 exactly - not merely
-      // "is an integer". This shared run's per-request, per-second buckets
-      // CANNOT exercise the trunc/round DISAGREEING case on their own:
-      // response times are integer ms, and Sketch#quantile
-      // (packages/statistics/src/sketch.ts) short-circuits to the exact max
-      // whenever ceil(0.95*n) === n, i.e. whenever a bucket has fewer than 20
-      // samples - true of every per-request, per-second bucket in this
-      // ~1-3 req/s fixture. Mutating Math.trunc to Math.round and re-running
-      // leaves this loop (and the pre-existing sibling check in
-      // parity-endpoints.integration.test.ts) GREEN - proven by actually
-      // doing it. The block below is what actually catches that mutation.
+      // y is the bucket's own OK p95, EXACTLY. Gatling truncates its p95 to an
+      // integer, and the scatter still applies `Math.trunc` — but an exact
+      // (`sparse-ms-v2`) percentile is a nearest-rank OBSERVATION, and
+      // response times are integer milliseconds, so the value is already an
+      // integer and the truncation is a no-op. It only ever mattered for a
+      // legacy sketch row, whose estimate was fractional; this case used to
+      // pin trunc-against-round on one, and a new run cannot produce one. The
+      // claim that survives is that y IS the bucket's p95 and that it is an
+      // integer — so a scatter answering a different percentile, or a value
+      // that was interpolated rather than observed, fails here.
       for (const b of okBuckets as { percentilesOk: { p95: number } }[]) {
-        expect(scatter.body.ok.some(([, y]: [number, number]) => y === Math.trunc(b.percentilesOk.p95))).toBe(true);
+        expect(Number.isInteger(b.percentilesOk.p95)).toBe(true);
+        expect(scatter.body.ok.some(([, y]: [number, number]) => y === b.percentilesOk.p95)).toBe(true);
       }
 
-      // The real distinguishing case: force heavy bucket coalescing (a real,
-      // user-configurable knob - packages/statistics/src/buckets.ts's
-      // BucketSeries halves resolution once bucket count exceeds
-      // maxBucketsEndpoint) on a FRESH ingest of the SAME reference bundle, so
-      // each request's ~63 one-second buckets collapse into one bucket with
-      // ~70-160 samples. At that sample count Sketch#quantile leaves its
-      // exact-boundary short-circuit and returns a genuinely interpolated,
-      // frequently fractional value - which is what actually distinguishes
-      // Math.trunc from Math.round. Needs its own ingest (like PT-K-03):
-      // maxBucketsEndpoint is captured into engineOptions at POST /v1/runs
-      // time (packages/core/src/engine-options.ts's ENGINE_KEYS), not
-      // read live - via a sibling project, not a second app (see
-      // createSiblingProject's comment for why).
+      // The same claim on a heavily coalesced bucket: force each request's
+      // ~63 one-second buckets into ONE (a real, user-configurable knob —
+      // packages/statistics/src/buckets.ts's BucketSeries halves resolution
+      // once bucket count exceeds maxBucketsEndpoint) on a FRESH ingest of
+      // the SAME reference bundle, so the bucket holds ~70-160 samples. That
+      // is the sample count at which a sketch estimate went fractional; an
+      // exact histogram still answers an observed integer. Needs its own
+      // ingest (like PT-K-03): maxBucketsEndpoint is captured into
+      // engineOptions at POST /v1/runs time (packages/core/src/engine-options.ts's
+      // ENGINE_KEYS), not read live — via a sibling project, not a second app
+      // (see createSiblingProject's comment for why).
       // The request-scope series (own p95) and the run-scope series (the
       // scatter's x-axis rate) each coalesce independently on THEIR OWN
       // occupied-bucket count (parity.controller.ts's scatter() sums the
@@ -625,16 +623,14 @@ describe('Appendix A — Gatling report parity rows (PT-*)', () => {
         (b: { percentilesOk: Record<string, number> }) => b.percentilesOk.p95 !== undefined,
       );
       expect(bigBucket).toBeDefined();
-      const rawP95 = bigBucket.percentilesOk.p95;
-      // If this fires, the fixture/coalescing no longer produces a
-      // fractional value here and this case needs a different bucket - not
-      // a reason to weaken the assertion below.
-      expect(Math.trunc(rawP95)).not.toBe(Math.round(rawP95));
+      // The coalesce must actually have happened, or this repeats the loop above.
+      expect(cSeries.body.buckets).toHaveLength(1);
+      const p95 = bigBucket.percentilesOk.p95;
+      expect(Number.isInteger(p95)).toBe(true);
 
       const cOwnWidthMs = inferWidthMs(cSeries.body.buckets.map((b: { startOffsetMs: number }) => b.startOffsetMs));
       const cExpectedX = expectedRate(bigBucket.startOffsetMs, cOwnWidthMs, cGlobalSeries.body.buckets);
-      expect(cScatter.body.ok).toContainEqual([cExpectedX, Math.trunc(rawP95)]);
-      expect(cScatter.body.ok).not.toContainEqual([cExpectedX, Math.round(rawP95)]);
+      expect(cScatter.body.ok).toEqual([[cExpectedX, p95]]);
     });
 
     it('PT-RQ-09b scatter point counts pin the accepted ±1 OK-series delta', async () => {

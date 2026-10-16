@@ -158,34 +158,130 @@ describe('Histogram#percentile', () => {
   });
 });
 
-describe('Histogram#sumOfSquares', () => {
-  it('gives an exact standard deviation over a merged set', () => {
+/**
+ * The population variance as a two-pass oracle computes it over the raw
+ * values: the mean first, then the mean squared deviation. This is the form
+ * the PR 3 verifier compares against within 1e-9, so it is the yardstick.
+ */
+const twoPassVariance = (values: readonly number[]): number => {
+  let sum = 0;
+  for (const v of values) sum += v;
+  const mean = sum / values.length;
+  let dev = 0;
+  for (const v of values) dev += (v - mean) ** 2;
+  return dev / values.length;
+};
+
+/**
+ * 200,000 group durations packed into 300000-300019 ms: large and tight, and
+ * UNEVENLY spread. An even spread (`300_000 + (i * 7) % 20`, equal counts per
+ * value) happens to round its Σx² exactly and the one-pass form scores 0
+ * error on it — measured — so a fixture of that shape cannot fail.
+ */
+const tightLarge = (): number[] =>
+  (() => { let s = 1; return Array.from({ length: 200_000 }, () => { s = (s * 1103515245 + 12345) & 0x7fffffff; return 300_000 + Math.floor((s / 0x7fffffff) * 20); }); })();
+
+describe('Histogram#variance', () => {
+  it('gives the exact population variance over a merged set', () => {
     const values = [3, 5, 5, 9, 11, 20, 20, 20];
     const h = new Histogram();
     for (const v of values) h.accept(v);
-
-    const n = values.length;
-    const mean = values.reduce((a, b) => a + b, 0) / n;
-    const expected = Math.sqrt(values.reduce((a, b) => a + (b - mean) ** 2, 0) / n);
-
-    const variance = h.sumOfSquares() / h.total - (h.sum / h.total) ** 2;
-    expect(Math.sqrt(variance)).toBeCloseTo(expected, 9);
+    expect(h.variance()).toBeCloseTo(twoPassVariance(values), 12);
   });
 
-  it('is additive across a merge, which is what a window needs', () => {
+  /**
+   * The case `E[x²] − E[x]²` loses: values far from zero and close together,
+   * which is exactly what a long group duration looks like. Measured on the
+   * one-pass form at 4.0e-7 relative error — the PR 3 verifier allows 1e-9.
+   */
+  it('stays within 1e-12 of a two-pass oracle on large, tightly packed values', () => {
+    const values = tightLarge();
+    const h = new Histogram();
+    for (const v of values) h.accept(v);
+    const oracle = twoPassVariance(values);
+    expect(oracle).toBeGreaterThan(0); // the fixture must actually spread
+    expect(Math.abs(h.variance() - oracle) / oracle).toBeLessThanOrEqual(1e-12);
+  });
+
+  it('is the same across a merge as over the whole, whatever order the bins arrived in', () => {
     const a = new Histogram();
     const b = new Histogram();
-    for (const v of [1, 2, 3]) a.accept(v);
-    for (const v of [4, 5, 6]) b.accept(v);
+    for (const v of [6, 5, 4]) a.accept(v);
+    for (const v of [3, 2, 1]) b.accept(v);
     const both = new Histogram();
     for (const v of [1, 2, 3, 4, 5, 6]) both.accept(v);
 
     a.merge(b);
-    expect(a.sumOfSquares()).toBe(both.sumOfSquares());
+    expect(a.variance()).toBe(both.variance());
   });
 
   it('is zero for an empty histogram', () => {
-    expect(new Histogram().sumOfSquares()).toBe(0);
+    expect(new Histogram().variance()).toBe(0);
+  });
+});
+
+describe('Histogram#percentiles', () => {
+  it('answers a whole set in one call, identically to asking rank by rank', () => {
+    const h = new Histogram();
+    for (let i = 0; i < 5000; i++) h.accept(Math.floor(((i * 7919) % 4096) ** 1.3));
+    // Unsorted and repeated on purpose: the walk sorts its ranks, the answer
+    // keeps the caller's order.
+    const set = [99, 50, 0, 99.9, 50, 100, 7, 95];
+    expect(h.percentiles(set)).toEqual(set.map((p) => h.percentile(p)));
+  });
+
+  it('answers undefined for every rank of an empty histogram', () => {
+    expect(new Histogram().percentiles([50, 99])).toEqual([undefined, undefined]);
+  });
+
+  it('refuses only the ranks a legacy overflow bin hides', () => {
+    const legacy = [...Array<number>(90).fill(10), ...Array<number>(10).fill(125_000)];
+    const h = Histogram.deserialize(Histogram.legacyV1ForTests(legacy));
+    expect(h.percentiles([50, 95])).toEqual([10, undefined]);
+  });
+
+  /**
+   * The keys are sorted once and kept until a write changes them. A stale
+   * order would answer from the histogram as it was, which reads as a
+   * plausible percentile and is not one.
+   */
+  it('sees a value added after it was last asked, by accept and by merge', () => {
+    const h = new Histogram();
+    for (const v of [10, 20, 30]) h.accept(v);
+    expect(h.percentile(0)).toBe(10);
+    h.accept(5);
+    expect(h.percentile(0)).toBe(5);
+    expect(h.variance()).toBeCloseTo(twoPassVariance([5, 10, 20, 30]), 12);
+    const other = new Histogram();
+    other.accept(1);
+    h.merge(other);
+    expect(h.percentile(0)).toBe(1);
+    expect([...h.entries()].map(([v]) => v)).toEqual([1, 5, 10, 20, 30]);
+  });
+});
+
+/**
+ * Spec §4: one entry per distinct observed millisecond, so 1M values spread
+ * across 0–30 s cost at most 30,001 entries however many there are. The
+ * values are fractional on purpose — the bound is the 1 ms resolution, and
+ * a histogram that kept sub-millisecond keys would hold a million.
+ *
+ * The byte ceiling is 64 KiB. Each entry serializes as a delta from the
+ * previous key and a count, both unsigned varints: at this density every
+ * delta is 1 and every count is near 33, so each is one byte — 2 bytes per
+ * entry, 60,002 for 30,001 entries, plus the version, entry count and the
+ * total/sum/min/max trailer. Measured: 60,018 bytes. A 300 s spread measured
+ * 300,001 entries and 600,019 bytes, the same 2 bytes per entry.
+ */
+describe('Histogram size bound', () => {
+  it('keeps 1M values spread over 0–30,000 ms within 30,001 entries and 64 KiB', () => {
+    let seed = 7;
+    const rand = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+    const h = new Histogram();
+    for (let i = 0; i < 1_000_000; i++) h.accept(rand() * 30_000);
+    expect(h.total).toBe(1_000_000);
+    expect([...h.entries()].length).toBeLessThanOrEqual(30_001);
+    expect(h.serialize().length).toBeLessThanOrEqual(64 * 1024);
   });
 });
 

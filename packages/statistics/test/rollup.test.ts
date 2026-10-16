@@ -38,6 +38,22 @@ describe('RollupBuilder', () => {
     expect(r.percentiles).toEqual({ p50: 30, 'p99.9': 1000 });
   });
 
+  /**
+   * `√(Σx²/n − mean²)` cancels catastrophically on values far from zero and
+   * close together — a long group duration. Measured at 4.0e-7 relative error
+   * on exactly this fixture; the PR 3 verifier compares within 1e-9.
+   */
+  it('keeps the standard deviation of large, tightly packed values within 1e-12 of a two-pass oracle', () => {
+    const values = (() => { let s = 1; return Array.from({ length: 200_000 }, () => { s = (s * 1103515245 + 12345) & 0x7fffffff; return 300_000 + Math.floor((s / 0x7fffffff) * 20); }); })();
+    const b = new RollupBuilder();
+    values.forEach((v, i) => b.add(v, i % 50 !== 0));
+    const r = b.finish({ scope: 'group', name: 'Browse', family: 'group_duration', windowMs: 1000, percentiles: [50] });
+    const mean = values.reduce((a, v) => a + v, 0) / values.length;
+    const oracle = Math.sqrt(values.reduce((a, v) => a + (v - mean) ** 2, 0) / values.length);
+    expect(oracle).toBeGreaterThan(0);
+    expect(Math.abs(r.stddevMs - oracle) / oracle).toBeLessThanOrEqual(1e-12);
+  });
+
   it('keeps a five-minute group duration exact', () => {
     const b = new RollupBuilder();
     b.add(300_700, true);

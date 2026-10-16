@@ -38,6 +38,27 @@ describe('rollupFromHistograms', () => {
     expect(w.throughputRps).toBeCloseTo(full.throughputRps, 9);
   });
 
+  it('agrees with the batch path to the bit, and both with a two-pass oracle, on large tightly packed values', () => {
+    // The batch row and a full-extent window must not disagree even in the last
+    // bit: the PR 3 verifier holds both to the raw log within 1e-9, and a
+    // one-pass variance is 4.0e-7 off on exactly this shape.
+    const values = (() => { let s = 1; return Array.from({ length: 200_000 }, () => { s = (s * 1103515245 + 12345) & 0x7fffffff; return 300_000 + Math.floor((s / 0x7fffffff) * 20); }); })();
+    const builder = new RollupBuilder();
+    const ok = new Histogram();
+    const ko = new Histogram();
+    values.forEach((v, i) => {
+      const isOk = i % 50 !== 0;
+      builder.add(v, isOk);
+      (isOk ? ok : ko).accept(v);
+    });
+    const full = builder.finish({ scope: 'group', name: 'Browse', family: 'group_duration', windowMs: 10_000, percentiles: [50] });
+    const w = rollupFromHistograms(ok, ko, 10_000, [50]);
+    const mean = values.reduce((a, v) => a + v, 0) / values.length;
+    const oracle = Math.sqrt(values.reduce((a, v) => a + (v - mean) ** 2, 0) / values.length);
+    expect(Math.abs(w.stddevMs - oracle) / oracle).toBeLessThanOrEqual(1e-12);
+    expect(w.stddevMs).toBe(full.stddevMs);
+  });
+
   /**
    * A `group_duration` row measures a group's WALL-CLOCK span, so
    * `group("Browse") { during(5.minutes) { … } }` — ordinary Gatling — lands

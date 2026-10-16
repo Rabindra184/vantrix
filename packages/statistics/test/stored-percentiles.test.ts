@@ -12,17 +12,25 @@ describe('storedPercentiles', () => {
     expect(storedPercentiles(exactRow(), [50, 99.9])).toEqual({ p50: 500, 'p99.9': 999 });
   });
 
-  it('keeps the legacy sketch path, clamped, for a pre-2026-10-15 row', () => {
+  /**
+   * The reference run's shape: 95 requests at 100 ms and 5 at the same top
+   * value, so the p99 rank is interior and lands in the maximum's own sketch
+   * bucket, whose midpoint sits ABOVE the maximum. Only a population where
+   * the raw estimate escapes the row's range can tell a clamp from none: a
+   * uniform 1..1000 stays inside it either way.
+   */
+  it('keeps the legacy sketch path, clamped to the row it sits beside', () => {
     const s = new Sketch();
-    for (let v = 1; v <= 1000; v++) s.accept(v);
+    for (let i = 0; i < 95; i++) s.accept(100);
+    for (let i = 0; i < 5; i++) s.accept(2503);
+    const sketch = Sketch.deserialize(s.serialize());
+    expect(sketch.quantile(0.99)).toBeGreaterThan(2503); // the raw estimate escapes
     const legacy = {
-      count: 1000, minMs: 1, maxMs: 1000, percentiles: { p50: 500 },
+      count: 100, minMs: 100, maxMs: 2503, percentiles: { p99: 2503 },
       histogramOk: Histogram.deserialize(Histogram.legacyV1ForTests([1, 2, 3])), histogramKo: null,
-      sketch: Sketch.deserialize(s.serialize()),
+      sketch,
     };
-    const out = storedPercentiles(legacy, [99]);
-    expect(out.p99).toBeGreaterThanOrEqual(1);
-    expect(out.p99).toBeLessThanOrEqual(1000); // clamped, as before
+    expect(storedPercentiles(legacy, [99])).toEqual({ p99: 2503 });
   });
 
   it('falls back to the frozen column for an empty row or a row with neither source', () => {
