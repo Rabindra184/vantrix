@@ -2,6 +2,7 @@ import type { TrendRun, TrendsResponse } from '@perfportal/contracts';
 import { runLabels } from './compare';
 import type { ChartData, ChartSeries, ChartTableRow } from '../types';
 import { clampPercentile } from '../../percentile';
+import { isExact } from '../../routes/statsMethod';
 import {
   comparabilityBreaks,
   summariseBreaks,
@@ -297,9 +298,14 @@ export function toPercentileTrend(t: TrendsResponse): ChartData {
     data: slots.map((run) => (run === null ? null : at(run, key))),
   }));
 
+  // ≈ on an estimated run's row (the label; never the series). Per run, from
+  // its own `statsMethod`, because a cohort can span the backfill. Only this
+  // table: the status and throughput figures are counts and rates, exact on
+  // every run, so their rows make no claim.
   const rows: ChartTableRow[] = runs.map((run, i) => ({
     label: labels[i]!,
     values: [fullTimestamp(run), ...keys.map((key) => at(run, key) ?? '—')],
+    exact: isExact(run.statsMethod),
   }));
 
   return { series, axisLabels: axis, columns, rows, limitation: trendNote(t, breaks) };

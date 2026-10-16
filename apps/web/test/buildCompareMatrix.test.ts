@@ -8,8 +8,12 @@ const REFERENCE = fixture.stats as unknown as StatsResponse;
 /** Every request name the fixture carries, which is what a full run yields. */
 const ALL_REQUESTS = REFERENCE.stats.filter((s) => s.scope === 'request').map((s) => s.name);
 
-function asRun(id: string, over?: (s: StatsResponse) => StatsResponse): CompareStats {
-  return { id, label: id, stats: over ? over(REFERENCE) : REFERENCE };
+function asRun(
+  id: string,
+  over?: (s: StatsResponse) => StatsResponse,
+  exact = true,
+): CompareStats {
+  return { id, label: id, exact, stats: over ? over(REFERENCE) : REFERENCE };
 }
 
 /** A copy of the payload with some request rows removed. */
@@ -215,3 +219,31 @@ describe('toCompareMatrix — the change column (review.md finding 18)', () => {
   });
 });
 
+/**
+ * ═══ WHICH COLUMNS ARE ESTIMATES ═══
+ *
+ * A column is one run, so its header carries ≈ when THAT run's percentiles
+ * were estimated — per run, never one answer for the selection. The Change
+ * column is a difference of two runs and is approximate when either is. And
+ * only for a percentile metric: max, throughput and errors are exact on every
+ * run.
+ */
+describe('toCompareMatrix — which columns are estimates', () => {
+  it('marks each run column by its own run, and the change by both', () => {
+    const m = toCompareMatrix([asRun('a'), asRun('b', undefined, false)], 'p95', 'a');
+    expect(m.exact).toEqual([true, false]);
+    expect(m.change?.exact).toBe(false);
+
+    const exact = toCompareMatrix([asRun('a'), asRun('b')], 'p95', 'a');
+    expect(exact.exact).toEqual([true, true]);
+    expect(exact.change?.exact).toBe(true);
+  });
+
+  it('makes no estimate claim for a metric that is not a percentile', () => {
+    for (const metric of ['max', 'throughput', 'errors'] as const) {
+      const m = toCompareMatrix([asRun('a', undefined, false), asRun('b', undefined, false)], metric, 'a');
+      expect(m.exact, metric).toEqual([true, true]);
+      expect(m.change?.exact, metric).toBe(true);
+    }
+  });
+});

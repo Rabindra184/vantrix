@@ -1,4 +1,5 @@
 import { useId, useMemo } from 'react';
+import { Approx } from '../components/Approx';
 import InfoTip from '../components/InfoTip';
 import SectionHeading from '../components/SectionHeading';
 import { EmptyState } from '../components/States';
@@ -120,7 +121,7 @@ export default function CompareMatrix({
               <th scope="col" className={TH}>
                 Request
               </th>
-              {matrix.labels.map((label) => (
+              {matrix.labels.map((label, column) => (
                 // Was `${TH} text-right` written out here — the same thing
                 // `TH_NUM` now names for every table, so a new one gets the
                 // alignment by reaching for the right constant.
@@ -130,7 +131,11 @@ export default function CompareMatrix({
                       somewhere: a cell's announced context is its own column
                       header, so this is the only placement where every value
                       carries its unit to a screen-reader user. */}
-                  {label} ({unit})
+                  {/* ≈ when THIS run's figures were estimated, so every value
+                      in its column is announced with the mark. */}
+                  <Approx exact={matrix.exact[column] ?? true}>
+                    {label} ({unit})
+                  </Approx>
                 </th>
               ))}
               {/* LAST, after the values it is derived from: a reader scans the
@@ -138,7 +143,7 @@ export default function CompareMatrix({
                   two run columns would read as belonging to one of them. */}
               {matrix.change !== null && (
                 <th scope="col" className={TH_NUM}>
-                  Change
+                  <Approx exact={matrix.change.exact}>Change</Approx>
                 </th>
               )}
             </tr>

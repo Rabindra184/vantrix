@@ -18,7 +18,40 @@ import { isChangeGood, type CompareMetric } from '../charts/transforms/compare';
 export interface CompareStats {
   readonly id: string;
   readonly label: string;
+  /**
+   * Whether THIS run's statistics are exact (`isExact(statsMethod)`). Per run,
+   * because a selection can span the backfill. REQUIRED, with no default: a
+   * forgotten value would either mark an exact column ≈ or drop the mark from
+   * an estimate, and nothing would fail.
+   */
+  readonly exact: boolean;
   readonly stats: StatsResponse;
+}
+
+/**
+ * Which compare metrics an estimated run reported from its sketch.
+ *
+ * Only the percentiles. `max` is the exactly tracked extreme, and throughput
+ * and errors are counts over a duration — all exact on every run, so a ≈ on
+ * them would mark a figure that is not an estimate. A `Record` so a metric
+ * added to `CompareMetric` has to answer here before anything compiles.
+ */
+const ESTIMATED_BY_SKETCH: Record<CompareMetric, boolean> = {
+  p50: true,
+  p95: true,
+  p99: true,
+  max: false,
+  throughput: false,
+  errors: false,
+};
+
+/**
+ * Whether one run's figure for one metric is exact: the run is exact, or the
+ * metric is one the sketch never estimated. Shared by the matrix headers and
+ * the summary tiles, so the two cannot disagree about which figures carry ≈.
+ */
+export function figureIsExact(runExact: boolean, metric: CompareMetric): boolean {
+  return runExact || !ESTIMATED_BY_SKETCH[metric];
 }
 
 export interface CompareMatrix {
@@ -26,6 +59,9 @@ export interface CompareMatrix {
   readonly requests: readonly string[];
   /** Column headers — run labels, in selection order. */
   readonly labels: readonly string[];
+  /** Per column, in `labels` order: whether that run's figures for this
+   *  metric are exact (`figureIsExact`). `false` puts ≈ in its header. */
+  readonly exact: readonly boolean[];
   /** `cells[request][run]`. `null` where that run has no such request. */
   readonly cells: readonly (readonly (number | null)[])[];
   /**
@@ -55,6 +91,9 @@ export interface CompareChange {
   readonly referenceLabel: string;
   /** Per request, in `requests` order. `null` where either side has no value. */
   readonly rows: readonly (CompareChangeRow | null)[];
+  /** Whether BOTH runs' figures are exact: a difference is no more exact than
+   *  its least exact term. `false` puts ≈ in the Change header. */
+  readonly exact: boolean;
 }
 
 export interface CompareChangeRow {
@@ -179,6 +218,9 @@ export function toCompareMatrix(
       : {
           subjectLabel: runs[subjectIndex]!.label,
           referenceLabel: runs[referenceIndex]!.label,
+          exact:
+            figureIsExact(runs[subjectIndex]!.exact, metric) &&
+            figureIsExact(runs[referenceIndex]!.exact, metric),
           rows: cells.map((row) => {
             const subject = row[subjectIndex];
             const reference = row[referenceIndex];
@@ -200,6 +242,7 @@ export function toCompareMatrix(
     requests,
     change,
     labels: runs.map((run) => run.label),
+    exact: runs.map((run) => figureIsExact(run.exact, metric)),
     // `null`, never `0`, for a request a run does not have. It did not take no
     // time — it did not run, and a zero would sort to the top of a column of
     // durations as though it were the fastest thing in the comparison.

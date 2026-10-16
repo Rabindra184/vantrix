@@ -569,6 +569,38 @@ describe('RunList — a row carries enough to triage on', () => {
  * break opportunity at all) did push Errors off screen before `NoteLine`
  * wrapped anywhere rather than only between words.
  */
+/**
+ * ═══ ≈ ON AN ESTIMATED RUN'S p95, AND ONLY THERE ═══
+ *
+ * A run processed before exact statistics reports its p95 from the retired
+ * sketch, within 1%, until the backfill reaches it — so a list mixing the two
+ * marks each row by its OWN `statsMethod`. Both directions are asserted: a ≈
+ * on an exact run is as false as a missing one on an estimate. A run whose
+ * row carries no `statsMethod` (an API that predates it) is not known to be
+ * exact. And a run with no p95 has no figure to mark — its "—" stays bare.
+ */
+describe('RunList — ≈ marks an estimated run’s p95', () => {
+  const ids = [
+    '70000000-0000-4000-8000-000000000001',
+    '70000000-0000-4000-8000-000000000002',
+    '70000000-0000-4000-8000-000000000003',
+    '70000000-0000-4000-8000-000000000004',
+  ];
+  const rows = [
+    { ...TRIAGE_ROW, id: ids[0]!, statsMethod: 'estimated' as const },
+    { ...TRIAGE_ROW, id: ids[1]!, statsMethod: 'exact-v1' as const },
+    { ...TRIAGE_ROW, id: ids[2]! },
+    { ...TRIAGE_ROW, id: ids[3]!, statsMethod: 'estimated' as const, metrics: null },
+  ];
+
+  it('marks the estimated and field-less rows, and neither the exact one nor an absent p95', async () => {
+    renderList(rows);
+    await screen.findAllByTestId('run-p95');
+    const cells = screen.getAllByTestId('run-p95').map((cell) => cell.textContent ?? '');
+    expect(cells).toEqual(['≈approximately 659 ms', '659 ms', '≈approximately 659 ms', '—']);
+  });
+});
+
 describe('RunList — a run’s note is read without opening it', () => {
   it('shows the note under the simulation, and nothing for a run without one', async () => {
     renderList([

@@ -20,9 +20,14 @@ import fixture from './fixtures/reference-run.json';
 const REFERENCE = fixture.stats as unknown as StatsResponse;
 const ALL_REQUESTS = REFERENCE.stats.filter((s) => s.scope === 'request').map((s) => s.name);
 
-const asRun = (id: string, over?: (s: StatsResponse) => StatsResponse): CompareStats => ({
+const asRun = (
+  id: string,
+  over?: (s: StatsResponse) => StatsResponse,
+  exact = true,
+): CompareStats => ({
   id,
   label: id,
+  exact,
   stats: over ? over(REFERENCE) : REFERENCE,
 });
 
@@ -116,5 +121,28 @@ describe('CompareMatrix — review.md copy row 7', () => {
     const cells = within(row).getAllByRole('cell');
     expect(cells[0]).toHaveTextContent('—');
     expect(cells[0]).not.toHaveTextContent('0');
+  });
+});
+
+/**
+ * ═══ ≈ IN AN ESTIMATED RUN'S COLUMN HEADER, AND ONLY THERE ═══
+ *
+ * A cell's announced context is its column header, so the mark in the header
+ * reaches every value in that run's column — "approximately b (ms)" — while
+ * an exact run's header stays exactly "a (ms)". The Change column leans on
+ * both runs, so it carries ≈ when either was estimated.
+ */
+describe('CompareMatrix — an estimated run’s column', () => {
+  it('marks the estimated run’s header and the change, and not the exact run’s', () => {
+    renderMatrix('p95', '95th percentile', [asRun('a'), asRun('b', undefined, false)]);
+    const names = screen.getAllByRole('columnheader').map((h) => h.textContent);
+    expect(names).toEqual(['Request', 'a (ms)', '≈approximately b (ms)', '≈approximately Change']);
+    expect(screen.getByRole('columnheader', { name: 'a (ms)' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'approximately b (ms)' })).toBeInTheDocument();
+  });
+
+  it('marks nothing when both runs are exact', () => {
+    renderMatrix('p95', '95th percentile', [asRun('a'), asRun('b')]);
+    for (const h of screen.getAllByRole('columnheader')) expect(h.textContent).not.toContain('≈');
   });
 });

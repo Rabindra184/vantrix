@@ -205,6 +205,24 @@ describe('RunList — cards carry every field the row did', () => {
     for (const card of cards) expect(within(card).queryByText('Focus')).toBeNull();
   });
 
+  /**
+   * ≈ before an estimated run's p95 on its card, as on the table's cell, and
+   * never before an exact run's — or before a "—", which is no figure.
+   */
+  it('marks an estimated run’s p95 and not an exact one', async () => {
+    renderList([
+      { ...ROWS[0]!, statsMethod: 'estimated' },
+      { ...ROWS[0]!, id: '44444444-4444-4444-8444-444444444444', statsMethod: 'exact-v1' },
+      { ...ROWS[1]!, statsMethod: 'estimated' },
+    ] as unknown as RunListResponse['items']);
+    const cards = await screen.findAllByTestId('run-row');
+    expect(cards.map((card) => within(card).getByTestId('run-p95').textContent)).toEqual([
+      '≈approximately 659 ms',
+      '659 ms',
+      '—',
+    ]);
+  });
+
   /** An unparsed run has no p95 and no error rate. `—`, never `0` — a zero in
    *  a latency column is a measurement, which is the wrong claim entirely. */
   it('draws an absent measurement as an absence', async () => {

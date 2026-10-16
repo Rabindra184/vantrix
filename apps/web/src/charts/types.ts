@@ -19,6 +19,16 @@
 export interface ChartTableRow {
   readonly label: string;
   readonly values: readonly (string | number)[];
+  /**
+   * Set only on a row that IS one run's estimable figures — a trend's
+   * percentile table — and then whether that run's statistics are exact
+   * (`isExact`). `false` puts ≈ before the row's label; `true` leaves it bare.
+   *
+   * ABSENT IS "NO CLAIM", not "exact" and not "estimated": a time bucket, a
+   * request, or a run's counts and rates (exact on every run) are not
+   * estimates, and a ≈ there would mark a figure that is not one.
+   */
+  readonly exact?: boolean;
 }
 
 /**
