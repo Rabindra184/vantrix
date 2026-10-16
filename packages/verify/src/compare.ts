@@ -1,4 +1,15 @@
-import type { Comparison, Expected, ExpectedSeriesBucket, ExpectedStat, FigureMismatch, Stored, StoredSeriesBucket } from './figures.js';
+import type {
+  Comparison,
+  Expected,
+  ExpectedError,
+  ExpectedErrorBucket,
+  ExpectedSeriesBucket,
+  ExpectedStat,
+  ExpectedUserBucket,
+  FigureMismatch,
+  Stored,
+  StoredSeriesBucket,
+} from './figures.js';
 
 /**
  * ═══ ONE LEDGER, ONE COMPARATOR PER TABLE ═══
@@ -6,9 +17,9 @@ import type { Comparison, Expected, ExpectedSeriesBucket, ExpectedStat, FigureMi
  * `compare` runs every comparator in `COMPARATORS` over one `Ledger`. A
  * comparator owns one table: it pairs expected and stored rows by their key
  * (`matchRows`) and checks each figure through the ledger, which counts it and
- * records a mismatch. Series buckets, errors, error buckets and users (Tasks
- * 3 and 4) are each one more comparator in that list; nothing here changes
- * for them.
+ * records a mismatch. Each metric table — stats, series buckets, errors,
+ * error buckets, users — and the run's two spans has one comparator in that
+ * list.
  *
  * TOLERANCE. Counts, extremes and percentiles are integers both sides compute
  * from the same observations, so they must be EQUAL. A mean, a standard
@@ -216,8 +227,127 @@ export const compareSeries: Comparator = (expected, stored, ledger) => {
   });
 };
 
-/** Task 4 appends its comparators here. */
-export const COMPARATORS: readonly Comparator[] = [compareStats, compareSeries, compareRun];
+/*
+ * ═══ ERROR ROWS: WHERE THE MESSAGE GOES, AND THE OTHER ROW'S KEY ═══
+ *
+ * `FigureMismatch` has no message field, and an error row has no family, so
+ * a mismatch on an error row carries its MESSAGE as its `family` — the third
+ * coordinate of the row, as the family is of a stat row. The `is_other` row
+ * carries `''`, which no real row can: a real label is the message or
+ * `'(no message)'`, never empty.
+ *
+ * Rows are KEYED with `is_other` in the key, though: the other row by
+ * `(scope, name, other)` and a real row by `(scope, name, its message)`, so a
+ * stored real row whose message is `''` can never pair with the other row.
+ * The other row's message is then checked as a figure of its own (`message`,
+ * which must be `''`).
+ */
+
+const familyOf = (r: Pick<ExpectedError, 'isOther' | 'message'>): string => (r.isOther ? '' : r.message);
+
+const errorKey = (r: Pick<ExpectedError, 'scope' | 'name' | 'isOther' | 'message'>): string =>
+  r.isOther ? `${r.scope}\u0000${r.name}\u0000other` : `${r.scope}\u0000${r.name}\u0000message\u0000${r.message}`;
+
+const errorPlace = (r: Pick<ExpectedError, 'scope' | 'name' | 'isOther' | 'message'>): RowPlace => ({
+  table: 'run_error',
+  scope: r.scope,
+  name: r.name,
+  family: familyOf(r),
+  bucket: null,
+});
+
+/**
+ * `run_error`: `count` per row, and an other row's `message`. A row on one
+ * side only is one `row` mismatch carrying its count.
+ */
+export const compareErrors: Comparator = (expected, stored, ledger) => {
+  matchRows<ExpectedError, ExpectedError>(expected.errors, stored.errors, errorKey, {
+    both(e, s) {
+      const at = errorPlace(e);
+      ledger.exact(at, 'count', null, s.count, e.count);
+      if (e.isOther) ledger.exact(at, 'message', null, s.message, e.message);
+    },
+    missing(e) {
+      ledger.row(errorPlace(e), null, e.count);
+    },
+    extra(s) {
+      ledger.row(errorPlace(s), s.count, null);
+    },
+  });
+};
+
+type ErrorBucketKeyed = Pick<ExpectedErrorBucket, 'startOffsetMs' | 'isOther' | 'message'>;
+
+const errorBucketKey = (b: ErrorBucketKeyed): string =>
+  b.isOther ? `${String(b.startOffsetMs)}\u0000other` : `${String(b.startOffsetMs)}\u0000message\u0000${b.message}`;
+
+const errorBucketPlace = (b: ErrorBucketKeyed): RowPlace => ({
+  table: 'run_error_bucket',
+  scope: 'run',
+  name: '',
+  family: familyOf(b),
+  bucket: b.startOffsetMs,
+});
+
+/**
+ * `run_error_bucket`, run scope only, keyed `(start_offset_ms, other)` or
+ * `(start_offset_ms, message)`: `count` and `bucket_width_ms` per row, and an
+ * other row's `message`. A row on one side only is one `row` mismatch
+ * carrying its count.
+ */
+export const compareErrorBuckets: Comparator = (expected, stored, ledger) => {
+  matchRows<ExpectedErrorBucket, ExpectedErrorBucket>(expected.errorBuckets, stored.errorBuckets, errorBucketKey, {
+    both(e, s) {
+      const at = errorBucketPlace(e);
+      ledger.exact(at, 'count', null, s.count, e.count);
+      ledger.exact(at, 'bucket_width_ms', null, s.bucketWidthMs, e.bucketWidthMs);
+      if (e.isOther) ledger.exact(at, 'message', null, s.message, e.message);
+    },
+    missing(e) {
+      ledger.row(errorBucketPlace(e), null, e.count);
+    },
+    extra(s) {
+      ledger.row(errorBucketPlace(s), s.count, null);
+    },
+  });
+};
+
+type UserKeyed = Pick<ExpectedUserBucket, 'scenario' | 'startOffsetMs'>;
+
+const userKey = (b: UserKeyed): string => `${b.scenario}\u0000${String(b.startOffsetMs)}`;
+
+const userPlace = (b: UserKeyed): RowPlace => ({
+  table: 'run_user_bucket',
+  scope: 'scenario',
+  name: b.scenario,
+  family: '',
+  bucket: b.startOffsetMs,
+});
+
+/**
+ * `run_user_bucket`, keyed `(scenario, start_offset_ms)`: `started`, `ended`
+ * and `max_concurrent`. A bucket on one side only is one `row` mismatch
+ * carrying its `max_concurrent` — a gap-filled bucket has no starts or ends,
+ * so its concurrency is what a reader recognises it by.
+ */
+export const compareUsers: Comparator = (expected, stored, ledger) => {
+  matchRows<ExpectedUserBucket, ExpectedUserBucket>(expected.users, stored.users, userKey, {
+    both(e, s) {
+      const at = userPlace(e);
+      ledger.exact(at, 'started', null, s.started, e.started);
+      ledger.exact(at, 'ended', null, s.ended, e.ended);
+      ledger.exact(at, 'max_concurrent', null, s.maxConcurrent, e.maxConcurrent);
+    },
+    missing(e) {
+      ledger.row(userPlace(e), null, e.maxConcurrent);
+    },
+    extra(s) {
+      ledger.row(userPlace(s), s.maxConcurrent, null);
+    },
+  });
+};
+
+export const COMPARATORS: readonly Comparator[] = [compareStats, compareSeries, compareErrors, compareErrorBuckets, compareUsers, compareRun];
 
 export function compare(expected: Expected, stored: Stored): Comparison {
   const ledger = new Ledger();

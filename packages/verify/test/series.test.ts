@@ -6,6 +6,7 @@ import {
   compare,
   expectedFrom,
   optionsFrom,
+  seriesWidth,
   type Expected,
   type ExpectedSeriesBucket,
   type Stored,
@@ -72,6 +73,15 @@ describe('series width', () => {
       [2, 2],
       [1, 1],
     ]);
+  });
+
+  it('treats a cap below 1 as 1, as the engine clamps it', () => {
+    // Every edge before the run start: at W=1000 both fall in index -3, one
+    // bucket, so a cap of 1 is met at once. Unclamped, a cap of 0 could never
+    // be met and the width would run on to the first past the furthest edge.
+    expect(seriesWidth([-3000, -2500], 0)).toBe(1000);
+    const e = expectedFrom([req('A', -3000, -2500)], opts({ maxBucketsRun: 0 }));
+    expect(series(e, 'run', '', 'response_time').map((b) => b.startOffsetMs)).toEqual([-3000]);
   });
 
   it('places each bucket at its index times the coalesced width, negative before the run start', () => {
@@ -200,7 +210,7 @@ describe('series on the reference fixture', () => {
 
 /** A stored copy of what the verifier expects: the shape a faithful engine writes. */
 function storedFrom(e: Expected): Stored {
-  return structuredClone({ stats: e.stats, run: e.run, series: e.series });
+  return structuredClone({ stats: e.stats, run: e.run, series: e.series, errors: e.errors, errorBuckets: e.errorBuckets, users: e.users });
 }
 
 describe('compare: series buckets', () => {
@@ -214,7 +224,10 @@ describe('compare: series buckets', () => {
       (n, b) => n + 9 + Object.keys(b.percentiles).length + Object.keys(b.percentilesOk).length + Object.keys(b.percentilesKo).length,
       0,
     );
-    expect(r.figuresChecked).toBe(statFigures + bucketFigures);
+    // The error and user tables are counted in their own files; take them as measured.
+    const others =
+      compare({ ...expected, stats: [], series: [] }, { ...storedFrom(expected), stats: [], series: [] }).figuresChecked - 2;
+    expect(r.figuresChecked).toBe(statFigures + bucketFigures + others);
   });
 
   function corrupt(mutate: (s: Stored) => void): ReturnType<typeof compare> {

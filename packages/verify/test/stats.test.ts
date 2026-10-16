@@ -174,18 +174,27 @@ describe('expectedFrom: run_stat rows', () => {
     expect(row(e, 'group', 'G', 'group_cumulated')!.throughputRps).toBe((1 / windowMs) * 1000);
   });
 
-  it('ignores user and error records in run_stat', () => {
+  it('ignores user and error records in run_stat, the series and the run spans', () => {
+    // They have tables of their own (errors.test.ts, users.test.ts); nothing else moves.
     const base = [req('A', 0, 10)];
     const noisy: CanonicalEvent[] = [
       ...base,
       { type: 'user', scenario: 's', userId: 'u', kind: 'start', tsMs: RUN_START - 99_000 },
       { type: 'error', message: 'boom', tsMs: RUN_START + 99_000 },
     ];
-    expect(expectedFrom(noisy, opts())).toEqual(expectedFrom(base, opts()));
+    const pick = (e: Expected) => ({ stats: e.stats, series: e.series, run: e.run });
+    expect(pick(expectedFrom(noisy, opts()))).toEqual(pick(expectedFrom(base, opts())));
   });
 
   it('has no rows and zero spans for a run with no requests', () => {
-    expect(expectedFrom([], opts())).toEqual({ stats: [], series: [], run: { durationMs: 0, activityMs: 0 } });
+    expect(expectedFrom([], opts())).toEqual({
+      stats: [],
+      series: [],
+      errors: [],
+      errorBuckets: [],
+      users: [],
+      run: { durationMs: 0, activityMs: 0 },
+    });
   });
 });
 
@@ -215,7 +224,7 @@ describe('expectedFrom on the reference fixture', () => {
 
 /** A stored copy of what the verifier expects: the shape a faithful engine writes. */
 function storedFrom(e: Expected): Stored {
-  return structuredClone({ stats: e.stats, run: e.run, series: e.series });
+  return structuredClone({ stats: e.stats, run: e.run, series: e.series, errors: e.errors, errorBuckets: e.errorBuckets, users: e.users });
 }
 
 describe('compare', () => {
@@ -231,9 +240,9 @@ describe('compare', () => {
     const r = compare(expected, storedFrom(expected));
     expect(r.mismatches).toEqual([]);
     // 9 scalar figures plus each percentile, per row, plus the run's two spans,
-    // plus every series bucket's (series.test.ts counts those on their own)
-    const series = compare({ ...expected, stats: [] }, { ...storedFrom(expected), stats: [] }).figuresChecked - 2;
-    const want = expected.stats.reduce((n, s) => n + 9 + Object.keys(s.percentiles).length, 0) + 2 + series;
+    // plus every other table's (series, errors and users tests count those on their own)
+    const others = compare({ ...expected, stats: [] }, { ...storedFrom(expected), stats: [] }).figuresChecked - 2;
+    const want = expected.stats.reduce((n, s) => n + 9 + Object.keys(s.percentiles).length, 0) + 2 + others;
     expect(r.figuresChecked).toBe(want);
   });
 

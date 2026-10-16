@@ -68,11 +68,19 @@ function observed(v: number): number {
 
 /**
  * The smallest `1000 · 2^k` whose distinct indexes over `edges` are at most
- * `cap`. A cap the data cannot meet (below 1, or 1 for a series straddling the
- * run start, whose indexes stay at -1 and 0 for ever) stops at the first width
- * past which nothing coarsens any further, rather than doubling for ever.
+ * `cap`. A cap below 1 is taken as 1, as the engine clamps its own
+ * (`Math.max(1, cap)`). The run series' width is also the error buckets'
+ * (errors.ts), which is why this is exported.
+ *
+ * The `width > reach` guard then fires for exactly one shape: a cap of 1 on a
+ * series whose edges straddle the run start, whose indexes stay at -1 and 0 at
+ * every width. The engine loops there and stores no rows at all, so whatever
+ * this returns is compared against nothing; the guard only keeps the verifier
+ * from looping too. Any cap of 2 or more is met by the time the width passes
+ * the furthest edge, and so is a cap of 1 on a series on one side of the start.
  */
-export function seriesWidth(edges: readonly number[], cap: number): number {
+export function seriesWidth(edges: readonly number[], rawCap: number): number {
+  const cap = Math.max(1, rawCap);
   let reach = 0;
   for (const t of edges) reach = Math.max(reach, Math.abs(t));
   let width = BASE_WIDTH_MS;

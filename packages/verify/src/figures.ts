@@ -75,6 +75,43 @@ export interface ExpectedSeriesBucket {
   percentilesKo: Record<string, number>;
 }
 
+/**
+ * One `run_error` row. A real row's `message` is its label — the message, or
+ * `'(no message)'` for an absent or empty one, so a real label is never `''`.
+ * The remainder past the 200 kept messages is ONE row with `isOther` set and
+ * `message` `''`.
+ */
+export interface ExpectedError {
+  scope: string;
+  name: string;
+  message: string;
+  isOther: boolean;
+  count: number;
+}
+
+/**
+ * One `run_error_bucket` row (run scope only). A top message keeps its own
+ * row; everything else in the bucket is the `isOther` row, `message` `''`.
+ * `bucketWidthMs` is the run series' width, stored on every row.
+ */
+export interface ExpectedErrorBucket {
+  startOffsetMs: number;
+  message: string;
+  isOther: boolean;
+  count: number;
+  bucketWidthMs: number;
+}
+
+/** One `run_user_bucket` row: a scenario's users over one bucket. */
+export interface ExpectedUserBucket {
+  scenario: string;
+  /** The bucket's index times the scenario's (coalesced) width; negative before the run start. */
+  startOffsetMs: number;
+  started: number;
+  ended: number;
+  maxConcurrent: number;
+}
+
 /** The two `run` columns derived from the log. */
 export interface RunSpans {
   durationMs: number;
@@ -82,13 +119,16 @@ export interface RunSpans {
 }
 
 /**
- * Everything the raw log says the stored figures should be. Task 4 adds
- * `errors`, `errorBuckets` and `users` beside these, each with a comparator
- * of its own in compare.ts.
+ * Everything the raw log says the stored figures should be: one list per
+ * metric table, each with a comparator of its own in compare.ts, and the run's
+ * two spans.
  */
 export interface Expected {
   stats: ExpectedStat[];
   series: ExpectedSeriesBucket[];
+  errors: ExpectedError[];
+  errorBuckets: ExpectedErrorBucket[];
+  users: ExpectedUserBucket[];
   run: RunSpans;
 }
 
@@ -107,10 +147,22 @@ export type StoredSeriesBucket = Omit<ExpectedSeriesBucket, 'startedOkCount' | '
   percentilesKo: Record<string, number> | null;
 };
 
-/** What the database holds for one run, mapped by the worker into this shape. */
+/** The error and user tables have no nullable column: a stored row is the expected shape, read back. */
+export type StoredError = ExpectedError;
+export type StoredErrorBucket = ExpectedErrorBucket;
+export type StoredUserBucket = ExpectedUserBucket;
+
+/**
+ * What the database holds for one run, mapped by the worker into this shape.
+ * Persistence names two of these lists differently (`seriesBuckets`,
+ * `userBuckets`); the rows' field names match.
+ */
 export interface Stored {
   stats: StoredStat[];
   series: StoredSeriesBucket[];
+  errors: StoredError[];
+  errorBuckets: StoredErrorBucket[];
+  users: StoredUserBucket[];
   run: RunSpans;
 }
 

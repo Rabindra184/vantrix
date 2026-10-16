@@ -1,7 +1,9 @@
 import type { CanonicalEvent } from '@perfportal/core';
 import type { Expected, ExpectedStat, VerifyOptions } from './figures.js';
 import { nearestRankIndex } from './rank.js';
+import { expectedErrorBuckets, expectedErrors } from './errors.js';
 import { expectedSeries } from './series.js';
+import { expectedUsers } from './users.js';
 
 /**
  * ═══ RECOMPUTED FROM THE RAW EVENTS, THE PLAINEST WAY THERE IS ═══
@@ -56,7 +58,7 @@ function observed(v: number): number {
 const SCOPE_ORDER: Record<string, number> = { run: 0, request: 1, group: 2 };
 
 export function expectedFrom(source: Iterable<CanonicalEvent>, opts: VerifyOptions): Expected {
-  // Read once: a generator would hand the series pass nothing.
+  // Read once: a generator would hand the series, error and user passes nothing.
   const events = [...source];
   const rows = new Map<string, RowAcc>();
   const add = (scope: string, name: string, family: string, value: number, ok: boolean): void => {
@@ -110,6 +112,9 @@ export function expectedFrom(source: Iterable<CanonicalEvent>, opts: VerifyOptio
   return {
     stats,
     series: expectedSeries(events, opts),
+    errors: expectedErrors(events, opts),
+    errorBuckets: expectedErrorBuckets(events, opts),
+    users: expectedUsers(events, opts),
     run: {
       durationMs: lastMs === 0 ? 0 : Math.max(0, lastMs - opts.runStartMs),
       activityMs: lastMs === 0 ? 0 : windowMs,
