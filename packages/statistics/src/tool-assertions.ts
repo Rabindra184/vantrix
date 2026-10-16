@@ -161,8 +161,16 @@ function measure(target: AssertionTarget, row: StatRollup): number | null {
         // Exact, from both statuses' histograms — Gatling's assertion reads the
         // all-responses population. Arbitrary ranks (99.9) are answerable
         // because the histograms are kept, not only the configured columns.
-        case 'percentile':
-          return mergedHistogram(row.histogramOk, row.histogramKo).percentile(target.rank ?? 0) ?? null;
+        //
+        // The rank is a raw decoded double the log carries unchecked, and
+        // `nearestRankIndex` throws outside [0, 100] — inside the engine that
+        // would fail the whole ingest. A rank no percentile can answer measures
+        // nothing, so it is null: `not_applicable`, never a guessed extreme.
+        case 'percentile': {
+          const rank = target.rank ?? 0;
+          if (!(Number.isFinite(rank) && rank >= 0 && rank <= 100)) return null;
+          return mergedHistogram(row.histogramOk, row.histogramKo).percentile(rank) ?? null;
+        }
       }
   }
 }

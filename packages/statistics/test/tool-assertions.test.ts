@@ -227,6 +227,33 @@ describe('tool assertions — a percentile verdict is the exact nearest-rank val
     expect(r.actualValue).toBeLessThan(runRow().maxMs);
   });
 
+  /**
+   * A decoded rank is a raw double the log carries with no range check, and
+   * `nearestRankIndex` throws for one outside [0, 100] — the right contract for
+   * internal callers, and the wrong one here: `evaluateToolAssertions` runs
+   * inside the engine, so a throw would fail every ingest of a simulation that
+   * declared such an assertion. The old sketch path clamped the index and never
+   * threw; the honest answer is that nothing was measured.
+   */
+  it.each([['above 100', 150], ['NaN', Number.NaN], ['below 0', -1]])(
+    'reports a percentile rank %s as not applicable, and the engine does not throw',
+    (_label, rank) => {
+      const r = percentile(rank, { kind: 'lt', value: 2510 });
+      expect(r.outcome).toBe('not_applicable');
+      expect(r.actualValue).toBeNull();
+
+      const events: CanonicalEvent[] = [
+        {
+          type: 'meta', simulation: 'S', toolVersion: '3.15.1', startedAtMs: 0,
+          assertions: [{ path: { kind: 'global' }, target: { kind: 'responseTime', stat: 'percentile', rank }, condition: { kind: 'lt', value: 2510 } }],
+        },
+        ...durations.map((ms): CanonicalEvent => ({ type: 'request', name: 'r', groups: [], userId: 'u', startMs: 0, endMs: ms, ok: true })),
+      ];
+      const result = runEngine(events);
+      expect(result.toolAssertions.map((a) => a.outcome)).toEqual(['not_applicable']);
+    },
+  );
+
   it('answers the reference run’s p99 with the true nearest-rank value, below its maximum', () => {
     // PT-G-12's true p99 is 2501 against a maximum of 2503: a verdict clamped to
     // the range would read 2503, and Gatling's own histogram prints 2369.
