@@ -154,6 +154,7 @@ export const SCHEMA_TABLES = [
   'telemetry_sample',
   'sla_rule',
   'run_assertion',
+  'run_verdict_change',
   'runner_artifact',
   'runner_job',
   'runner_job_event',

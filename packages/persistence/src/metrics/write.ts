@@ -171,4 +171,27 @@ export class MetricWriter {
       ]),
     );
   }
+
+  /**
+   * Every metric and assertion row of one run, for a recompute that rewrites
+   * them in the same transaction. The partitioned tables are addressed by
+   * (run_started_on, run_id) — their primary keys' prefix — so each DELETE
+   * prunes to one partition. The six metric tables carry no foreign key to
+   * run, so nothing else removes these rows.
+   *
+   * `runStartedOn` is bound as the same Date `persist` binds, never as a
+   * formatted day: node-postgres serializes a Date one way, so a row this
+   * writer put on a day is found on that day.
+   */
+  async deleteForRun(client: pg.PoolClient, ctx: { runId: string; runStartedOn: Date }): Promise<void> {
+    for (const table of ['run_series_bucket', 'run_user_bucket', 'run_error_bucket']) {
+      await client.query(`DELETE FROM "${table}" WHERE run_started_on = $2 AND run_id = $1`, [
+        ctx.runId,
+        ctx.runStartedOn,
+      ]);
+    }
+    for (const table of ['run_stat', 'run_error', 'run_assertion']) {
+      await client.query(`DELETE FROM "${table}" WHERE run_id = $1`, [ctx.runId]);
+    }
+  }
 }

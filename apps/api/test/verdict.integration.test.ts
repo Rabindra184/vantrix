@@ -247,6 +247,9 @@ describe('the adaptive verdict', () => {
       error: { code: 'BUNDLE_TOO_LARGE', message: 'too big', remediation: 'shrink it' },
       // The column default every run created since exact statistics takes.
       statsMethod: 'exact-v1',
+      // Never recomputed: a run parsed exact the first time has nothing to redo.
+      recomputeError: null,
+      recomputedAt: null,
     };
 
     expect(runsService.statusFor(run)).toBe(413);
