@@ -93,7 +93,8 @@ export default function RunReport() {
     return <WaitingPanel status={run.data.run.status} />;
   }
   const runStatus = run.data.run.status;
-  // Decides whether the statistics table's percentile caveat is an estimate's.
+  // Decides whether the percentile caveat is an estimate's, and whether the
+  // Requests and Groups tables mark their percentile headings with ≈.
   const exact = isExact(run.data.run.statsMethod);
 
   return (
@@ -102,7 +103,7 @@ export default function RunReport() {
         {() => <RequestsSection runId={runId} runStatus={runStatus} exact={exact} />}
       </CollapsibleSection>
       <CollapsibleSection id="groups" title="Groups">
-        {() => <GroupsSection runId={runId} />}
+        {() => <GroupsSection runId={runId} exact={exact} />}
       </CollapsibleSection>
       <CollapsibleSection id="virtual-users" title="Virtual users">
         {() => <VirtualUsersSection runId={runId} />}
@@ -288,12 +289,12 @@ function RequestsTable({
   );
 }
 
-function GroupsSection({ runId }: { readonly runId: string }) {
+function GroupsSection({ runId, exact }: { readonly runId: string; readonly exact: boolean }) {
   const { terminal } = useRunTerminal(runId);
   const window = useWindowFromShell();
   const stats = useQuery({ ...statsQuery(runId, window), enabled: terminal });
   if (!terminal) return <LiveNotice kind="withheld" subject="Groups" />;
-  if (stats.data !== undefined) return <GroupsList runId={runId} stats={stats.data} windowSelected={window !== null} />;
+  if (stats.data !== undefined) return <GroupsList runId={runId} stats={stats.data} windowSelected={window !== null} exact={exact} />;
   if (stats.isPending) return <LoadingState label="Loading this run’s groups…" />;
   return <ErrorState title="This run’s groups could not be loaded" detail={explain(stats.error, 'table')} />;
 }

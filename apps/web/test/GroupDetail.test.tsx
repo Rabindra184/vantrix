@@ -441,3 +441,66 @@ describe('GroupDetail — its charts read the viewer’s clock', () => {
     });
   });
 });
+
+/**
+ * ═══ ≈ FOLLOWS THE RUN'S `statsMethod` HERE TOO ═══
+ *
+ * `ScopedStatistics` marks a percentile heading when it is told the run is
+ * estimated; nothing there proves THIS page derives that from the run's own
+ * identity. A hard-coded `exact` would pass the component's own file
+ * whichever value it held, so the page is rendered both ways.
+ */
+describe('GroupDetail — ≈ on an estimated run', () => {
+  const RUN_ID = '00000000-0000-4000-8000-00000000000b';
+  const URL_FOR = (id: string) => `/runs/${id}/groups/Cart`;
+  const ROUTE = '/runs/:runId/groups/:name';
+
+  function renderFor(statsMethod: RunResponse['statsMethod']) {
+    vi.stubGlobal('fetch', (input: RequestInfo) =>
+      String(input).includes('/stats')
+        ? Promise.resolve(new Response(JSON.stringify(fixture.stats), { status: 200 }))
+        : Promise.resolve(new Response('{}', { status: 500 })),
+    );
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const run: RunResponse = {
+      id: RUN_ID,
+      project: { id: '11111111-1111-4111-8111-111111111111', slug: 'checkout', name: 'Checkout' },
+      status: 'complete',
+      verdict: 'not_evaluated',
+      tool: 'gatling',
+      toolVersion: '3.15.1',
+      simulation: 'example.ParitySimulation',
+      description: null,
+      durationMs: 63161,
+      startedAt: '2026-08-15T12:00:00.000Z',
+      toolStartedAt: '2026-08-15T11:42:09.000Z',
+      assertions: [],
+      statsMethod,
+    };
+    client.setQueryData(runQueryKey(RUN_ID), { state: 'ready', run });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={[URL_FOR(RUN_ID)]}>
+          <Routes>
+            <Route path={ROUTE} element={<GroupDetail />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  }
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('marks the 95th heading of an estimated run and not of an exact one', async () => {
+    renderFor('estimated');
+    expect((await screen.findAllByRole('columnheader', { name: 'approximately 95th' })).length).toBeGreaterThan(0);
+    expect(screen.queryAllByRole('columnheader', { name: '95th' })).toEqual([]);
+    cleanup();
+    vi.unstubAllGlobals();
+
+    renderFor('exact-v1');
+    expect((await screen.findAllByRole('columnheader', { name: '95th' })).length).toBeGreaterThan(0);
+    expect(screen.queryAllByRole('columnheader', { name: /approximately/ })).toEqual([]);
+    expect(document.body.textContent).not.toContain('≈');
+  });
+});

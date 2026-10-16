@@ -231,6 +231,29 @@ describe('RunReport — GE’s sections', () => {
     expect(trigger).not.toHaveAccessibleDescription(never);
   });
 
+  /**
+   * The Groups section's two p95 headings carry ≈ for an estimated run, and
+   * this page is what decides it — `GroupsList` only does what it is told.
+   */
+  it('marks the Groups p95 headings of an estimated run and not of an exact one', async () => {
+    const openGroups = async () => {
+      await userEvent.click(screen.getByRole('button', { name: 'Groups' }));
+      return within(screen.getByTestId('section-groups')).findByRole('table', { name: 'Groups' });
+    };
+    renderReport({ run: { statsMethod: 'estimated' } });
+    let table = await openGroups();
+    for (const name of ['p95 cumulated', 'p95 duration']) {
+      expect(within(table).getByRole('columnheader', { name: `approximately ${name}` }).textContent).toContain('≈');
+    }
+    expect(within(table).getByRole('columnheader', { name: 'Count' }).textContent).not.toContain('≈');
+    cleanup();
+
+    renderReport({ run: { statsMethod: 'exact-v1' } });
+    table = await openGroups();
+    expect(within(table).getByRole('columnheader', { name: 'p95 cumulated' })).toBeInTheDocument();
+    expect(table.textContent).not.toMatch(/≈|approximately/);
+  });
+
   it('narrows every Requests query to the window', async () => {
     const seen = renderReport({ window: { fromMs: 10_000, toMs: 20_000, bucketWidthMs: 1_000 } });
     await screen.findByTestId('chart-requests-and-responses');

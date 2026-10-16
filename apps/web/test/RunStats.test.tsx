@@ -738,6 +738,19 @@ describe('RunStats — clean tiles', () => {
     expect(screen.getByRole('button', { name: /about p95/i })).toHaveAccessibleDescription(/within 1%/i);
   });
 
+  /** ≈ rides on the p95 VALUE of an estimated run, and on no other tile. */
+  it('marks an estimated run’s p95 value with ≈, and an exact run’s not at all', () => {
+    renderStats(<RunStats exact={false} stats={stats} peakUsers={12} runStatus="complete" />);
+    expect(screen.getByTestId('stat-p95').textContent).toContain('≈');
+    expect(screen.getByTestId('stat-p95')).toHaveTextContent(/approximately/);
+    for (const id of ['stat-error-rate', 'stat-total-requests', 'stat-peak-users']) {
+      expect(screen.getByTestId(id).textContent, id).not.toContain('≈');
+    }
+    cleanup();
+    renderStats(<RunStats exact stats={stats} peakUsers={12} runStatus="complete" />);
+    expect(screen.getByTestId('stat-p95').textContent).not.toMatch(/≈|approximately/);
+  });
+
   it('puts the p95 caveat behind an info beside its label', () => {
     renderStats(<RunStats exact={false} stats={stats} peakUsers={12} runStatus="complete" />);
     expect(screen.getByRole('button', { name: 'About p95' })).toHaveAccessibleDescription(/within 1%/);

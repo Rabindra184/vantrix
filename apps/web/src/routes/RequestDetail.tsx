@@ -2,6 +2,7 @@ import type { StatRow, StatsResponse } from '@perfportal/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import { useRunTerminal, useWindowSuffix } from './useRunWindow';
+import { isExact } from './statsMethod';
 import { formatInstant } from './format';
 import { TimeAxisProvider } from '../charts/TimeAxisContext';
 import { projectPath, projectTestPath } from './paths';
@@ -213,7 +214,7 @@ export default function RequestDetail() {
               <EmptyState title={`This run recorded no request named ${name}.`} />
             </div>
           ) : (
-            <ScopedStatistics row={row} rows={data.stats} />
+            <ScopedStatistics row={row} rows={data.stats} exact={isExact(run?.statsMethod)} />
           );
         }}
       </TableSection>

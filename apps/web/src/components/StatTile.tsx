@@ -45,7 +45,8 @@ export default function StatTile({
   'data-testid': testId,
 }: {
   readonly label: string;
-  readonly value: string;
+  /** A node so a figure can carry its ≈ (`Approx`) for an estimated run. */
+  readonly value: ReactNode;
   /** The noun after the number — `ms`, `req/s`. See the module docstring. */
   readonly unit?: string;
   /**

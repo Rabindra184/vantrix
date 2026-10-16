@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { ProblemError } from '../api/fetch';
 import useDocumentTitle from '../useDocumentTitle';
+import { RecomputeProgress } from './RecomputeProgress';
 import { ADMIN_PROJECTS_ROUTE, ADMIN_USERS_ROUTE } from './paths';
 
 /**
@@ -74,6 +75,11 @@ export default function AdminShell({
           );
         })}
       </nav>
+
+      {/* Between the tabs and the page, on every Administration page: the
+          backfill concerns the whole install, not one section. It renders
+          nothing once no run remains. */}
+      <RecomputeProgress />
 
       {children}
     </div>

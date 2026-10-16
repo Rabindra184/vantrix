@@ -3,6 +3,7 @@ import type { StatRow, StatsResponse } from '@perfportal/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import { useRunTerminal, useWindowSuffix } from './useRunWindow';
+import { isExact } from './statsMethod';
 import { formatInstant } from './format';
 import { TimeAxisProvider } from '../charts/TimeAxisContext';
 import { projectPath, projectTestPath } from './paths';
@@ -227,7 +228,7 @@ export default function GroupDetail() {
                 <EmptyState title={`This run recorded no ${title.toLowerCase()} for ${name}.`} />
               </div>
             ) : (
-              <ScopedStatistics row={row} rows={data.stats} heading={title} />
+              <ScopedStatistics row={row} rows={data.stats} heading={title} exact={isExact(run?.statsMethod)} />
             );
           }}
         </TableSection>

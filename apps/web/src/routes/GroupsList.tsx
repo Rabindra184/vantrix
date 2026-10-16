@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import type { StatsResponse } from '@perfportal/contracts';
+import { Approx } from '../components/Approx';
 import TableFrame from '../components/TableFrame';
 import { ROW, TABLE, TD, TD_NUM, TH, TH_NUM, THEAD } from '../components/tableStyles';
 import { clampPercentile } from '../percentile';
@@ -63,6 +64,7 @@ export default function GroupsList({
   runId,
   stats,
   windowSelected,
+  exact,
 }: {
   readonly runId: string;
   readonly stats: StatsResponse;
@@ -71,6 +73,10 @@ export default function GroupsList({
    *  buckets in it, and the wrong answer is a sentence about the whole run that
    *  reads as evidence. */
   readonly windowSelected: boolean;
+  /** Whether the run's statistics are exact (`isExact(run.statsMethod)`). An
+   *  estimated run's two p95 headings carry ≈ — on the heading, never on each
+   *  cell (clean UI). REQUIRED, no default: the wrong value is silent. */
+  readonly exact: boolean;
 }) {
   /* The reader's window travels with the drill-down, as it does from the
      statistics table's rows: opening a group from a windowed Report must not
@@ -105,8 +111,12 @@ export default function GroupsList({
             <th scope="col" className={TH_NUM}>Count</th>
             <th scope="col" className={TH_NUM}>OK</th>
             <th scope="col" className={TH_NUM}>KO</th>
-            <th scope="col" className={TH_NUM}>p95 cumulated</th>
-            <th scope="col" className={TH_NUM}>p95 duration</th>
+            <th scope="col" className={TH_NUM}>
+              <Approx exact={exact}>p95 cumulated</Approx>
+            </th>
+            <th scope="col" className={TH_NUM}>
+              <Approx exact={exact}>p95 duration</Approx>
+            </th>
           </tr>
         </thead>
         <tbody>
