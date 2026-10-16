@@ -1213,7 +1213,8 @@ const paths: Record<string, PathItemObject> = {
         'in the same project, newest first — with a null simulation forming its own cohort ' +
         'rather than matching every run. "cohortSize" is the whole cohort and may exceed the ' +
         'number of runs returned, which "limit" caps. Percentiles are recomputed from each ' +
-        'run\'s stored sketch at the project\'s current percentile set, exactly as ' +
+        'run\'s stored histograms (exact) or, for runs ingested before 2026-10-15, its stored ' +
+        'sketch, at the project\'s current percentile set, exactly as ' +
         'GET /v1/runs/{id}/stats does, so the two cannot disagree.',
       parameters: [parameters['RunId']!, parameters['Limit']!],
       responses: {

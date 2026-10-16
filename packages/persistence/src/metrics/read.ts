@@ -21,10 +21,13 @@ export interface StoredStat {
   histogramOk: Histogram | null;
   histogramKo: Histogram | null;
   /**
-   * The persisted summary sketch, for recomputing `percentiles` at the
-   * project's currently configured set (spec §9.1, K-03). Null for rows
-   * written before the sketch was persisted, in which case callers fall
-   * back to the frozen `percentiles` column.
+   * The legacy DDSketch. Present only on rows written before 2026-10-15; every
+   * row since carries none, and its percentiles are recomputed at the
+   * project's currently configured set (spec §4, K-03) exactly from the two
+   * `sparse-ms-v2` histograms above. `storedPercentiles` in
+   * `@perfportal/statistics` is the one rule choosing between them: exact
+   * histograms first, this sketch (clamped) for a legacy row, and the frozen
+   * `percentiles` column when a row has neither.
    */
   sketch: Sketch | null;
 }
@@ -328,8 +331,11 @@ export class MetricReader {
         throughputRps: r.throughput_rps,
         percentiles: r.percentiles as Record<string, number>,
         // Deserialised here exactly as `stats` above does it, so the two
-        // endpoints answer percentile questions from the same object rather
-        // than from a stored float and a sketch respectively.
+        // endpoints answer percentile questions from the same objects —
+        // exact histograms, or a legacy row's sketch — rather than one from
+        // a stored float and the other from a recomputation.
+        histogramOk: r.histogram_ok ? Histogram.deserialize(new Uint8Array(r.histogram_ok)) : null,
+        histogramKo: r.histogram_ko ? Histogram.deserialize(new Uint8Array(r.histogram_ko)) : null,
         sketch: r.sketch ? Sketch.deserialize(new Uint8Array(r.sketch)) : null,
       })),
       // Identical on every row; zero only when there are no rows at all, which

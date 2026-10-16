@@ -1,26 +1,21 @@
+import { nearestRankIndex } from './rank.js';
+
 /** Wire format tag stored in `run_stat.histogram_kind`. Bump on any layout change. */
-export const HISTOGRAM_KIND = 'sparse-ms-v1' as const;
+export const HISTOGRAM_KIND = 'sparse-ms-v2' as const;
 
 /**
- * Observations above this fold into a single overflow bin, and the bin exists
- * so a run that reaches it degrades loudly (`countBelow` and `quantile` throw)
- * instead of silently.
+ * Histograms written before 2026-10-15 (`sparse-ms-v1`) folded observations
+ * above this into one overflow bin. New histograms are uncapped: a sparse
+ * 1 ms structure costs one entry per DISTINCT observed value, so a 300 s
+ * group duration costs the same as a 3 ms response. Kept only to read v1.
  *
- * THIS COMMENT USED TO ADD "120s is above any realistic HTTP timeout, so the
- * loss is theoretical". That is true of REQUESTS and false of the
- * `group_duration` rows these same histograms hold: a group's duration is its
+ * The cap was a real loss, not a theoretical one: a group's duration is its
  * wall-clock span, so `group("Browse") { during(5.minutes) { … } }` — ordinary
- * Gatling — produces 300 s observations on a run whose slowest request is
- * 400 ms. Measured on exactly that shape, every rank landed in the overflow
- * bin, so a windowed read threw at p50.
- *
- * The loss is therefore real and reachable, and the caller has to survive it:
- * `rollupFromHistograms` omits an unrecoverable percentile rather than letting
- * the refusal become a 500. Count, min, max, mean and standard deviation are
- * unaffected — `accept` records them BEFORE folding into the bin — so what a
- * reader loses is the estimated columns, not the measured ones.
+ * Gatling — produced 300 s observations, every rank of which landed in the
+ * overflow bin. A v1 row read today still carries that bin, and the ranks it
+ * hides stay unrecoverable (`percentile` answers `undefined` for them).
  */
-export const DEFAULT_HISTOGRAM_CAP_MS = 120_000;
+export const LEGACY_V1_CAP_MS = 120_000;
 
 export interface HistogramSnapshot {
   total: number;
@@ -56,27 +51,72 @@ function readUvarint(buf: Uint8Array, pos: { i: number }): number {
  *
  * Response times are integer milliseconds, so 1 ms bins are lossless — which is
  * what lets indicator bands and Gatling's distribution bins be computed at read
- * time at ANY bounds, exactly. The DDSketch beside it cannot do this: its bins
- * are logarithmic (~2% wide), so the bin straddling 800 ms cannot be split.
+ * time at ANY bounds, exactly. A DDSketch cannot do this: its bins are
+ * logarithmic (~2% wide), so the bin straddling 800 ms cannot be split.
  *
  * Size is bounded by DISTINCT OBSERVED VALUES, not by range.
  */
 export class Histogram {
   #bins = new Map<number, number>();
-  #capMs: number;
+  /** Infinite for every new histogram; only a v1 read carries a finite cap. */
+  #capMs: number = Number.POSITIVE_INFINITY;
+  #exact = true;
   #total = 0;
   #sum = 0;
   #min = Number.POSITIVE_INFINITY;
   #max = Number.NEGATIVE_INFINITY;
   #overflowCount = 0;
+  /**
+   * The keys in ascending order, computed once and kept until a write adds a
+   * key. Sorting is the whole cost of a percentile here — a 300,000-key sort
+   * against a walk that is linear — and every percentile, the variance, the
+   * serializer and the distribution bins all want the same order. `null`
+   * means stale. Only a NEW key invalidates it; a count increment on a key
+   * already present changes no order.
+   *
+   * The cache is kept for the histogram's life, so a live bucket asked for
+   * percentiles holds one number per distinct key beside its bins — the same
+   * retention class that keeps bucket merges un-memoised, accepted here
+   * because it is bounded by the bins themselves.
+   */
+  #sortedKeys: number[] | null = null;
+  /**
+   * Bumped by every write. Lets a caller memoise a value derived from this
+   * histogram (`mergedHistogram`) and know when it has gone stale.
+   */
+  #version = 0;
+  /** A shared, memoised merge is read-only: writing to it would corrupt every reader. */
+  #frozen = false;
 
-  constructor(opts: { capMs?: number } = {}) {
-    this.#capMs = opts.capMs ?? DEFAULT_HISTOGRAM_CAP_MS;
+  constructor() {}
+
+  /** Monotonic write counter — see `#version`. */
+  get version(): number { return this.#version; }
+
+  /**
+   * Makes further `accept`/`merge` throw. For a histogram handed to more than
+   * one reader (a memoised merge), where a write would silently change every
+   * other reader's answer.
+   */
+  freeze(): this { this.#frozen = true; return this; }
+
+  #write(): void {
+    if (this.#frozen) throw new Error('Histogram: this histogram is a shared, read-only merge');
+    this.#version++;
   }
+
+  #keys(): number[] {
+    if (this.#sortedKeys === null) this.#sortedKeys = [...this.#bins.keys()].sort((a, b) => a - b);
+    return this.#sortedKeys;
+  }
+
+  /** True unless this histogram was read from `sparse-ms-v1` bytes. */
+  get exact(): boolean { return this.#exact; }
 
   /** Negative durations are a upstream data fault; clamp to 0 rather than corrupt the key space. */
   accept(valueMs: number): void {
     const v = Math.max(0, Math.round(valueMs));
+    this.#write();
     this.#total++;
     this.#sum += v;
     if (v < this.#min) this.#min = v;
@@ -85,16 +125,27 @@ export class Histogram {
       this.#overflowCount++;
       return;
     }
-    this.#bins.set(v, (this.#bins.get(v) ?? 0) + 1);
+    const prev = this.#bins.get(v);
+    if (prev === undefined) this.#sortedKeys = null;
+    this.#bins.set(v, (prev ?? 0) + 1);
   }
 
   merge(other: Histogram): void {
-    for (const [v, c] of other.#bins) this.#bins.set(v, (this.#bins.get(v) ?? 0) + c);
+    this.#write();
+    for (const [v, c] of other.#bins) {
+      const prev = this.#bins.get(v);
+      if (prev === undefined) this.#sortedKeys = null;
+      this.#bins.set(v, (prev ?? 0) + c);
+    }
     this.#total += other.#total;
     this.#sum += other.#sum;
     this.#overflowCount += other.#overflowCount;
     if (other.#min < this.#min) this.#min = other.#min;
     if (other.#max > this.#max) this.#max = other.#max;
+    // A legacy input makes the merge legacy: its overflow bin hides ranks, and
+    // the cap below which its bins are exact is the narrowest one merged in.
+    if (!other.#exact) this.#exact = false;
+    this.#capMs = Math.min(this.#capMs, other.#capMs);
   }
 
   get total(): number { return this.#total; }
@@ -108,22 +159,21 @@ export class Histogram {
 
   /** Ascending by value. */
   *entries(): IterableIterator<readonly [number, number]> {
-    for (const v of [...this.#bins.keys()].sort((a, b) => a - b)) {
-      yield [v, this.#bins.get(v) as number] as const;
-    }
+    for (const v of this.#keys()) yield [v, this.#bins.get(v) as number] as const;
   }
 
   /**
    * Exact count of observations strictly below `boundMs`.
    *
-   * Throws when the bound sits above the cap and an overflow bin exists: the
-   * answer would be a guess, and a band count that silently guesses is exactly
-   * the defect this class replaced.
+   * Only a LEGACY v1 histogram can throw: when the bound sits above its cap
+   * and an overflow bin exists, the answer would be a guess, and a band count
+   * that silently guesses is exactly the defect this class replaced. A new
+   * histogram has no cap, so the comparison below is never true for it.
    */
   countBelow(boundMs: number): number {
     if (this.#overflowCount > 0 && boundMs > this.#capMs) {
       throw new Error(
-        `Histogram: countBelow(${boundMs}) crosses the ${this.#capMs}ms overflow bin (${this.#overflowCount} observations); the exact count is unrecoverable.`,
+        `Histogram: countBelow(${boundMs}) crosses the legacy ${this.#capMs}ms overflow bin (${this.#overflowCount} observations); the exact count is unrecoverable.`,
       );
     }
     let n = 0;
@@ -132,59 +182,95 @@ export class Histogram {
   }
 
   /**
-   * The value at quantile `q`, EXACTLY — nearest-rank, `sorted[ceil(q·n) − 1]`.
+   * The nearest-rank value at percentile `p` (0–100), exactly — see
+   * `nearestRankIndex`. `undefined` when empty, or when a LEGACY v1 overflow
+   * bin hides the rank (that value is unrecoverable, and an absent key is
+   * the honest answer; `StatisticsTable` already renders it as a dash).
    *
    * ═══ THE CONVENTION IS NOT A DETAIL ═══
    *
-   * `Sketch#quantile` goes to considerable trouble to re-express its query so
-   * DDSketch's internal `q * (count - 1)` arithmetic resolves to this same
-   * index, because every ground-truth computation in this repo's tests uses it.
-   * A histogram quantile on the linear-interpolation convention would differ by
-   * one rank position on identical data — and since a windowed statistics row
-   * reads histograms while the unwindowed row reads sketches, that difference
-   * would surface as a percentile that shifts when a reader brushes to the
-   * whole run. It would look like a windowing bug and would not be one.
+   * Nearest-rank, `sorted[⌈p/100 × n⌉ − 1]`, computed on integers by
+   * `nearestRankIndex` — the ONE rank formula, so a windowed row and a
+   * whole-run row cannot disagree by a rank position on identical data. That
+   * disagreement would look like a windowing bug and would not be one.
    *
-   * ═══ THE OVERFLOW BIN ═══
-   *
-   * Throws when the rank lands beyond the cap, matching `countBelow`: the value
-   * is genuinely unrecoverable there, and a percentile that silently guesses is
-   * the defect this class exists to avoid. Only the ranks the overflow actually
-   * covers are refused — a p50 below the cap is still answered when the p99 is
-   * not, because refusing every quantile would throw away answers we have.
+   * Only the ranks a legacy overflow actually covers are refused — a p50
+   * below the cap is still answered when the p99 is not, because refusing
+   * every percentile would throw away answers we have.
    */
-  quantile(q: number): number {
-    if (this.#total === 0) return NaN;
-    const index = Math.min(this.#total - 1, Math.max(0, Math.ceil(q * this.#total) - 1));
-
-    // Every counted observation sits below the cap; the overflow is the tail.
-    const counted = this.#total - this.#overflowCount;
-    if (index >= counted) {
-      throw new Error(
-        `Histogram: quantile(${q}) lands in the ${this.#capMs}ms overflow bin ` +
-          `(${this.#overflowCount} observations); the exact value is unrecoverable.`,
-      );
-    }
-
-    let seen = 0;
-    for (const [value, count] of this.entries()) {
-      seen += count;
-      if (seen > index) return value;
-    }
-    return this.max;
+  percentile(p: number): number | undefined {
+    return this.percentiles([p])[0];
   }
 
   /**
-   * `Σ(value² × count)`, for an exact standard deviation over any merged set.
+   * Every percentile of `set` in ONE cumulative walk over the sorted keys,
+   * answered in the caller's order. Same values as asking `percentile` rank
+   * by rank — the oracle tests hold both to a sort of the raw values — at the
+   * cost of one walk rather than one per rank.
    *
-   * A walk rather than a running total, so it stays correct through `merge` and
-   * `deserialize` without a third field to keep in step. The bins are the
-   * state; everything else is derived from them.
+   * Throws a RangeError for a rank outside [0, 100] exactly as `percentile`
+   * always has (`nearestRankIndex`), except on an empty histogram, which
+   * answers `undefined` for every rank before any rank is checked.
    */
-  sumOfSquares(): number {
-    let total = 0;
-    for (const [value, count] of this.entries()) total += value * value * count;
-    return total;
+  percentiles(set: readonly number[]): (number | undefined)[] {
+    const out: (number | undefined)[] = set.map(() => undefined);
+    // Every counted observation sits below a legacy cap; the overflow is the tail.
+    const answerable = this.#total - this.#overflowCount;
+    const targets: { index: number; slot: number }[] = [];
+    for (let slot = 0; slot < set.length; slot++) {
+      const index = nearestRankIndex(set[slot] as number, this.#total);
+      if (index < 0 || index >= answerable) continue;
+      targets.push({ index, slot });
+    }
+    if (targets.length === 0) return out;
+    targets.sort((a, b) => a.index - b.index);
+    let t = 0;
+    let seen = 0;
+    for (const value of this.#keys()) {
+      seen += this.#bins.get(value) as number;
+      while (t < targets.length && seen > (targets[t] as { index: number }).index) {
+        out[(targets[t] as { slot: number }).slot] = value;
+        t++;
+      }
+      if (t === targets.length) break;
+    }
+    for (; t < targets.length; t++) out[(targets[t] as { slot: number }).slot] = this.max;
+    return out;
+  }
+
+  /**
+   * The POPULATION variance (÷ n), in two passes: the mean from the exact
+   * sum first, then `Σ count·(value − mean)²` over the sorted bins.
+   *
+   * ═══ NOT `Σx²/n − mean²`, WHICH THIS REPLACED ═══
+   *
+   * That one-pass form subtracts two numbers near `mean²` to get a small
+   * one, and on values far from zero and close together — a long group
+   * duration, 200,000 observations in 300000–300019 ms — it measured 2.5e-7
+   * relative error in the standard deviation against a two-pass oracle.
+   * The PR 3 verifier compares within 1e-9. Here every deviation is small
+   * before it is squared, so nothing large cancels.
+   *
+   * Walked in SORTED order so the answer depends only on the bins, never on
+   * the order they were inserted or merged in: the batch row, a full-extent
+   * window and a live snapshot of one run agree to the bit.
+   *
+   * A legacy v1 overflow bin's observations are in `total` and `sum` but not
+   * in the bins, so for such a row the mean includes them while the
+   * deviations do not: the result is UNRELIABLE, not merely narrower (90 × 10
+   * ms and 10 × 125,000 ms reads ~11,858 against a true ~37,496). The old
+   * one-pass form was wrong there too. Same class of loss as that row's
+   * unrecoverable percentiles.
+   */
+  variance(): number {
+    if (this.#total === 0) return 0;
+    const mean = this.#sum / this.#total;
+    let dev = 0;
+    for (const value of this.#keys()) {
+      const d = value - mean;
+      dev += (this.#bins.get(value) as number) * d * d;
+    }
+    return dev / this.#total;
   }
 
   snapshot(): HistogramSnapshot {
@@ -194,9 +280,12 @@ export class Histogram {
     };
   }
 
+  /** Always `sparse-ms-v2`: version 2, entries, total, sum, min, max. */
   serialize(): Uint8Array {
-    const out: number[] = [1];                       // version
-    writeUvarint(out, this.#capMs);
+    if (this.#overflowCount > 0) {
+      throw new Error('Histogram: a legacy v1 histogram with an overflow bin cannot be re-serialized');
+    }
+    const out: number[] = [2];                       // version
     const sorted = [...this.entries()];
     writeUvarint(out, sorted.length);
     let prev = 0;
@@ -207,18 +296,25 @@ export class Histogram {
     }
     writeUvarint(out, this.#total);
     writeUvarint(out, this.#sum);
-    writeUvarint(out, this.#overflowCount);
     writeUvarint(out, this.#total === 0 ? 0 : this.#min);
     writeUvarint(out, this.#total === 0 ? 0 : this.#max);
     return Uint8Array.from(out);
   }
 
+  /**
+   * Reads both formats. v1 (`sparse-ms-v1`) carries a cap after the version
+   * byte and an overflow count after the sum; v2 carries neither. A v1 read is
+   * marked not `exact`.
+   */
   static deserialize(buf: Uint8Array): Histogram {
     const pos = { i: 0 };
     const version = buf[pos.i++];
-    if (version !== 1) throw new Error(`Histogram: unsupported version ${String(version)}`);
-    const capMs = readUvarint(buf, pos);
-    const h = new Histogram({ capMs });
+    if (version !== 1 && version !== 2) throw new Error(`Histogram: unsupported version ${String(version)}`);
+    const h = new Histogram();
+    if (version === 1) {
+      h.#capMs = readUvarint(buf, pos);
+      h.#exact = false;
+    }
     const n = readUvarint(buf, pos);
     let prev = 0;
     for (let k = 0; k < n; k++) {
@@ -226,15 +322,38 @@ export class Histogram {
       h.#bins.set(v, readUvarint(buf, pos));
       prev = v;
     }
-    // Restored explicitly, never re-derived from the bins: the overflow bin
+    // Restored explicitly, never re-derived from the bins: a v1 overflow bin
     // holds observations the bins do not, so total/sum/max would all be wrong.
     h.#total = readUvarint(buf, pos);
     h.#sum = readUvarint(buf, pos);
-    h.#overflowCount = readUvarint(buf, pos);
+    h.#overflowCount = version === 1 ? readUvarint(buf, pos) : 0;
     const min = readUvarint(buf, pos);
     const max = readUvarint(buf, pos);
     h.#min = h.#total === 0 ? Number.POSITIVE_INFINITY : min;
     h.#max = h.#total === 0 ? Number.NEGATIVE_INFINITY : max;
     return h;
+  }
+
+  /** Test-only: the exact v1 bytes the pre-2026-10-15 writer produced. */
+  static legacyV1ForTests(values: readonly number[]): Uint8Array {
+    const bins = new Map<number, number>();
+    let overflow = 0, sum = 0, min = Infinity, max = -Infinity;
+    for (const raw of values) {
+      const v = Math.max(0, Math.round(raw));
+      sum += v; min = Math.min(min, v); max = Math.max(max, v);
+      if (v > LEGACY_V1_CAP_MS) overflow++; else bins.set(v, (bins.get(v) ?? 0) + 1);
+    }
+    const out: number[] = [1];
+    writeUvarint(out, LEGACY_V1_CAP_MS);
+    const sorted = [...bins.entries()].sort((a, b) => a[0] - b[0]);
+    writeUvarint(out, sorted.length);
+    let prev = 0;
+    for (const [v, c] of sorted) { writeUvarint(out, v - prev); writeUvarint(out, c); prev = v; }
+    writeUvarint(out, values.length);
+    writeUvarint(out, sum);
+    writeUvarint(out, overflow);
+    writeUvarint(out, values.length === 0 ? 0 : min);
+    writeUvarint(out, values.length === 0 ? 0 : max);
+    return Uint8Array.from(out);
   }
 }

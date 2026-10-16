@@ -46,13 +46,20 @@
  * — so the reloaded maximum IS the impossible value, and clamping against it
  * achieves nothing while looking complete. `packages/persistence`'s own
  * "answers a percentile that was never stored" case is what caught that,
- * by comparing a live sketch's quantiles against a reloaded one's.
+ * when it compared a live sketch's quantiles against a reloaded one's (it
+ * compares exact histograms now that new rows carry no sketch).
  *
  * So the rule is per ASSEMBLER instead, and it is the one a reader checks:
  * **a percentile is clamped against the same min and max reported beside it.**
- * `RollupBuilder.finish` and `bucketLatency` assemble that triple;
- * `resolveMetric`, the metrics controller and `tool-assertions.ts` recompute a
- * percentile against one already assembled.
+ * `storedPercentiles` (`stored-percentiles.ts`) recomputes a LEGACY row's
+ * percentile from its stored sketch against a row already assembled, and it
+ * is the only one: the metrics controller's /stats and trends reads used to
+ * carry their own copies of that recomputation and now call
+ * `storedPercentiles` instead. `RollupBuilder.finish`, `bucketLatency`,
+ * `tool-assertions.ts` and `packages/sla`'s `resolveMetric` were callers too
+ * until they moved to exact histograms: a nearest-rank value is an observation
+ * the row made, so it is inside that row's range by construction and they call
+ * this no longer.
  *
  * ═══ AND THAT SENTENCE IS NO LONGER THE LIST ═══
  *
@@ -74,9 +81,10 @@
  * describes a mechanism it does not have: a windowed row is built from
  * `Histogram`, not `Sketch`. The conclusion survives and is stronger than the
  * argument it was given — a `Histogram` is an EXACT 1 ms structure whose
- * `quantile` is nearest-rank over observed values and whose `min`/`max` are
+ * `percentile` is nearest-rank over observed values and whose `min`/`max` are
  * observed values, so its answer is inside its own range by construction
- * rather than by estimate. Corrected here rather than quietly, because a
+ * rather than by estimate (and, being `percentile` rather than `.quantile(`,
+ * it is not a caller the guard below collects at all). Corrected here rather than quietly, because a
  * docstring asserting a mechanism the code does not have is the defect this
  * very file was written to fix, and it went in with the fix.
  */

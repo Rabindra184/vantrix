@@ -1,7 +1,5 @@
 import type { MetricFamily, MetricScope } from '@perfportal/core';
 import { Histogram } from './histogram.js';
-import { clampPercentile } from './percentile.js';
-import { Sketch } from './sketch.js';
 
 export interface StatRollup {
   scope: MetricScope;
@@ -15,39 +13,66 @@ export interface StatRollup {
   maxMs: number;
   meanMs: number;
   stddevMs: number;
-  /** A projection of `sketch`, exact at this scope. Aggregation merges `sketch`, never these. */
+  /**
+   * Exact nearest-rank values over BOTH statuses, at the configured set — a
+   * projection of `mergedHistogram(histogramOk, histogramKo)`. Aggregation
+   * merges the histograms, never these.
+   */
   percentiles: Record<string, number>;
   throughputRps: number;
-  sketch: Sketch;
   /**
-   * Exact 1ms histograms, split by status because Gatling renders OK and KO as
-   * separate distribution series. `All` is their merge, which is exact.
-   * The sketch above spans BOTH statuses; do not conflate the two.
+   * Exact 1 ms histograms, split by status because Gatling renders OK and KO as
+   * separate distribution series. Their merge is the all-responses population
+   * every other figure on this row is computed from.
    */
   histogramOk: Histogram;
   histogramKo: Histogram;
 }
 
+const merges = new WeakMap<Histogram, { ko: Histogram; okVersion: number; koVersion: number; all: Histogram }>();
+
+/**
+ * The merge of both statuses — never mutates either input.
+ *
+ * MEMOISED and FROZEN. One live tick asked for the same merge three times
+ * per rollup (`finish`, `toEvaluableStats`, every percentile Gatling
+ * assertion), and each fresh merge then paid its own key sort; at 300,000
+ * distinct values that was most of a tick. A repeat call for the same two
+ * histograms, neither written since (`Histogram#version`), returns the merge
+ * already built, sorted keys and all. It is frozen because it is now shared:
+ * a caller that wrote to it would change every other caller's answer, so a
+ * write throws instead. A caller that needs to accumulate builds its own.
+ */
+export function mergedHistogram(ok: Histogram, ko: Histogram): Histogram {
+  const hit = merges.get(ok);
+  if (hit && hit.ko === ko && hit.okVersion === ok.version && hit.koVersion === ko.version) return hit.all;
+  const all = new Histogram();
+  all.merge(ok);
+  all.merge(ko);
+  all.freeze();
+  merges.set(ok, { ko, okVersion: ok.version, koVersion: ko.version, all });
+  return all;
+}
+
+/**
+ * Percentiles of a histogram at a set, omitting ranks it cannot answer. An
+ * empty histogram answers {}: a p95 of 0 would be a fabricated observation.
+ */
+export function percentilesOf(h: Histogram, set: readonly number[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  const values = h.percentiles(set); // one walk for the whole set
+  set.forEach((p, i) => {
+    const v = values[i];
+    if (v !== undefined) out[`p${p}`] = v;
+  });
+  return out;
+}
+
 export class RollupBuilder {
-  #sketch = new Sketch();
   #histOk = new Histogram();
   #histKo = new Histogram();
-  #count = 0;
-  #ok = 0;
-  #min = Number.POSITIVE_INFINITY;
-  #max = Number.NEGATIVE_INFINITY;
-  #mean = 0;
-  #m2 = 0;                        // Welford
 
   add(durationMs: number, ok: boolean): void {
-    this.#count++;
-    if (ok) this.#ok++;
-    if (durationMs < this.#min) this.#min = durationMs;
-    if (durationMs > this.#max) this.#max = durationMs;
-    const delta = durationMs - this.#mean;
-    this.#mean += delta / this.#count;
-    this.#m2 += delta * (durationMs - this.#mean);
-    this.#sketch.accept(durationMs);
     if (ok) this.#histOk.accept(durationMs); else this.#histKo.accept(durationMs);
   }
 
@@ -55,60 +80,50 @@ export class RollupBuilder {
     scope: MetricScope; name: string; family: MetricFamily;
     windowMs: number; percentiles: number[];
     /**
-     * Hand back COPIES of the sketch and histograms rather than the live
-     * accumulators.
+     * Hand back COPIES of the histograms rather than the live accumulators.
      *
      * Off by default: a batch fold finishes once and never touches the builder
      * again, so copying would be pure cost. A LIVE fold keeps going after the
      * snapshot, and a snapshot that aliases the accumulator would mutate under
      * whoever is serializing it — a state that existed at no instant.
      *
-     * Lossless: DDSketch and Histogram merges are exact, which is the same
-     * property that makes BucketSeries coalescing lossless.
+     * Lossless: a histogram merge is exact, which is the same property that
+     * makes BucketSeries coalescing lossless.
      */
     clone?: boolean;
   }): StatRollup {
-    // ONE expression for the exact extremes, read by the clamp below and by the
-    // `minMs`/`maxMs` returned to the caller. Two copies would let the estimate be
-    // projected onto a range other than the one reported beside it, which is the
-    // whole property `clampPercentile` exists to hold.
-    const range = {
-      minMs: this.#count === 0 ? 0 : this.#min,
-      maxMs: this.#count === 0 ? 0 : this.#max,
+    const copy = (h: Histogram): Histogram => {
+      const c = new Histogram();
+      c.merge(h);
+      return c;
     };
-
-    // A percentile of a sample cannot lie outside the sample's own range, and the
-    // sketch's 1% error means the estimate sometimes does — 24 of 436 values across
-    // the nine real runs measured, worst +12.46 ms. Unclamped it reached the SLA
-    // evaluator, which failed runs on a p99 above their own exactly-tracked maximum.
-    // NaN for an empty sketch passes through unchanged, which is what it did before.
-    const percentiles: Record<string, number> = {};
-    for (const p of opts.percentiles) {
-      percentiles[`p${p}`] = clampPercentile(this.#sketch.quantile(p / 100), range);
-    }
-
-    const copyOf = <T extends { merge(other: T): void }>(src: T, empty: T): T => {
-      empty.merge(src);
-      return empty;
-    };
-
+    const histogramOk = opts.clone ? copy(this.#histOk) : this.#histOk;
+    const histogramKo = opts.clone ? copy(this.#histKo) : this.#histKo;
+    // ONE population for every figure on the row. Count, extremes, mean,
+    // standard deviation and percentiles all come from this merge, so a row
+    // describes one set of values and no figure can sit outside another's range.
+    // Merged from the histograms the row RETURNS, so `toEvaluableStats` and
+    // the Gatling assertions asking for this row's merge get this one back.
+    const all = mergedHistogram(histogramOk, histogramKo);
+    const count = all.total;
+    const okCount = histogramOk.total;
+    const mean = count === 0 ? 0 : all.sum / count;
     return {
       scope: opts.scope,
       name: opts.name,
       family: opts.family,
-      count: this.#count,
-      okCount: this.#ok,
-      koCount: this.#count - this.#ok,
-      errorRate: this.#count === 0 ? 0 : (this.#count - this.#ok) / this.#count,
-      minMs: range.minMs,
-      maxMs: range.maxMs,
-      meanMs: this.#mean,
-      stddevMs: this.#count === 0 ? 0 : Math.sqrt(this.#m2 / this.#count),
-      percentiles,
-      throughputRps: opts.windowMs === 0 ? 0 : (this.#count / opts.windowMs) * 1000,
-      sketch: opts.clone ? copyOf(this.#sketch, new Sketch()) : this.#sketch,
-      histogramOk: opts.clone ? copyOf(this.#histOk, new Histogram()) : this.#histOk,
-      histogramKo: opts.clone ? copyOf(this.#histKo, new Histogram()) : this.#histKo,
+      count,
+      okCount,
+      koCount: count - okCount,
+      errorRate: count === 0 ? 0 : (count - okCount) / count,
+      minMs: all.min,
+      maxMs: all.max,
+      meanMs: mean,
+      stddevMs: Math.sqrt(all.variance()), // population, two-pass — see Histogram#variance
+      percentiles: percentilesOf(all, opts.percentiles),
+      throughputRps: opts.windowMs === 0 ? 0 : (count / opts.windowMs) * 1000,
+      histogramOk,
+      histogramKo,
     };
   }
 }

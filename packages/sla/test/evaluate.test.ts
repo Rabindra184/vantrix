@@ -1,11 +1,11 @@
-import { Sketch } from '@perfportal/statistics';
+import { Histogram } from '@perfportal/statistics';
 import { describe, expect, it } from 'vitest';
 import { evaluateRules, resolveMetric, type EvaluableRule, type EvaluableStat } from '../src/index.js';
 
-function sketchOf(values: number[]): Sketch {
-  const s = new Sketch();
-  for (const v of values) s.accept(v);
-  return s;
+function histogramOf(values: number[]): Histogram {
+  const h = new Histogram();
+  for (const v of values) h.accept(v);
+  return h;
 }
 
 function stat(over: Partial<EvaluableStat> = {}): EvaluableStat {
@@ -23,7 +23,7 @@ function stat(over: Partial<EvaluableStat> = {}): EvaluableStat {
     stddevMs: 300,
     throughputRps: 50,
     percentiles: { p50: 100, p95: 700, p99: 1800 },
-    sketch: sketchOf(Array.from({ length: 1000 }, (_, i) => i + 1)),
+    histogram: histogramOf(Array.from({ length: 1000 }, (_, i) => i + 1)),
     ...over,
   };
 }
@@ -46,10 +46,37 @@ describe('resolveMetric', () => {
     expect(resolveMetric(stat(), 'p95')).toBe(700);
   });
 
-  it('answers a percentile that was never stored, from the sketch', () => {
-    const v = resolveMetric(stat(), 'p99.9');
-    expect(v).not.toBeNull();
-    expect(Math.abs(v! - 999) / 999).toBeLessThanOrEqual(0.01);
+  it('answers a percentile outside the stored set exactly from the histogram', () => {
+    const h = new Histogram();
+    for (let v = 1; v <= 1000; v++) h.accept(v);
+    const s: EvaluableStat = {
+      scope: 'run', name: '', family: 'response_time', count: 1000, okCount: 1000, koCount: 0,
+      errorRate: 0, minMs: 1, maxMs: 1000, meanMs: 500.5, stddevMs: 0, throughputRps: 0,
+      percentiles: { p50: 500 }, histogram: h,
+    };
+    // Nearest rank: the 999th of 1..1000 — exactly, not within 1%.
+    expect(resolveMetric(s, 'p99.9')).toBe(999);
+    expect(resolveMetric(s, 'p50')).toBe(500);
+  });
+
+  it('answers null for a percentile when no histogram and no stored value exist', () => {
+    const s = { scope: 'run', name: '', family: 'response_time', count: 0, okCount: 0, koCount: 0,
+      errorRate: 0, minMs: 0, maxMs: 0, meanMs: 0, stddevMs: 0, throughputRps: 0, percentiles: {} } satisfies EvaluableStat;
+    expect(resolveMetric(s, 'p95')).toBeNull();
+  });
+
+  /**
+   * The pattern accepts any number after `p`, and `Histogram#percentile`
+   * reaches `nearestRankIndex`, which THROWS outside [0, 100]. A stored rule
+   * naming p150 must read as unresolvable (`not_applicable`), never take the
+   * whole evaluation down with a RangeError.
+   */
+  it('answers null for a percentile rank no histogram can answer, rather than throwing', () => {
+    expect(resolveMetric(stat(), 'p150')).toBeNull();
+    expect(resolveMetric(stat(), 'p100')).toBeNull();
+    expect(resolveMetric(stat(), 'p0')).toBeNull();
+    const r = evaluateRules([rule({ metric: 'p150' })], [stat()]);
+    expect(r.assertions[0]?.outcome).toBe('not_applicable');
   });
 
   it('resolves the scalar metrics', () => {
@@ -64,8 +91,12 @@ describe('resolveMetric', () => {
     expect(resolveMetric(stat(), 'p95th')).toBeNull();
   });
 
-  it('returns null for a percentile when there is no sketch to fall back to', () => {
-    expect(resolveMetric(stat({ sketch: undefined }), 'p99.9')).toBeNull();
+  it('returns null for a percentile when there is no histogram to fall back to', () => {
+    expect(resolveMetric(stat({ histogram: undefined }), 'p99.9')).toBeNull();
+  });
+
+  it('returns null for an unstored percentile of an empty histogram', () => {
+    expect(resolveMetric(stat({ histogram: new Histogram() }), 'p99.9')).toBeNull();
   });
 
   /**
@@ -74,29 +105,21 @@ describe('resolveMetric', () => {
    *
    * A gate on a percentile the project does not store — `p90` where the project
    * configures p50/75/95/99 — never reads `stat.percentiles` at all; it asks the
-   * sketch. So a clamp installed where the STORED percentiles are projected
-   * (`RollupBuilder.finish`) would have left exactly this path judging a value
-   * the product refuses to display. It lives in `Sketch.quantile` for that reason,
-   * and this case is what tells the two apart.
-   *
-   * The plateau fixture is the one from `sketch.test.ts`: unclamped, p95 answered
-   * 2515.4601126102525 on a sample whose largest observation is 2503. `minMs` and
-   * `maxMs` are set to the sketch's own extremes here because that is what the
-   * engine always produces — measured on the reference run, the two agree on all
-   * fourteen rows, merged group and run scopes included.
+   * histogram. The sketch this replaced estimated 2515.4601126102525 here on a
+   * sample whose largest observation is 2503, and needed a clamp to keep a gate
+   * from judging an impossible value. A nearest-rank histogram answers an
+   * OBSERVED value, so the right answer needs no correction.
    */
-  it('answers the sketch fallback inside the range, so a gate cannot judge an impossible value', () => {
+  it('answers the histogram fallback with an observed value, never one past the maximum', () => {
     const plateau = stat({
       minMs: 100,
       maxMs: 2503,
-      percentiles: {}, // nothing stored, so the sketch is the only answer
-      sketch: sketchOf([...Array<number>(450).fill(100), ...Array<number>(50).fill(2503)]),
+      percentiles: {}, // nothing stored, so the histogram is the only answer
+      histogram: histogramOf([...Array<number>(450).fill(100), ...Array<number>(50).fill(2503)]),
     });
 
-    const v = resolveMetric(plateau, 'p95');
-    expect(v).not.toBeNull();
-    expect(v!).toBeLessThanOrEqual(plateau.maxMs);
-    expect(v!).toBe(2503);
+    expect(resolveMetric(plateau, 'p95')).toBe(2503);
+    expect(resolveMetric(plateau, 'p90')).toBe(100);
   });
 });
 

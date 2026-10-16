@@ -1,19 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { BUCKET_PERCENTILES, Sketch, bucketLatency } from '../src/index.js';
+import { BUCKET_PERCENTILES, Histogram, bucketLatency } from '../src/index.js';
 
 /** A bucket-shaped object carrying only what bucketLatency reads. */
-function bucketOf(all: number[], ok: number[], ko: number[]) {
+function bucketOf(ok: number[], ko: number[]) {
   const fill = (xs: number[]) => {
-    const s = new Sketch();
-    for (const x of xs) s.accept(x);
-    return s;
+    const h = new Histogram();
+    for (const x of xs) h.accept(x);
+    return h;
   };
-  return { sketch: fill(all), sketchOk: fill(ok), sketchKo: fill(ko) };
+  return { histogramOk: fill(ok), histogramKo: fill(ko) };
 }
 
 describe('bucketLatency', () => {
-  it('derives min, max and mean from the all-outcomes sketch', () => {
-    const out = bucketLatency(bucketOf([10, 20, 60], [10, 20], [60]));
+  it('derives min, max and mean from the merge of both statuses', () => {
+    const out = bucketLatency(bucketOf([10, 20], [60]));
     expect(out.minMs).toBe(10);
     expect(out.maxMs).toBe(60);
     expect(out.meanMs).toBe(30);
@@ -21,28 +21,24 @@ describe('bucketLatency', () => {
 
   /**
    * The same rule `RollupBuilder` holds, one level down: a bucket reports
-   * `minMs`/`maxMs` beside its bands, so no band may fall outside them. It is
-   * a SEPARATE assembler rather than a consequence of that one — the clamp is
-   * deliberately not inside `Sketch.quantile`, because a reloaded sketch's
-   * extremes are bucket-approximate and clamping against them achieves nothing
-   * (see `clampPercentile`). The OK and KO splits are clamped against their own
-   * sketches, which are subsets of the range reported, so tighter and still
-   * inside it.
+   * `minMs`/`maxMs` beside its bands, so no band may fall outside them. The
+   * bands are exact nearest-rank values now, so this holds by construction;
+   * the plateau is kept because it is the shape that broke the old DDSketch
+   * estimate (2515.4601126102525 against a maximum of 2503).
    */
   it('keeps every band inside the min and max it reports, where the tail plateaus', () => {
     const plateau = [...Array<number>(450).fill(100), ...Array<number>(50).fill(2503)];
-    const out = bucketLatency(bucketOf(plateau, plateau, []));
+    const out = bucketLatency(bucketOf(plateau, []));
     expect(out.maxMs).toBe(2503); // the tail really is a plateau at the maximum
     for (const [key, v] of Object.entries(out.percentiles)) {
       expect(v, `${key} is inside [${out.minMs}, ${out.maxMs}]`).toBeLessThanOrEqual(out.maxMs);
       expect(v, `${key} is inside [${out.minMs}, ${out.maxMs}]`).toBeGreaterThanOrEqual(out.minMs);
     }
-    // Unclamped the top bands answered 2515.4601126102525 here.
     expect(out.percentiles.p99!).toBe(2503);
   });
 
   it('emits every fixed band, for each outcome split', () => {
-    const out = bucketLatency(bucketOf([10, 20, 60], [10, 20], [60]));
+    const out = bucketLatency(bucketOf([10, 20], [60]));
     const expected = BUCKET_PERCENTILES.map((p) => `p${p}`);
     expect(Object.keys(out.percentiles)).toEqual(expected);
     expect(Object.keys(out.percentilesOk)).toEqual(expected);
@@ -50,11 +46,11 @@ describe('bucketLatency', () => {
   });
 
   // The asymmetry is deliberate and is the thing a reimplementation gets
-  // wrong: an empty sketch has no observations, so a p95 of 0 would be
+  // wrong: an empty histogram has no observations, so a p95 of 0 would be
   // fabricated -- but min/max/mean are 0 because the batch writer's columns
   // are NOT NULL. Both halves are asserted so neither can drift alone.
-  it('returns {} for an empty sketch but 0 for its min, max and mean', () => {
-    const out = bucketLatency(bucketOf([], [], []));
+  it('returns {} for an empty histogram but 0 for its min, max and mean', () => {
+    const out = bucketLatency(bucketOf([], []));
     expect(out.percentiles).toEqual({});
     expect(out.percentilesOk).toEqual({});
     expect(out.percentilesKo).toEqual({});
@@ -64,8 +60,26 @@ describe('bucketLatency', () => {
   });
 
   it('gives an all-KO bucket empty OK bands and populated KO bands', () => {
-    const out = bucketLatency(bucketOf([60], [], [60]));
+    const out = bucketLatency(bucketOf([], [60]));
     expect(out.percentilesOk).toEqual({});
     expect(Object.keys(out.percentilesKo)).toHaveLength(BUCKET_PERCENTILES.length);
+  });
+
+  it('answers {} for an empty population and exact values otherwise', () => {
+    const okOnlyKo = { histogramOk: new Histogram(), histogramKo: new Histogram() };
+    okOnlyKo.histogramKo.accept(401);
+    okOnlyKo.histogramKo.accept(403);
+    const lat = bucketLatency(okOnlyKo);
+    expect(lat.percentilesOk).toEqual({});
+    expect(lat.percentilesKo.p50).toBe(401);
+    expect(lat.minMs).toBe(401);
+    expect(lat.maxMs).toBe(403);
+    expect(lat.meanMs).toBe(402);
+    expect(Object.values(lat.percentiles).every(Number.isFinite)).toBe(true);
+  });
+
+  it('answers zeros and {} for a bucket that saw nothing', () => {
+    const lat = bucketLatency({ histogramOk: new Histogram(), histogramKo: new Histogram() });
+    expect(lat).toEqual({ minMs: 0, maxMs: 0, meanMs: 0, percentiles: {}, percentilesOk: {}, percentilesKo: {} });
   });
 });

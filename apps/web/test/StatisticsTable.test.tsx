@@ -118,7 +118,7 @@ const ALL_PATHS = [
 function renderTable(payload: StatsResponse = stats) {
   return render(
     <MemoryRouter>
-      <StatisticsTable stats={payload} runId={RUN_ID} windowSelected={false} />
+      <StatisticsTable exact={false} stats={payload} runId={RUN_ID} windowSelected={false} />
     </MemoryRouter>,
   );
 }
@@ -357,7 +357,7 @@ describe('StatisticsTable — the columns (G-12, §9 checkpoint 6)', () => {
     };
     render(
       <MemoryRouter>
-        <StatisticsTable stats={odd} runId={RUN_ID} windowSelected={false} />
+        <StatisticsTable exact={false} stats={odd} runId={RUN_ID} windowSelected={false} />
       </MemoryRouter>,
     );
     expect(screen.getByRole('columnheader', { name: /99\.9/ })).toBeTruthy();
@@ -540,7 +540,7 @@ describe('StatisticsTable — expand and collapse (G-13, §9 checkpoint 4)', () 
   it('starts with groups collapsed', () => {
     render(
       <MemoryRouter>
-        <StatisticsTable stats={stats} runId={RUN_ID} windowSelected={false} />
+        <StatisticsTable exact={false} stats={stats} runId={RUN_ID} windowSelected={false} />
       </MemoryRouter>,
     );
     expect(screen.queryByText('Recommendations')).toBeNull();
@@ -669,7 +669,7 @@ describe('StatisticsTable — the row links (G-16)', () => {
   it('links each row to its detail page (G-16)', () => {
     render(
       <MemoryRouter>
-        <StatisticsTable stats={stats} runId={RUN_ID} windowSelected={false} />
+        <StatisticsTable exact={false} stats={stats} runId={RUN_ID} windowSelected={false} />
       </MemoryRouter>,
     );
     // `List Products` is `Catalog/List Products` post-D-10, nested under a
@@ -977,7 +977,9 @@ describe('StatisticsTable — a displayed percentile is clamped to [min, max]', 
   });
 
   /** And the caption says so — a reader comparing our p99 against another
-   *  tool's needs to know it is an estimate, clamped or not. */
+   *  tool's needs to know it is an estimate, clamped or not. ON AN ESTIMATED
+   *  RUN: `renderTable` passes `exact={false}`, a run processed before exact
+   *  statistics. */
   it('says the percentiles are estimates within 1%, in the disclosure', () => {
     renderTable();
     /* READ OFF THE PAGE, NOT OFF THE `<caption>` (review C06). The claim is
@@ -988,6 +990,34 @@ describe('StatisticsTable — a displayed percentile is clamped to [min, max]', 
     const page = document.body.textContent ?? '';
     expect(page).toMatch(/estimate/i);
     expect(page).toMatch(/within 1%/i);
+  });
+
+  /**
+   * ═══ AN EXACT RUN'S PERCENTILES ARE NOT ESTIMATES ═══
+   *
+   * `statsMethod: 'exact-v1'` means each percentile is the observed value at
+   * the nearest rank — nothing to be within 1% of, and nothing to clamp, since
+   * an observed value cannot lie outside the range it was observed in. The
+   * caveat is asserted as a PAIR with the estimated run's: either alone passes
+   * against a table that always or never prints it.
+   */
+  it('drops the estimate caveat on an exact run and keeps it on an estimated one', () => {
+    const info = (): string => {
+      const trigger = screen.getByRole('button', { name: 'About Statistics' });
+      return document.getElementById(trigger.getAttribute('aria-describedby') ?? '')?.textContent ?? '';
+    };
+    render(
+      <MemoryRouter>
+        <StatisticsTable exact stats={stats} runId={RUN_ID} windowSelected={false} />
+      </MemoryRouter>,
+    );
+    expect(info()).toMatch(/exact/i);
+    expect(info()).not.toMatch(/within 1%|estimat|clamp/i);
+    // The rest of the methodology is not a claim about estimation and stays.
+    expect(info()).toMatch(/never be added together/i);
+    cleanup();
+    renderTable();
+    expect(info()).toMatch(/within 1%/i);
   });
 });
 
@@ -1000,7 +1030,7 @@ describe('StatisticsTable — sortable columns (G-15, §9 checkpoint 3)', () => 
   it('opens worst-first, not alphabetically', () => {
     render(
       <MemoryRouter>
-        <StatisticsTable stats={stats} runId={RUN_ID} windowSelected={false} />
+        <StatisticsTable exact={false} stats={stats} runId={RUN_ID} windowSelected={false} />
       </MemoryRouter>,
     );
     const first = screen.getAllByTestId('stat-row')[0]!;
@@ -1012,7 +1042,7 @@ describe('StatisticsTable — sortable columns (G-15, §9 checkpoint 3)', () => 
   it('toggles direction when the same column is clicked twice', () => {
     render(
       <MemoryRouter>
-        <StatisticsTable stats={stats} runId={RUN_ID} windowSelected={false} />
+        <StatisticsTable exact={false} stats={stats} runId={RUN_ID} windowSelected={false} />
       </MemoryRouter>,
     );
     const header = screen.getByRole('button', { name: /sort by 95th/i });
@@ -1265,7 +1295,7 @@ describe('StatisticsTable — the name filter (G-14)', () => {
   it('filters as you type, keeping ancestors', () => {
     render(
       <MemoryRouter>
-        <StatisticsTable stats={stats} runId={RUN_ID} windowSelected={false} />
+        <StatisticsTable exact={false} stats={stats} runId={RUN_ID} windowSelected={false} />
       </MemoryRouter>,
     );
     fireEvent.change(screen.getByLabelText(/filter/i), { target: { value: 'Recommend' } });
@@ -1418,7 +1448,7 @@ describe('StatisticsTable — why it is empty, when it is', () => {
   it('says statistics were not RETAINED when the stream stopped early', () => {
     render(
       <MemoryRouter>
-        <StatisticsTable stats={empty} runId={RUN_ID} windowSelected={false} runStatus="incomplete" />
+        <StatisticsTable exact={false} stats={empty} runId={RUN_ID} windowSelected={false} runStatus="incomplete" />
       </MemoryRouter>,
     );
     expect(screen.getByText(/no statistics were retained/i)).toBeTruthy();
@@ -1428,7 +1458,7 @@ describe('StatisticsTable — why it is empty, when it is', () => {
   it('keeps "recorded" for a completed run that measured nothing', () => {
     render(
       <MemoryRouter>
-        <StatisticsTable stats={empty} runId={RUN_ID} windowSelected={false} runStatus="complete" />
+        <StatisticsTable exact={false} stats={empty} runId={RUN_ID} windowSelected={false} runStatus="complete" />
       </MemoryRouter>,
     );
     expect(screen.getByText(/no statistics were recorded/i)).toBeTruthy();
@@ -1463,7 +1493,7 @@ describe('StatisticsTable — why it is empty, when it is', () => {
   it('says the window selected nothing, and not that nothing was recorded', () => {
     render(
       <MemoryRouter>
-        <StatisticsTable stats={empty} runId={RUN_ID} windowSelected runStatus="incomplete" />
+        <StatisticsTable exact={false} stats={empty} runId={RUN_ID} windowSelected runStatus="incomplete" />
       </MemoryRouter>,
     );
     expect(screen.getByText(/no requests ran in the selected window/i)).toBeTruthy();
@@ -1475,7 +1505,7 @@ describe('StatisticsTable — why it is empty, when it is', () => {
   it('says "recorded" and never the window sentence when no window is selected', () => {
     render(
       <MemoryRouter>
-        <StatisticsTable stats={empty} runId={RUN_ID} windowSelected={false} />
+        <StatisticsTable exact={false} stats={empty} runId={RUN_ID} windowSelected={false} />
       </MemoryRouter>,
     );
     expect(screen.getByText(/recorded for this run/i)).toBeTruthy();
@@ -1915,7 +1945,7 @@ describe('StatisticsTable — a shared link carries the question', () => {
   const at = (search: string) =>
     render(
       <MemoryRouter initialEntries={[`/runs/${RUN_ID}${search}`]}>
-        <StatisticsTable stats={stats} runId={RUN_ID} windowSelected={false} />
+        <StatisticsTable exact={false} stats={stats} runId={RUN_ID} windowSelected={false} />
         <Where />
       </MemoryRouter>,
     );
@@ -1991,14 +2021,14 @@ describe('StatisticsTable — its heading level', () => {
   ])('is a section heading by default and one level down when told to (%s)', (_state, payload) => {
     render(
       <MemoryRouter>
-        <StatisticsTable stats={payload} runId={RUN_ID} windowSelected={false} />
+        <StatisticsTable exact={false} stats={payload} runId={RUN_ID} windowSelected={false} />
       </MemoryRouter>,
     );
     expect(screen.getByRole('heading', { level: 2, name: 'Statistics' })).toBeDefined();
     cleanup();
     render(
       <MemoryRouter>
-        <StatisticsTable stats={payload} runId={RUN_ID} windowSelected={false} headingLevel={3} />
+        <StatisticsTable exact={false} stats={payload} runId={RUN_ID} windowSelected={false} headingLevel={3} />
       </MemoryRouter>,
     );
     expect(screen.getByRole('heading', { level: 3, name: 'Statistics' })).toBeDefined();

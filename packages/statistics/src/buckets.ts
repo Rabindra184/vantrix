@@ -1,5 +1,4 @@
 import { Histogram } from './histogram.js';
-import { Sketch } from './sketch.js';
 
 export interface Bucket {
   startOffsetMs: number;
@@ -15,26 +14,13 @@ export interface Bucket {
    */
   startedOkCount: number;
   startedKoCount: number;
-  sketch: Sketch;
   /**
-   * Status-filtered sketches. Gatling's percentiles-over-time chart is OK-only
-   * (its title is literally "Response Time Percentiles over Time (OK)") and its
-   * response-time-vs-throughput scatter is two independent series, each from its
-   * own status-filtered digest. `sketch` above spans BOTH and is retained for
-   * the combined view; it is not a substitute for these.
-   */
-  sketchOk: Sketch;
-  sketchKo: Sketch;
-  /**
-   * The same observations `sketchOk`/`sketchKo` hold, in a form a TIME WINDOW
-   * can merge.
-   *
-   * Both are kept rather than one replacing the other. The sketch is what
-   * `run_stat` already stores for the whole run and what K-03 recomputes
-   * percentiles from; these are what a sub-range is re-aggregated from, and
-   * they are a different trade. Measured: a DDSketch protobuf costs 1068 bytes
-   * for a SINGLE observation because its store is dense, while this costs 12 —
-   * and its quantiles are exact rather than within RELATIVE_ACCURACY.
+   * Exact 1 ms histograms, split by status. Gatling's percentiles-over-time
+   * chart is OK-only (its title is literally "Response Time Percentiles over
+   * Time (OK)") and its response-time-vs-throughput scatter is two independent
+   * series, each from its own status-filtered population; their merge is the
+   * combined view. A TIME WINDOW re-aggregates a sub-range by merging these,
+   * and a merge is exact — so every figure a bucket reports is exact too.
    */
   histogramOk: Histogram;
   histogramKo: Histogram;
@@ -42,7 +28,7 @@ export interface Bucket {
 
 /**
  * Starts at 1-second buckets and halves resolution in place whenever the count
- * exceeds maxBuckets. Because DDSketch merges are exact, coalescing is lossless.
+ * exceeds maxBuckets. Because histogram merges are exact, coalescing is lossless.
  */
 export class BucketSeries {
   #startMs: number;
@@ -64,7 +50,6 @@ export class BucketSeries {
       b = {
         startOffsetMs: idx * this.#widthMs, startedCount: 0, endedCount: 0,
         okCount: 0, koCount: 0, startedOkCount: 0, startedKoCount: 0,
-        sketch: new Sketch(), sketchOk: new Sketch(), sketchKo: new Sketch(),
         histogramOk: new Histogram(), histogramKo: new Histogram(),
       };
       this.#buckets.set(idx, b);
@@ -73,20 +58,18 @@ export class BucketSeries {
       b.startedCount++;
       // The START-edge split. okCount/koCount below are the END-edge split and
       // belong to responses/s; requests/s is bucketed by start time, exactly
-      // like the sketches immediately below (G-23).
+      // like the histograms immediately below (G-23).
       if (ok) b.startedOkCount++; else b.startedKoCount++;
-      // Sketches are fed on the START edge, not the end, to match Gatling.
+      // Histograms are fed on the START edge, not the end, to match Gatling.
       // Gatling's RequestPercentilesBuffers.updateRequestPercentilesBuffers
       // (gatling-charts, buffers/RequestPercentilesBuffers.scala) files every
       // percentile/scatter observation under `startBucket` — the bucket
       // derived from the request's START time. A request starting at 10.9s
       // and finishing at 11.2s therefore belongs to Gatling's bucket 10, not
-      // 11. Feeding the sketch on 'end' instead shifts every
+      // 11. Feeding the histograms on 'end' instead shifts every
       // percentiles-over-time and scatter point that straddles a bucket
       // boundary. The caller (engine.ts) always passes the same value/ok on
-      // both edges, so this only changes WHICH bucket the sketch lands in.
-      b.sketch.accept(value);
-      if (ok) b.sketchOk.accept(value); else b.sketchKo.accept(value);
+      // both edges, so this only changes WHICH bucket an observation lands in.
       // Same edge, same condition as the split above — which is what makes
       // histogramOk.total equal startedOkCount, the invariant the persisted
       // column is checked against at every layer.
@@ -114,10 +97,7 @@ export class BucketSeries {
           target.koCount += b.koCount;
           target.startedOkCount += b.startedOkCount;
           target.startedKoCount += b.startedKoCount;
-          target.sketch.merge(b.sketch);      // exact — this is why coalescing is lossless
-          target.sketchOk.merge(b.sketchOk);
-          target.sketchKo.merge(b.sketchKo);
-          target.histogramOk.merge(b.histogramOk);   // exact, like the sketches
+          target.histogramOk.merge(b.histogramOk);   // exact — this is why coalescing is lossless
           target.histogramKo.merge(b.histogramKo);
         }
       }

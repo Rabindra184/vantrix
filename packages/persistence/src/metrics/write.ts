@@ -1,5 +1,5 @@
 import type { EngineResult } from '@perfportal/statistics';
-import { HISTOGRAM_KIND, SKETCH_KIND, bucketLatency } from '@perfportal/statistics';
+import { HISTOGRAM_KIND, bucketLatency } from '@perfportal/statistics';
 import type pg from 'pg';
 
 export interface MetricContext {
@@ -63,8 +63,12 @@ export class MetricWriter {
         s.count, s.okCount, s.koCount, s.errorRate,
         s.minMs, s.maxMs, s.meanMs, s.stddevMs, s.throughputRps,
         JSON.stringify(s.percentiles),
-        Buffer.from(s.sketch.serialize()),
-        SKETCH_KIND,
+        // No DDSketch since 2026-10-15: the two exact histograms below are
+        // what every stored percentile is recomputed from. A row written
+        // before that keeps its sketch, and its readers keep the legacy path
+        // (storedPercentiles in @perfportal/statistics).
+        null,
+        null,
         Buffer.from(s.histogramOk.serialize()),
         Buffer.from(s.histogramKo.serialize()),
         HISTOGRAM_KIND,
@@ -76,7 +80,7 @@ export class MetricWriter {
       for (const b of entry.buckets) {
         // The one derivation, shared with the live publisher — see
         // bucketLatency's own doc comment for why it is not inlined here.
-        // Bucket sketches themselves are deliberately not persisted (spec §9.1).
+        // A bucket carries no sketch; its exact histograms are persisted below.
         const lat = bucketLatency(b);
         bucketRows.push([
           ctx.runStartedOn, ctx.runId, ctx.orgId, ctx.projectId,

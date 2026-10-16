@@ -507,6 +507,12 @@ model Run {
   /// it is a column: they describe the run, they are not entities of their own.
   toolAssertions   Json?     @map("tool_assertions")
   packageId        String?   @map("package_id") @db.Uuid
+  /// How this run's statistics were computed. 'estimated' for every run that
+  /// existed before 2026-10-15 (DDSketch percentiles, capped histograms);
+  /// 'exact-v1' for every run since (uncapped sparse-ms-v2 histograms). The
+  /// column's default is what makes a new run exact: no insert names it.
+  /// A CHECK constraint (run_stats_method_check) holds it to those two words.
+  statsMethod      String    @default("exact-v1") @map("stats_method")
 
   project    Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
   package    Package?       @relation(fields: [packageId], references: [id], onDelete: SetNull, onUpdate: NoAction)
@@ -557,8 +563,10 @@ model RunStat {
   stddevMs      Float   @map("stddev_ms")
   throughputRps Float   @map("throughput_rps")
   percentiles   Json
-  sketch        Bytes
-  sketchKind    String  @map("sketch_kind")
+  /// Legacy rows only: a row written since 2026-10-15 carries no DDSketch,
+  /// and its percentiles are recomputed from the two exact histograms.
+  sketch        Bytes?
+  sketchKind    String? @map("sketch_kind")
   histogramOk   Bytes?  @map("histogram_ok")
   histogramKo   Bytes?  @map("histogram_ko")
   histogramKind String? @map("histogram_kind")

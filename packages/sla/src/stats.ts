@@ -1,4 +1,4 @@
-import type { StatRollup } from '@perfportal/statistics';
+import { mergedHistogram, type StatRollup } from '@perfportal/statistics';
 import type { EvaluableStat } from './metrics.js';
 
 /**
@@ -31,6 +31,6 @@ export function toEvaluableStats(stats: readonly StatRollup[]): EvaluableStat[] 
     stddevMs: s.stddevMs,
     throughputRps: s.throughputRps,
     percentiles: s.percentiles,
-    sketch: s.sketch,
+    histogram: mergedHistogram(s.histogramOk, s.histogramKo),
   }));
 }

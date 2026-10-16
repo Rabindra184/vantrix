@@ -38,29 +38,58 @@ describe('rollupFromHistograms', () => {
     expect(w.throughputRps).toBeCloseTo(full.throughputRps, 9);
   });
 
+  it('agrees with the batch path to the bit, and both with a two-pass oracle, on large tightly packed values', () => {
+    // The batch row and a full-extent window must not disagree even in the last
+    // bit: the PR 3 verifier holds both to the raw log within 1e-9, and a
+    // one-pass variance is around 2.5e-7 off on this shape.
+    const values = (() => { let s = 1; return Array.from({ length: 200_000 }, () => { s = (s * 1103515245 + 12345) & 0x7fffffff; return 300_000 + Math.floor((s / 0x7fffffff) * 20); }); })();
+    const builder = new RollupBuilder();
+    const ok = new Histogram();
+    const ko = new Histogram();
+    values.forEach((v, i) => {
+      const isOk = i % 50 !== 0;
+      builder.add(v, isOk);
+      (isOk ? ok : ko).accept(v);
+    });
+    const full = builder.finish({ scope: 'group', name: 'Browse', family: 'group_duration', windowMs: 10_000, percentiles: [50] });
+    const w = rollupFromHistograms(ok, ko, 10_000, [50]);
+    const mean = values.reduce((a, v) => a + v, 0) / values.length;
+    const oracle = Math.sqrt(values.reduce((a, v) => a + (v - mean) ** 2, 0) / values.length);
+    expect(Math.abs(w.stddevMs - oracle) / oracle).toBeLessThanOrEqual(1e-12);
+    expect(w.stddevMs).toBe(full.stddevMs);
+  });
+
   /**
    * A `group_duration` row measures a group's WALL-CLOCK span, so
    * `group("Browse") { during(5.minutes) { … } }` — ordinary Gatling — lands
-   * every observation above the 120 s histogram cap on a run whose slowest
-   * REQUEST is 400 ms. `Histogram#quantile` refuses a rank in the overflow
-   * bin, correctly; before this the refusal escaped `rollupFromHistograms`
-   * and became a 500 on `GET /v1/runs/:id/stats?from=&to=`, for a run whose
-   * unwindowed page rendered fine because that path reads the uncapped sketch.
+   * every observation above the legacy 120 s histogram cap on a run whose
+   * slowest REQUEST is 400 ms. New histograms are uncapped and answer those
+   * ranks exactly; a LEGACY v1 row still carries the overflow bin, and
+   * `Histogram#percentile` answers `undefined` for a rank inside it. Before
+   * this was handled the refusal escaped `rollupFromHistograms` and became a
+   * 500 on `GET /v1/runs/:id/stats?from=&to=`.
    */
-  describe('when observations land in the overflow bin', () => {
+  describe('when observations land in a legacy overflow bin', () => {
     const OVER = [300_700, 300_700, 300_700, 300_700];
+    const legacy = (values: readonly number[]): Histogram =>
+      Histogram.deserialize(Histogram.legacyV1ForTests(values));
 
-    it('answers the row instead of throwing, and omits the unrecoverable percentiles', () => {
+    it('answers them exactly from a new, uncapped histogram', () => {
       const w = rollupFromHistograms(
         fill(new Histogram(), OVER), new Histogram(), 600_000, [50, 95, 99]);
+      expect(w.percentiles).toEqual({ p50: 300_700, p95: 300_700, p99: 300_700 });
+    });
+
+    it('answers the row instead of throwing, and omits the unrecoverable percentiles', () => {
+      const w = rollupFromHistograms(legacy(OVER), new Histogram(), 600_000, [50, 95, 99]);
 
       // ABSENT, never 0 — `bucketLatency` already answers {} rather than a
       // band of zeros for the same reason, and the table renders a dash.
       expect(w.percentiles).toEqual({});
       expect(w.percentiles.p50).toBeUndefined();
 
-      // And the measured columns are EXACT and survive: `accept` records min,
-      // max and sum BEFORE folding an observation into the bin.
+      // And the measured columns are EXACT and survive: the v1 writer
+      // recorded min, max and sum BEFORE folding an observation into the bin.
       expect(w.count).toBe(4);
       expect(w.minMs).toBe(300_700);
       expect(w.maxMs).toBe(300_700);
@@ -73,7 +102,7 @@ describe('rollupFromHistograms', () => {
       // any observation overflows would satisfy the case above perfectly
       // while throwing away answers the histogram still holds.
       const w = rollupFromHistograms(
-        fill(new Histogram(), [...Array<number>(9).fill(500), 300_700]),
+        legacy([...Array<number>(9).fill(500), 300_700]),
         new Histogram(), 600_000, [50, 99]);
 
       expect(w.percentiles.p50).toBe(500);
@@ -87,7 +116,7 @@ describe('rollupFromHistograms', () => {
     const w = rollupFromHistograms(
       fill(new Histogram(), OK), fill(new Histogram(), KO), 10_000, [50, 95]);
     const combined = fill(fill(new Histogram(), OK), KO);
-    expect(w.percentiles['p95']).toBe(combined.quantile(0.95));
+    expect(w.percentiles['p95']).toBe(combined.percentile(95));
   });
 
   it('does not mutate the histograms it was handed', () => {

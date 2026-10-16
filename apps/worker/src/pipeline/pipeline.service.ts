@@ -467,7 +467,7 @@ export class PipelineService {
           result.simulation, result.description, result.durationMs,
           // Appendix A G-05. Written here rather than evaluated on read because
           // the engine has just judged them against the very rollups it built —
-          // recomputing later would mean reloading sketches to re-answer a
+          // recomputing later would mean reloading histograms to re-answer a
           // question already answered. `[]` for a simulation that declared none,
           // which is a different fact from the NULL a pre-decoder run carries.
           JSON.stringify(result.toolAssertions),

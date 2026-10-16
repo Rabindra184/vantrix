@@ -19,9 +19,9 @@ import {
   Histogram,
   type IndicatorBands,
   bandsFrom,
-  clampPercentile,
   inferBucketWidthMs,
   rollupFromHistograms,
+  storedPercentiles,
   toTelemetrySeries,
 } from '@perfportal/statistics';
 import type { Request } from 'express';
@@ -92,16 +92,19 @@ export class MetricsController {
     const run = await this.#run(req, id);
 
     /**
-     * PERCENTILES ARE RECOMPUTED FROM EACH RUN'S SKETCH, at the project's
-     * currently configured set — exactly as `/stats` does, and for the same
-     * reason (spec §9.1, K-03): the sketch is persisted so that reconfiguring
-     * the percentile set needs no re-ingest.
+     * PERCENTILES ARE RECOMPUTED FROM EACH RUN'S STORED ROW, at the project's
+     * currently configured set — exactly as `/stats` does, through the same
+     * `storedPercentiles`, and for the same reason (spec §9.1, K-03): the
+     * histograms (or, for a run ingested before 2026-10-15, the sketch) are
+     * persisted so that reconfiguring the percentile set needs no re-ingest.
      *
      * Reading the frozen `percentiles` column here instead would put the
      * statistics table and the trend on DIFFERENT SETS the moment a project
-     * reconfigured, silently — both would look like plausible numbers. It also
-     * disagrees in the last decimal places even when the sets match, which is
-     * what an integration test comparing the two endpoints caught.
+     * reconfigured, silently — both would look like plausible numbers. For a
+     * LEGACY (sketch) row it also disagrees in the last decimal places even
+     * when the sets match, which is what an integration test comparing the two
+     * endpoints caught; an exact row's frozen column holds the same
+     * nearest-rank values the histograms give.
      *
      * THE PARSE IS GUARDED even though this endpoint only reads
      * `percentiles`. `parseProjectSettings` validates the WHOLE document, so a
@@ -112,7 +115,7 @@ export class MetricsController {
      *
      * It answers 400 rather than degrading to a default percentile set: a
      * silent fallback would put this trend on a DIFFERENT set from the
-     * statistics table, which is the divergence the sketch recomputation above
+     * statistics table, which is the divergence the recomputation above
      * exists to prevent. `/stats` fails the same way for the same project, so
      * the two stay consistent, and the message names the setting to fix.
      */
@@ -175,19 +178,8 @@ export class MetricsController {
         maxMs: r.maxMs,
         meanMs: r.meanMs,
         throughputRps: r.throughputRps,
-        // The same expression `/stats` uses, including the `count > 0` guard:
-        // an empty stat has a sketch with nothing to quantile, and its frozen
-        // column is the only answer available.
-        // CLAMPED against the row's own exact `minMs`/`maxMs`, which is what this
-        // response reports beside these values. The sketch is DESERIALIZED here, so
-        // its own extremes are bucket-approximate and would clamp to the very
-        // over-estimate this is correcting — see `clampPercentile`.
-        percentiles:
-          r.sketch && r.count > 0
-            ? Object.fromEntries(
-                settings.percentiles.map((p) => [`p${p}`, clampPercentile(r.sketch!.quantile(p / 100), r)]),
-              )
-            : r.percentiles,
+        // Exact for rows written since 2026-10-15; legacy rows keep the clamped sketch — see storedPercentiles.
+        percentiles: storedPercentiles(r, settings.percentiles),
       })),
     };
   }
@@ -261,22 +253,8 @@ export class MetricsController {
       meanMs: s.meanMs,
       stddevMs: s.stddevMs,
       throughputRps: s.throughputRps,
-      // Recomputed from the persisted sketch at the project's currently
-      // configured percentile set (spec §9.1, K-03) — the whole reason the
-      // sketch is stored is so this needs no re-ingest, exactly like
-      // indicators below. Falls back to the frozen `percentiles` column
-      // for rows written before the sketch was persisted, or for an
-      // empty stat where the sketch has nothing to quantile.
-      // CLAMPED against the row's own exact `minMs`/`maxMs`, which is what this
-      // response reports beside these values. The sketch is DESERIALIZED here, so
-      // its own extremes are bucket-approximate and would clamp to the very
-      // over-estimate this is correcting — see `clampPercentile`.
-      percentiles:
-        s.sketch && s.count > 0
-          ? Object.fromEntries(
-              settings.percentiles.map((p) => [`p${p}`, clampPercentile(s.sketch!.quantile(p / 100), s)]),
-            )
-          : s.percentiles,
+      // Exact for rows written since 2026-10-15; legacy rows keep the clamped sketch — see storedPercentiles.
+      percentiles: storedPercentiles(s, settings.percentiles),
       indicators: s.histogramOk
         ? bandsOrRefuse(s.histogramOk, s.koCount, settings.indicators)
         : { under: 0, between: 0, over: 0, failed: s.koCount },
@@ -673,8 +651,10 @@ export class MetricsController {
  * Indicator bands, or a refusal that names the setting responsible.
  *
  * `bandsFrom` reaches `Histogram#countBelow`, which REFUSES a bound above the
- * 120s overflow cap while overflow observations exist — the exact count is
- * genuinely unrecoverable there, and that refusal is right. What a read
+ * legacy 120s overflow cap while overflow observations exist — the exact count
+ * is genuinely unrecoverable there, and that refusal is right. Only histograms
+ * of runs ingested before 2026-10-15 (`sparse-ms-v1`) carry that bin; new ones
+ * are uncapped and never refuse. What a read
  * handler must not do is let it out: `ProblemFilter` turns it into a 500
  * whose remediation is "Retry the request", and retrying re-reads the same
  * buckets against the same setting for ever.
@@ -712,8 +692,9 @@ function bandsOrRefuse(
     throw badRequest(
       'PROJECT_SETTINGS_INVALID',
       `The project's "indicators.higherMs" (${indicators.higherMs}) cannot be applied to this run: ${message(err)}`,
-      'This project\'s "indicators.higherMs" exceeds the 120000ms histogram cap, so the bands '
-        + 'cannot be counted. Lower it to at most 120000 — it is a stored project setting with no '
+      'This project\'s "indicators.higherMs" exceeds the legacy 120000ms histogram cap of runs '
+        + 'ingested before 2026-10-15, so the bands cannot be counted for this run. Lower it to at '
+        + 'most 120000 — it is a stored project setting with no '
         + 'editing surface yet, so this needs a direct settings update.',
     );
   }

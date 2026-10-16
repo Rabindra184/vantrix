@@ -73,6 +73,7 @@ const RENDERED_IN: Readonly<Record<string, string>> = {
   'Platform gates': 'apps/web/src/routes/AssertionBars.tsx',
   'Simulation assertions': 'apps/web/src/routes/AssertionBars.tsx',
   Verdict: 'apps/web/src/routes/RunList.tsx',
+  Percentiles: 'apps/web/src/tables/StatisticsTable.tsx',
   estimated: 'apps/web/src/routes/RunStats.tsx',
 };
 
@@ -254,5 +255,40 @@ describe('RunGlossary — the Gatling parity promise names its exception', () =>
       warning?.meaning,
       'the warning never tells the reader which columns they CAN diff against Gatling',
     ).toMatch(/exact/i);
+  });
+});
+
+/**
+ * ═══ EXACT STATISTICS: THE PERCENTILE ENTRY DEFINES NEAREST RANK ═══
+ *
+ * Runs processed by the exact engine report the observed value at the nearest
+ * rank, so an entry telling every reader that percentiles are "estimated from
+ * a sketch … within 1%" became false for every new run. The entry now states
+ * the definition, and may mention the estimate only as a fact about OLDER
+ * runs — so the "within 1%" check is scoped to the sentence: any sentence that
+ * says it must also say which runs it is about. A general claim that
+ * percentiles are estimates must not survive anywhere in the meaning.
+ */
+describe('RunGlossary — percentiles are defined by nearest rank', () => {
+  /* Found by its headword, and required to EXIST in each case: a lookup that
+     came back undefined would make the "must not" assertions below pass
+     against nothing. */
+  const entry = ENTRIES.find((e) => e.term === 'Percentiles, estimated');
+
+  it('states the nearest-rank definition', () => {
+    expect(entry, 'no "Percentiles, estimated" entry').toBeDefined();
+    expect(entry!.meaning).toMatch(/nearest rank/i);
+  });
+
+  it('does not call percentiles in general estimates; within 1% names only older runs', () => {
+    expect(entry, 'no "Percentiles, estimated" entry').toBeDefined();
+    const meaning = entry!.meaning;
+    // The scoped check below must have a sentence to scope, or it is vacuous.
+    expect(meaning).toMatch(/within 1%/i);
+    expect(meaning).not.toMatch(/percentiles[^.]*\bare estimated\b|estimated from a sketch/i);
+    const sentences = meaning.split(/(?<=\.)\s+/);
+    for (const s of sentences.filter((x) => /within 1%/i.test(x))) {
+      expect(s, `"${s}" claims 1% without saying which runs`).toMatch(/before exact statistics/i);
+    }
   });
 });

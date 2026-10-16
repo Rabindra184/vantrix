@@ -47,18 +47,17 @@
  * pinned geometry — and a phone is where a reader has the LEAST room for
  * explanation in place.
  *
- * ═══ BESIDE N02's PERCENTILE DISCLOSURE, NOT ABSORBING IT ═══
+ * ═══ BESIDE THE PERCENTILE CAVEATS, NOT ABSORBING THEM ═══
  *
- * They answer different questions. That one is HOW a number is computed — a
- * sketch, accurate to within 1%, against a tool whose own p99 reads 9.47% low
- * on this fixture. This one is WHICH WORD names which quantity. Folding a
- * methodology paragraph behind a vocabulary summary buries it, and absorbing
- * it would move it into `RunStats`, which mounts on a phone along with the
- * rest of the Summary — the bars, the sparklines and the errors table too. The
- * last entry cross-references it instead. (They no longer sit on
- * one page: that disclosure is under the Summary's tiles and this is in the
- * Report beside the table whose words it defines, so the cross-reference names
- * the Summary rather than saying "beside".)
+ * They answer different questions. The ⓘ beside Statistics (and, on a run
+ * processed before exact statistics, the one beside the p95 tile) says HOW a
+ * number on THAT run was computed: the observed value at the nearest rank on
+ * an exact run, a sketch estimate within 1% on an older one. This one is
+ * WHICH WORD names which quantity, and it is the same text on every run — so
+ * the last entry states the nearest-rank definition and names the older runs'
+ * estimate as the exception, rather than describing any one run. Folding a
+ * per-run caveat behind a vocabulary summary would bury it, and the summary
+ * cannot know which run it sits under.
  */
 export default function RunGlossary() {
   return (
@@ -140,8 +139,12 @@ export const ENTRIES: readonly { term: string; meaning: string }[] = [
       'What the platform gates concluded: passed, failed, or not evaluated when no rule applied. A simulation assertion never produces one — it has an outcome instead.',
   },
   {
-    term: 'estimated',
+    /* "Percentiles" is the statistics table's own word for them (its info,
+       for an exact run); "estimated" is what the p95 tile's ⓘ still says on a
+       run processed before exact statistics — the exception the last sentence
+       names. */
+    term: 'Percentiles, estimated',
     meaning:
-      'Percentiles — the p95 tile and the table’s percentile columns — are estimated from a sketch rather than counted; the ⓘ beside the p95 tile and beside Statistics says how close. They are also taken at the nearest rank, so a percentile here can differ from the same column in Gatling’s own report by a whole measurement — on a small sample that gap can be wide, and both numbers are right. Total, OK, KO, Min, Max and Mean are exact, and are what to diff the two reports on.',
+      'p95 and the other percentiles are the actual response time at that rank — nearest rank: of n responses, the one at position ⌈p/100 × n⌉. Gatling’s own report estimates them with t-digest, so its tail values can differ. Runs processed before exact statistics show an estimate within 1%.',
   },
 ];

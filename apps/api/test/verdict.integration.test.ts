@@ -245,6 +245,8 @@ describe('the adaptive verdict', () => {
       // A failed ingest has no note; nobody has written one.
       note: null, noteUpdatedAt: null, noteAuthorName: null,
       error: { code: 'BUNDLE_TOO_LARGE', message: 'too big', remediation: 'shrink it' },
+      // The column default every run created since exact statistics takes.
+      statsMethod: 'exact-v1',
     };
 
     expect(runsService.statusFor(run)).toBe(413);

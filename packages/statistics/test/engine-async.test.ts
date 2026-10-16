@@ -32,11 +32,13 @@ describe('runEngineAsync', () => {
     const sync = runEngine(events());
     const async_ = await runEngineAsync(toAsync(events()));
 
-    // Compare everything except the sketches, which are objects.
+    // The histograms are class instances whose state is private, so compare
+    // their snapshots rather than the objects.
     const strip = (r: typeof sync) =>
       r.stats
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        .map(({ sketch: _sketch, ...rest }) => rest)
+        .map(({ histogramOk, histogramKo, ...rest }) => ({
+          ...rest, histogramOk: histogramOk.snapshot(), histogramKo: histogramKo.snapshot(),
+        }))
         .sort((a, b) => `${a.scope}${a.name}${a.family}`.localeCompare(`${b.scope}${b.name}${b.family}`));
 
     expect(strip(async_)).toEqual(strip(sync));

@@ -5,8 +5,7 @@ import type {
   AssertionTarget,
   ToolAssertion,
 } from '@perfportal/core';
-import { clampPercentile } from './percentile.js';
-import type { StatRollup } from './rollup.js';
+import { mergedHistogram, type StatRollup } from './rollup.js';
 
 /**
  * Appendix A G-05 — the tool's own assertions, rendered and RE-EVALUATED.
@@ -18,9 +17,9 @@ import type { StatRollup } from './rollup.js';
  * this platform's own statistics, which is what makes the verdict *better*
  * than the report rather than merely equal to it. Gatling's percentiles are
  * histogram estimates (PRD §A.9 F-6, measured 9.47% low on the p99 of a real
- * run, reporting a value that occurs nowhere in the data); the sketch behind
- * `StatRollup` answers the same question within 1%, against the true
- * distribution.
+ * run, reporting a value that occurs nowhere in the data); the histograms
+ * behind `StatRollup` answer the same question exactly — the nearest-rank
+ * value, which is always an observation the run really made.
  *
  * ═══ THE WORDING IS NOT INVENTED ═══
  *
@@ -134,7 +133,7 @@ function holds(actual: number, condition: AssertionCondition): boolean {
  * The measured value for a target, off one statistics row.
  *
  * Returns null where the row cannot answer — a percentile of a row whose
- * sketch is empty, say — so the caller reports `not_applicable` rather than
+ * histograms are empty, say — so the caller reports `not_applicable` rather than
  * asserting against a zero nobody measured.
  */
 function measure(target: AssertionTarget, row: StatRollup): number | null {
@@ -159,27 +158,21 @@ function measure(target: AssertionTarget, row: StatRollup): number | null {
         case 'max': return row.maxMs;
         case 'mean': return row.meanMs;
         case 'stddev': return row.stddevMs;
-        // ARBITRARY RANKS ARE AVAILABLE because the sketch is stored, not just
-        // the four projected columns: `percentile(99.9)` is answerable even
-        // though 99.9 is not one of the per-bucket bands. The sketch spans both
-        // statuses, which is the same population Gatling's own assertion reads.
+        // Exact, from both statuses' histograms — Gatling's assertion reads the
+        // all-responses population. `mergedHistogram` hands back the merge
+        // `finish` already built for this row, so a run declaring hundreds of
+        // percentile assertions does not re-merge and re-sort per assertion. Arbitrary ranks (99.9) are answerable
+        // because the histograms are kept, not only the configured columns.
         //
-        // CLAMPED, like every other assembler that reports an estimate beside
-        // the extremes it was taken from. `row.percentiles` is already clamped
-        // by `RollupBuilder.finish`; this branch re-derives from the sketch to
-        // reach ranks that projection does not carry, and re-derives the raw
-        // estimate with it. Measured on the reference run, the two disagreed:
-        //
-        //   row.percentiles.p99   2503                  <- the statistics table
-        //   sketch.quantile(.99)  2515.4601126102525    <- this verdict
-        //   row.maxMs             2503                  <- `case 'max'`, 3 lines up
-        //
-        // so `99th percentile of response time is less than 2510.0` was
-        // reported FAILED on a run whose slowest request was 2503 ms and whose
-        // true p99 is 2501 — a verdict this module's own docstring says is
-        // BETTER than the tool's, disagreeing with the tool by being worse.
-        case 'percentile':
-          return clampPercentile(row.sketch.quantile((target.rank ?? 0) / 100), row);
+        // The rank is a raw decoded double the log carries unchecked, and
+        // `nearestRankIndex` throws outside [0, 100] — inside the engine that
+        // would fail the whole ingest. A rank no percentile can answer measures
+        // nothing, so it is null: `not_applicable`, never a guessed extreme.
+        case 'percentile': {
+          const rank = target.rank ?? 0;
+          if (!(Number.isFinite(rank) && rank >= 0 && rank <= 100)) return null;
+          return mergedHistogram(row.histogramOk, row.histogramKo).percentile(rank) ?? null;
+        }
       }
   }
 }

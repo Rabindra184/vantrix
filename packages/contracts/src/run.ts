@@ -311,6 +311,11 @@ export const RunIdentitySchema = z.object({
    *  offers a Logs tab. OPTIONAL as well as nullable, for the rolling-deploy
    *  reason the stamps above give. */
   runnerJobId: z.string().uuid().nullable().optional(),
+  /** Whether this run's statistics are exact ('exact-v1') or were estimated
+   *  by the pre-2026-10-15 sketch engine ('estimated'). OPTIONAL for the
+   *  rolling-deploy reason the stamps above give; a reader treats absent as
+   *  "not known to be exact". */
+  statsMethod: z.enum(['estimated', 'exact-v1']).optional(),
   /** The note a person wrote on this run (run-note.ts), or null for none.
    *  OPTIONAL as well as nullable, for the rolling-deploy reason the lifecycle
    *  stamps above give: a required field blanks the run page against an API

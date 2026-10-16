@@ -45,7 +45,8 @@ export class RunsService {
   /**
    * The run's lifecycle stamps, for BOTH identity builders — `toResponse`
    * below and the 202 in `respondWithRun` — so the two cannot send different
-   * sets. Two come off the RunRecord; `queuedAt` and `runnerJobId` are one
+   * sets. Three come off the RunRecord (`statsMethod` among them: which engine
+   * produced the run's statistics); `queuedAt` and `runnerJobId` are one
    * indexed lookup (`runner_job_run_id_idx`) for the runner job that produced
    * the run, if any. A run has at most one: a retry makes a new job AND a new
    * run.
@@ -55,6 +56,7 @@ export class RunsService {
     streamUpdatedAt: string | null;
     queuedAt: string | null;
     runnerJobId: string | null;
+    statsMethod: RunRecord['statsMethod'];
   }> {
     const job = await this.prisma.runnerJob.findFirst({
       // The run's own project as well: the runner writes `run_id` only for a
@@ -72,6 +74,7 @@ export class RunsService {
       // The same lookup answers the Logs tab's question — does this run have
       // a runner job, and so any events? — at no extra query.
       runnerJobId: job?.id ?? null,
+      statsMethod: run.statsMethod,
     };
   }
 
@@ -120,6 +123,7 @@ export class RunsService {
       streamUpdatedAt: lifecycle.streamUpdatedAt,
       queuedAt: lifecycle.queuedAt,
       runnerJobId: lifecycle.runnerJobId,
+      statsMethod: lifecycle.statsMethod,
       note: noteOf(run),
       // Appendix A G-05. Already evaluated at ingest against the rollups the
       // engine had in hand, so this is a projection, not a computation — and

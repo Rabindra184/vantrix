@@ -571,6 +571,21 @@ export async function renameSimulation(runId: string, simulation: string): Promi
 }
 
 /**
+ * Label a seeded run as processed before exact statistics.
+ *
+ * Every run this harness ingests is 'exact-v1' (the column's default since
+ * migration 20261015120000), so nothing here can produce an 'estimated' run
+ * the honest way. The LABEL is all the web reads to decide whether to print
+ * the estimate caveat, and the API does not branch on it, so flipping the
+ * column is a faithful stand-in for that one decision — and only for it: the
+ * run's rows are still exact rows, so nothing that measures a figure should
+ * use this.
+ */
+export async function markEstimated(runId: string): Promise<void> {
+  await prisma.run.update({ where: { id: runId }, data: { statsMethod: 'estimated' } });
+}
+
+/**
  * Write a run's note directly, for the GEOMETRY case — the browser case
  * writes one through the real form, which is the path that proves the
  * feature. No author: note_updated_by is a user id, and nothing that uses

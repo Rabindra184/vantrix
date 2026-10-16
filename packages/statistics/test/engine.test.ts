@@ -108,7 +108,7 @@ describe('engine — parity additions', () => {
   });
 
   it('stores a FIXED per-bucket percentile band set, not the project’s columns', () => {
-    // Buckets persist numbers, not sketches, so a configurable per-bucket set
+    // Buckets persist their bands as numbers, so a configurable per-bucket set
     // would make history depend on ingest-day configuration. p95 in particular
     // must always exist: Gatling's scatter hardcodes quantile(0.95).
     expect(BUCKET_PERCENTILES).toContain(95);

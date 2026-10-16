@@ -27,8 +27,32 @@ export const ENGINE_KEYS = [
 export function engineOptionsFrom(settings: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const k of ENGINE_KEYS) {
-    const v = settings[k];
+    const v = k === 'percentiles' ? usablePercentiles(settings[k]) : settings[k];
     if (v !== undefined) out[k] = v;
   }
   return out;
+}
+
+/**
+ * The ONE engine key that is checked, because it is the one that can take a
+ * run down. The engine answers each configured percentile by nearest rank,
+ * and `nearestRankIndex` throws a RangeError for a rank outside [0, 100] —
+ * inside `RollupBuilder.finish`, so a single `150` in project.settings failed
+ * every ingest and every live tick of the project. Filtered to what
+ * `ProjectSettingsSchema` accepts (finite, strictly inside (0, 100)); a set
+ * with nothing usable left is omitted, so the engine's default applies, as
+ * that schema's `.default()` would. `p0` and `p100` are the min and the max
+ * and have their own columns.
+ *
+ * More lenient than `parseProjectSettings`, deliberately: a partly bad set
+ * such as [50, 150] keeps 50 here, while that schema refuses the whole
+ * document. Ingest must not fail on a setting the read side would reject.
+ *
+ * Only NEW runs are protected: `engineOptions` is frozen onto a run at open,
+ * so a run opened with a bad set before this filter existed still carries it.
+ */
+function usablePercentiles(v: unknown): number[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  const kept = v.filter((p): p is number => typeof p === 'number' && Number.isFinite(p) && p > 0 && p < 100);
+  return kept.length > 0 ? kept : undefined;
 }

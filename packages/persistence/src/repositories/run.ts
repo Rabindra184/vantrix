@@ -103,6 +103,14 @@ export interface RunRecord {
         assertion?: unknown;
       }[]
     | null;
+  /**
+   * How this run's statistics were computed: 'estimated' for every run that
+   * existed before 2026-10-15 (DDSketch percentiles, capped histograms),
+   * 'exact-v1' for every run since (uncapped sparse-ms-v2 histograms, exact
+   * nearest-rank percentiles). Set by the column's default at insert, never
+   * by a writer — so no create path can forget it.
+   */
+  statsMethod: 'estimated' | 'exact-v1';
 }
 
 export interface CreateRunInput {
@@ -181,6 +189,7 @@ interface RunRow {
   engineOptions: unknown;
   error: unknown;
   toolAssertions: unknown;
+  statsMethod: string;
 }
 
 /**
@@ -234,6 +243,9 @@ function toRecord(row: RunRow): RunRecord {
     engineOptions: (row.engineOptions ?? {}) as Record<string, unknown>,
     error: (row.error ?? null) as RunRecord['error'],
     toolAssertions: (row.toolAssertions ?? null) as RunRecord['toolAssertions'],
+    // The column's CHECK constraint (run_stats_method_check) holds it to these
+    // two words, so the narrowing is the database's, not a guess.
+    statsMethod: row.statsMethod as RunRecord['statsMethod'],
   };
 }
 
@@ -400,12 +412,14 @@ export function runScopeStatOn(stat: string, run: string): string {
  * ═══ CLAMPED, LIKE EVERY OTHER SURFACE THAT SHOWS A PERCENTILE ═══
  *
  * A percentile cannot lie outside the sample it came from, and `minMs`/
- * `maxMs` are exact while the sketch carries 1% relative error — so the
- * stored estimate sometimes does. `clampPercentile` projects it back, and
+ * `maxMs` are exact while a legacy ('estimated') row's sketch carries 1%
+ * relative error — so its stored estimate sometimes does. An 'exact-v1'
+ * row's frozen column is a nearest-rank observation, already inside its own
+ * range, so the clamp is a no-op there and correct for both kinds. `clampPercentile` projects it back, and
  * the clamp branch installed it at every assembler: the rollup, the bucket
  * split, the evaluator's fallback and `/stats`. The list was the one reader
  * left holding the raw value, because it deliberately reads the FROZEN
- * column rather than re-quantiling a sketch per row.
+ * column rather than recomputing each row from its stored data.
  *
  * That trade is right and is untouched here: the clamp needs no sketch. It is
  * `Math.min(Math.max(v, min), max)` against two columns already on the row, so
@@ -1185,7 +1199,7 @@ export class RunRepository {
         r.started_on AS "startedOn", r.tool_started_at AS "toolStartedAt",
         r.ingested_at AS "ingestedAt", r.engine_options AS "engineOptions", r.error,
         r.parsing_started_at AS "parsingStartedAt", r.stream_updated_at AS "streamUpdatedAt",
-        r.tool_assertions AS "toolAssertions",
+        r.tool_assertions AS "toolAssertions", r.stats_method AS "statsMethod",
         r.note, r.note_updated_at AS "noteUpdatedAt", r.note_updated_by AS "noteUpdatedBy",
         nu.name AS "noteAuthorName",
         p.slug AS "projectSlug", p.name AS "projectName",
@@ -1193,10 +1207,11 @@ export class RunRepository {
         r.run_number AS "runNumber",
         -- THE TRIAGE NUMBERS. Without them a reader had to OPEN every run to
         -- learn whether it was interesting, which is what a list exists to
-        -- answer. The frozen percentiles column rather than the sketch: a
-        -- list row is a scan target, and re-quantiling 25 sketches per page to
-        -- move a column by fractions of a millisecond is not a trade this
-        -- surface wants. (No backticks in here -- this is a template literal,
+        -- answer. The frozen percentiles column rather than the stored
+        -- histograms: a list row is a scan target, and deserializing and
+        -- walking 25 histograms per page to recompute what the column already
+        -- holds (exactly, on a run written since 2026-10-15; a clamped sketch
+        -- estimate on a legacy one) is not a trade this surface wants. (No backticks in here -- this is a template literal,
         -- and one of those ends the string; CLAUDE.md records the same cut on
         -- TRENDS_SQL.)
         s.count AS "statCount", s.error_rate AS "statErrorRate",

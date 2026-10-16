@@ -60,8 +60,10 @@ const testRow = (
     },
   });
 
-/** A sketch of `n` observations: the stat table's `sketch` column is NOT NULL
- *  and a placeholder byte would fail to deserialise in any reader that tried. */
+/** A sketch of `n` observations, so these rows are legacy-shaped ('estimated'):
+ *  the column has been nullable since 2026-10-15, but a row that carries one
+ *  must carry a real one — a placeholder byte would fail to deserialise in any
+ *  reader that tried. */
 function sketchOf(n: number): Sketch {
   const s = new Sketch();
   for (let i = 0; i < n; i += 1) s.accept(i + 1);

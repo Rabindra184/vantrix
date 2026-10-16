@@ -108,7 +108,7 @@ export type SlaMetricUnit = 'ms' | 'fraction' | 'requests' | 'req/s';
  * The unit for any metric the evaluator can resolve, or null for one it cannot.
  *
  * Percentiles fall through to milliseconds: `resolveMetric` answers them from
- * the response-time sketch, so `p95` is the same kind of quantity as `mean`.
+ * the response-time histogram, so `p95` is the same kind of quantity as `mean`.
  */
 export function slaMetricUnit(metric: string): SlaMetricUnit | null {
   const scalar = (SLA_METRIC_UNITS as Record<string, SlaMetricUnit | undefined>)[metric];
