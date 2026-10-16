@@ -1,4 +1,4 @@
-import type { Comparison, Expected, ExpectedStat, FigureMismatch, Stored } from './figures.js';
+import type { Comparison, Expected, ExpectedSeriesBucket, ExpectedStat, FigureMismatch, Stored, StoredSeriesBucket } from './figures.js';
 
 /**
  * ═══ ONE LEDGER, ONE COMPARATOR PER TABLE ═══
@@ -164,8 +164,60 @@ export const compareRun: Comparator = (expected, stored, ledger) => {
   ledger.exact(at, 'activity_ms', null, stored.run.activityMs, expected.run.activityMs);
 };
 
-/** Tasks 3 and 4 append their comparators here. */
-export const COMPARATORS: readonly Comparator[] = [compareStats, compareRun];
+type SeriesKeyed = Pick<ExpectedSeriesBucket, 'scope' | 'name' | 'family' | 'startOffsetMs'>;
+
+const seriesKey = (b: SeriesKeyed): string => `${b.scope}\u0000${b.name}\u0000${b.family}\u0000${String(b.startOffsetMs)}`;
+
+const seriesPlace = (b: SeriesKeyed): RowPlace => ({
+  table: 'run_series_bucket',
+  scope: b.scope,
+  name: b.name,
+  family: b.family,
+  bucket: b.startOffsetMs,
+});
+
+/** Its edges: what a reader needs to recognise a bucket that is present on one side only. */
+const edgesOf = (b: Pick<ExpectedSeriesBucket, 'startedCount' | 'endedCount'>): number => b.startedCount + b.endedCount;
+
+/**
+ * `run_series_bucket`, keyed `(scope, name, family, start_offset_ms)`. Per
+ * paired bucket: the six counts (population null), min/max/mean over the
+ * start-edge observations (population `'all'`), and the three percentile
+ * maps — `percentiles` as `'all'`, `percentiles_ok` as `'ok'`,
+ * `percentiles_ko` as `'ko'`; the population is what tells `p95` of one map
+ * from `p95` of another. A bucket on one side only is one `row` mismatch,
+ * carrying its edge count (`started_count + ended_count`). A stored column
+ * that is null is compared like any other value — a null map as an empty one,
+ * so each figure the expected map holds is reported against null.
+ */
+export const compareSeries: Comparator = (expected, stored, ledger) => {
+  matchRows<ExpectedSeriesBucket, StoredSeriesBucket>(expected.series, stored.series, seriesKey, {
+    both(e, s) {
+      const at = seriesPlace(e);
+      ledger.exact(at, 'started_count', null, s.startedCount, e.startedCount);
+      ledger.exact(at, 'ended_count', null, s.endedCount, e.endedCount);
+      ledger.exact(at, 'ok_count', null, s.okCount, e.okCount);
+      ledger.exact(at, 'ko_count', null, s.koCount, e.koCount);
+      ledger.exact(at, 'started_ok_count', null, s.startedOkCount, e.startedOkCount);
+      ledger.exact(at, 'started_ko_count', null, s.startedKoCount, e.startedKoCount);
+      ledger.exact(at, 'min_ms', 'all', s.minMs, e.minMs);
+      ledger.exact(at, 'max_ms', 'all', s.maxMs, e.maxMs);
+      ledger.close(at, 'mean_ms', 'all', s.meanMs, e.meanMs);
+      ledger.exactMap(at, 'all', s.percentiles, e.percentiles);
+      ledger.exactMap(at, 'ok', s.percentilesOk ?? {}, e.percentilesOk);
+      ledger.exactMap(at, 'ko', s.percentilesKo ?? {}, e.percentilesKo);
+    },
+    missing(e) {
+      ledger.row(seriesPlace(e), null, edgesOf(e));
+    },
+    extra(s) {
+      ledger.row(seriesPlace(s), edgesOf(s), null);
+    },
+  });
+};
+
+/** Task 4 appends its comparators here. */
+export const COMPARATORS: readonly Comparator[] = [compareStats, compareSeries, compareRun];
 
 export function compare(expected: Expected, stored: Stored): Comparison {
   const ledger = new Ledger();

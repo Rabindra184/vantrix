@@ -50,6 +50,31 @@ export interface ExpectedStat {
   percentiles: Record<string, number>;
 }
 
+/**
+ * One `run_series_bucket` row, figures named by their camel-cased columns.
+ * The three percentile maps carry the FIXED bucket set (`p25` … `p99`), over
+ * the bucket's start-edge observations: all of them, the ok ones, the ko ones.
+ */
+export interface ExpectedSeriesBucket {
+  scope: string;
+  name: string;
+  family: string;
+  /** The bucket's index times the series' width; negative before the run start. */
+  startOffsetMs: number;
+  startedCount: number;
+  endedCount: number;
+  okCount: number;
+  koCount: number;
+  startedOkCount: number;
+  startedKoCount: number;
+  minMs: number;
+  maxMs: number;
+  meanMs: number;
+  percentiles: Record<string, number>;
+  percentilesOk: Record<string, number>;
+  percentilesKo: Record<string, number>;
+}
+
 /** The two `run` columns derived from the log. */
 export interface RunSpans {
   durationMs: number;
@@ -57,21 +82,35 @@ export interface RunSpans {
 }
 
 /**
- * Everything the raw log says the stored figures should be. Tasks 3 and 4
- * add `series`, `errors`, `errorBuckets` and `users` beside these, each with
- * a comparator of its own in compare.ts.
+ * Everything the raw log says the stored figures should be. Task 4 adds
+ * `errors`, `errorBuckets` and `users` beside these, each with a comparator
+ * of its own in compare.ts.
  */
 export interface Expected {
   stats: ExpectedStat[];
+  series: ExpectedSeriesBucket[];
   run: RunSpans;
 }
 
 /** The stored row has the expected row's shape: same columns, read back. */
 export type StoredStat = ExpectedStat;
 
+/**
+ * A stored series bucket. Four columns are nullable in the table (rows written
+ * before the exact-statistics work have none), so the mirror lets them be
+ * null; a null is compared against the figure it should hold, never skipped.
+ */
+export type StoredSeriesBucket = Omit<ExpectedSeriesBucket, 'startedOkCount' | 'startedKoCount' | 'percentilesOk' | 'percentilesKo'> & {
+  startedOkCount: number | null;
+  startedKoCount: number | null;
+  percentilesOk: Record<string, number> | null;
+  percentilesKo: Record<string, number> | null;
+};
+
 /** What the database holds for one run, mapped by the worker into this shape. */
 export interface Stored {
   stats: StoredStat[];
+  series: StoredSeriesBucket[];
   run: RunSpans;
 }
 

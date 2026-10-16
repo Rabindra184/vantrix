@@ -61,6 +61,13 @@ describe('optionsFrom', () => {
     ).toEqual({ runStartMs: RUN_START, warmupMs: 5000, percentiles: [90, 99.9], maxBucketsRun: 600, maxBucketsEndpoint: 300 });
   });
 
+  it('uses a frozen percentile array exactly as given, empty or odd, and defaults only when it is not an array', () => {
+    expect(optionsFrom({ percentiles: [] }, RUN_START).percentiles).toEqual([]);
+    expect(optionsFrom({ percentiles: [99, 50, 99] }, RUN_START).percentiles).toEqual([99, 50, 99]);
+    expect(optionsFrom({ percentiles: [50, 'x'] }, RUN_START).percentiles).toEqual([50, 'x']);
+    expect(optionsFrom({ percentiles: '95' }, RUN_START).percentiles).toEqual([50, 75, 95, 99]);
+  });
+
   it('has a version the worker records beside each verification', () => {
     expect(Number.isInteger(VERIFIER_VERSION)).toBe(true);
   });
@@ -178,7 +185,7 @@ describe('expectedFrom: run_stat rows', () => {
   });
 
   it('has no rows and zero spans for a run with no requests', () => {
-    expect(expectedFrom([], opts())).toEqual({ stats: [], run: { durationMs: 0, activityMs: 0 } });
+    expect(expectedFrom([], opts())).toEqual({ stats: [], series: [], run: { durationMs: 0, activityMs: 0 } });
   });
 });
 
@@ -208,7 +215,7 @@ describe('expectedFrom on the reference fixture', () => {
 
 /** A stored copy of what the verifier expects: the shape a faithful engine writes. */
 function storedFrom(e: Expected): Stored {
-  return structuredClone({ stats: e.stats, run: e.run });
+  return structuredClone({ stats: e.stats, run: e.run, series: e.series });
 }
 
 describe('compare', () => {
@@ -223,8 +230,10 @@ describe('compare', () => {
   it('finds nothing wrong with a faithful copy, and counts every figure it checked', () => {
     const r = compare(expected, storedFrom(expected));
     expect(r.mismatches).toEqual([]);
-    // 9 scalar figures plus each percentile, per row, plus the run's two spans
-    const want = expected.stats.reduce((n, s) => n + 9 + Object.keys(s.percentiles).length, 0) + 2;
+    // 9 scalar figures plus each percentile, per row, plus the run's two spans,
+    // plus every series bucket's (series.test.ts counts those on their own)
+    const series = compare({ ...expected, stats: [] }, { ...storedFrom(expected), stats: [] }).figuresChecked - 2;
+    const want = expected.stats.reduce((n, s) => n + 9 + Object.keys(s.percentiles).length, 0) + 2 + series;
     expect(r.figuresChecked).toBe(want);
   });
 
