@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { runEngine } from '../src/engine.js';
+import { mergedHistogram } from '../src/rollup.js';
 import { IngestError, type CanonicalEvent, type GroupEvent } from '@perfportal/core';
 
 const base = 1_000_000;
@@ -203,10 +204,11 @@ describe('group scopes', () => {
 
     // The file's `grp(['Catalog'], 0, 500, 300)` is annotated "duration 500,
     // cumulated 300 — deliberately different", so a single series reused for
-    // both families would make these sketches equal.
+    // both families would make these histograms equal.
     const cumulated = catalog.find((v) => v.family === 'group_cumulated')!;
     const duration = catalog.find((v) => v.family === 'group_duration')!;
-    const maxOf = (v: typeof cumulated) => Math.max(...v.buckets.map((b) => b.sketch.max));
+    const maxOf = (v: typeof cumulated) =>
+      Math.max(...v.buckets.map((b) => mergedHistogram(b.histogramOk, b.histogramKo).max));
     expect(maxOf(cumulated)).not.toBe(maxOf(duration));
   });
 });

@@ -13,8 +13,8 @@ import { UserSeries, type UserBucket } from './users.js';
 /**
  * The per-bucket percentile bands, FIXED rather than configurable.
  *
- * A bucket persists percentiles as plain numbers - the ingest spine stores
- * summary sketches only - so a bucket's percentiles can never be recomputed at
+ * A bucket persists its percentile bands as plain numbers, and the charts draw
+ * those stored columns rather than recomputing from the bucket's histograms at
  * read time. A configurable per-bucket set would therefore mean "whatever the
  * project happened to be configured as on ingest day". This is exactly the set
  * Gatling's own percentiles-over-time chart renders, so K-04's band selector is
@@ -411,7 +411,7 @@ export class LiveEngine {
     // `ErrorSeries.finish()` coalesces IN PLACE (errors-series.ts, `#halve`),
     // unlike every other read here: `RollupBuilder.finish()` is pure,
     // `BucketSeries.buckets()` only reads, and `snapshot({ clone: true })`
-    // exists precisely so the sketches and histograms are copied. This one
+    // exists precisely so the histograms are copied. This one
     // mutates, so calling it twice is not calling it once.
     //
     // It is nonetheless SAFE to snapshot a live run repeatedly, which is

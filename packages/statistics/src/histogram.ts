@@ -51,8 +51,8 @@ function readUvarint(buf: Uint8Array, pos: { i: number }): number {
  *
  * Response times are integer milliseconds, so 1 ms bins are lossless — which is
  * what lets indicator bands and Gatling's distribution bins be computed at read
- * time at ANY bounds, exactly. The DDSketch beside it cannot do this: its bins
- * are logarithmic (~2% wide), so the bin straddling 800 ms cannot be split.
+ * time at ANY bounds, exactly. A DDSketch cannot do this: its bins are
+ * logarithmic (~2% wide), so the bin straddling 800 ms cannot be split.
  *
  * Size is bounded by DISTINCT OBSERVED VALUES, not by range.
  */

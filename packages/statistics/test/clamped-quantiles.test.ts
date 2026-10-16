@@ -114,8 +114,11 @@ describe('every production sketch quantile is clamped', () => {
 
     // VACUITY: a collector that matches nothing passes exactly as quietly as
     // one that works, which this file records for the tokens guard and the
-    // run-route sweep.
-    expect(calls.length).toBeGreaterThan(4);
+    // run-route sweep. Three callers remain (`packages/sla`'s `resolveMetric`
+    // and the metrics controller's two): `RollupBuilder.finish`,
+    // `bucketLatency` and `tool-assertions.ts` read exact histograms now and
+    // take no `.quantile(` at all.
+    expect(calls.length).toBeGreaterThan(2);
 
     const exemptFiles = new Set(EXEMPT.map((e) => e.file));
     const offenders = calls

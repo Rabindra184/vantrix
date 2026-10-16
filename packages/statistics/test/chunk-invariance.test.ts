@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { parseSimulationLog, StreamingLogDecoder } from '@perfportal/plugin-gatling';
-import { Bucket, LiveEngine, runEngine } from '../src/index.js';
+import { Bucket, LiveEngine, bucketLatency, runEngine } from '../src/index.js';
 
 const LOG = new URL(
   '../../../fixtures/gatling-3.15.1.2/reference-report/simulation.log',
@@ -21,19 +21,10 @@ describe('chunk invariance', () => {
       // Numeric bucket fields (these stringify fine)
       startOffsetMs: b.startOffsetMs, startedCount: b.startedCount, endedCount: b.endedCount,
       okCount: b.okCount, koCount: b.koCount, startedOkCount: b.startedOkCount, startedKoCount: b.startedKoCount,
-      // Sketch accumulators — project through public accessors
-      sketch: {
-        count: b.sketch.count, min: b.sketch.min, max: b.sketch.max, sum: b.sketch.sum,
-        p50: b.sketch.quantile(0.5), p95: b.sketch.quantile(0.95),
-      },
-      sketchOk: {
-        count: b.sketchOk.count, min: b.sketchOk.min, max: b.sketchOk.max, sum: b.sketchOk.sum,
-        p50: b.sketchOk.quantile(0.5), p95: b.sketchOk.quantile(0.95),
-      },
-      sketchKo: {
-        count: b.sketchKo.count, min: b.sketchKo.min, max: b.sketchKo.max, sum: b.sketchKo.sum,
-        p50: b.sketchKo.quantile(0.5), p95: b.sketchKo.quantile(0.95),
-      },
+      // Every latency figure a bucket publishes, exactly — the live chart and
+      // the final report read this one derivation, so it must not differ by a
+      // millisecond between a streamed fold and a batch one.
+      latency: bucketLatency(b),
       // Histogram accumulators — project through snapshot()
       histogramOk: b.histogramOk.snapshot(),
       histogramKo: b.histogramKo.snapshot(),
@@ -44,6 +35,7 @@ describe('chunk invariance', () => {
         scope: s.scope, name: s.name, family: s.family, count: s.count,
         okCount: s.okCount, koCount: s.koCount, errorRate: s.errorRate,
         minMs: s.minMs, maxMs: s.maxMs, meanMs: s.meanMs, stddevMs: s.stddevMs,
+        // Exact equality, not tolerance: nearest-rank over exact histograms.
         percentiles: s.percentiles, throughputRps: s.throughputRps,
         okTotal: s.histogramOk.total, koTotal: s.histogramKo.total,
       })),

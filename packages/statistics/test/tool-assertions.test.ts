@@ -1,8 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { CanonicalEvent, ToolAssertion } from '@perfportal/core';
-import { readRunHeader, BinaryReader } from '@perfportal/plugin-gatling';
+import { parseSimulationLog, readRunHeader, BinaryReader } from '@perfportal/plugin-gatling';
 import { runEngine } from '../src/engine.js';
+import { nearestRankIndex } from '../src/rank.js';
 import { evaluateToolAssertions } from '../src/tool-assertions.js';
 
 /**
@@ -157,44 +158,37 @@ describe('tool assertions — the verdict is recomputed, not read', () => {
   });
 
   it('answers a percentile rank that is not one of the stored bands', () => {
-    // THE POINT OF KEEPING THE SKETCH. 99.9 is not among the per-bucket bands
-    // (25/50/75/80/85/90/95/99), and the four projected columns cannot answer
-    // it either — the sketch can.
+    // THE POINT OF KEEPING THE HISTOGRAMS. 99.9 is not among the per-bucket
+    // bands (25/50/75/80/85/90/95/99), and the four projected columns cannot
+    // answer it either — the histograms can, exactly. Nearest rank 3 of the
+    // three responses, KO included, is the 300 ms one.
     const r = evalOne({
       path: global,
       target: { kind: 'responseTime', stat: 'percentile', rank: 99.9 },
       condition: { kind: 'lte', value: 300 },
     });
-    expect(r.actualValue).toBeGreaterThan(0);
+    expect(r.actualValue).toBe(300);
     expect(r.outcome).toBe('passed');
   });
 });
 
-describe('tool assertions — a percentile verdict is clamped like every other estimate', () => {
+describe('tool assertions — a percentile verdict is the exact nearest-rank value', () => {
   /**
-   * 95 fast requests and 5 slow ones AT THE SAME TOP VALUE, which is what makes
-   * this fixture able to tell a clamped answer from a raw one.
-   *
-   * `Sketch.quantile` returns the exactly-tracked `max` for rank `n - 1` and
-   * estimates every interior rank from the bucket store. With n = 100 the p99
-   * rank is index 98 — interior — and it falls in the maximum's own bucket,
-   * whose midpoint sits ABOVE the maximum. The block above cannot see this: its
-   * run has three requests and asks for p99.9, which IS `n - 1`, so it takes
-   * the early return and never reaches the estimating path at all.
-   *
-   * The numbers here are the reference run's, reproduced exactly (max 2503,
-   * raw p99 2515.4601126102525) — the same 12.46 ms overshoot that made
-   * `99th percentile of response time is less than 2510.0` report FAILED on a
-   * run whose slowest request was 2503 ms.
+   * 95 fast requests and 5 slow ones AT THE SAME TOP VALUE — the shape on which
+   * the old DDSketch estimate escaped its own range: its p99 here was
+   * 2515.4601126102525 against a maximum of 2503, the 12.46 ms overshoot that
+   * made `99th percentile of response time is less than 2510.0` report FAILED
+   * on a run whose slowest request was 2503 ms. The verdict reads the exact
+   * histograms now, so the answer is the value at nearest rank 99 of 100.
    */
+  const durations = [...Array<number>(95).fill(100), ...Array<number>(5).fill(2503)];
   const stats = () => {
     const events: CanonicalEvent[] = [
       { type: 'meta', simulation: 'S', toolVersion: '3.15.1', startedAtMs: 0 },
     ];
-    const push = (ms: number) =>
+    for (const ms of durations) {
       events.push({ type: 'request', name: 'r', groups: [], userId: 'u', startMs: 0, endMs: ms, ok: true });
-    for (let i = 0; i < 95; i += 1) push(100);
-    for (let i = 0; i < 5; i += 1) push(2503);
+    }
     return runEngine(events).stats;
   };
 
@@ -212,32 +206,44 @@ describe('tool assertions — a percentile verdict is clamped like every other e
 
   it('agrees with the percentile the statistics table prints for the same run', () => {
     const row = runRow();
-
-    // THE FIXTURE HAS TO BE ABLE TO DISTINGUISH THE TWO ANSWERS, and saying so
-    // is not decoration: if the sketch ever stops overshooting on this shape,
-    // every assertion below is satisfied by the unclamped product too and this
-    // case goes on passing while guarding nothing.
-    expect(row.sketch.quantile(0.99)).toBeGreaterThan(row.maxMs);
+    const truth = durations[nearestRankIndex(99, durations.length)];
 
     // One run, one quantity, one answer. `row.percentiles` is what the
-    // statistics table renders; this verdict re-derives from the sketch to
-    // reach arbitrary ranks, and must land in the same place.
+    // statistics table renders; this verdict re-derives from the histograms to
+    // reach arbitrary ranks, and must land in the same place — the true value.
     const r = percentile(99, { kind: 'lt', value: 2510 });
+    expect(r.actualValue).toBe(truth);
     expect(r.actualValue).toBe(row.percentiles.p99);
-    expect(r.actualValue).toBe(row.maxMs);
 
     // The run's slowest request was 2503 ms, so nothing it did breached 2510.
     expect(r.outcome).toBe('passed');
   });
 
-  it('leaves a percentile that is already inside the range alone', () => {
-    // PAIRED WITH THE CASE ABOVE, because "clamped" quietly becoming "pinned to
-    // the maximum" would satisfy it perfectly and flatten every percentile
-    // column in the product.
-    const row = runRow();
+  it('leaves a percentile that is not at the extreme alone', () => {
+    // PAIRED WITH THE CASE ABOVE, because a verdict quietly "pinned to the
+    // maximum" would satisfy it perfectly and flatten every percentile column.
     const r = percentile(50, { kind: 'gte', value: 0 });
+    expect(r.actualValue).toBe(durations[nearestRankIndex(50, durations.length)]);
+    expect(r.actualValue).toBeLessThan(runRow().maxMs);
+  });
 
-    expect(r.actualValue).toBeLessThan(row.maxMs);
-    expect(r.actualValue).toBeGreaterThanOrEqual(row.minMs);
+  it('answers the reference run’s p99 with the true nearest-rank value, below its maximum', () => {
+    // PT-G-12's true p99 is 2501 against a maximum of 2503: a verdict clamped to
+    // the range would read 2503, and Gatling's own histogram prints 2369.
+    const events = [...parseSimulationLog(readFileSync('fixtures/gatling-3.15.1.2/reference-report/simulation.log'))];
+    const sorted = events
+      .filter((e): e is Extract<CanonicalEvent, { type: 'request' }> => e.type === 'request')
+      .map((e) => e.endMs - e.startMs)
+      .sort((a, b) => a - b);
+    const truth = sorted[nearestRankIndex(99, sorted.length)]!;
+    const engineStats = runEngine(events).stats;
+    const row = engineStats.find((s) => s.scope === 'run' && s.family === 'response_time')!;
+
+    const r = evaluateToolAssertions(
+      [{ path: { kind: 'global' }, target: { kind: 'responseTime', stat: 'percentile', rank: 99 }, condition: { kind: 'lt', value: 2510 } }],
+      engineStats,
+    )[0]!;
+    expect(r.actualValue).toBe(truth);
+    expect(truth).toBeLessThan(row.maxMs); // the fixture distinguishes exact from clamped
   });
 });

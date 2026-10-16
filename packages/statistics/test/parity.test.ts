@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { parseSimulationLog } from '@perfportal/plugin-gatling';
 import { runEngine } from '../src/engine.js';
 import { bandsFrom } from '../src/indicators.js';
+import { nearestRankIndex } from '../src/rank.js';
 
 const FIXTURE = 'fixtures/gatling-3.15.1.2/reference-report/simulation.log';
 const events = [...parseSimulationLog(readFileSync(FIXTURE))];
@@ -84,13 +85,29 @@ describe('PT-G-12 percentiles vs ground truth', () => {
     .filter((e): e is Extract<typeof e, { type: 'request' }> => e.type === 'request')
     .map((e) => e.endMs - e.startMs)
     .sort((a, b) => a - b);
-  const truth = (q: number) => durations[Math.min(durations.length - 1, Math.ceil(q * durations.length) - 1)]!;
+  const truth = (p: number) => durations[nearestRankIndex(p, durations.length)]!;
 
-  it('is within 1% relative of the true percentile', () => {
+  it('equals the true nearest-rank percentile', () => {
     for (const p of [50, 75, 95, 99]) {
-      const got = run.percentiles[`p${p}`]!;
-      const want = truth(p / 100);
-      expect(Math.abs(got - want) / want).toBeLessThanOrEqual(0.01);
+      expect(run.percentiles[`p${p}`]!, `p${p}`).toBe(truth(p));
+    }
+  });
+
+  it('reports every run and request percentile as the exact nearest-rank value', () => {
+    const requests = events.filter((e): e is Extract<typeof e, { type: 'request' }> => e.type === 'request');
+    const durationsFor = (row: (typeof result.stats)[number]): number[] =>
+      requests
+        .filter((e) => row.scope === 'run' || [...e.groups, e.name].join('/') === row.name)
+        .map((e) => e.endMs - e.startMs)
+        .sort((a, b) => a - b);
+    const rows = result.stats.filter((s) => s.family === 'response_time' && (s.scope === 'run' || s.scope === 'request'));
+    expect(rows.length).toBeGreaterThan(1); // the run row plus at least one request
+    for (const row of rows) {
+      const values = durationsFor(row);
+      expect(values.length, `${row.scope}/${row.name}`).toBe(row.count);
+      for (const [key, value] of Object.entries(row.percentiles)) {
+        expect(value, `${row.scope}/${row.name} ${key}`).toBe(values[nearestRankIndex(Number(key.slice(1)), values.length)]);
+      }
     }
   });
 

@@ -26,14 +26,33 @@ describe('RollupBuilder', () => {
     expect(Object.keys(r.percentiles).sort()).toEqual(['p50', 'p95']);
     expect(r.percentiles.p95!).toBeGreaterThan(r.percentiles.p50!);
   });
+
+  it('has no sketch and derives mean and population stddev from the histograms', () => {
+    const b = new RollupBuilder();
+    for (const v of [10, 20, 30, 40]) b.add(v, true);
+    b.add(1000, false);
+    const r = b.finish({ scope: 'run', name: '', family: 'response_time', windowMs: 1000, percentiles: [50, 99.9] });
+    expect('sketch' in r).toBe(false);
+    expect(r.meanMs).toBe(220);
+    expect(r.stddevMs).toBeCloseTo(Math.sqrt((100 + 400 + 900 + 1600 + 1_000_000) / 5 - 220 ** 2), 9);
+    expect(r.percentiles).toEqual({ p50: 30, 'p99.9': 1000 });
+  });
+
+  it('keeps a five-minute group duration exact', () => {
+    const b = new RollupBuilder();
+    b.add(300_700, true);
+    const r = b.finish({ scope: 'group', name: 'Browse', family: 'group_duration', windowMs: 1000, percentiles: [50] });
+    expect(r.percentiles.p50).toBe(300_700);
+  });
 });
 
 /**
- * A percentile cannot lie outside the sample it came from, and `minMs`/`maxMs`
- * are tracked exactly while the sketch carries 1% relative error — so the
- * estimate sometimes does. Unclamped it reached the SLA evaluator, which failed
- * runs on a p99 above their own maximum while the statistics table showed the
- * maximum one column over.
+ * A percentile cannot lie outside the sample it came from. The DDSketch these
+ * rollups used to carry had 1% relative error, so its estimate sometimes did —
+ * and reached the SLA evaluator, which failed runs on a p99 above their own
+ * maximum while the statistics table showed the maximum one column over. The
+ * percentiles are exact nearest-rank values now, so they are inside the range
+ * by construction; these cases stay because they are the shapes that broke it.
  *
  * THE SHAPE THAT REACHES A BOUND IS A PLATEAU, which is why these fixtures are
  * not noise: an interior rank whose TRUE value is the extreme puts the estimate
@@ -89,13 +108,14 @@ describe('RollupBuilder histograms', () => {
     expect(r.histogramKo.countAt(900)).toBe(1);
   });
 
-  it('keeps the sketch over BOTH statuses, matching the existing percentile columns', () => {
+  it('takes the percentile columns over BOTH statuses, the merge of the two histograms', () => {
     const b = new RollupBuilder();
     b.add(10, true);
     b.add(20, false);
     const r = b.finish({ scope: 'run', name: '', family: 'response_time', windowMs: 1000, percentiles: [50] });
     expect(r.count).toBe(2);
     expect(r.histogramOk.total + r.histogramKo.total).toBe(r.count);
+    expect(r.percentiles.p50).toBe(10); // nearest rank 1 of [10, 20], across both statuses
   });
 
   it('yields bands that agree with the rollup counts', () => {

@@ -8,7 +8,7 @@ const LOG = new URL(
   import.meta.url,
 );
 
-/** Sketches and histograms are class instances; compare their observable numbers. */
+/** Histograms are class instances; compare their observable numbers. */
 const comparable = (r: ReturnType<typeof runEngine>) => ({
   stats: r.stats.map((s) => ({
     scope: s.scope, name: s.name, family: s.family,
@@ -74,14 +74,14 @@ describe('LiveEngine', () => {
     const runStat = snap.stats.find((s) => s.scope === 'run' && s.family === 'response_time');
     if (!runStat) throw new Error('fixture produced no run-scope response_time rollup');
 
-    // Read the sketch and histogram BEFORE folding the rest in.
-    const p95Before = runStat.sketch.quantile(0.95);
+    // Read the histograms BEFORE folding the rest in.
+    const p95Before = runStat.histogramOk.percentile(95);
     const okTotalBefore = runStat.histogramOk.total;
 
     for (const e of events.slice(half)) engine.add(e);
 
     // The snapshot is a value, not a view: nothing about it may have changed.
-    expect(runStat.sketch.quantile(0.95)).toBe(p95Before);
+    expect(runStat.histogramOk.percentile(95)).toBe(p95Before);
     expect(runStat.histogramOk.total).toBe(okTotalBefore);
 
     // And the engine really did keep going, so the test is not vacuously true.

@@ -1240,7 +1240,7 @@ export class LiveFoldOwner {
    * attribution held under a burst of claims.
    *
    * NOT the same terms as `snapshotOf`, despite looking like it: `snapshotOf`
-   * needs `{ clone: true }` because a rollup's own sketches/histograms are
+   * needs `{ clone: true }` because a rollup's own histograms are
    * mutated by the NEXT fold; a plain field-spread is enough here because
    * every `EvaluableRule` field is a primitive -- the same shallow copy
    * `evaluateRules` already takes of each rule before using it
