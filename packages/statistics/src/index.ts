@@ -15,3 +15,4 @@ export * from './engine-async.js';
 export * from './users.js';
 export * from './telemetry.js';
 export * from './tool-assertions.js';
+export * from './stored-percentiles.js';

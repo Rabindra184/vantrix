@@ -46,12 +46,15 @@
  * — so the reloaded maximum IS the impossible value, and clamping against it
  * achieves nothing while looking complete. `packages/persistence`'s own
  * "answers a percentile that was never stored" case is what caught that,
- * by comparing a live sketch's quantiles against a reloaded one's.
+ * when it compared a live sketch's quantiles against a reloaded one's (it
+ * compares exact histograms now that new rows carry no sketch).
  *
  * So the rule is per ASSEMBLER instead, and it is the one a reader checks:
  * **a percentile is clamped against the same min and max reported beside it.**
- * The metrics controller recomputes a percentile from a stored sketch against
- * a row already assembled. `RollupBuilder.finish`, `bucketLatency`,
+ * `storedPercentiles` (`stored-percentiles.ts`) recomputes a LEGACY row's
+ * percentile from its stored sketch against a row already assembled. (The
+ * metrics controller's own two copies of that recomputation, for /stats and
+ * trends, are the other callers until they move onto that one rule.) `RollupBuilder.finish`, `bucketLatency`,
  * `tool-assertions.ts` and `packages/sla`'s `resolveMetric` were callers too
  * until they moved to exact histograms: a nearest-rank value is an observation
  * the row made, so it is inside that row's range by construction and they call

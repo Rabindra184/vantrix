@@ -1,4 +1,4 @@
-import type { Sketch } from '@perfportal/statistics';
+import type { Histogram, Sketch } from '@perfportal/statistics';
 
 /**
  * The cohort query behind `GET /v1/runs/:id/trends`.
@@ -101,6 +101,7 @@ export const TRENDS_SQL = `
          t.environment, t.branch, t.commit_sha, t.tool, t.simulation, t.run_number,
          t.count, t.ok_count, t.ko_count, t.error_rate,
          t.min_ms, t.max_ms, t.mean_ms, t.throughput_rps, t.percentiles, t.sketch,
+         t.histogram_ok, t.histogram_ko,
          t.cohort_size
     FROM (
       SELECT r.id, r.started_at, r.tool_started_at, r.duration_ms, r.verdict,
@@ -111,6 +112,7 @@ export const TRENDS_SQL = `
              r.environment, r.branch, r.commit_sha, r.tool, r.simulation, r.run_number,
              s.count, s.ok_count, s.ko_count, s.error_rate,
              s.min_ms, s.max_ms, s.mean_ms, s.throughput_rps, s.percentiles, s.sketch,
+             s.histogram_ok, s.histogram_ko,
              COALESCE(r.tool_started_at, r.started_at) AS effective,
              ROW_NUMBER() OVER (
                ORDER BY COALESCE(r.tool_started_at, r.started_at) DESC, r.id DESC
@@ -175,23 +177,33 @@ export interface StoredTrendRun {
   readonly meanMs: number;
   readonly throughputRps: number;
   /**
-   * The FROZEN column, written at ingest. A fallback only — see `sketch`.
+   * The FROZEN column, written at ingest. A fallback only — see `histogramOk`.
    */
   readonly percentiles: Record<string, number>;
   /**
-   * THE SKETCH, WHICH IS WHERE A TREND'S PERCENTILES ACTUALLY COME FROM.
+   * THE HISTOGRAMS, WHICH IS WHERE A TREND'S PERCENTILES ACTUALLY COME FROM.
    *
-   * `/stats` recomputes percentiles from this at the project's CURRENTLY
-   * configured set (spec §9.1, K-03) — that is the entire reason the sketch is
-   * persisted, so reconfiguring the set needs no re-ingest. The frozen
-   * `percentiles` column is only for rows written before it existed.
+   * `/stats` recomputes percentiles at the project's CURRENTLY configured set
+   * (spec §4, K-03), so reconfiguring the set needs no re-ingest, and it does
+   * so through `storedPercentiles` in `@perfportal/statistics` — the one rule
+   * for a stored row. A row written since 2026-10-15 carries two exact
+   * `sparse-ms-v2` histograms and no sketch, and is recomputed exactly from
+   * them; a row written before keeps its legacy path, the sketch below,
+   * clamped. The frozen `percentiles` column answers only a row with neither.
    *
    * A trend reading the frozen column instead would put the statistics table
    * and the trend on DIFFERENT PERCENTILE SETS the moment a project
    * reconfigured — silently, since both would look like plausible numbers.
-   * They also disagree in the last few decimal places even when the sets
-   * match, one being a sketch quantile and the other a stored float, which is
-   * how this was caught.
+   * Handing this row to the same `storedPercentiles` the statistics table
+   * uses is what keeps the two on one answer.
+   *
+   * Null for a run ingested before the parity migration added the columns.
+   */
+  readonly histogramOk: Histogram | null;
+  readonly histogramKo: Histogram | null;
+  /**
+   * The legacy DDSketch: present only on rows written before 2026-10-15,
+   * null on every row since. Read only when the histograms are not exact.
    */
   readonly sketch: Sketch | null;
 }

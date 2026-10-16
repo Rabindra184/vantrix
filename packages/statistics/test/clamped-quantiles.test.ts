@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { Histogram } from '../src/index.js';
 
 /**
  * EVERY SKETCH QUANTILE IN PRODUCTION IS CLAMPED, AND THE LIST IS DERIVED.
@@ -30,22 +31,35 @@ import { describe, expect, it } from 'vitest';
  * percentile the statistics table prints), which is the division of labour the
  * security guard in `session-auth.integration.test.ts` already uses.
  *
+ * ═══ AFTER EXACT STATISTICS, ONE CALLER IS THE POINT ═══
+ *
+ * Since 2026-10-15 every rollup, bucket, SLA metric and Gatling assertion is a
+ * nearest-rank read of an exact `Histogram`, whose method is `percentile` and
+ * which has no `quantile` at all. The one production `Sketch#quantile` that
+ * remains by design is the LEGACY path in `stored-percentiles.ts`: a row
+ * written before 2026-10-15 recomputed from its stored DDSketch, clamped. So
+ * the vacuity floor is ONE caller, not zero — a guard over a rule nobody can
+ * break any more would still pass, which is exactly what the floor refuses —
+ * and the second case pins why every `.quantile(` the collector finds can only
+ * be a sketch's: `Histogram` has no such method, and no production line names
+ * one as the receiver.
+ *
  * ═══ COMMENTS ARE STRIPPED, AND THIS ONE IS NOT DEFENSIVE ═══
  *
  * Measured rather than asserted, which this file asks for after three branches
  * repaired a false load-bearing claim by ADDING prose instead of correcting the
- * sentence. Run with the strip replaced by the identity, the collector finds
- * TEN calls rather than seven, and all three extras are prose:
+ * sentence. Measured on 2026-10-16, with `stored-percentiles.ts` and the
+ * metrics controller's two recomputations as the callers: with the strip
+ * replaced by the identity the collector finds SIX calls rather than three,
+ * and all three extras are prose —
  *
- *     packages/statistics/src/percentile.ts:67    the clamp's own docstring
- *     packages/statistics/src/tool-assertions.ts  the comment explaining its clamp
- *     apps/web/src/routes/RunDetail.tsx           the docstring correcting Sketch
+ *     packages/statistics/src/percentile.ts (twice)  the clamp's own docstring
+ *     apps/web/src/routes/RunSummary.tsx              the docstring correcting Sketch
  *
  * The first is the one worth seeing. `percentile.ts` explains THIS guard, and
  * the sentence in which it does so says `.quantile(` — so without the strip the
- * rule's own documentation is reported as a caller breaking the rule. The other
- * two were written in the branch that fixed this defect class. The strip is
- * load-bearing here, not defensive, and the second mutation below proves it.
+ * rule's own documentation is reported as a caller breaking the rule. The strip
+ * is load-bearing here, not defensive.
  */
 
 const CLAMPER = 'clampPercentile';
@@ -114,11 +128,17 @@ describe('every production sketch quantile is clamped', () => {
 
     // VACUITY: a collector that matches nothing passes exactly as quietly as
     // one that works, which this file records for the tokens guard and the
-    // run-route sweep. Two callers remain (the metrics controller's two):
-    // `RollupBuilder.finish`, `bucketLatency`, `tool-assertions.ts` and
-    // `packages/sla`'s `resolveMetric` read exact histograms now and take no
-    // `.quantile(` at all.
-    expect(calls.length).toBeGreaterThan(1);
+    // run-route sweep. The floor is ONE, and it holds with
+    // `stored-percentiles.ts`'s legacy sketch path as the only caller — which
+    // is what this guard protects once the metrics controller moves onto
+    // `storedPercentiles`. `RollupBuilder.finish`, `bucketLatency`,
+    // `tool-assertions.ts` and `packages/sla`'s `resolveMetric` read exact
+    // histograms and take no `.quantile(` at all.
+    expect(calls.length).toBeGreaterThanOrEqual(1);
+    expect(
+      calls.some((c) => c.file.endsWith(join('packages', 'statistics', 'src', 'stored-percentiles.ts'))),
+      'the legacy sketch path in stored-percentiles.ts is the caller this guard exists for',
+    ).toBe(true);
 
     const exemptFiles = new Set(EXEMPT.map((e) => e.file));
     const offenders = calls
@@ -130,6 +150,23 @@ describe('every production sketch quantile is clamped', () => {
       'a percentile must be clamped against the min and max reported beside it — ' +
         `wrap the call in ${CLAMPER}(...), or add the file to EXEMPT with its reason`,
     ).toEqual([]);
+  });
+
+  it('no production code calls Histogram#quantile — it does not exist', () => {
+    // BEHAVIOURAL: the exact histogram answers `percentile`, nearest-rank over
+    // observed values, so it needs no clamp and offers no `quantile` to call.
+    // This is what makes every `.quantile(` the case above collects a SKETCH
+    // call — if a `quantile` ever came back on `Histogram`, an unclamped call
+    // on it would type-check and this guard could no longer tell the two apart.
+    expect('quantile' in Histogram.prototype).toBe(false);
+
+    // SYNTACTIC: and no production line names a histogram as the receiver, so
+    // a reintroduced method (or a structurally-typed stand-in) is caught at
+    // the call site, not only at the class.
+    const histogramReceivers = quantileCalls()
+      .filter((c) => /histogram\w*!?\.quantile\(/i.test(c.text))
+      .map((c) => `${c.file}:${c.line}  ${c.text}`);
+    expect(histogramReceivers, 'a Histogram has percentile(p), never quantile(q)').toEqual([]);
   });
 
   it('keeps every exemption earning its place', () => {

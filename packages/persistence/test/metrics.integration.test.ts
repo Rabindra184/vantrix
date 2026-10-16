@@ -1,4 +1,4 @@
-import { bandsFrom, bucketLatency, Histogram, HISTOGRAM_KIND, runEngine } from '@perfportal/statistics';
+import { bandsFrom, bucketLatency, Histogram, HISTOGRAM_KIND, mergedHistogram, percentilesOf, runEngine, Sketch, storedPercentiles } from '@perfportal/statistics';
 import type { CanonicalEvent } from '@perfportal/core';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { createPool, createPrisma, ERROR_SERIES_SQL, MetricReader, MetricWriter, SERIES_SQL, MAX_OFFSET_MS, USER_SERIES_SQL, WINDOWED_BUCKETS_SQL } from '../src/index.js';
@@ -109,14 +109,13 @@ describe('MetricWriter / MetricReader', () => {
     expect(storedRun?.percentiles['p95']).toBeCloseTo(engineRun?.percentiles['p95'] ?? -1, 6);
   });
 
-  it('answers a percentile that was never stored in the JSONB — the point of keeping the sketch', async () => {
-    // Reads the sketch the same way production does now: through stats(),
-    // whose `sketch` field is what MetricsController.stats() (K-03) recomputes
-    // percentiles from. There is no longer a standalone MetricReader.sketch()
-    // — it had no production caller (PipelineService evaluates SLA rules
-    // against the in-memory sketch from the same runEngineAsync call that
-    // writes this column, not by reading it back) — so this test now exercises
-    // the sketch column through its one real reader instead.
+  it('answers a percentile that was never stored in the JSONB — the point of keeping the histograms', async () => {
+    // Reads the stored row the way production does: through stats(), whose
+    // histograms are what /stats recomputes percentiles from at the project's
+    // current set (K-03), via storedPercentiles. A row written since
+    // 2026-10-15 carries no sketch at all, so the exact histograms are the
+    // ONLY source, and an unstored rank (p99.9) must come back exact — the
+    // same value the engine's own in-memory histograms give.
     const ctx = await seedRun();
     const result = await persist(ctx);
 
@@ -124,14 +123,59 @@ describe('MetricWriter / MetricReader', () => {
     expect(Object.keys(stored[0]!.percentiles)).not.toContain('p99.9');
 
     const storedRun = stored.find((s) => s.scope === 'run');
-    const original = result.stats.find((s) => s.scope === 'run')?.sketch;
+    const engineRun = result.stats.find((s) => s.scope === 'run')!;
 
-    expect(storedRun?.sketch).not.toBeNull();
-    expect(storedRun!.sketch!.count).toBe(original!.count);
-    for (const q of [0.5, 0.95, 0.99]) {
-      expect(storedRun!.sketch!.quantile(q)).toBeCloseTo(original!.quantile(q), 6);
+    expect(storedRun?.sketch).toBeNull();
+    expect(storedRun?.histogramOk?.exact).toBe(true);
+    expect(storedRun?.histogramKo?.exact).toBe(true);
+
+    const set = [50, 95, 99, 99.9];
+    const recomputed = storedPercentiles(storedRun!, set);
+    expect(recomputed).toEqual(percentilesOf(mergedHistogram(engineRun.histogramOk, engineRun.histogramKo), set));
+    // And it agrees with the frozen column on every rank the column holds.
+    for (const key of Object.keys(storedRun!.percentiles)) {
+      expect(recomputed[key]).toBe(storedRun!.percentiles[key]);
     }
-    expect(Number.isFinite(storedRun!.sketch!.quantile(0.999))).toBe(true);
+    expect(Number.isFinite(recomputed['p99.9'])).toBe(true);
+  });
+
+  it('writes new rows with v2 histograms, no sketch, and an exact-v1 run', async () => {
+    const ctx = await seedRun();
+    await persist(ctx);
+    const { rows } = await pool.query(
+      `SELECT sketch, sketch_kind, histogram_kind, get_byte(histogram_ok, 0) AS v FROM run_stat WHERE run_id = $1`, [ctx.runId]);
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every((r) => r.sketch === null && r.sketch_kind === null && r.histogram_kind === 'sparse-ms-v2' && r.v === 2)).toBe(true);
+    const run = await pool.query(`SELECT stats_method FROM run WHERE id = $1`, [ctx.runId]);
+    expect(run.rows[0].stats_method).toBe('exact-v1');
+  });
+
+  it('still reads a legacy row (sketch + v1 histogram) through the legacy path', async () => {
+    const ctx = await seedRun();
+    await pool.query(`UPDATE run SET stats_method = 'estimated' WHERE id = $1`, [ctx.runId]);
+    const sketch = new Sketch();
+    for (const v of [100, 200, 300]) sketch.accept(v);
+    await pool.query(
+      `INSERT INTO run_stat (id, run_id, org_id, project_id, scope, name, family, count, ok_count, ko_count,
+         error_rate, min_ms, max_ms, mean_ms, stddev_ms, throughput_rps, percentiles,
+         sketch, sketch_kind, histogram_ok, histogram_ko, histogram_kind)
+       VALUES (gen_random_uuid(), $1, $2, $3, 'run', '', 'response_time', 3, 3, 0,
+         0, 100, 300, 200, 81.6, 1, '{"p50":200}', $4, 'ddsketch', $5, $6, 'sparse-ms-v1')`,
+      [ctx.runId, ctx.orgId, ctx.projectId, Buffer.from(sketch.serialize()),
+       Buffer.from(Histogram.legacyV1ForTests([100, 200, 300])), Buffer.from(Histogram.legacyV1ForTests([]))],
+    );
+    const { rows } = await pool.query(`SELECT sketch, histogram_ok FROM run_stat WHERE run_id = $1`, [ctx.runId]);
+    expect(rows[0].sketch).not.toBeNull();
+    expect(Histogram.deserialize(new Uint8Array(rows[0].histogram_ok)).exact).toBe(false);
+
+    // Through the reader and the shared rule: a legacy row takes the clamped
+    // sketch path, never the v1 histogram, and stays inside its own range.
+    const [stat] = await new MetricReader(pool).stats({ orgId: ctx.orgId, projectId: ctx.projectId }, ctx.runId);
+    expect(stat!.sketch).not.toBeNull();
+    const out = storedPercentiles(stat!, [50, 99]);
+    expect(out.p50).toBeCloseTo(sketch.quantile(0.5), 6);
+    expect(out.p99).toBeGreaterThanOrEqual(100);
+    expect(out.p99).toBeLessThanOrEqual(300);
   });
 
   it('round-trips series buckets and error rows', async () => {
@@ -157,12 +201,13 @@ describe('MetricWriter / MetricReader', () => {
     );
   });
 
-  // Task 17: buckets.ts now tracks OK-only and KO-only sketches alongside the
-  // combined one, because Gatling's percentiles-over-time chart is OK-only and
-  // its scatter is two independent status-filtered series. This proves the
-  // write/read round trip actually carries the status-filtered figures, not
-  // just the combined one relabeled — comparing against the in-memory
-  // engine's own sketchOk/sketchKo, not just checking the columns are present.
+  // Task 17: buckets.ts tracks OK-only and KO-only histograms (it tracked
+  // sketches until exact statistics, 2026-10-15), because Gatling's
+  // percentiles-over-time chart is OK-only and its scatter is two independent
+  // status-filtered series. This proves the write/read round trip actually
+  // carries the status-filtered figures, not just the combined one relabeled
+  // — comparing against the in-memory engine's own histogramOk/histogramKo
+  // (through bucketLatency), not just checking the columns are present.
   it('round-trips per-status bucket percentiles, distinct from the combined figure for a mixed bucket', async () => {
     const ctx = await seedRun();
     const result = await persist(ctx);
@@ -180,15 +225,16 @@ describe('MetricWriter / MetricReader', () => {
     // Round-trips against the engine's OWN per-status figures (all eight
     // configured bands), not just spot-checking one figure.
     //
-    // AGAINST `bucketLatency`, NOT A HAND-ROLLED `sketchOk.quantile(p)`. This
-    // read the sketches directly until the clamp landed, and that made it a
-    // SECOND COPY of the derivation whose own docstring says it is "THE ONLY
-    // derivation of a bucket's latency fields" because "a second copy drifts".
-    // It drifted the moment the real one started projecting an estimate onto
-    // its sample's range: stored 485 against a raw 487.92238360521986, on an
-    // OK population whose exactly-tracked maximum is 485. Asking the real
-    // assembler keeps the claim — these are the status-filtered figures, not
-    // the combined ones relabeled — and cannot drift again.
+    // AGAINST `bucketLatency`, NOT A HAND-ROLLED per-status quantile. This
+    // read the buckets' (then) sketches directly until the clamp landed, and
+    // that made it a SECOND COPY of the derivation whose own docstring says it
+    // is "THE ONLY derivation of a bucket's latency fields" because "a second
+    // copy drifts". It drifted the moment the real one started projecting an
+    // estimate onto its sample's range: stored 485 against a raw
+    // 487.92238360521986, on an OK population whose exactly-tracked maximum
+    // is 485. The buckets carry exact histograms now, but asking the real
+    // assembler still keeps the claim — these are the status-filtered figures,
+    // not the combined ones relabeled — and cannot drift again.
     const derived = bucketLatency(mixed!);
     for (const key of Object.keys(storedB!.percentilesOk)) {
       expect(storedB!.percentilesOk[key]).toBeCloseTo(derived.percentilesOk[key]!, 6);
@@ -196,10 +242,10 @@ describe('MetricWriter / MetricReader', () => {
     }
 
     // And the whole point: the OK-only figures must be their OWN thing, not
-    // the combined sketch relabeled. If a bucket's OK subset and combined
+    // the combined histogram relabeled. If a bucket's OK subset and combined
     // set agreed on all eight configured bands this would be a false pass,
     // but that is not plausible here — koCount > 0 in this bucket, so the
-    // combined sketch strictly contains points the OK-only one does not.
+    // combined histogram strictly contains points the OK-only one does not.
     expect(storedB!.percentilesOk).not.toEqual(storedB!.percentiles);
   });
 
