@@ -115,7 +115,7 @@ export class RunsService {
       runnerJobId: job?.id ?? null,
       statsMethod: run.statsMethod,
       verdictChanges: changes.flatMap((c) => verdictChangeOf(run.id, c)),
-      verification: verificationSummaryOf(verification, stat !== null),
+      verification: verificationSummaryOf(run.id, verification, stat !== null),
     };
   }
 
@@ -302,15 +302,19 @@ function verdictChangeOf(
  * run with statistics is `pending` (the verifier has not reached it yet), and
  * one with none answers null — not verifiable, so no mark at all. The two
  * columns are held to the contract's words by `run_verification`'s CHECK
- * constraints; a row that somehow does not parse reads as no row rather than
- * failing the whole run response — the rule `verdictChangeOf` above follows
- * for a stored snapshot.
+ * constraints; a row that somehow does not parse draws no mark rather than
+ * failing the whole run response, and is logged — the rule `verdictChangeOf`
+ * above follows for a stored snapshot. No mark, not "Verifying…": a row that
+ * exists has been reached, so claiming the verifier has not would be false.
  */
 function verificationSummaryOf(
+  runId: string,
   row: { status: string; unverifiableReason: string | null } | null,
   hasStats: boolean,
 ): VerificationSummary | null {
   if (row === null) return hasStats ? { status: 'pending', reason: null } : null;
   const parsed = VerificationSummarySchema.safeParse({ status: row.status, reason: row.unverifiableReason });
-  return parsed.success ? parsed.data : null;
+  if (parsed.success) return parsed.data;
+  console.warn(`dropping run ${runId}'s verification mark: its row does not parse`, parsed.error.issues);
+  return null;
 }

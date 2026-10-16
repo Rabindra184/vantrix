@@ -174,4 +174,20 @@ describe('loadWorkerConfig', () => {
       expect(loadWorkerConfig({ ...BASE_ENV, VERIFY_SCAN_INTERVAL_MS: 'often' }).verifyScanIntervalMs).toBe(600_000);
     });
   });
+
+  /**
+   * `setInterval(fn, 0)` walks every candidate back to back, and a negative
+   * delay is clamped to the same thing: neither is what an operator means.
+   * Both scans read a non-positive interval as their default, through ONE
+   * helper, so the two queues cannot drift apart on it.
+   */
+  describe('scan intervals', () => {
+    it.each(['0', '-5'])('reads %s as the default for both scans', (v) => {
+      const config = loadWorkerConfig({
+        ...BASE_ENV, RECOMPUTE_SCAN_INTERVAL_MS: v, VERIFY_SCAN_INTERVAL_MS: v,
+      });
+      expect(config.recomputeScanIntervalMs).toBe(600_000);
+      expect(config.verifyScanIntervalMs).toBe(600_000);
+    });
+  });
 });

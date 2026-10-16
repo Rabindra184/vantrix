@@ -241,6 +241,12 @@ export const compareSeries: Comparator = (expected, stored, ledger) => {
  * stored real row whose message is `''` can never pair with the other row.
  * The other row's message is then checked as a figure of its own (`message`,
  * which must be `''`).
+ *
+ * A stored REAL row whose message is `''` therefore reports its mismatches
+ * under family `''`, the same label the other row's carry. That is accepted
+ * rather than disambiguated: the engine writes `'(no message)'` for an empty
+ * message (`NO_MESSAGE`), so only a corrupted row can hold `''`, its key still
+ * differs from the other row's, and the row it labels is itself the defect.
  */
 
 const familyOf = (r: Pick<ExpectedError, 'isOther' | 'message'>): string => (r.isOther ? '' : r.message);

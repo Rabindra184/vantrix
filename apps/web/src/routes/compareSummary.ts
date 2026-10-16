@@ -29,8 +29,10 @@ export interface CompareSummaryModel {
   /**
    * Whether the delta's figures are exact: BOTH the current run's and the
    * baseline's (`figureIsExact`), since a difference is no more exact than
-   * its least exact term. True where there is no baseline — there is then no
-   * delta figure to qualify. `false` puts ≈ before the delta.
+   * its least exact term. True where the tile states no figure — no baseline
+   * selected, or a value not measured — since there is then nothing to
+   * qualify. `false` puts ≈ before the delta. The whole rule lives HERE: the
+   * tile reads it as it is, rather than patching the no-figure cases in.
    */
   readonly deltaExact: boolean;
   /** Whether the best run's figure is exact; true where there is none. */
@@ -91,8 +93,10 @@ export function buildCompareSummary(
     bestLabel: best?.label ?? null,
     bestValue: best?.value ?? null,
     deltaExact:
-      (current === null || figureIsExact(current.exact, metric)) &&
-      (baseline === null || figureIsExact(baseline.exact, metric)),
+      deltaUnavailable === 'no-baseline' ||
+      deltaUnavailable === 'not-measured' ||
+      ((current === null || figureIsExact(current.exact, metric)) &&
+        (baseline === null || figureIsExact(baseline.exact, metric))),
     bestExact: best === null || figureIsExact(best.exact, metric),
   };
 }

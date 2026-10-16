@@ -1,5 +1,6 @@
 import type { CanonicalEvent } from '@perfportal/core';
 import type { ExpectedUserBucket, VerifyOptions } from './figures.js';
+import { BASE_WIDTH_MS } from './figures.js';
 
 /**
  * ═══ `run_user_bucket`, RECOMPUTED FROM THE USER EVENTS ═══
@@ -26,8 +27,6 @@ import type { ExpectedUserBucket, VerifyOptions } from './figures.js';
 
 /** The bucket count a scenario's users are coalesced below. Not configurable. */
 export const USER_BUCKET_CAP = 1200;
-
-const BASE_WIDTH_MS = 1000;
 
 interface Second {
   started: number;

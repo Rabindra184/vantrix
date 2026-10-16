@@ -34,6 +34,7 @@ function Detail({ verification: v }: { readonly verification: Verification }) {
     return <p>This run has not been checked yet.</p>;
   }
   const shown = v.mismatches.slice(0, MISMATCH_ROWS);
+  const keys = mismatchKeys(shown);
   const rest = v.mismatches.length - shown.length;
   return (
     <div className="flex flex-col gap-3">
@@ -80,7 +81,7 @@ function Detail({ verification: v }: { readonly verification: Verification }) {
             </thead>
             <tbody>
               {shown.map((m, index) => (
-                <tr key={index} className={ROW}>
+                <tr key={keys[index]} className={ROW}>
                   <td className={`${TD} whitespace-nowrap`}>{TABLE_NAMES[m.table]}</td>
                   <td className={`${TD} break-all`}>{rowLabel(m)}</td>
                   <td className={`${TD} font-mono`}>{figureLabel(m)}</td>
@@ -95,6 +96,23 @@ function Detail({ verification: v }: { readonly verification: Verification }) {
       {rest > 0 && <p className="text-muted">and {formatCount(rest)} more</p>}
     </div>
   );
+}
+
+/**
+ * A React key per mismatch, from what the mismatch IS — its table, row,
+ * bucket, figure and population — rather than where it sits in the list, so a
+ * row keeps its key when the list above it changes on a re-check. Two
+ * mismatches can name the same place (a duplicated stored row is reported
+ * once per extra copy), so a repeat takes its occurrence as a suffix.
+ */
+export function mismatchKeys(mismatches: readonly FigureMismatch[]): string[] {
+  const seen = new Map<string, number>();
+  return mismatches.map((m) => {
+    const base = [m.table, m.scope, m.name, m.family, String(m.bucket), m.figure, String(m.population)].join('\u0000');
+    const n = seen.get(base) ?? 0;
+    seen.set(base, n + 1);
+    return n === 0 ? base : `${base}\u0000${String(n)}`;
+  });
 }
 
 /** "deleted", "kept until 2027-01-14", or "kept indefinitely" — a calendar

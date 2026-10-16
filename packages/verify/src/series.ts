@@ -1,5 +1,6 @@
 import type { CanonicalEvent } from '@perfportal/core';
 import type { ExpectedSeriesBucket, VerifyOptions } from './figures.js';
+import { BASE_WIDTH_MS } from './figures.js';
 import { nearestRankIndex } from './rank.js';
 
 /**
@@ -32,8 +33,6 @@ export const SERIES_PERCENTILES: readonly number[] = [25, 50, 75, 80, 85, 90, 95
 
 /** A group series' cap. Not configurable. */
 export const GROUP_SERIES_CAP = 300;
-
-const BASE_WIDTH_MS = 1000;
 
 interface Observation {
   /** Edge offsets from the run start. */

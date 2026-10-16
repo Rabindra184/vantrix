@@ -25,6 +25,11 @@ export function nearestRankIndex(p: number, n: number): number {
   // the ceiling against the integers themselves, in both directions.
   while (rank * denominator < numerator) rank += 1;
   while (rank > 0 && (rank - 1) * denominator >= numerator) rank -= 1;
+  // A `p` outside [0, 100] lands here as the first or last value rather than
+  // throwing. No caller passes one: a run's percentile set is the frozen
+  // engine options, which `engineOptionsFrom` keeps to finite values inside
+  // (0, 100), and the fixed bands are 50 to 99.9. The clamp is for p = 0 and
+  // p = 100, whose ceilings are rank 0 and rank n exactly.
   if (rank < 1) rank = 1;
   if (rank > n) rank = n;
   return rank - 1;

@@ -19,6 +19,15 @@ export type RunStatus = z.infer<typeof RunStatusSchema>;
 export const RunVerdictSchema = z.enum(['passed', 'failed', 'not_evaluated']);
 export type RunVerdict = z.infer<typeof RunVerdictSchema>;
 
+/**
+ * Which engine produced a run's figures: 'exact-v1' (every figure exact
+ * against the raw log) or 'estimated' (the pre-2026-10-15 sketch engine).
+ * ONE definition, carried by the run identity, the run list, trends and the
+ * test catalogue — five places that spelled the enum by hand before.
+ */
+export const StatsMethodSchema = z.enum(['estimated', 'exact-v1']);
+export type StatsMethod = z.infer<typeof StatsMethodSchema>;
+
 export const AssertionOutcomeSchema = z.enum(['passed', 'failed', 'not_applicable']);
 export type AssertionOutcome = z.infer<typeof AssertionOutcomeSchema>;
 
@@ -407,7 +416,7 @@ export const RunIdentitySchema = z.object({
    *  by the pre-2026-10-15 sketch engine ('estimated'). OPTIONAL for the
    *  rolling-deploy reason the stamps above give; a reader treats absent as
    *  "not known to be exact". */
-  statsMethod: z.enum(['estimated', 'exact-v1']).optional(),
+  statsMethod: StatsMethodSchema.optional(),
   /** Every SLA assertion the exact recompute of this run's statistics
    *  changed, in the order recorded; empty when it changed none or the run
    *  was never recomputed. OPTIONAL for the rolling-deploy reason the stamps
@@ -577,7 +586,7 @@ export const RunListResponseSchema = z.object({
        * rolling-deploy reason the block above gives; absent reads as "not
        * known to be exact".
        */
-      statsMethod: z.enum(['estimated', 'exact-v1']).optional(),
+      statsMethod: StatsMethodSchema.optional(),
     }),
   ),
   nextCursor: z.string().nullable(),

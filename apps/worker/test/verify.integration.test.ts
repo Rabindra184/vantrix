@@ -9,7 +9,7 @@ import type { CanonicalEvent } from '@perfportal/core';
 import { createPool, createPrisma, VerificationRepository } from '@perfportal/persistence';
 import { GatlingPlugin, parseSimulationLog } from '@perfportal/plugin-gatling';
 import { BlobStore } from '@perfportal/storage';
-import { VERIFIER_VERSION } from '@perfportal/verify';
+import { Ledger, VERIFIER_VERSION } from '@perfportal/verify';
 import type { Prisma } from '@prisma/client';
 import { Queue, type Worker } from 'bullmq';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -161,6 +161,38 @@ describe('VerifyService', () => {
     expect(row!.checkedAt).not.toBeNull();
   });
 
+  /**
+   * ═══ EVERY TABLE IS ACTUALLY CHECKED ═══
+   *
+   * A clean result is only evidence if each table contributed figures to it:
+   * a read that returned no rows for a table, matched against an expectation
+   * that also came out empty, would agree perfectly while checking nothing.
+   * The ledger is the one place every figure is counted, so its three
+   * counting methods are watched and their calls tallied by the row's table —
+   * and the tally has to add up to the stored total, or the watch missed a
+   * caller and the per-table numbers mean nothing.
+   */
+  it('checks figures from every table on the fixture, and the tally is the whole count', async () => {
+    const { runId } = await ingested();
+    const byTable = new Map<string, number>();
+    for (const method of ['exact', 'close', 'row'] as const) {
+      const original = Ledger.prototype[method] as (...args: unknown[]) => void;
+      vi.spyOn(Ledger.prototype, method).mockImplementation(function (this: Ledger, ...args: unknown[]) {
+        const table = (args[0] as { table: string }).table;
+        byTable.set(table, (byTable.get(table) ?? 0) + 1);
+        original.apply(this, args);
+      });
+    }
+
+    expect(await service().verify(runId)).toBe('verified');
+
+    const tables = ['run_stat', 'run_series_bucket', 'run_error', 'run_error_bucket', 'run_user_bucket', 'run'];
+    for (const table of tables) expect(byTable.get(table) ?? 0, table).toBeGreaterThan(0);
+    expect([...byTable.keys()].sort()).toEqual([...tables].sort());
+    const total = [...byTable.values()].reduce((n, c) => n + c, 0);
+    expect(total).toBe((await verifications.find(runId))!.figuresChecked);
+  });
+
   it('records the raw log retention date as the ingest date plus the configured days', async () => {
     const { runId } = await ingested();
     await pool.query(`UPDATE run SET ingested_at = '2026-08-07T23:30:00Z' WHERE id = $1`, [runId]);
@@ -209,6 +241,14 @@ describe('VerifyService', () => {
       corrupt: `UPDATE run_error SET count = count + 1
                  WHERE ctid = (SELECT ctid FROM run_error WHERE run_id = $1 AND scope = 'run' ORDER BY message LIMIT 1)`,
       read: `SELECT count AS v FROM run_error WHERE run_id = $1 AND scope = 'run' ORDER BY message LIMIT 1`,
+    },
+    {
+      table: 'run_error_bucket', figure: 'count',
+      corrupt: `UPDATE run_error_bucket SET count = count + 1
+                 WHERE ctid = (SELECT ctid FROM run_error_bucket WHERE run_id = $1
+                                ORDER BY start_offset_ms, is_other, message LIMIT 1)`,
+      read: `SELECT count AS v FROM run_error_bucket WHERE run_id = $1
+              ORDER BY start_offset_ms, is_other, message LIMIT 1`,
     },
     {
       table: 'run_user_bucket', figure: 'max_concurrent',

@@ -159,6 +159,21 @@ function numberOr(value: string | undefined, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
+/**
+ * A scan interval: a positive number of milliseconds, else the default. Blank
+ * is unset (compose passes an unset variable as an EMPTY string, and
+ * `Number('')` is 0), a non-numeric value is the default (`numberOr`), and so
+ * is zero or a negative — `setInterval(fn, 0)` would walk every candidate back
+ * to back, which no operator means by "0". ONE helper for both scans, so the
+ * recompute and verify queues cannot disagree about what a bad interval means.
+ * (Not folded into `numberOr` itself: LIVE_TICK_MS has a case pinning '' to
+ * its floor rather than its default.)
+ */
+function scanIntervalOr(value: string | undefined, fallback: number): number {
+  const n = numberOr(value?.trim() || undefined, fallback);
+  return n > 0 ? n : fallback;
+}
+
 export function loadWorkerConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
   const databaseUrl = env.DATABASE_URL;
   if (!databaseUrl) throw new Error('Missing required environment variable DATABASE_URL');
@@ -190,16 +205,12 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv = process.env): WorkerCo
     maxOwnedRuns: numberOr(env.MAX_OWNED_RUNS, 25),
     // `=== 'false'`, not truthiness -- see the field's own doc comment.
     recomputeEnabled: env.RECOMPUTE_ENABLED !== 'false',
-    // numberOr: a NaN interval is setInterval's effectively-zero delay, which
-    // would rescan the database continuously. And blank is unset: compose
-    // passes `${PERFPORTAL_RECOMPUTE_SCAN_INTERVAL_MS:-}`, an EMPTY string
-    // when the operator set nothing, and Number('') is 0 -- the same
-    // continuous rescan by another road. (Not changed in numberOr itself:
-    // LIVE_TICK_MS has a case pinning '' to its floor.)
-    recomputeScanIntervalMs: numberOr(env.RECOMPUTE_SCAN_INTERVAL_MS?.trim() || undefined, 600_000),
+    // scanIntervalOr: a NaN, blank, zero or negative interval would rescan the
+    // database continuously -- see its doc comment.
+    recomputeScanIntervalMs: scanIntervalOr(env.RECOMPUTE_SCAN_INTERVAL_MS, 600_000),
     rawLogRetentionDays: parseRawLogRetentionDays(env.RAW_LOG_RETENTION_DAYS),
     // `=== 'false'` and blank-is-default: recompute's two rules, for the same reasons.
     verifyEnabled: env.VERIFY_ENABLED !== 'false',
-    verifyScanIntervalMs: numberOr(env.VERIFY_SCAN_INTERVAL_MS?.trim() || undefined, 600_000),
+    verifyScanIntervalMs: scanIntervalOr(env.VERIFY_SCAN_INTERVAL_MS, 600_000),
   };
 }

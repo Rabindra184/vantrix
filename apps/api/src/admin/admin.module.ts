@@ -8,9 +8,10 @@ import { AdminController } from './admin.controller.js';
 // PrismaClient and the repositories (UserRepository, ProjectRepository,
 // ProjectMemberRepository) are provided and exported by the @Global()
 // AuthModule (see auth.module.ts), so only what is this module's own is
-// declared here. RecomputeRepository and VerificationRepository are raw SQL on a pg pool, so it is a
-// factory over the shared pool AuthModule exports — the way RunsModule and
-// MetricsModule provide MetricReader — not a second connection.
+// declared here. RecomputeRepository and VerificationRepository are raw SQL
+// on a pg pool, so each is a factory over the shared pool AuthModule exports —
+// the way RunsModule and MetricsModule provide MetricReader — not a second
+// connection.
 @Module({
   controllers: [AdminController],
   providers: [

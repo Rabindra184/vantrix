@@ -165,6 +165,19 @@ describe('buildCompareSummary — which figures are estimates', () => {
     expect([currentEstimated.deltaExact, currentEstimated.bestExact]).toEqual([false, false]);
   });
 
+  /** "Select a baseline run" and "Not measured" state no number: no ≈, even
+   *  when a run is estimated. One rule, in the model — not patched in by the tile. */
+  it('makes no estimate claim where the tile states no figure', () => {
+    const noBaseline = buildCompareSummary([at('a', 200, false)], 'a', 'p95');
+    expect(noBaseline.deltaUnavailable).toBe('no-baseline');
+    expect(noBaseline.deltaExact).toBe(true);
+
+    const unmeasured = { id: 'b', label: 'b', exact: false, stats: stats({ percentiles: {} }) };
+    const notMeasured = buildCompareSummary([at('a', 200, false), unmeasured], 'a', 'p95');
+    expect(notMeasured.deltaUnavailable).toBe('not-measured');
+    expect(notMeasured.deltaExact).toBe(true);
+  });
+
   it('makes no estimate claim for a metric that is not a percentile', () => {
     for (const metric of ['max', 'throughput', 'errors'] as const) {
       const summary = buildCompareSummary([at('a', 200, false), at('b', 300, false)], 'a', metric);

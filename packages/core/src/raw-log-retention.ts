@@ -2,9 +2,18 @@
 export const DEFAULT_RAW_LOG_RETENTION_DAYS = 90;
 
 /**
+ * The longest retention accepted: a hundred years. Past it the number stops
+ * being a retention and starts breaking things — `make_interval(days => $1::int)`
+ * overflows on every sweep and `Date.UTC` answers an Invalid Date, so a typo
+ * like `99999999999` would fail the sweeper every 30 s and every verify job for
+ * ever. `0` is the way to keep raw logs for ever.
+ */
+export const MAX_RAW_LOG_RETENTION_DAYS = 36_500;
+
+/**
  * `RAW_LOG_RETENTION_DAYS`: how many days a run's raw log is kept after its
- * ingest. A whole, non-negative number of days — `0` keeps raw logs for ever —
- * or the default when unset or blank (compose passes an unset variable as an
+ * ingest. A whole number of days from 0 to `MAX_RAW_LOG_RETENTION_DAYS` — `0`
+ * keeps raw logs for ever — or the default when unset or blank (compose passes an unset variable as an
  * EMPTY string). Anything else THROWS, naming the variable, so the process
  * refuses to start rather than guessing: a `-1` written to mean "for ever"
  * falling back to ninety days would delete logs nobody chose to delete.
@@ -22,7 +31,13 @@ export function parseRawLogRetentionDays(value: string | undefined): number {
       `RAW_LOG_RETENTION_DAYS must be a whole number of days (0 keeps raw logs for ever); got "${value}"`,
     );
   }
-  return Number(text);
+  const days = Number(text);
+  if (days > MAX_RAW_LOG_RETENTION_DAYS) {
+    throw new Error(
+      `RAW_LOG_RETENTION_DAYS must be at most ${MAX_RAW_LOG_RETENTION_DAYS} days (0 keeps raw logs for ever); got "${value}"`,
+    );
+  }
+  return days;
 }
 
 /**

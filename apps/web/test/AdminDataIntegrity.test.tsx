@@ -6,6 +6,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DataIntegrity } from '@perfportal/contracts';
 import AdminDataIntegrity from '../src/routes/AdminDataIntegrity';
+import { dataIntegrityQueryKey } from '../src/api/admin';
 import { ADMIN_DATA_INTEGRITY_ROUTE, ADMIN_USERS_ROUTE, runPath } from '../src/routes/paths';
 
 // No vitest globals here, so Testing Library's automatic cleanup never
@@ -43,8 +44,22 @@ function stub(body: DataIntegrity): { calls: () => number; seen: string[] } {
   return { calls: () => seen.filter((u) => u === '/v1/admin/data-integrity').length, seen };
 }
 
+const problem = (status: number, code: string, detail: string, remediation: string): Response =>
+  json(status, { type: 'about:blank', title: 'Error', status, code, detail, remediation });
+
+/** Answers the page's own endpoint with whatever `answer` returns at the time. */
+function stubWith(answer: () => Response): void {
+  vi.stubGlobal('fetch', (input: RequestInfo | URL) =>
+    Promise.resolve(String(input) === '/v1/admin/data-integrity' ? answer() : json(404, {})),
+  );
+}
+
 function renderPage() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return { client, ...renderTree(client) };
+}
+
+function renderTree(client: QueryClient) {
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[ADMIN_DATA_INTEGRITY_ROUTE]}>
@@ -140,6 +155,35 @@ describe('AdminDataIntegrity', () => {
     const before = calls();
     await act(() => vi.advanceTimersByTimeAsync(25_000));
     expect(calls()).toBeGreaterThan(before);
+  });
+
+  /** A refusal is the API declining this session the page: say so, in its words. */
+  it('shows the API’s refusal, and none of the page, when the first read is refused', async () => {
+    stubWith(() => problem(403, 'ADMIN_REQUIRED', 'Administration needs an admin account.', 'Ask an admin to make you one.'));
+    renderPage();
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Administration needs an admin account.');
+    expect(alert).toHaveTextContent('Ask an admin to make you one.');
+    expect(screen.getByText('Data integrity could not be loaded')).toBeInTheDocument();
+    expect(screen.queryByTestId('verification-counts')).toBeNull();
+  });
+
+  /** A refetch that fails is not a refusal: the counts it had are still true. */
+  it('keeps the page it has, and says quietly that it could not be refreshed', async () => {
+    let failing = false;
+    stubWith(() =>
+      failing ? problem(500, 'INTERNAL', 'The request could not be completed.', 'Retry the request.') : json(200, DATA),
+    );
+    const { client } = renderPage();
+    await counts();
+
+    failing = true;
+    await act(() => client.invalidateQueries({ queryKey: dataIntegrityQueryKey }));
+
+    expect(await screen.findByText('This list could not be refreshed, so it may be out of date.')).toBeInTheDocument();
+    expect(screen.getByTestId('verification-counts')).toHaveTextContent(/Verified\s*812/);
+    expect(screen.queryByText('Data integrity could not be loaded')).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 
   it('does not poll once nothing is pending or recomputing', async () => {

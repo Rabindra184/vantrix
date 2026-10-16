@@ -568,8 +568,8 @@ function CompareSummary({
         testId="compare-delta"
         value={deltaText}
         // ≈ only over a figure: "Select a baseline run" and "Not measured"
-        // state no number, so there is nothing to qualify.
-        exact={summary.deltaExact || summary.deltaUnavailable === 'no-baseline' || summary.deltaUnavailable === 'not-measured'}
+        // state no number, which `deltaExact` already says.
+        exact={summary.deltaExact}
         detail={
           summary.baselineLabel === null
             ? 'Select another run to establish a baseline'

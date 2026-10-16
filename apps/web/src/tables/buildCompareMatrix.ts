@@ -54,14 +54,23 @@ export function figureIsExact(runExact: boolean, metric: CompareMetric): boolean
   return runExact || !ESTIMATED_BY_SKETCH[metric];
 }
 
+export interface CompareColumn {
+  readonly label: string;
+  readonly exact: boolean;
+}
+
 export interface CompareMatrix {
   /** Row headers — request names, in stable order. */
   readonly requests: readonly string[];
-  /** Column headers — run labels, in selection order. */
-  readonly labels: readonly string[];
-  /** Per column, in `labels` order: whether that run's figures for this
-   *  metric are exact (`figureIsExact`). `false` puts ≈ in its header. */
-  readonly exact: readonly boolean[];
+  /**
+   * One per run, in selection order: its label (the column header) and
+   * whether its figures for this metric are exact (`figureIsExact`) — `false`
+   * puts ≈ in its header. ONE object per column rather than two parallel
+   * arrays, so a header cannot read past the end of one of them: the renderer
+   * used to fall back to "exact" when it did, a silent default toward the
+   * claim this mark exists to qualify.
+   */
+  readonly columns: readonly CompareColumn[];
   /** `cells[request][run]`. `null` where that run has no such request. */
   readonly cells: readonly (readonly (number | null)[])[];
   /**
@@ -241,8 +250,7 @@ export function toCompareMatrix(
   return {
     requests,
     change,
-    labels: runs.map((run) => run.label),
-    exact: runs.map((run) => figureIsExact(run.exact, metric)),
+    columns: runs.map((run) => ({ label: run.label, exact: figureIsExact(run.exact, metric) })),
     // `null`, never `0`, for a request a run does not have. It did not take no
     // time — it did not run, and a zero would sort to the top of a column of
     // durations as though it were the fastest thing in the comparison.

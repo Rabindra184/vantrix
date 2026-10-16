@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { FigureMismatch, RunStatus, Verification, VerificationSummary } from '@perfportal/contracts';
 import VerificationMark from '../src/routes/VerificationMark';
+import { mismatchKeys } from '../src/routes/VerificationPanel';
 import { VERIFICATION } from '../src/routes/marks';
 
 // No vitest globals here, so Testing Library's automatic cleanup never
@@ -251,5 +252,23 @@ describe('VerificationMark — the panel', () => {
     await user.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(trigger()).toHaveFocus();
+  });
+});
+
+describe('VerificationPanel — row keys', () => {
+  /** An index key moves with the list: a row would take another's identity. */
+  it('keys a mismatch by what it is, so it keeps its key when one above it goes', () => {
+    const a = mismatch({ figure: 'p50' });
+    const b = mismatch({ figure: 'p95' });
+    const c = mismatch({ table: 'run_series_bucket', bucket: 4000, figure: 'ok_count', population: null });
+    const before = mismatchKeys([a, b, c]);
+    const after = mismatchKeys([b, c]);
+    expect(after).toEqual(before.slice(1));
+  });
+
+  it('keeps two mismatches at one place apart', () => {
+    const extra = mismatch({ figure: 'row', population: null, stored: 3, recomputed: null });
+    const keys = mismatchKeys([extra, extra, mismatch()]);
+    expect(new Set(keys).size).toBe(3);
   });
 });

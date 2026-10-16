@@ -5,7 +5,7 @@ import { z } from 'zod';
  * from the one `RunResponse` uses the day a fourth value is added. `run.ts`
  * imports nothing but zod, so this direction cannot cycle.
  */
-import { RunVerdictSchema } from './run.js';
+import { RunVerdictSchema, StatsMethodSchema } from './run.js';
 import { RunNumberSchema } from './run-number.js';
 
 export const MetricScopeSchema = z.enum(['run', 'scenario', 'group', 'request']);
@@ -388,7 +388,7 @@ export const TrendRunSchema = z.object({
    *  a trend table marks an `'estimated'` run's percentiles with ≈. Optional
    *  for the reason the blocks above give; absent reads as "not known to be
    *  exact". */
-  statsMethod: z.enum(['estimated', 'exact-v1']).optional(),
+  statsMethod: StatsMethodSchema.optional(),
 });
 export type TrendRun = z.infer<typeof TrendRunSchema>;
 

@@ -7,6 +7,14 @@
 
 export const VERIFIER_VERSION = 1;
 
+/**
+ * The finest bucket width the engine writes, before any coalescing: one
+ * second. Both bucketed series start from it — the response-time series
+ * halves its bucket count by doubling it, the users series multiplies it by
+ * a power of two — so it is ONE constant, not two copies that could disagree.
+ */
+export const BASE_WIDTH_MS = 1000;
+
 /** One stored figure the verifier re-derived from the raw log and got a different answer for. */
 export interface FigureMismatch {
   scope: string;

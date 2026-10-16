@@ -121,7 +121,7 @@ export default function CompareMatrix({
               <th scope="col" className={TH}>
                 Request
               </th>
-              {matrix.labels.map((label, column) => (
+              {matrix.columns.map(({ label, exact }) => (
                 // Was `${TH} text-right` written out here — the same thing
                 // `TH_NUM` now names for every table, so a new one gets the
                 // alignment by reaching for the right constant.
@@ -133,7 +133,7 @@ export default function CompareMatrix({
                       carries its unit to a screen-reader user. */}
                   {/* ≈ when THIS run's figures were estimated, so every value
                       in its column is announced with the mark. */}
-                  <Approx exact={matrix.exact[column] ?? true}>
+                  <Approx exact={exact}>
                     {label} ({unit})
                   </Approx>
                 </th>
@@ -156,7 +156,7 @@ export default function CompareMatrix({
                   {name}
                 </th>
                 {matrix.cells[row]!.map((value, column) => (
-                  <td key={matrix.labels[column]} className={TD_NUM}>
+                  <td key={matrix.columns[column]?.label ?? column} className={TD_NUM}>
                     {/* `formatCell`, the same function the data tables and the
                         tooltip use, so no surface in this app rounds a number
                         differently from another. A dash for absence — never a

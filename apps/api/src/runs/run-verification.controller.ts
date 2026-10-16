@@ -39,6 +39,15 @@ import { runNotFound, uuidParam } from '../common/validation.js';
  * column was computed once, at verify time, and goes stale the moment the
  * operator changes RAW_LOG_RETENTION_DAYS or retention deletes the log; it is
  * not read.
+ *
+ * ═══ A STORED ROW THAT DOES NOT PARSE IS A 500, ON PURPOSE ═══
+ *
+ * The run header's mark drops a bad row and logs it (`verificationSummaryOf`);
+ * this read does not, so a mismatch list the contract refuses answers 500.
+ * Only the worker writes the column, from typed values, and a NaN figure
+ * serialises to null, which the contract allows — so a refusal here means the
+ * row was edited by hand, and a panel quietly showing part of it would
+ * misstate the very record the reader opened.
  */
 @Controller('/v1/runs/:id')
 export class RunVerificationController {

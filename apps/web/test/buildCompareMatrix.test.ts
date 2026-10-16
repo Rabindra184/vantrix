@@ -98,7 +98,7 @@ describe('toCompareMatrix', () => {
 
   it('keeps one column per selected run, in selection order', () => {
     const m = toCompareMatrix([asRun('first'), asRun('second'), asRun('third')], 'p95', 'first');
-    expect(m.labels).toEqual(['first', 'second', 'third']);
+    expect(m.columns.map((c) => c.label)).toEqual(['first', 'second', 'third']);
     for (const row of m.cells) expect(row).toHaveLength(3);
   });
 
@@ -231,18 +231,18 @@ describe('toCompareMatrix — the change column (review.md finding 18)', () => {
 describe('toCompareMatrix — which columns are estimates', () => {
   it('marks each run column by its own run, and the change by both', () => {
     const m = toCompareMatrix([asRun('a'), asRun('b', undefined, false)], 'p95', 'a');
-    expect(m.exact).toEqual([true, false]);
+    expect(m.columns.map((c) => c.exact)).toEqual([true, false]);
     expect(m.change?.exact).toBe(false);
 
     const exact = toCompareMatrix([asRun('a'), asRun('b')], 'p95', 'a');
-    expect(exact.exact).toEqual([true, true]);
+    expect(exact.columns.map((c) => c.exact)).toEqual([true, true]);
     expect(exact.change?.exact).toBe(true);
   });
 
   it('makes no estimate claim for a metric that is not a percentile', () => {
     for (const metric of ['max', 'throughput', 'errors'] as const) {
       const m = toCompareMatrix([asRun('a', undefined, false), asRun('b', undefined, false)], metric, 'a');
-      expect(m.exact, metric).toEqual([true, true]);
+      expect(m.columns.map((c) => c.exact), metric).toEqual([true, true]);
       expect(m.change?.exact, metric).toBe(true);
     }
   });
