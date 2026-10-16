@@ -50,11 +50,12 @@
  *
  * So the rule is per ASSEMBLER instead, and it is the one a reader checks:
  * **a percentile is clamped against the same min and max reported beside it.**
- * `resolveMetric` and the metrics controller recompute a percentile from a
- * stored sketch against a row already assembled. `RollupBuilder.finish`,
- * `bucketLatency` and `tool-assertions.ts` were callers too until they moved to
- * exact histograms: a nearest-rank value is an observation the row made, so it
- * is inside that row's range by construction and they call this no longer.
+ * The metrics controller recomputes a percentile from a stored sketch against
+ * a row already assembled. `RollupBuilder.finish`, `bucketLatency`,
+ * `tool-assertions.ts` and `packages/sla`'s `resolveMetric` were callers too
+ * until they moved to exact histograms: a nearest-rank value is an observation
+ * the row made, so it is inside that row's range by construction and they call
+ * this no longer.
  *
  * ═══ AND THAT SENTENCE IS NO LONGER THE LIST ═══
  *

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Histogram, Sketch, type StatRollup } from '@perfportal/statistics';
+import { Histogram, type StatRollup } from '@perfportal/statistics';
 import { toEvaluableStats } from '../src/index.js';
 
 function rollup(overrides: Record<string, unknown> = {}): StatRollup {
@@ -17,7 +17,6 @@ function rollup(overrides: Record<string, unknown> = {}): StatRollup {
     stddevMs: 5,
     throughputRps: 1.5,
     percentiles: { p95: 55 },
-    sketch: new Sketch(),
     histogramOk: new Histogram(),
     histogramKo: new Histogram(),
     ...overrides,
@@ -35,7 +34,26 @@ describe('toEvaluableStats', () => {
       expect(out![key]).toEqual(source[key]);
     }
     expect(out!.percentiles).toEqual(source.percentiles);
-    expect(out!.sketch).toBeDefined();
+    expect(out!.histogram).toBeDefined();
+  });
+
+  /**
+   * The evaluator judges the ALL-RESPONSES population, as the stored
+   * percentiles and Gatling's own assertions do — so the histogram it is
+   * handed is the merge of both statuses, and building it must not mutate
+   * either input (the rollup is reused for persistence afterwards).
+   */
+  it('hands the evaluator the merge of both statuses, leaving the rollup untouched', () => {
+    const ok = new Histogram();
+    for (const v of [10, 20, 30]) ok.accept(v);
+    const ko = new Histogram();
+    for (const v of [5000, 6000]) ko.accept(v);
+    const [out] = toEvaluableStats([rollup({ histogramOk: ok, histogramKo: ko })]);
+    expect(out!.histogram!.total).toBe(5);
+    expect(out!.histogram!.percentile(100)).toBe(6000);
+    expect(out!.histogram!.percentile(1)).toBe(10);
+    expect(ok.total).toBe(3);
+    expect(ko.total).toBe(2);
   });
 
   // The mapping is a boundary, not a convenience: a field added to StatRollup

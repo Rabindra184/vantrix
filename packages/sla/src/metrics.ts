@@ -1,4 +1,4 @@
-import { clampPercentile, type Sketch } from '@perfportal/statistics';
+import type { Histogram } from '@perfportal/statistics';
 
 export interface EvaluableStat {
   scope: string;
@@ -14,8 +14,8 @@ export interface EvaluableStat {
   stddevMs: number;
   throughputRps: number;
   percentiles: Record<string, number>;
-  /** The persisted summary sketch, when loaded. */
-  sketch?: Sketch;
+  /** All-responses exact histogram, for percentiles outside the stored set. */
+  histogram?: Histogram;
 }
 
 const SCALARS: Record<string, (s: EvaluableStat) => number> = {
@@ -33,10 +33,16 @@ const PERCENTILE = /^p(\d+(?:\.\d+)?)$/;
 
 /**
  * Percentiles come from the stored JSONB when present, and otherwise from the
- * summary sketch. That fallback is why summary sketches are persisted at all
- * (spec §9.1): a rule may ask for p99.9 while the project stores only
- * [50, 75, 95, 99], and the alternative would be freezing the answerable
- * percentile set at ingest time forever.
+ * row's all-responses histogram, exactly: nearest-rank over the observed 1 ms
+ * bins, at full precision (spec §2). That fallback is why the histograms are
+ * kept and not only the configured columns: a rule may ask for p99.9 while the
+ * project stores only [50, 75, 95, 99], and the alternative would be freezing
+ * the answerable percentile set at ingest time forever.
+ *
+ * Both doors give the same answer, because the stored values are themselves
+ * projections of that same merged histogram (`StatRollup.percentiles`). And a
+ * nearest-rank answer is an OBSERVED value, so unlike the sketch estimate it
+ * replaced it needs no clamp to stay inside the row's own min and max.
  */
 export function resolveMetric(stat: EvaluableStat, metric: string): number | null {
   const scalar = SCALARS[metric];
@@ -49,13 +55,14 @@ export function resolveMetric(stat: EvaluableStat, metric: string): number | nul
   if (stored !== undefined) return stored;
 
   const p = Number(m[1]);
+  // The pattern admits any number (`p150`), and `nearestRankIndex` THROWS
+  // outside [0, 100] — a stored rule would take the whole evaluation down. An
+  // unanswerable rank is unresolvable: null, which `evaluateRules` records as
+  // `not_applicable`. The bound is strict at both ends to match
+  // `isResolvableSlaMetric` in contracts (which pins this text): `p0` and
+  // `p100` are the min and the max, and have their own scalar names.
   if (!(p > 0 && p < 100)) return null;
-  if (!stat.sketch || stat.sketch.count === 0) return null;
-  // THE SECOND DOOR ONTO THE SAME QUESTION, and it has to give the same answer as
-  // the stored column above. A gate on a percentile the project does not store
-  // never reads `stat.percentiles` at all, so a clamp applied only where those are
-  // projected would leave this path judging a value the product refuses to display.
-  // Clamped against the stat's own EXACT extremes, not the sketch's — after a
-  // reload the sketch's are bucket-approximate (see `clampPercentile`).
-  return clampPercentile(stat.sketch.quantile(p / 100), stat);
+  // `undefined` for an empty histogram or a legacy overflow bin hiding the
+  // rank — nothing measured, never a guessed extreme.
+  return stat.histogram?.percentile(p) ?? null;
 }
