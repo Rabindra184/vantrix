@@ -1,12 +1,13 @@
 import type { EngineResult } from '@perfportal/statistics';
 import { HISTOGRAM_KIND, bucketLatency } from '@perfportal/statistics';
 import type pg from 'pg';
+import { partitionDay } from './partition-day.js';
 
 export interface MetricContext {
   runId: string;
   orgId: string;
   projectId: string;
-  /** The partition key. Must match run.started_on exactly. */
+  /** The partition key, as UTC midnight of run.started_on (bound as `partitionDay`). */
   runStartedOn: Date;
 }
 
@@ -46,6 +47,9 @@ export class MetricWriter {
    * throughput requirement that is out of scope for this slice.
    */
   async persist(client: pg.PoolClient, ctx: MetricContext, result: EngineResult): Promise<void> {
+    // The UTC day as text, never the Date: see `partitionDay` for the day a
+    // host west of UTC lost.
+    const day = partitionDay(ctx.runStartedOn);
     await insertBatched(
       client,
       'run_stat',
@@ -83,7 +87,7 @@ export class MetricWriter {
         // A bucket carries no sketch; its exact histograms are persisted below.
         const lat = bucketLatency(b);
         bucketRows.push([
-          ctx.runStartedOn, ctx.runId, ctx.orgId, ctx.projectId,
+          day, ctx.runId, ctx.orgId, ctx.projectId,
           entry.scope, entry.name, entry.family,
           b.startOffsetMs,
           b.startedCount, b.endedCount, b.okCount, b.koCount,
@@ -120,7 +124,7 @@ export class MetricWriter {
     for (const entry of result.users) {
       for (const b of entry.buckets) {
         userRows.push([
-          ctx.runStartedOn, ctx.runId, ctx.orgId, ctx.projectId,
+          day, ctx.runId, ctx.orgId, ctx.projectId,
           entry.scenario, b.startOffsetMs, b.started, b.ended, b.maxConcurrent,
         ]);
       }
@@ -157,7 +161,7 @@ export class MetricWriter {
         'start_offset_ms', 'message', 'is_other', 'count', 'bucket_width_ms',
       ],
       result.errorSeries.rows.map((r) => [
-        ctx.runStartedOn, ctx.runId, ctx.orgId, ctx.projectId,
+        day, ctx.runId, ctx.orgId, ctx.projectId,
         r.startOffsetMs,
         // The folded remainder is carried by the COLUMN PAIR, not by a message
         // value a real error could also have. `('other', false)` and
@@ -179,15 +183,17 @@ export class MetricWriter {
    * prunes to one partition. The six metric tables carry no foreign key to
    * run, so nothing else removes these rows.
    *
-   * `runStartedOn` is bound as the same Date `persist` binds, never as a
-   * formatted day: node-postgres serializes a Date one way, so a row this
-   * writer put on a day is found on that day.
+   * `runStartedOn` is bound as the same UTC day `persist` binds
+   * (`partitionDay`), never as the Date itself: node-postgres renders a Date
+   * in the process's local zone, and west of UTC that is the day before — the
+   * DELETE then missed the rows on the right day.
    */
   async deleteForRun(client: pg.PoolClient, ctx: { runId: string; runStartedOn: Date }): Promise<void> {
+    const day = partitionDay(ctx.runStartedOn);
     for (const table of ['run_series_bucket', 'run_user_bucket', 'run_error_bucket']) {
-      await client.query(`DELETE FROM "${table}" WHERE run_started_on = $2 AND run_id = $1`, [
+      await client.query(`DELETE FROM "${table}" WHERE run_started_on = $2::date AND run_id = $1`, [
         ctx.runId,
-        ctx.runStartedOn,
+        day,
       ]);
     }
     for (const table of ['run_stat', 'run_error', 'run_assertion']) {

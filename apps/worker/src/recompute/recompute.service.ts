@@ -94,6 +94,16 @@ export class RecomputeService {
       );
       if (!rows[0]?.got) return 'locked';
 
+      // A LOCK SESSION LOST MID-RECOMPUTE IS SAFE. The lock lives in this
+      // session, so if its connection dies another worker can take it and
+      // recompute the same run beside this one. Both write in one
+      // transaction each, and every row they insert carries a unique key
+      // (run_stat's (run_id, scope, name, family), each bucket table's
+      // primary key): a second writer whose transaction overlaps the first
+      // meets the first's rows and rolls back, and one that starts after the
+      // first committed finds the run already exact. Either way the run ends
+      // with one engine's figures, never two.
+
       try {
         return await this.#recomputeHoldingLock(runId);
       } finally {
@@ -124,10 +134,19 @@ export class RecomputeService {
     const recompute = new RecomputeRepository(this.pool);
     if ((await recompute.candidates({ runId }, 1)).length === 0) return 'already_exact';
 
+    // ═══ THE LARGER OF THE PROJECT'S LIMIT AND THE WORKER'S ═══
+    //
+    // The run was ingested under the limit in force then. A project setting
+    // LOWERED since would refuse an archive that parsed perfectly, and a size
+    // refusal is about this deployment's settings, not about the log — so the
+    // recompute opens with whichever is larger. A refusal even under that is
+    // rethrown (`sourceFailure`), never recorded: raising the limit fixes it.
     const project = await new ProjectRepository(this.prisma).byId(run.projectId);
-    const maxTotalBytes =
-      (project?.settings.maxDecompressedBundleBytes as number | undefined) ??
-      this.config.maxDecompressedBundleBytes;
+    const projectLimit = project?.settings.maxDecompressedBundleBytes;
+    const maxTotalBytes = Math.max(
+      typeof projectLimit === 'number' && Number.isFinite(projectLimit) ? projectLimit : 0,
+      this.config.maxDecompressedBundleBytes,
+    );
 
     let source: BundleSource;
     try {
@@ -259,8 +278,9 @@ export class RecomputeService {
  * Only two kinds of error are facts about the run: `RawLogMissingError`
  * (there is no log, and never will be) and an `IngestError` from verifying or
  * opening the bytes — `BUNDLE_CHECKSUM_MISMATCH`, or an archive refused as
- * not an archive or too large, which is the log failing to parse. Anything
- * else is the object store failing to answer, and is NOT keyed on
+ * not an archive, which is the log failing to parse. `BUNDLE_TOO_LARGE` is
+ * NOT one of them: it is the deployment's limit speaking, and is rethrown.
+ * Anything else is the object store failing to answer, and is NOT keyed on
  * `isTransient`: the AWS SDK reports a socket timeout as a bare
  * `name: 'TimeoutError'` with no code, which that function does not
  * recognise, and recording it would retire a perfectly good run for good.
@@ -268,7 +288,12 @@ export class RecomputeService {
 function sourceFailure(err: unknown): RecomputeError | null {
   if (err instanceof RawLogMissingError) return 'raw_log_missing';
   if (err instanceof Error && err.name === 'IngestError') {
-    return (err as { code?: unknown }).code === 'BUNDLE_CHECKSUM_MISMATCH' ? 'checksum_mismatch' : 'parse_failed';
+    const code = (err as { code?: unknown }).code;
+    // A size refusal is a fact about the configured limit, not the log: the
+    // same bytes open once an operator raises it. Recording it would retire
+    // the run for good over a setting.
+    if (code === 'BUNDLE_TOO_LARGE') return null;
+    return code === 'BUNDLE_CHECKSUM_MISMATCH' ? 'checksum_mismatch' : 'parse_failed';
   }
   return null;
 }

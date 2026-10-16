@@ -338,7 +338,7 @@ describe('GET /v1/admin/recompute', () => {
     expect(RecomputeProgressSchema.parse(res.body)).toEqual({ total: 4, remaining: 2, failed: 1 });
   });
 
-  it('refuses a session that is not an admin’s 403 ADMIN_REQUIRED', async () => {
+  it('refuses a non-admin session with 403 ADMIN_REQUIRED', async () => {
     ctx = await createTestApp();
     const manager = await signInAsProjectMember(ctx, email('manager'), [{ projectId: ctx.projectId, role: 'manager' }]);
     const res = await api('get', '/v1/admin/recompute', manager.cookie);

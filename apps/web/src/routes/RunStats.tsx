@@ -214,7 +214,15 @@ export default function RunStats({
              nothing on an exact run's, and nothing on the other three tiles —
              a count, a rate and a peak are not estimated however the
              percentiles were taken. */
-          value={<Approx exact={exact}>{percentileValue(run, 'p95')}</Approx>}
+          value={
+            /* Only a VALUE is an estimate: a dash is no measurement, and "≈ —"
+               would claim one. Same test `percentileUnit` uses for the unit. */
+            percentileUnit(run, 'p95') === undefined ? (
+              percentileValue(run, 'p95')
+            ) : (
+              <Approx exact={exact}>{percentileValue(run, 'p95')}</Approx>
+            )
+          }
           unit={percentileUnit(run, 'p95')}
           tone={slaTone(assertions, 'p95')}
           info={exact ? undefined : <InfoTip label="About p95">{P95_INFO}</InfoTip>}

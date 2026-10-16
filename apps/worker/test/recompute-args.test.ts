@@ -1,10 +1,24 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Queue } from 'bullmq';
 import type { RecomputeRepository } from '@perfportal/persistence';
-import { parseRecomputeArgs } from '../src/recompute/recompute-args.js';
+import { parseRecomputeArgs, RECOMPUTE_USAGE, recomputeLine } from '../src/recompute/recompute-args.js';
 import { createRecomputeScan } from '../src/recompute/recompute-queue.js';
 
 const RUN = '0b9c8f4e-2d3a-4c1b-9e7f-1a2b3c4d5e6f';
+
+describe("the CLI's words", () => {
+  // The run lock makes running beside the worker safe; the usage, the script
+  // and DEPLOYMENT.md all have to say so, and none may tell an operator to
+  // stop the worker first.
+  it('says running beside the worker is safe, and nothing about stopping it', () => {
+    expect(RECOMPUTE_USAGE).toMatch(/beside the worker is safe/);
+    expect(RECOMPUTE_USAGE).not.toMatch(/stopped/i);
+  });
+
+  it('prints each run as "<id>: <outcome>"', () => {
+    expect(recomputeLine(RUN, 'checksum_mismatch')).toBe(`${RUN}: checksum_mismatch`);
+  });
+});
 
 describe('parseRecomputeArgs', () => {
   it('reads --project', () => {

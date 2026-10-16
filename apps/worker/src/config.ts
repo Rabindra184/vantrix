@@ -170,7 +170,11 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv = process.env): WorkerCo
     // `=== 'false'`, not truthiness -- see the field's own doc comment.
     recomputeEnabled: env.RECOMPUTE_ENABLED !== 'false',
     // numberOr: a NaN interval is setInterval's effectively-zero delay, which
-    // would rescan the database continuously.
-    recomputeScanIntervalMs: numberOr(env.RECOMPUTE_SCAN_INTERVAL_MS, 600_000),
+    // would rescan the database continuously. And blank is unset: compose
+    // passes `${PERFPORTAL_RECOMPUTE_SCAN_INTERVAL_MS:-}`, an EMPTY string
+    // when the operator set nothing, and Number('') is 0 -- the same
+    // continuous rescan by another road. (Not changed in numberOr itself:
+    // LIVE_TICK_MS has a case pinning '' to its floor.)
+    recomputeScanIntervalMs: numberOr(env.RECOMPUTE_SCAN_INTERVAL_MS?.trim() || undefined, 600_000),
   };
 }

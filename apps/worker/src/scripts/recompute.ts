@@ -3,10 +3,10 @@
  * statistics -- in this process, one at a time, printing each.
  *
  * It does NOT go through the `recompute` queue. It is what an operator runs
- * with the worker stopped (or with `RECOMPUTE_ENABLED=false`), to finish the
- * backlog now rather than behind ingest. Running it beside a worker is safe --
- * every recompute takes the run's ingest lock, and a run somebody else holds
- * is reported `locked` and left for the worker -- just not faster.
+ * to finish the backlog now rather than behind ingest -- beside a running
+ * worker or with `RECOMPUTE_ENABLED=false`. Running it beside a worker is
+ * safe: every recompute takes the run's ingest lock, and a run somebody else
+ * holds is reported `locked` and left for the worker.
  *
  * Usage: see `RECOMPUTE_USAGE`, printed on any bad argument.
  */
@@ -19,7 +19,12 @@ import {
 } from '@perfportal/persistence';
 import { BlobStore } from '@perfportal/storage';
 import { loadWorkerConfig } from '../config.js';
-import { parseRecomputeArgs, RECOMPUTE_USAGE, type RecomputeArgs } from '../recompute/recompute-args.js';
+import {
+  parseRecomputeArgs,
+  RECOMPUTE_USAGE,
+  recomputeLine,
+  type RecomputeArgs,
+} from '../recompute/recompute-args.js';
 import { RecomputeService, type RecomputeOutcome } from '../recompute/recompute.service.js';
 
 const BATCH = 50;
@@ -80,7 +85,7 @@ async function main(): Promise<void> {
         for (const runId of page.ids) {
           const outcome = await service.recompute(runId);
           counts.set(outcome, (counts.get(outcome) ?? 0) + 1);
-          console.log(`Recomputed ${runId} (${outcome})`);
+          console.log(recomputeLine(runId, outcome));
         }
         if (page.next === null) break;
         after = page.next;

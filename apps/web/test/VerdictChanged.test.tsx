@@ -29,12 +29,48 @@ describe('VerdictChanged', () => {
     const trigger = screen.getByRole('button', { name: 'About the verdict change' });
     // Values through the same formatter the gates table uses, so the two
     // surfaces print one number one way — computed, not written down.
-    expect(trigger).toHaveAccessibleDescription(new RegExp(formatSlaMeasured('p95', 812.4, 800)));
-    expect(trigger).toHaveAccessibleDescription(new RegExp(formatSlaMeasured('p95', 790, 800)));
+    // A substring, not a RegExp built from the formatted value: a value
+    // carrying a regex metacharacter (the decimal point among them) would
+    // otherwise match more than it says.
+    const description = trigger.getAttribute('aria-describedby');
+    const text = description === null ? '' : (document.getElementById(description)?.textContent ?? '');
+    expect(text).toContain(formatSlaMeasured('p95', 812.4, 800));
+    expect(text).toContain(formatSlaMeasured('p95', 790, 800));
     expect(trigger).toHaveAccessibleDescription(/failed/);
     expect(trigger).toHaveAccessibleDescription(/passed/);
     // The rule, in the words the rules page uses.
     expect(trigger).toHaveAccessibleDescription(/whole run/i);
+  });
+
+  /**
+   * ═══ A ROW EXISTS FOR EVERY CHANGED OUTCOME, NOT ONLY A CHANGED VERDICT ═══
+   *
+   * One rule can move from passed to failed while another rule already failed
+   * the run, so the run's verdict reads failed before and after. Saying "the
+   * verdict changed" there would be false in the largest text on the page.
+   */
+  it('says an outcome changed, not the verdict, when the run verdict held', () => {
+    render(
+      <VerdictChanged
+        changes={[{ ...CHANGE, oldOutcome: 'passed', newOutcome: 'failed', oldVerdict: 'failed', newVerdict: 'failed' }]}
+      />,
+    );
+    expect(screen.getByTestId('verdict-changed')).toHaveTextContent("An SLA rule's outcome changed with exact statistics");
+    expect(screen.queryByText('Verdict changed by exact statistics')).toBeNull();
+    // The same info either way.
+    expect(screen.getByRole('button', { name: 'About the verdict change' })).toHaveAccessibleDescription(/whole run/i);
+  });
+
+  it('says the verdict changed when any one change moved it, beside one that did not', () => {
+    render(
+      <VerdictChanged
+        changes={[
+          { ...CHANGE, oldVerdict: 'failed', newVerdict: 'failed' },
+          CHANGE,
+        ]}
+      />,
+    );
+    expect(screen.getByTestId('verdict-changed')).toHaveTextContent('Verdict changed by exact statistics');
   });
 
   it('prints no number for a side that had nothing to measure', () => {

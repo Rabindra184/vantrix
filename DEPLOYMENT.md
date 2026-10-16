@@ -352,21 +352,11 @@ many projects and orgs it matched before it starts. Running it beside the
 worker is safe: a run the worker is holding is reported `locked` and left to
 it.
 
-To defer the backlog, set `RECOMPUTE_ENABLED=false` on the worker. The
-compose file does not pass that variable through, so add it with an override
-file and name both files on every command:
-
-```yaml
-# infra/recompute-off.yml
-services:
-  worker:
-    environment:
-      RECOMPUTE_ENABLED: "false"
-```
-
-```bash
-docker compose -f infra/docker-compose.yml -f infra/recompute-off.yml --profile onprem up -d
-```
+To defer the backlog, set `PERFPORTAL_RECOMPUTE_ENABLED=false` in
+`infra/.env` (exactly that word; empty means on) and `up` again; the worker
+then leaves it for `pnpm recompute`. `PERFPORTAL_RECOMPUTE_SCAN_INTERVAL_MS`
+sets how often the worker looks for runs still to recompute (empty means
+every 10 minutes).
 
 A run that cannot be recomputed — its stored log is gone, no longer matches
 the checksum recorded at ingest, or cannot be parsed — keeps its estimated

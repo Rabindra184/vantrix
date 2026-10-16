@@ -124,6 +124,11 @@ export default function GroupDetail() {
      itself uses, so this costs no request of its own. */
   const { detail } = useRunTerminal(runId);
   const run = detail.data?.state === 'ready' ? detail.data.run : null;
+  // No ≈ until the run's identity is known: `/stats` and the run are separate
+  // queries, and a run still loading (or failed to load) is not an estimated
+  // one. Reading `statsMethod` off a missing run answered "estimated" and put
+  // ≈ on every exact run until its identity arrived.
+  const exact = run === null || isExact(run.statsMethod);
 
   useDocumentTitle(name ?? null);
 
@@ -228,7 +233,7 @@ export default function GroupDetail() {
                 <EmptyState title={`This run recorded no ${title.toLowerCase()} for ${name}.`} />
               </div>
             ) : (
-              <ScopedStatistics row={row} rows={data.stats} heading={title} exact={isExact(run?.statsMethod)} />
+              <ScopedStatistics row={row} rows={data.stats} heading={title} exact={exact} />
             );
           }}
         </TableSection>

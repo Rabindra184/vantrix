@@ -212,6 +212,19 @@ describe('RecomputeRepository', () => {
     expect(listed?.recomputedAt).toBeNull();
   });
 
+  /**
+   * An exact-labelled run over legacy rows (selected by format, not label)
+   * that cannot be recomputed keeps its legacy figures for good, so its label
+   * has to say so: marking it failed relabels it estimated, and its
+   * percentiles carry ≈.
+   */
+  it('relabels a run it marks failed as estimated', async () => {
+    const mislabelled = await seedRunWithStatRow({ statsMethod: 'exact-v1', sketch: true, histogramKind: 'sparse-ms-v1' });
+    await new RecomputeRepository(pool).markFailed(mislabelled, 'parse_failed');
+    const { rows } = await pool.query<{ stats_method: string }>(`SELECT stats_method FROM run WHERE id = $1`, [mislabelled]);
+    expect(rows).toEqual([{ stats_method: 'estimated' }]);
+  });
+
   it('refuses a recompute error outside the three it knows', async () => {
     const run = await seedRunWithStatRow({ statsMethod: 'estimated' });
     await expect(

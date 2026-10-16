@@ -8,6 +8,7 @@ import { Readable } from 'node:stream';
 import {
   createPool,
   createPrisma,
+  MetricReader,
   MetricWriter,
   RecomputeRepository,
 } from '@perfportal/persistence';
@@ -386,6 +387,35 @@ describe('RecomputeService', () => {
     expect(run.stats_method).toBe('estimated');
   });
 
+  /**
+   * ═══ A LIMIT LOWERED SINCE INGEST IS NOT A FACT ABOUT THE LOG ═══
+   *
+   * `maxDecompressedBundleBytes` is a project setting a person can lower after
+   * the run was ingested under the old one. Opening with the project's value
+   * alone would refuse an archive that parsed perfectly, and retire the run as
+   * parse_failed for good. The recompute opens with whichever is larger, the
+   * project's setting or the worker's own.
+   */
+  it('recomputes an archive a project limit lowered after ingest would now refuse', async () => {
+    const { runId, projectId } = await legacyRun();
+    await prisma.project.update({ where: { id: projectId }, data: { settings: { maxDecompressedBundleBytes: 10 } } });
+
+    expect(await service().recompute(runId)).toBe('recomputed');
+    expect((await runRow(runId)).recompute_error).toBeNull();
+  });
+
+  it('rethrows a size refusal instead of recording it, so the run stays selectable', async () => {
+    const { runId } = await legacyRun();
+    const tight = new RecomputeService({ ...config, maxDecompressedBundleBytes: 10 }, prisma, pool, blobs);
+
+    await expect(tight.recompute(runId)).rejects.toMatchObject({ name: 'IngestError', code: 'BUNDLE_TOO_LARGE' });
+
+    const run = await runRow(runId);
+    expect(run.recompute_error).toBeNull();
+    expect(run.stats_method).toBe('estimated');
+    expect(await new RecomputeRepository(pool).candidates({ runId }, 1)).toEqual([runId]);
+  });
+
   it('rethrows an object-store failure instead of recording it, so the run stays selectable', async () => {
     const { runId } = await legacyRun();
     // The shape the AWS SDK's node http handler gives a socket timeout: a
@@ -454,6 +484,57 @@ describe('RecomputeService', () => {
     await pool.query(`UPDATE run SET status = 'parsing' WHERE id = $1`, [runId]);
     expect(await service().recompute(runId)).toBe('not_eligible');
     expect((await runRow(runId)).stats_method).toBe('estimated');
+  });
+
+  /**
+   * ═══ THE PARTITION DAY IS THE RUN'S UTC DATE, WHATEVER ZONE THE WORKER RUNS IN ═══
+   *
+   * `run_started_on` is the run's UTC calendar date (Prisma writes
+   * `started_on` that way). node-postgres renders a JS Date parameter in the
+   * PROCESS's zone, so a worker west of UTC bound 2026-08-07T00:00Z as
+   * 2026-08-06: the recompute's DELETE missed the legacy buckets on the 7th and
+   * its INSERT wrote new ones on the 6th — two engines' rows for one run, and
+   * the run labelled exact. The legacy rows are written here in this
+   * process's own zone first, and the recompute runs in New York.
+   */
+  it('keeps every bucket row on the run\'s UTC date when the worker runs west of UTC', async () => {
+    const { runId, orgId, projectId } = await legacyRun();
+    const bucketDays = async (): Promise<Record<string, number>> => {
+      const out: Record<string, number> = {};
+      for (const t of ['run_series_bucket', 'run_user_bucket', 'run_error_bucket']) {
+        const { rows } = await pool.query<{ day: string; n: string }>(
+          `SELECT run_started_on::text AS day, count(*) AS n FROM "${t}" WHERE run_id = $1 GROUP BY 1`,
+          [runId],
+        );
+        for (const r of rows) out[`${t} ${r.day}`] = Number(r.n);
+      }
+      return out;
+    };
+    const before = await bucketDays();
+    expect(Object.keys(before).length).toBeGreaterThan(0);
+    expect(Object.keys(before).every((k) => k.endsWith(' 2026-08-07'))).toBe(true);
+
+    const previous = process.env.TZ;
+    process.env.TZ = 'America/New_York';
+    try {
+      // The flip has to have taken, or this case passes on any host.
+      expect(new Date('2026-08-07T00:00:00Z').getHours()).not.toBe(0);
+
+      expect(await service().recompute(runId)).toBe('recomputed');
+
+      // Same row counts, every one on the 7th, none on the 6th.
+      expect(await bucketDays()).toEqual(before);
+
+      // And a reader in the same zone finds them, through the same binding.
+      const run = await prisma.run.findUniqueOrThrow({ where: { id: runId } });
+      const series = await new MetricReader(pool).series({ orgId, projectId }, runId, run.startedOn, {
+        scope: 'run', name: '', family: 'response_time',
+      });
+      expect(series.length).toBeGreaterThan(0);
+    } finally {
+      if (previous === undefined) delete process.env.TZ;
+      else process.env.TZ = previous;
+    }
   });
 
   it('returns gone for a run that no longer exists', async () => {

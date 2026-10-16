@@ -11,7 +11,8 @@ export const RECOMPUTE_USAGE = [
   'Usage: pnpm recompute [--project <slug>] [--run <run id>]',
   '',
   'Recomputes, exactly, every finished run that still carries estimated statistics.',
-  'Run it with the worker STOPPED: it does not go through the queue.',
+  'It does not go through the queue. Running it beside the worker is safe: each run',
+  'is recomputed under its own lock, and a run the worker holds is left to it (locked).',
   '',
   '  --project <slug>  only runs of projects with this slug -- in EVERY org on this',
   '                    install, since slugs are unique per org only',
@@ -55,4 +56,13 @@ export function parseRecomputeArgs(argv: string[]): RecomputeArgs {
     }
   }
   return out;
+}
+
+/**
+ * One line per run the CLI touched: "<run id>: <outcome>". Not "Recomputed
+ * <id> (checksum_mismatch)" -- a run that could not be recomputed was not
+ * recomputed, and a line that says so first misreads in a scrolled terminal.
+ */
+export function recomputeLine(runId: string, outcome: string): string {
+  return `${runId}: ${outcome}`;
 }

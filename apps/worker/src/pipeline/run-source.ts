@@ -27,10 +27,12 @@ export interface RunSourceDeps {
 }
 
 /**
- * There is no stored log to read for this run, and none ever will be: either
- * it never stored one (`bundleSha256 === ''` — a live run closed with no
- * bytes, or a stream abandoned before a whole record arrived), or the object
- * its row names is no longer in the bucket.
+ * There is no VERIFIED stored log to read for this run, and none ever will
+ * be: either no checksum was ever recorded for one (`bundleSha256 === ''` — a
+ * live run closed with no bytes, a stream abandoned before a whole record
+ * arrived, or a sweeper that stored the object and crashed before writing its
+ * checksum, so the bytes may be there and nothing vouches for them), or the
+ * object its row names is no longer in the bucket.
  *
  * Deliberately NOT an `IngestError`. A recompute reads it as "skip this run";
  * the ingest pipeline must not treat a missing log any differently from how
@@ -43,7 +45,7 @@ export class RawLogMissingError extends Error {
   ) {
     super(
       reason === 'never_stored'
-        ? `run stored no log (bundleSha256 is empty; key ${bundleKey})`
+        ? `run has no verified log (bundleSha256 is empty; key ${bundleKey})`
         : `the stored log ${bundleKey} is no longer in the object store`,
     );
     this.name = 'RawLogMissingError';

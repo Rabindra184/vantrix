@@ -151,9 +151,17 @@ export class RecomputeRepository {
     return { total: Number(row.total), remaining: Number(row.remaining), failed: Number(row.failed) };
   }
 
-  /** Takes the run out of every later selection. */
+  /**
+   * Takes the run out of every later selection, and labels it estimated in the
+   * same statement. A run never recomputed keeps its legacy figures for good,
+   * so its label has to say so — an exact-labelled run selected by its legacy
+   * rows would otherwise go on reading as exact, with no ≈ anywhere.
+   */
   async markFailed(runId: string, reason: RecomputeError): Promise<void> {
-    await this.pool.query(`UPDATE run SET recompute_error = $2 WHERE id = $1::uuid`, [runId, reason]);
+    await this.pool.query(
+      `UPDATE run SET recompute_error = $2, stats_method = 'estimated' WHERE id = $1::uuid`,
+      [runId, reason],
+    );
   }
 
   /** In the order they were recorded. */

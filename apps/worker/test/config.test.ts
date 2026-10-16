@@ -119,5 +119,17 @@ describe('loadWorkerConfig', () => {
         loadWorkerConfig({ ...BASE_ENV, RECOMPUTE_SCAN_INTERVAL_MS: 'often' }).recomputeScanIntervalMs,
       ).toBe(600_000);
     });
+
+    /**
+     * Compose passes both as `${PERFPORTAL_...:-}`, so an operator who sets
+     * neither hands the worker EMPTY STRINGS, not absent variables. Empty has
+     * to mean the default: `Number('')` is 0, and a 0 ms interval rescans the
+     * database continuously.
+     */
+    it('reads an empty string, as compose passes an unset variable, as the default', () => {
+      const config = loadWorkerConfig({ ...BASE_ENV, RECOMPUTE_ENABLED: '', RECOMPUTE_SCAN_INTERVAL_MS: '' });
+      expect(config.recomputeEnabled).toBe(true);
+      expect(config.recomputeScanIntervalMs).toBe(600_000);
+    });
   });
 });

@@ -1,6 +1,7 @@
 import { Histogram, Sketch } from '@perfportal/statistics';
 import type pg from 'pg';
 import type { ProjectScope } from '../repositories/tenant.js';
+import { partitionDay } from './partition-day.js';
 import { TRENDS_SQL, type StoredTrendRun } from './trends.js';
 
 export interface StoredStat {
@@ -358,7 +359,7 @@ export class MetricReader {
   ): Promise<StoredBucket[]> {
     const { rows } = await this.pool.query(
       SERIES_SQL,
-      [runStartedOn, runId, scope.orgId, scope.projectId, sel.scope, sel.name, sel.family],
+      [partitionDay(runStartedOn), runId, scope.orgId, scope.projectId, sel.scope, sel.name, sel.family],
     );
     return rows.map((r) => ({
       startOffsetMs: r.start_offset_ms,
@@ -386,7 +387,7 @@ export class MetricReader {
   ): Promise<boolean> {
     const { rows } = await this.pool.query(
       HAS_GROUP_SERIES_SQL,
-      [runStartedOn, runId, scope.orgId, scope.projectId],
+      [partitionDay(runStartedOn), runId, scope.orgId, scope.projectId],
     );
     return rows[0]?.present === true;
   }
@@ -415,7 +416,7 @@ export class MetricReader {
   async users(scope: ProjectScope, runId: string, runStartedOn: Date): Promise<StoredUserBucket[]> {
     const { rows } = await this.pool.query(
       USER_SERIES_SQL,
-      [runStartedOn, runId, scope.orgId, scope.projectId],
+      [partitionDay(runStartedOn), runId, scope.orgId, scope.projectId],
     );
     return rows.map((r) => ({
       scenario: r.scenario,
@@ -444,7 +445,7 @@ export class MetricReader {
     const { rows } = await this.pool.query(
       WINDOWED_BUCKETS_SQL,
       [
-        runStartedOn, runId, scope.orgId, scope.projectId, sel.scope, sel.family,
+        partitionDay(runStartedOn), runId, scope.orgId, scope.projectId, sel.scope, sel.family,
         // Clamped HERE rather than trusting every caller: this is the layer
         // that knows the column is int4, and an unclamped upper bound throws
         // instead of returning everything.
@@ -466,7 +467,7 @@ export class MetricReader {
   async isWindowable(scope: ProjectScope, runId: string, runStartedOn: Date): Promise<boolean> {
     const { rows } = await this.pool.query(
       IS_WINDOWABLE_SQL,
-      [runStartedOn, runId, scope.orgId, scope.projectId],
+      [partitionDay(runStartedOn), runId, scope.orgId, scope.projectId],
     );
     return rows[0]?.present === true;
   }
@@ -485,7 +486,7 @@ export class MetricReader {
   ): Promise<StoredErrorBucket[]> {
     const { rows } = await this.pool.query(
       ERROR_SERIES_SQL,
-      [runStartedOn, runId, scope.orgId, scope.projectId],
+      [partitionDay(runStartedOn), runId, scope.orgId, scope.projectId],
     );
     return rows.map((r) => ({
       startOffsetMs: r.start_offset_ms,

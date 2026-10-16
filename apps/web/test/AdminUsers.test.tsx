@@ -227,7 +227,9 @@ describe('AdminUsers — the exact-statistics backfill', () => {
     stubApi({ read: (url) => (url === '/v1/admin/recompute' ? Promise.resolve(json(200, { total: 40, remaining: 10, failed: 0 })) : undefined) });
     renderPage();
     const status = await screen.findByText(/Recomputing exact statistics: 30 of 40 runs/);
-    expect(status.closest('[role="status"]')).not.toBeNull();
+    // The line itself, and not a live region: it changes every ten seconds.
+    expect(status.closest('[data-testid="recompute-progress"]')).not.toBeNull();
+    expect(status.closest('[role="status"]')).toBeNull();
     const nav = screen.getByRole('navigation', { name: 'Administration sections' });
     // Under the tabs, above the page: the nav comes first in document order.
     expect(nav.compareDocumentPosition(status) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
