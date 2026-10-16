@@ -128,9 +128,9 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **241 files / 3903 tests**, it
+`nvm use` first, and if a run reports fewer than **242 files / 3918 tests**, it
 did not run everything — nor did an integration run reporting fewer than
-**219 files / 3376 tests**, an e2e run fewer than **204**, or a
+**220 files / 3391 tests**, an e2e run fewer than **204**, or a
 `pnpm test:e2e:cross` run fewer than **612** (204 on each of three engines).
 (Update those numbers when a sub-project adds suites, or the next reader
 calibrates against a stale floor and a silently-skipped run looks like a
@@ -171,7 +171,9 @@ so a five-minute group duration is answered exactly rather than refused.
 Percentiles are nearest rank (spec §2: the value at 1-based position
 ⌈p/100 × n⌉) through ONE function, `nearestRankIndex`
 (`packages/statistics/src/rank.ts`); standard deviation is population
-(√(Σx²/n − mean²)), as Gatling's is. Rollups, buckets, the live fold, the
+in two passes — the mean first, then `Σ count·(value − mean)²` over the
+sorted bins, ÷ n — as Gatling's is (see the final fix wave below for why not
+√(Σx²/n − mean²)). Rollups, buckets, the live fold, the
 Gatling-assertion evaluator, SLA rules (`resolveMetric` reads the merged
 histogram) and `/stats` and trends (one `storedPercentiles`) all take their
 figures from the merged OK+KO histogram. New `run_stat` rows write no sketch:
@@ -266,7 +268,7 @@ coverage, not a statistics defect.
   T3  resolveMetric's rank guard removed                    the p150 case alone (RangeError)
       stats without the OK+KO merge                         the merge case alone
   T4  the writer writing sketch bytes again                 3 failed, the new-rows case among them
-      the clamp removed from storedPercentiles              the guard, naming stored-percentiles.ts:25
+      the clamp removed from storedPercentiles              the guard, naming storedPercentiles' sketch.quantile
   T5  lifecycleOf hard-coding 'exact-v1'                    the stored-'estimated' case alone
       /stats on the old controller, a reconfigured set      expected [p50..p99] to equal [p90, p99.9]
   T6  exact hard-coded true / false on both pages           3 / 2 failed
@@ -298,6 +300,110 @@ no `dist/main.js` running:
     204 tests using 2 workers` and **204 passed, exit 0**, no flaky case
     (load 6.5 at start). `--list` collects **204**, and **612** with
     `PERFPORTAL_E2E_BROWSERS=all`.
+
+**THE FINAL FIX WAVE** (after the whole-branch review) added ONE unit file,
+`packages/core/test/engine-options.test.ts` (3), and 12 cases elsewhere
+(`histogram` 6 net — `sumOfSquares`' three replaced by `variance`' four,
+`percentiles`' four and the size bound — `rollup` 5, `window` 1):
+**241 / 3903 to 242 / 3918**. Integration gains all fifteen, every file being
+`.ts`: **219 / 3376 to 220 / 3391**, PT-RQ-09 rewritten in place. **e2e stays
+204.** What the review found, each a defect a green gate could not show:
+
+  - **PT-RQ-09 COULD NOT PASS ON ANY NEW RUN.** It is re-pointed at its
+    surviving claim — the scatter's y for a coalesced bucket EQUALS that
+    bucket's exact p95, an integer — with the x pin kept and a guard that
+    the coalesce happened. `Math.trunc` stays in `parity.controller.ts` as
+    Gatling's rule; its comment says it is a no-op on exact rows and only
+    ever moved a legacy sketch value.
+  - **A PERCENTILE RE-SORTED EVERY KEY, PER RANK.** `entries()` copied and
+    sorted the keys on each call, `percentile` walked it once per rank and
+    `sumOfSquares` again, and `toEvaluableStats` and every percentile Gatling
+    assertion merged afresh. The histogram keeps its sorted keys until a
+    write ADDS a key, `percentiles(set)` answers a whole set in one walk
+    (`percentile` delegates), and `mergedHistogram` is memoised on both
+    inputs' write counters (`Histogram#version`) and FROZEN — a shared merge
+    that someone wrote to would change every reader's answer, so a write
+    throws. `bucketLatency` keeps a fresh merge on purpose: a memo keyed on
+    each of a live run's buckets would hold a second copy of every bucket
+    for the run's life. Measured, one `finish` plus the SLA mapping over 1M
+    observations: **30k distinct values 14.3 + 3.9 ms to 5.6 + 0.7 ms; 300k
+    distinct 186.8 + 51 ms to 73.6 + 8 ms**, percentiles byte-identical.
+  - **THE ONE-PASS STANDARD DEVIATION CANCELLED.** `√(Σx²/n − mean²)` on
+    200,000 durations in 300000–300019 ms measured **2.5e-7 relative
+    error** against a two-pass oracle (the PR 3 verifier allows 1e-9); the
+    two-pass `Histogram#variance` measures **3.0e-13**. It walks the SORTED
+    keys, so the answer depends only on the bins: batch, window and live
+    agree to the bit (`window.test.ts` asserts `toBe`). **AN EVEN SPREAD
+    CANNOT FAIL THIS**: `300000 + (i * 7) % 20`, equal counts per value,
+    measured 0 error on the one-pass form, so the first draft of the case
+    passed against the defect — the fixture is uneven now.
+  - **THE SPEC'S SIZE-BOUND TEST WAS MISSING.** 1M fractional values over
+    0–30,000 ms: ≤ 30,001 entries and ≤ 64 KiB serialized (measured 30,001 and
+    **60,018 bytes**, two bytes an entry); 0–300,000 ms measured 300,001 and
+    600,019. A soak-shaped run (4 h, 2M requests, 10 endpoints): run row
+    **5,063 + 2,307 bytes** (OK + KO), busiest request row 3,855, a run-series
+    bucket **834 bytes median / 934 max** at 16 s width over 901 buckets
+    (751 KB a series). **ITS FIRST RED-VERIFY SURVIVED**: the float LCG
+    `(seed * 1103515245 + 12345) & 0x7fffffff` loses bits above 2^53 and
+    cycles after ~14,000 values, so a histogram keeping sub-millisecond keys
+    still had 14,000 entries. `Math.imul` fixed the generator.
+  - **ONE BAD PERCENTILE FAILED EVERY INGEST.** `engineOptionsFrom` passed
+    raw `project.settings.percentiles` through, and a value outside
+    [0, 100] throws inside `RollupBuilder.finish`. It keeps finite values in
+    (0, 100) now, omitting the set when none is left. A run opened BEFORE
+    this keeps its frozen set.
+  - Minors: `percentile.ts`' caller paragraph, sketch wording in
+    `compare.ts`, `percentiles.ts` and `run.ts`, the legacy clamp case
+    (its 1..1000 population stayed inside the range with or without the
+    clamp — it uses the 95 × 100 / 5 × 2503 plateau now, raw 2515 against
+    2503), and `DEPLOYMENT.md`'s upgrade order: migrate, API, then worker —
+    an old API answers a 500 on a new run's v2 histograms.
+
+Red-verified, one replacement each, the tree restored from a committed
+checkpoint: sorted keys never invalidated on accept / on merge (the
+later-write case alone, each), ranks walked unsorted (the set case alone),
+one-pass variance back (the three tight-large cases), `Math.round` dropped
+from `accept` (the bound case), absolute keys instead of deltas (the bound
+case and three round trips), the memo ignoring versions (the rewrite case),
+the merge never frozen (the freeze case), the legacy clamp dropped (its case),
+the percentile filter dropped (two cases).
+
+**WHAT WAS RUN** for the wave, on Node v22.19.0, each total predicted first
+(unit 242 / 3918, integration 220 / 3391, e2e 204), against `perfportal_exact`,
+Redis db 12 and e2e port 3730:
+
+  - `pnpm build`, `typecheck` (every `.tsbuildinfo` deleted first) and `lint`
+    exit 0. `lint` first failed on two `.mjs` probes in the SDD directory —
+    eslint lints `.superpowers/`, which git ignores, as recorded above.
+  - `test:unit` **242 / 3918**, exit 0, zero `Errors` lines (load 3.33).
+  - `test:integration` **220 / 3391, exit 0, zero failures** on its third
+    full run (load 3.37 at start, 15.80 at the end). **THE FIRST RAN AGAINST
+    NO DATABASE**: Docker Desktop's daemon restarted at about 09:28, the
+    `furan-*` containers came back on their restart policy and the three
+    `infra-*` ones stayed `Exited (255)`, so the suite met `ioredis`
+    connection errors and two-minute timeouts from its first file. Nothing
+    said so but the errors; `docker ps -a` did. `docker start` on the three
+    brought the data back intact. The second collected 220 / 3391 and failed
+    two cases on P1001 "Can't reach database server", one of them
+    `activity.integration` — the first file after the build, the shape the
+    project-access entry records — at 4,868 free pages; both files passed
+    alone with PT-RQ-09's (52 / 52).
+  - `PERFPORTAL_E2E_PORT=3730 pnpm test:e2e --workers=2` read back `Running
+    204 tests using 2 workers` and **204 passed, exit 0**, no flaky case
+    (load 6.59 at start).
+  - PT-RQ-09 red-verified against the real API: the scatter answering the OK
+    p99 instead of the p95 fails it; `Math.trunc` to `Math.round` passes, as
+    a no-op on integers must.
+  - **The real run again**: the same `BasicSimulation` log through
+    `POST /v1/runs` on this tree's API (:3731) and worker, `statsMethod`
+    `exact-v1`: the three-way script **63 of 63 EQUAL**, and every row's
+    population standard deviation within **5e-16** of a two-pass computation
+    over the raw log (the 1e-9 bar), mean byte-identical. Against the run
+    Task 7 ingested, all 13 rows' percentiles, counts, extremes and means are
+    byte-identical; 12 standard deviations moved in the last bits. Real
+    response times are small enough that the one-pass form was already
+    within 3e-15 here — the cancellation needs large, tight values, which a
+    soak's group durations are.
 
 The ingest-idempotency-p2002-target branch
 (`fix/ingest-idempotency-p2002-target`) added ONE unit file,
