@@ -275,8 +275,12 @@ describe('Histogram#percentiles', () => {
  */
 describe('Histogram size bound', () => {
   it('keeps 1M values spread over 0–30,000 ms within 30,001 entries and 64 KiB', () => {
+    // Math.imul keeps the LCG in 32-bit integers. The float form
+    // `(seed * 1103515245 + 12345) & 0x7fffffff` loses bits above 2^53 and
+    // cycles after ~14,000 values (measured) — which let a histogram that
+    // kept sub-millisecond keys pass this case with 14,000 entries.
     let seed = 7;
-    const rand = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+    const rand = () => { seed = (Math.imul(seed, 1103515245) + 12345) >>> 0; return seed / 2 ** 32; };
     const h = new Histogram();
     for (let i = 0; i < 1_000_000; i++) h.accept(rand() * 30_000);
     expect(h.total).toBe(1_000_000);
