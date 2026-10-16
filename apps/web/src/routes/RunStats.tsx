@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import type { Assertion, RunResponse, StatRow, StatsResponse, TrendRun } from '@perfportal/contracts';
+import { Approx } from '../components/Approx';
 import InfoTip from '../components/InfoTip';
 import StatTile from '../components/StatTile';
 import { comparability, summariseConditions } from './comparability';
@@ -209,7 +210,19 @@ export default function RunStats({
              where `ProjectRules` already writes it out in full, and the `ms`
              unit beside the value is what says this is a time. */
           label="p95"
-          value={percentileValue(run, 'p95')}
+          /* ≈ ON THE VALUE of an estimated run, beside the ⓘ that explains it;
+             nothing on an exact run's, and nothing on the other three tiles —
+             a count, a rate and a peak are not estimated however the
+             percentiles were taken. */
+          value={
+            /* Only a VALUE is an estimate: a dash is no measurement, and "≈ —"
+               would claim one. Same test `percentileUnit` uses for the unit. */
+            percentileUnit(run, 'p95') === undefined ? (
+              percentileValue(run, 'p95')
+            ) : (
+              <Approx exact={exact}>{percentileValue(run, 'p95')}</Approx>
+            )
+          }
           unit={percentileUnit(run, 'p95')}
           tone={slaTone(assertions, 'p95')}
           info={exact ? undefined : <InfoTip label="About p95">{P95_INFO}</InfoTip>}

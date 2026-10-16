@@ -3,6 +3,7 @@ import { clampPercentile } from '@perfportal/statistics';
 import type { Prisma, PrismaClient } from '@prisma/client';
 import type { RunStatus, RunVerdict } from '@perfportal/contracts';
 import { escapeLike } from './like.js';
+import type { RecomputeError } from './recompute.js';
 import { visibilityClause, type ProjectScope, type TenantScope } from './tenant.js';
 import { isUuid } from './uuid.js';
 
@@ -111,6 +112,15 @@ export interface RunRecord {
    * by a writer — so no create path can forget it.
    */
   statsMethod: 'estimated' | 'exact-v1';
+  /**
+   * Why this run's statistics could not be recomputed exactly, or null. Set
+   * by the recompute when a legacy run's raw log is gone, does not match its
+   * recorded checksum, or no longer parses; a run carrying one is never
+   * selected again (see `CANDIDATE_PREDICATE_SQL`).
+   */
+  recomputeError: RecomputeError | null;
+  /** When a recompute last rewrote this run's statistics; null otherwise. */
+  recomputedAt: Date | null;
 }
 
 export interface CreateRunInput {
@@ -190,6 +200,8 @@ interface RunRow {
   error: unknown;
   toolAssertions: unknown;
   statsMethod: string;
+  recomputeError: string | null;
+  recomputedAt: Date | null;
 }
 
 /**
@@ -246,6 +258,10 @@ function toRecord(row: RunRow): RunRecord {
     // The column's CHECK constraint (run_stats_method_check) holds it to these
     // two words, so the narrowing is the database's, not a guess.
     statsMethod: row.statsMethod as RunRecord['statsMethod'],
+    // Narrowed by the column's CHECK constraint (run_recompute_error_check),
+    // the same way statsMethod is above.
+    recomputeError: row.recomputeError as RunRecord['recomputeError'],
+    recomputedAt: row.recomputedAt,
   };
 }
 
@@ -1200,6 +1216,7 @@ export class RunRepository {
         r.ingested_at AS "ingestedAt", r.engine_options AS "engineOptions", r.error,
         r.parsing_started_at AS "parsingStartedAt", r.stream_updated_at AS "streamUpdatedAt",
         r.tool_assertions AS "toolAssertions", r.stats_method AS "statsMethod",
+        r.recompute_error AS "recomputeError", r.recomputed_at AS "recomputedAt",
         r.note, r.note_updated_at AS "noteUpdatedAt", r.note_updated_by AS "noteUpdatedBy",
         nu.name AS "noteAuthorName",
         p.slug AS "projectSlug", p.name AS "projectName",

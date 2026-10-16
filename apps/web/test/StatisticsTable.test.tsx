@@ -115,10 +115,16 @@ const ALL_PATHS = [
   'Search',
 ];
 
-function renderTable(payload: StatsResponse = stats) {
+/**
+ * An EXACT run unless a case says otherwise. Most cases here are about columns,
+ * sorting and filtering, which read each heading's name and text — and an
+ * estimated run's percentile headings carry ≈ ("approximately 95th"). The
+ * cases about the estimate itself pass `{ exact: false }`.
+ */
+function renderTable(payload: StatsResponse = stats, { exact = true }: { exact?: boolean } = {}) {
   return render(
     <MemoryRouter>
-      <StatisticsTable exact={false} stats={payload} runId={RUN_ID} windowSelected={false} />
+      <StatisticsTable exact={exact} stats={payload} runId={RUN_ID} windowSelected={false} />
     </MemoryRouter>,
   );
 }
@@ -978,10 +984,9 @@ describe('StatisticsTable — a displayed percentile is clamped to [min, max]', 
 
   /** And the caption says so — a reader comparing our p99 against another
    *  tool's needs to know it is an estimate, clamped or not. ON AN ESTIMATED
-   *  RUN: `renderTable` passes `exact={false}`, a run processed before exact
-   *  statistics. */
+   *  RUN: a run processed before exact statistics. */
   it('says the percentiles are estimates within 1%, in the disclosure', () => {
-    renderTable();
+    renderTable(stats, { exact: false });
     /* READ OFF THE PAGE, NOT OFF THE `<caption>` (review C06). The claim is
        that the product tells a reader how close these numbers are; it used to
        be checked on the table's accessible NAME, which is where C06 says the
@@ -1016,8 +1021,53 @@ describe('StatisticsTable — a displayed percentile is clamped to [min, max]', 
     // The rest of the methodology is not a claim about estimation and stays.
     expect(info()).toMatch(/never be added together/i);
     cleanup();
-    renderTable();
+    renderTable(stats, { exact: false });
     expect(info()).toMatch(/within 1%/i);
+  });
+});
+
+describe('StatisticsTable — ≈ on an estimated run’s percentile headings', () => {
+  /** Leaf headings by their own label, read off the span that names them. */
+  const leafHeadings = (): Map<string, string> =>
+    new Map(
+      screen
+        .getAllByRole('columnheader')
+        .filter((th) => (th as HTMLTableCellElement).colSpan <= 1)
+        .map((th) => [th.querySelector('button')?.getAttribute('aria-label')?.replace(/^Sort by /, '') ?? '', th.textContent ?? '']),
+    );
+
+  /**
+   * On the HEADING, never on every cell (clean UI): one mark per column says
+   * the whole column is an estimate. The exactly-tracked columns carry none —
+   * a count or an extreme is not estimated however the percentiles were taken.
+   */
+  it('marks every percentile heading of an estimated run and nothing else; an exact run’s none', () => {
+    const percentileLabels = Object.keys(stats.stats[0]!.percentiles).map((key) => `${key.slice(1)}th`);
+    render(
+      <MemoryRouter>
+        <StatisticsTable exact={false} stats={stats} runId={RUN_ID} windowSelected={false} />
+      </MemoryRouter>,
+    );
+    showAllColumns();
+    const estimated = leafHeadings();
+    expect(percentileLabels.length).toBeGreaterThan(0);
+    for (const label of percentileLabels) {
+      expect(estimated.get(label), label).toContain('≈');
+      expect(screen.getByRole('columnheader', { name: `approximately ${label}` })).toBeTruthy();
+    }
+    for (const label of ['Total', 'OK', 'KO', 'Min', 'Max', 'Mean']) {
+      expect(estimated.get(label), label).toBeDefined();
+      expect(estimated.get(label), label).not.toContain('≈');
+    }
+
+    cleanup();
+    render(
+      <MemoryRouter>
+        <StatisticsTable exact stats={stats} runId={RUN_ID} windowSelected={false} />
+      </MemoryRouter>,
+    );
+    showAllColumns();
+    for (const [label, text] of leafHeadings()) expect(text, label).not.toMatch(/≈|approximately/);
   });
 });
 
@@ -1764,7 +1814,8 @@ describe('StatisticsTable — the prose is available rather than present', () =>
   };
 
   it('names the table with one word, without reciting the methodology', () => {
-    renderTable();
+    // An estimated run: the "within 1%" methodology is that run's.
+    renderTable(stats, { exact: false });
     const name = screen.getByRole('table').querySelector('caption')?.textContent ?? '';
     // Concise and useful, which is C06's own acceptance wording — and the word
     // six specs find this table by.

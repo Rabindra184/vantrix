@@ -14,7 +14,7 @@ afterEach(cleanup);
 
 describe('ScopedStatistics', () => {
   it('renders the payload’s own percentile columns, not a hard-coded set', () => {
-    render(<ScopedStatistics row={row} rows={stats.stats} />);
+    render(<ScopedStatistics exact row={row} rows={stats.stats} />);
     // Derived from the payload: a project configured with different
     // percentiles must move this table with it.
     //
@@ -28,13 +28,13 @@ describe('ScopedStatistics', () => {
   });
 
   it('renders counts against their own headings', () => {
-    render(<ScopedStatistics row={row} rows={stats.stats} />);
+    render(<ScopedStatistics exact row={row} rows={stats.stats} />);
     const total = screen.getByTestId('request-stat-count');
     expect(total).toHaveAttribute('data-value', String(row.count));
   });
 
   it('carries the unrounded value beside the rounded display', () => {
-    render(<ScopedStatistics row={row} rows={stats.stats} />);
+    render(<ScopedStatistics exact row={row} rows={stats.stats} />);
     // Rounding is a DISPLAY decision; the payload's value stays assertable.
     const mean = screen.getByTestId('request-stat-meanMs');
     expect(mean).toHaveAttribute('data-value', String(row.meanMs));
@@ -60,7 +60,7 @@ describe('ScopedStatistics — the unit', () => {
     Number(screen.getByRole('columnheader', { name }).getAttribute('colspan'));
 
   it('states milliseconds in a group heading over the time columns', () => {
-    render(<ScopedStatistics row={row} rows={stats.stats} />);
+    render(<ScopedStatistics exact row={row} rows={stats.stats} />);
 
     const leaves = screen.getAllByRole('columnheader').length - 2;
     expect(span('Executions') + span('Response Time (ms)')).toBe(leaves);

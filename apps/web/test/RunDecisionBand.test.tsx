@@ -597,3 +597,35 @@ describe('RunDecisionBand — one row per system, no repeated counts', () => {
     expect(screen.queryByText('Passed')).toBeNull();
   });
 });
+
+/**
+ * A verdict the exact recompute CHANGED is said beside the release gate — the
+ * one place a reader looks to decide ship/no-ship, and so the one place a
+ * verdict that moved under them must be flagged.
+ */
+describe('RunDecisionBand — a verdict changed by exact statistics', () => {
+  const CHANGE: NonNullable<RunIdentity['verdictChanges']>[number] = {
+    rule: { scope: 'run', targetName: null, family: 'response_time', metric: 'p95', comparator: 'lte', threshold: 800 },
+    oldOutcome: 'failed',
+    newOutcome: 'passed',
+    oldValue: 812.4,
+    newValue: 790,
+    oldVerdict: 'failed',
+    newVerdict: 'passed',
+    changedAt: '2026-10-16T09:00:00.000Z',
+  };
+
+  it('says so when the identity carries a change, and not otherwise', () => {
+    renderBand({ identity: { ...RUN, verdictChanges: [CHANGE] } });
+    expect(screen.getByText('Verdict changed by exact statistics')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'About the verdict change' })).toBeInTheDocument();
+    cleanup();
+
+    for (const identity of [{ ...RUN, verdictChanges: [] }, RUN]) {
+      renderBand({ identity });
+      expect(screen.queryByText('Verdict changed by exact statistics')).toBeNull();
+      expect(screen.queryByRole('button', { name: 'About the verdict change' })).toBeNull();
+      cleanup();
+    }
+  });
+});

@@ -353,6 +353,9 @@ export async function respondWithRun(
         // From `lifecycleOf` like the stamps above, so this body and
         // `toResponse` cannot disagree about whether a run is exact.
         statsMethod: lifecycle.statsMethod,
+        // From `lifecycleOf` for the same reason: a run recomputed while a
+        // reader polls it must not lose its changes between the two bodies.
+        verdictChanges: lifecycle.verdictChanges,
         // THE LIVE HALF of the run note, for the reason the lifecycle stamps
         // above give: a note written while a run streams is read through THIS
         // body, and one sent only by toResponse would vanish until it ended.

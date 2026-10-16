@@ -441,3 +441,102 @@ describe('GroupDetail — its charts read the viewer’s clock', () => {
     });
   });
 });
+
+/**
+ * ═══ ≈ FOLLOWS THE RUN'S `statsMethod` HERE TOO ═══
+ *
+ * `ScopedStatistics` marks a percentile heading when it is told the run is
+ * estimated; nothing there proves THIS page derives that from the run's own
+ * identity. A hard-coded `exact` would pass the component's own file
+ * whichever value it held, so the page is rendered both ways.
+ */
+describe('GroupDetail — ≈ on an estimated run', () => {
+  const RUN_ID = '00000000-0000-4000-8000-00000000000b';
+  const URL_FOR = (id: string) => `/runs/${id}/groups/Cart`;
+  const ROUTE = '/runs/:runId/groups/:name';
+
+  function runFor(statsMethod: RunResponse['statsMethod']): RunResponse {
+    return {
+      id: RUN_ID,
+      project: { id: '11111111-1111-4111-8111-111111111111', slug: 'checkout', name: 'Checkout' },
+      status: 'complete',
+      verdict: 'not_evaluated',
+      tool: 'gatling',
+      toolVersion: '3.15.1',
+      simulation: 'example.ParitySimulation',
+      description: null,
+      durationMs: 63161,
+      startedAt: '2026-08-15T12:00:00.000Z',
+      toolStartedAt: '2026-08-15T11:42:09.000Z',
+      assertions: [],
+      statsMethod,
+    };
+  }
+
+  function mount(client: QueryClient) {
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={[URL_FOR(RUN_ID)]}>
+          <Routes>
+            <Route path={ROUTE} element={<GroupDetail />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  }
+
+  function renderFor(statsMethod: RunResponse['statsMethod']) {
+    vi.stubGlobal('fetch', (input: RequestInfo) =>
+      String(input).includes('/stats')
+        ? Promise.resolve(new Response(JSON.stringify(fixture.stats), { status: 200 }))
+        : Promise.resolve(new Response('{}', { status: 500 })),
+    );
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(runQueryKey(RUN_ID), { state: 'ready', run: runFor(statsMethod) });
+    mount(client);
+  }
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  /**
+   * ═══ AN IDENTITY NOT YET READ IS NOT AN ESTIMATED ONE ═══
+   *
+   * `/stats` and the run itself are separate queries, so the table can draw
+   * while the run is still in flight (or has failed to load). Reading
+   * `statsMethod` off a run that is not there yet answered "estimated", and
+   * every exact run showed ≈ until its identity arrived. No mark until it is
+   * known; the mark once it says estimated.
+   */
+  it('draws no ≈ while the run is still loading, and marks it once the run says estimated', async () => {
+    let answer: (r: Response) => void = () => undefined;
+    const pending = new Promise<Response>((resolve) => {
+      answer = resolve;
+    });
+    vi.stubGlobal('fetch', (input: RequestInfo) => {
+      const url = String(input);
+      if (url.includes('/stats')) return Promise.resolve(new Response(JSON.stringify(fixture.stats), { status: 200 }));
+      if (url.endsWith(`/v1/runs/${RUN_ID}`)) return pending;
+      return Promise.resolve(new Response('{}', { status: 500 }));
+    });
+    mount(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+    expect((await screen.findAllByRole('columnheader', { name: '95th' })).length).toBeGreaterThan(0);
+    expect(document.body.textContent).not.toContain('≈');
+
+    answer(new Response(JSON.stringify(runFor('estimated')), { status: 200 }));
+    expect((await screen.findAllByRole('columnheader', { name: 'approximately 95th' })).length).toBeGreaterThan(0);
+  });
+
+  it('marks the 95th heading of an estimated run and not of an exact one', async () => {
+    renderFor('estimated');
+    expect((await screen.findAllByRole('columnheader', { name: 'approximately 95th' })).length).toBeGreaterThan(0);
+    expect(screen.queryAllByRole('columnheader', { name: '95th' })).toEqual([]);
+    cleanup();
+    vi.unstubAllGlobals();
+
+    renderFor('exact-v1');
+    expect((await screen.findAllByRole('columnheader', { name: '95th' })).length).toBeGreaterThan(0);
+    expect(screen.queryAllByRole('columnheader', { name: /approximately/ })).toEqual([]);
+    expect(document.body.textContent).not.toContain('≈');
+  });
+});

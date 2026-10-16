@@ -329,6 +329,40 @@ under a new API writes rows the new API reads correctly, and only that run's
 "exact" label is wrong (it says exact over estimated figures). So never let a
 new worker get ahead of the API.
 
+**Runs from before exact statistics are recomputed by themselves.** After the
+upgrade the worker finds every run that still carries estimated figures and
+recomputes it, exactly, from the log it stored at ingest — one run at a time,
+and only while no uploaded or finished run is waiting to be processed, so it
+never delays new results. It looks for more every ten minutes. A run's
+number, test, note and frozen SLA rules are kept; its statistics and its SLA
+rule values are rewritten. If a rule's outcome changes, the run page says so
+beside the release gate, with the old and the new value.
+
+To finish the backlog now instead, run it in the foreground. It prints each
+run, then a summary:
+
+```bash
+docker compose -f infra/docker-compose.yml --profile onprem run --rm worker pnpm recompute
+docker compose -f infra/docker-compose.yml --profile onprem run --rm worker pnpm recompute --project <slug>
+docker compose -f infra/docker-compose.yml --profile onprem run --rm worker pnpm recompute --run <run id>
+```
+
+`--project` matches the slug in **every org on the install**, and says how
+many projects and orgs it matched before it starts. Running it beside the
+worker is safe: a run the worker is holding is reported `locked` and left to
+it.
+
+To defer the backlog, set `PERFPORTAL_RECOMPUTE_ENABLED=false` in
+`infra/.env` (exactly that word; empty means on) and `up` again; the worker
+then leaves it for `pnpm recompute`. `PERFPORTAL_RECOMPUTE_SCAN_INTERVAL_MS`
+sets how often the worker looks for runs still to recompute (empty means
+every 10 minutes).
+
+A run that cannot be recomputed — its stored log is gone, no longer matches
+the checksum recorded at ingest, or cannot be parsed — keeps its estimated
+figures, and its percentiles are marked **≈**. While runs remain,
+Administration says how many, and how many could not be recomputed.
+
 **An upgrade sends nobody to *Choose a new password*.** The release that adds
 that step adds its flag as `NOT NULL DEFAULT false`, so every account that
 already exists comes through unflagged — an admin still signing in with the

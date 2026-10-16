@@ -10,6 +10,7 @@ import { countAssertions, firstFailedAssertion, type AssertionCounts } from './a
 import { decisionOf, releaseWord, rulesRan, type Decision } from './decision';
 import { runComparePath, runPath } from './paths';
 import { downloadRunSummary, runSummaryJson } from './runExport';
+import { VerdictChanged } from './VerdictChanged';
 
 /**
  * `unevaluated` IS NOT `none`, AND COLLAPSING THEM IS THE BUG `Decision`
@@ -213,6 +214,10 @@ export default function RunDecisionBand({
           <p className="text-[0.75rem] font-medium text-muted">
             Release gate
           </p>
+          {/* Directly under what it qualifies: the verdict above may not be the
+              one this run first carried. `?? []`: an API that predates the
+              field has recorded no change to report. */}
+          <VerdictChanged changes={identity.verdictChanges ?? []} />
         </div>
 
         <div className="flex min-w-0 flex-col justify-center gap-2.5 border-b border-divider p-4 @4xl:border-r @4xl:border-b-0 @4xl:p-5">

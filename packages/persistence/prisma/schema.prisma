@@ -513,11 +513,20 @@ model Run {
   /// column's default is what makes a new run exact: no insert names it.
   /// A CHECK constraint (run_stats_method_check) holds it to those two words.
   statsMethod      String    @default("exact-v1") @map("stats_method")
+  /// Why this run's statistics could NOT be recomputed exactly, or null. A
+  /// CHECK constraint (run_recompute_error_check) holds it to
+  /// 'raw_log_missing', 'checksum_mismatch' or 'parse_failed'. A run carrying
+  /// one is never selected for recompute again — see RecomputeRepository.
+  recomputeError   String?   @map("recompute_error")
+  /// When this run's statistics were last rewritten by a recompute; null for
+  /// a run parsed exact the first time.
+  recomputedAt     DateTime? @map("recomputed_at") @db.Timestamptz(3)
 
   project    Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
   package    Package?       @relation(fields: [packageId], references: [id], onDelete: SetNull, onUpdate: NoAction)
   test       Test?          @relation(fields: [testId], references: [id], onDelete: SetNull)
   assertions RunAssertion[]
+  verdictChanges RunVerdictChange[]
   runnerJobs RunnerJob[]
   /// SET NULL, not CASCADE: a deleted account keeps its words on the run and
   /// loses only the attribution.
@@ -809,6 +818,31 @@ model RunAssertion {
 
   @@index([runId])
   @@map("run_assertion")
+}
+
+/// One SLA rule whose outcome changed when a run's statistics were recomputed
+/// exactly — the rule as it read, both outcomes, both measured values and the
+/// run's verdict before and after. Written once per re-judged rule; never
+/// edited. Hand-authored SQL (migration 20261016120000), so the foreign key is
+/// ON UPDATE NO ACTION rather than Prisma's default.
+model RunVerdictChange {
+  id           String   @id @default(uuid()) @db.Uuid
+  runId        String   @map("run_id") @db.Uuid
+  orgId        String   @map("org_id") @db.Uuid
+  projectId    String   @map("project_id") @db.Uuid
+  ruleSnapshot Json     @map("rule_snapshot")
+  oldOutcome   String   @map("old_outcome")
+  newOutcome   String   @map("new_outcome")
+  oldValue     Float?   @map("old_value")
+  newValue     Float?   @map("new_value")
+  oldVerdict   String   @map("old_verdict")
+  newVerdict   String   @map("new_verdict")
+  changedAt    DateTime @default(now()) @map("changed_at") @db.Timestamptz(3)
+
+  run Run @relation(fields: [runId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([runId])
+  @@map("run_verdict_change")
 }
 
 model User {

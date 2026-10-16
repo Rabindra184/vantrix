@@ -14,6 +14,7 @@ export * from './repositories/test.js';
 export * from './repositories/activity.js';
 export * from './repositories/runner.js';
 export * from './repositories/package.js';
+export * from './repositories/recompute.js';
 export * from './runner-events.js';
 export * from './metrics/write.js';
 export * from './metrics/read.js';

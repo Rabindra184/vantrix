@@ -4,6 +4,7 @@ import {
   AdminProjectListResponseSchema,
   AdminUserListResponseSchema,
   AdminUserSchema,
+  RecomputeProgressSchema,
 } from '@perfportal/contracts';
 import {
   adminLockKey,
@@ -252,6 +253,104 @@ describe('GET /v1/admin/projects', () => {
       { slug: 'alpha', name: 'Alpha', memberCount: 0, createdAt: alpha.createdAt.toISOString() },
       { slug: 'checkout', name: 'Checkout', memberCount: 2, createdAt: checkout.createdAt.toISOString() },
     ]);
+  });
+});
+
+/**
+ * A finished run in `orgId`, labelled `statsMethod`, carrying one run_stat
+ * row in the given histogram format (or none) and the given recompute error.
+ * The row is written raw because its legacy shape — a sketch blob, an old
+ * histogram kind — is exactly what nothing in the product writes any more.
+ */
+async function seedStatRun(opts: {
+  orgId: string;
+  projectId: string;
+  statsMethod: 'estimated' | 'exact-v1';
+  statRow: 'legacy' | 'exact' | 'none';
+  recomputeError?: 'parse_failed';
+}): Promise<string> {
+  const run = await ctx.prisma.run.create({
+    data: {
+      orgId: opts.orgId,
+      projectId: opts.projectId,
+      status: 'complete',
+      verdict: 'not_evaluated',
+      tool: 'gatling',
+      bundleKey: `runs/${opts.projectId}/${randomUUID()}.tgz`,
+      bundleSha256: 'a'.repeat(64),
+      bundleBytes: 1n,
+      startedAt: new Date('2026-10-07T09:00:00Z'),
+      startedOn: new Date('2026-10-07T00:00:00Z'),
+      engineOptions: {},
+    },
+  });
+  await ctx.pool.query(`UPDATE run SET stats_method = $2, recompute_error = $3 WHERE id = $1`, [
+    run.id,
+    opts.statsMethod,
+    opts.recomputeError ?? null,
+  ]);
+  if (opts.statRow !== 'none') {
+    const legacy = opts.statRow === 'legacy';
+    await ctx.pool.query(
+      `INSERT INTO run_stat
+         (id, run_id, org_id, project_id, scope, name, family,
+          count, ok_count, ko_count, error_rate,
+          min_ms, max_ms, mean_ms, stddev_ms, throughput_rps,
+          percentiles, sketch, sketch_kind, histogram_ok, histogram_ko, histogram_kind)
+       VALUES (gen_random_uuid(), $1, $2, $3, 'run', '', 'response_time',
+               1, 1, 0, 0, 10, 10, 10, 0, 1,
+               '{}'::jsonb, $4, $5, $6, NULL, $7)`,
+      [
+        run.id,
+        opts.orgId,
+        opts.projectId,
+        legacy ? Buffer.from([1]) : null,
+        legacy ? 'ddsketch-v1' : null,
+        Buffer.from([1]),
+        legacy ? 'sparse-ms-v1' : 'sparse-ms-v2',
+      ],
+    );
+  }
+  return run.id;
+}
+
+describe('GET /v1/admin/recompute', () => {
+  /*
+   * One run of each kind in this org, and a candidate in ANOTHER org that
+   * must not be counted: total counts runs with statistics, remaining the
+   * ones still estimated, failed the ones given up on.
+   */
+  it('answers an admin this org’s backfill progress, and counts no other org’s runs', async () => {
+    ctx = await createTestApp();
+    const admin = await signInAsAdmin(ctx, email('admin'));
+    const base = { orgId: ctx.orgId, projectId: ctx.projectId };
+    await seedStatRun({ ...base, statsMethod: 'estimated', statRow: 'legacy' });
+    await seedStatRun({ ...base, statsMethod: 'estimated', statRow: 'legacy' });
+    await seedStatRun({ ...base, statsMethod: 'exact-v1', statRow: 'exact' });
+    await seedStatRun({ ...base, statsMethod: 'estimated', statRow: 'legacy', recomputeError: 'parse_failed' });
+    await seedStatRun({ ...base, statsMethod: 'estimated', statRow: 'none' });
+    const elsewhere = await otherOrg();
+    const elsewhereProject = await ctx.prisma.project.create({ data: { orgId: elsewhere, slug: 'aardvark', name: 'Aardvark' } });
+    await seedStatRun({ orgId: elsewhere, projectId: elsewhereProject.id, statsMethod: 'estimated', statRow: 'legacy' });
+    await seedStatRun({ orgId: elsewhere, projectId: elsewhereProject.id, statsMethod: 'estimated', statRow: 'legacy', recomputeError: 'parse_failed' });
+
+    const res = await api('get', '/v1/admin/recompute', admin.cookie).expect(200);
+    expect(RecomputeProgressSchema.parse(res.body)).toEqual({ total: 4, remaining: 2, failed: 1 });
+  });
+
+  it('refuses a non-admin session with 403 ADMIN_REQUIRED', async () => {
+    ctx = await createTestApp();
+    const manager = await signInAsProjectMember(ctx, email('manager'), [{ projectId: ctx.projectId, role: 'manager' }]);
+    const res = await api('get', '/v1/admin/recompute', manager.cookie);
+    expect([res.status, res.body.code]).toEqual([403, 'ADMIN_REQUIRED']);
+  });
+
+  it('refuses a bearer token, whatever its scopes', async () => {
+    ctx = await createTestApp();
+    const res = await request(ctx.app.getHttpServer())
+      .get('/v1/admin/recompute')
+      .set('Authorization', `Bearer ${ctx.readToken}`);
+    expect([res.status, res.body.code]).toEqual([403, 'FORBIDDEN']);
   });
 });
 

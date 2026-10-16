@@ -1,11 +1,14 @@
 import 'reflect-metadata';
+import { Queue } from 'bullmq';
 import { Redis } from 'ioredis';
-import { createPool, createPrisma, RuleRepository } from '@perfportal/persistence';
+import { createPool, createPrisma, RecomputeRepository, RuleRepository } from '@perfportal/persistence';
 import { BlobStore, LiveChunkStore } from '@perfportal/storage';
 import { loadWorkerConfig } from './config.js';
 import { startConsumer } from './consumer.js';
 import { LiveFoldOwner } from './live/fold-owner.js';
 import { PipelineService } from './pipeline/pipeline.service.js';
+import { createRecomputeScan, RECOMPUTE_QUEUE, startRecomputeConsumer } from './recompute/recompute-queue.js';
+import { RecomputeService } from './recompute/recompute.service.js';
 import { runShutdown } from './shutdown.js';
 import { Sweeper } from './sweeper.js';
 
@@ -53,10 +56,14 @@ const config = loadWorkerConfig();
 const PIPELINE_PRISMA_CLIENTS_PER_JOB = 1;
 const FOLD_OWNER_CLAIM_PRISMA_CLIENTS = 1;
 const PRISMA_HEADROOM = 1;
+// The recompute consumer (concurrency 1) reads a run and its project through Prisma, one query at a time.
+// Reserved even when RECOMPUTE_ENABLED=false: one idle connection's worth of budget, not worth a branch.
+const RECOMPUTE_PRISMA_CLIENTS = 1;
 const prisma = createPrisma(config.databaseUrl, {
   connectionLimit:
     config.concurrency * PIPELINE_PRISMA_CLIENTS_PER_JOB +
     config.maxOwnedRuns * FOLD_OWNER_CLAIM_PRISMA_CLIENTS +
+    RECOMPUTE_PRISMA_CLIENTS +
     PRISMA_HEADROOM,
 });
 
@@ -101,12 +108,19 @@ const prisma = createPrisma(config.databaseUrl, {
 const FOLD_OWNER_DISCOVERY_CLIENTS = 1;
 const PIPELINE_CLIENTS_PER_JOB = 2;
 const SWEEPER_CLIENTS = 1;
+// `RecomputeService.recompute` holds the run's lock client and, inside it, its write transaction's: two at once.
+const RECOMPUTE_CLIENTS = 2;
+// The recompute scheduler's candidate query, which can run beside a recompute.
+// Both recompute terms are reserved even when RECOMPUTE_ENABLED=false (a ceiling, not an allocation).
+const RECOMPUTE_SCAN_CLIENTS = 1;
 const pool = createPool(config.databaseUrl, {
   max:
     config.maxOwnedRuns +
     FOLD_OWNER_DISCOVERY_CLIENTS +
     config.concurrency * PIPELINE_CLIENTS_PER_JOB +
-    SWEEPER_CLIENTS,
+    SWEEPER_CLIENTS +
+    RECOMPUTE_CLIENTS +
+    RECOMPUTE_SCAN_CLIENTS,
   connectionTimeoutMillis: 10_000,
 });
 const blobs = new BlobStore(config.blob);
@@ -115,6 +129,25 @@ const chunks = new LiveChunkStore(blobs);
 
 const pipeline = new PipelineService(config, prisma, pool, blobs);
 const worker = startConsumer(config, pipeline);
+
+/**
+ * Background recompute of runs still carrying estimated statistics, behind
+ * ingest (see `recompute-queue.ts`). The first scan is fire-and-forget, like
+ * `foldOwner.listen()` below: startup must not wait on Redis or the database
+ * for an optimisation, and `createRecomputeScan` logs its own failures.
+ */
+let recompute:
+  | { queue: Queue; consumer: ReturnType<typeof startRecomputeConsumer>; timer: NodeJS.Timeout }
+  | null = null;
+if (config.recomputeEnabled) {
+  const queue = new Queue(RECOMPUTE_QUEUE, { connection: { url: config.redisUrl } });
+  const consumer = startRecomputeConsumer(config, new RecomputeService(config, prisma, pool, blobs));
+  const scan = createRecomputeScan(queue, new RecomputeRepository(pool));
+  void scan();
+  const timer = setInterval(() => void scan(), config.recomputeScanIntervalMs);
+  timer.unref();
+  recompute = { queue, consumer, timer };
+}
 const sweeper = new Sweeper(config, pool, chunks, blobs, new Redis(config.redisUrl));
 // This owner's Redis connection is its own -- not the one BullMQ's
 // `startConsumer`/`Sweeper` open via `{ connection: { url } }` -- because
@@ -186,6 +219,13 @@ function shutdown(): Promise<void> {
   shutdownPromise = runShutdown([
     { name: 'clear timers', run: () => { clearInterval(sweepTimer); clearInterval(liveTickTimer); } },
     { name: 'worker.close', run: () => worker.close() },
+    // Before pool.end(): a recompute in flight holds pool clients until its job returns.
+    { name: 'recompute.close', run: async () => {
+      if (!recompute) return;
+      clearInterval(recompute.timer);
+      await recompute.consumer.close();
+      await recompute.queue.close();
+    } },
     { name: 'sweeper.close', run: () => sweeper.close() },
     // Before pool.end(): each owned run holds a dedicated pooled client for
     // its advisory lock's whole lifetime, and close() releases every one of

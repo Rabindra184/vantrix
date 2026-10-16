@@ -47,6 +47,30 @@ export const AssertionRuleSchema = z.object({
 });
 export type AssertionRule = z.infer<typeof AssertionRuleSchema>;
 
+/**
+ * One SLA assertion whose outcome changed when the run's statistics were
+ * recomputed exactly (PR 2 of the exact-statistics work): the rule as it was
+ * frozen when the run was first judged, what it said then and what it says
+ * now, and the run's verdict either side.
+ *
+ * `rule` is the SAME shape the gates table reads (`AssertionRuleSchema`), so
+ * the run page describes a changed rule in the words it uses for every other.
+ * A value is null on a side whose outcome is `not_applicable` — there was
+ * nothing to measure. The API drops a stored snapshot that does not parse as
+ * a rule rather than failing the whole run response.
+ */
+export const VerdictChangeSchema = z.object({
+  rule: AssertionRuleSchema,
+  oldOutcome: AssertionOutcomeSchema,
+  newOutcome: AssertionOutcomeSchema,
+  oldValue: z.number().nullable(),
+  newValue: z.number().nullable(),
+  oldVerdict: RunVerdictSchema,
+  newVerdict: RunVerdictSchema,
+  changedAt: z.string().datetime(),
+});
+export type VerdictChange = z.infer<typeof VerdictChangeSchema>;
+
 export const AssertionSchema = z.object({
   ruleId: z.string().uuid(),
   outcome: AssertionOutcomeSchema,
@@ -316,6 +340,11 @@ export const RunIdentitySchema = z.object({
    *  rolling-deploy reason the stamps above give; a reader treats absent as
    *  "not known to be exact". */
   statsMethod: z.enum(['estimated', 'exact-v1']).optional(),
+  /** Every SLA assertion the exact recompute of this run's statistics
+   *  changed, in the order recorded; empty when it changed none or the run
+   *  was never recomputed. OPTIONAL for the rolling-deploy reason the stamps
+   *  above give. */
+  verdictChanges: z.array(VerdictChangeSchema).optional(),
   /** The note a person wrote on this run (run-note.ts), or null for none.
    *  OPTIONAL as well as nullable, for the rolling-deploy reason the lifecycle
    *  stamps above give: a required field blanks the run page against an API

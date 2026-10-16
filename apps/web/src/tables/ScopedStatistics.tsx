@@ -1,5 +1,6 @@
 import type { StatRow } from '@perfportal/contracts';
 import { useId, useMemo } from 'react';
+import { Approx } from '../components/Approx';
 import Card from '../components/Card';
 import SectionHeading from '../components/SectionHeading';
 import { ROW, SCROLLER, TABLE, TD_NUM, THEAD, TH_GROUP, TH_NUM } from '../components/tableStyles';
@@ -28,10 +29,17 @@ import { columnsFor, type Column } from './StatisticsTable';
 export default function ScopedStatistics({
   row,
   rows,
+  exact,
   heading = 'Statistics',
 }: {
   readonly row: StatRow;
   readonly rows: readonly StatRow[];
+  /**
+   * Whether the run's statistics are exact (`isExact(run.statsMethod)`). An
+   * estimated run's percentile headings carry ≈, as in the run's own table.
+   * REQUIRED, no default: the wrong value is silent either way.
+   */
+  readonly exact: boolean;
   /** Defaults to 'Statistics' — RequestDetail's one table needs no
    *  disambiguation, and that default keeps `TableSection`'s own `title="Statistics"`
    *  prop true in both the loading and the loaded state there. */
@@ -89,7 +97,10 @@ export default function ScopedStatistics({
                   // `TH_NUM`: every column here is a `TD_NUM` cell below, so
                   // every heading right-aligns with it.
                   <th key={c.column} scope="col" title={c.hint} className={TH_NUM}>
-                    {c.label}
+                    {/* ≈ on an estimated run's percentile headings, as the
+                        run's own table marks them. Its accessible name is then
+                        "approximately 95th"; an exact run's stays "95th". */}
+                    <Approx exact={exact || c.percentile !== true}>{c.label}</Approx>
                   </th>
                 ))}
               </tr>

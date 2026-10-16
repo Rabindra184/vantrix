@@ -100,4 +100,36 @@ describe('loadWorkerConfig', () => {
       expect(Number.isNaN(config.concurrency)).toBe(false);
     });
   });
+
+  describe('recompute', () => {
+    it('is on unless RECOMPUTE_ENABLED is exactly "false"', () => {
+      expect(loadWorkerConfig(BASE_ENV).recomputeEnabled).toBe(true);
+      expect(loadWorkerConfig({ ...BASE_ENV, RECOMPUTE_ENABLED: 'false' }).recomputeEnabled).toBe(false);
+      // An exact comparison: '0' and 'no' are not the word that turns it off.
+      expect(loadWorkerConfig({ ...BASE_ENV, RECOMPUTE_ENABLED: '0' }).recomputeEnabled).toBe(true);
+      expect(loadWorkerConfig({ ...BASE_ENV, RECOMPUTE_ENABLED: 'true' }).recomputeEnabled).toBe(true);
+    });
+
+    it('scans every ten minutes by default, and falls back to that on a non-numeric override', () => {
+      expect(loadWorkerConfig(BASE_ENV).recomputeScanIntervalMs).toBe(600_000);
+      expect(
+        loadWorkerConfig({ ...BASE_ENV, RECOMPUTE_SCAN_INTERVAL_MS: '60000' }).recomputeScanIntervalMs,
+      ).toBe(60_000);
+      expect(
+        loadWorkerConfig({ ...BASE_ENV, RECOMPUTE_SCAN_INTERVAL_MS: 'often' }).recomputeScanIntervalMs,
+      ).toBe(600_000);
+    });
+
+    /**
+     * Compose passes both as `${PERFPORTAL_...:-}`, so an operator who sets
+     * neither hands the worker EMPTY STRINGS, not absent variables. Empty has
+     * to mean the default: `Number('')` is 0, and a 0 ms interval rescans the
+     * database continuously.
+     */
+    it('reads an empty string, as compose passes an unset variable, as the default', () => {
+      const config = loadWorkerConfig({ ...BASE_ENV, RECOMPUTE_ENABLED: '', RECOMPUTE_SCAN_INTERVAL_MS: '' });
+      expect(config.recomputeEnabled).toBe(true);
+      expect(config.recomputeScanIntervalMs).toBe(600_000);
+    });
+  });
 });

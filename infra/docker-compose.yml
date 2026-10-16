@@ -129,6 +129,15 @@ services:
       # It is IGNORED when PERFPORTAL_PUBLIC_URL is https, so it cannot
       # downgrade a TLS deployment left over from an earlier config.
       ALLOW_INSECURE_COOKIES: ${PERFPORTAL_ALLOW_INSECURE_COOKIES:-false}
+      # ═══ THE EXACT-STATISTICS BACKFILL (the worker reads these) ═══
+      #
+      # The worker recomputes, in the background and behind ingest, every run
+      # stored before exact statistics. `false` (exactly that word) defers it;
+      # `pnpm recompute` then does the same work in the foreground. Both are
+      # passed as EMPTY when unset, and the worker reads empty as its default
+      # (on; every 10 minutes) -- `apps/worker/src/config.ts` and its test.
+      RECOMPUTE_ENABLED: ${PERFPORTAL_RECOMPUTE_ENABLED:-}
+      RECOMPUTE_SCAN_INTERVAL_MS: ${PERFPORTAL_RECOMPUTE_SCAN_INTERVAL_MS:-}
       RUNNER_ARTIFACT_DIR: /var/lib/perfportal/runner-artifacts
       RUNNER_WORK_DIR: /var/lib/perfportal/runner-work
       RUNNER_LOG_DIR: /var/log/perfportal/runner

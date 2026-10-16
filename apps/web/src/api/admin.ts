@@ -2,10 +2,12 @@ import {
   AdminProjectListResponseSchema,
   AdminUserListResponseSchema,
   AdminUserSchema,
+  RecomputeProgressSchema,
   type AdminProjectListResponse,
   type AdminUser,
   type AdminUserListResponse,
   type CreateUserRequest,
+  type RecomputeProgress,
   type SetPasswordRequest,
   type UpdateUserRequest,
 } from '@perfportal/contracts';
@@ -59,4 +61,14 @@ export function removeUser(userId: string): Promise<void> {
 
 export function fetchAdminProjects(): Promise<AdminProjectListResponse> {
   return apiFetch(AdminProjectListResponseSchema, '/v1/admin/projects');
+}
+
+/**
+ * `GET /v1/admin/recompute`: how far the exact-statistics backfill has got in
+ * the caller's org — runs in total, still to recompute, and given up on.
+ */
+export const recomputeProgressQueryKey = ['admin-recompute'] as const;
+
+export function fetchRecomputeProgress(): Promise<RecomputeProgress> {
+  return apiFetch(RecomputeProgressSchema, '/v1/admin/recompute');
 }

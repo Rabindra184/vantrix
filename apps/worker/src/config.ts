@@ -103,6 +103,22 @@ export interface WorkerConfig {
    * worker that stops.
    */
   maxOwnedRuns: number;
+  /**
+   * Whether this worker recomputes runs still carrying estimated statistics
+   * in the background (`recompute/recompute-queue.ts`). On unless
+   * `RECOMPUTE_ENABLED` is EXACTLY `false`: a flag that switched off on any
+   * falsy-looking word would let `RECOMPUTE_ENABLED=0` or `=no` mean
+   * something different on each reader's mental model, and the one value that
+   * turns it off is the one the deployment guide names.
+   */
+  recomputeEnabled: boolean;
+  /**
+   * How often the scheduler looks for runs that still need recomputing. Ten
+   * minutes: the queue is deduplicated by run id, so a scan is cheap when
+   * nothing changed, and a run ingested by an older worker mid-deploy is
+   * picked up well inside a working hour.
+   */
+  recomputeScanIntervalMs: number;
 }
 
 /**
@@ -151,5 +167,14 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv = process.env): WorkerCo
     // LIVE_TICK_MS must not turn the floor below into NaN.
     liveTickMs: Math.max(1000, numberOr(env.LIVE_TICK_MS, 5000)),
     maxOwnedRuns: numberOr(env.MAX_OWNED_RUNS, 25),
+    // `=== 'false'`, not truthiness -- see the field's own doc comment.
+    recomputeEnabled: env.RECOMPUTE_ENABLED !== 'false',
+    // numberOr: a NaN interval is setInterval's effectively-zero delay, which
+    // would rescan the database continuously. And blank is unset: compose
+    // passes `${PERFPORTAL_RECOMPUTE_SCAN_INTERVAL_MS:-}`, an EMPTY string
+    // when the operator set nothing, and Number('') is 0 -- the same
+    // continuous rescan by another road. (Not changed in numberOr itself:
+    // LIVE_TICK_MS has a case pinning '' to its floor.)
+    recomputeScanIntervalMs: numberOr(env.RECOMPUTE_SCAN_INTERVAL_MS?.trim() || undefined, 600_000),
   };
 }

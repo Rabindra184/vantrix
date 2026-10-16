@@ -217,6 +217,26 @@ describe('AdminUsers — the shell', () => {
   });
 });
 
+describe('AdminUsers — the exact-statistics backfill', () => {
+  /**
+   * The progress line sits in the shell, between the section tabs and the
+   * page, so every Administration page shows it while runs remain. That it
+   * shows nothing once they are done is `RecomputeProgress.test.tsx`'s claim.
+   */
+  it('shows the backfill’s progress under the tabs while runs remain', async () => {
+    stubApi({ read: (url) => (url === '/v1/admin/recompute' ? Promise.resolve(json(200, { total: 40, remaining: 10, failed: 0 })) : undefined) });
+    renderPage();
+    const status = await screen.findByText(/Recomputing exact statistics: 30 of 40 runs/);
+    // The line itself, and not a live region: it changes every ten seconds.
+    expect(status.closest('[data-testid="recompute-progress"]')).not.toBeNull();
+    expect(status.closest('[role="status"]')).toBeNull();
+    const nav = screen.getByRole('navigation', { name: 'Administration sections' });
+    // Under the tabs, above the page: the nav comes first in document order.
+    expect(nav.compareDocumentPosition(status) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(status.compareDocumentPosition(await table()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});
+
 describe('AdminUsers — the table', () => {
   it('lists each account with its email, project count and status, under the five columns', async () => {
     stubApi();

@@ -13,6 +13,7 @@ import {
   type SortDirection,
   type TableRow,
 } from './buildTree';
+import { Approx } from '../components/Approx';
 import Button from '../components/Button';
 import InfoTip from '../components/InfoTip';
 import SectionHeading from '../components/SectionHeading';
@@ -106,6 +107,12 @@ export interface Column {
   /** `undefined` when this row HAS no value here — which is not zero. */
   readonly value: (row: StatRow) => number | undefined;
   readonly format: (value: number) => string;
+  /**
+   * A percentile column — the one kind of figure an estimated run (the retired
+   * sketch) did not track exactly, so its heading carries ≈ (`Approx`) on such
+   * a run. Counts, the extremes and the mean were always exact.
+   */
+  readonly percentile?: true;
 }
 
 /**
@@ -373,6 +380,7 @@ function percentileColumnsOf(rows: readonly StatRow[]): readonly Column[] {
         return clampPercentile(raw, row);
       },
       format: formatMs,
+      percentile: true as const,
     }));
 }
 
@@ -1034,6 +1042,8 @@ export default function StatisticsTable({
               <SortableHeader
                 column="name"
                 label={NAME_COLUMN_LABEL}
+                // A name is not a figure; nothing to mark.
+                exact
                 labelId={`${labelIdBase}-name`}
                 sort={activeSort}
                 onSort={sortBy}
@@ -1059,6 +1069,10 @@ export default function StatisticsTable({
                   column={column.column}
                   label={column.label}
                   hint={column.hint}
+                  // ≈ on the HEADING of each percentile column of an estimated
+                  // run — one mark per column, never one per cell (clean UI);
+                  // the Statistics ⓘ already says what it means.
+                  exact={exact || column.percentile !== true}
                   labelId={`${labelIdBase}-${index}`}
                   sort={activeSort}
                   onSort={sortBy}
@@ -1223,6 +1237,7 @@ function SortableHeader({
   column,
   label,
   hint,
+  exact,
   labelId,
   sort,
   onSort,
@@ -1233,6 +1248,14 @@ function SortableHeader({
   column: SortColumn;
   label: string;
   hint?: string;
+  /**
+   * Whether this column's figures are exact. `false` marks the heading with
+   * ≈ — INSIDE the span the `<th>` is named by, so the name reads
+   * "approximately 95th" for an estimated run and stays exactly "95th" for an
+   * exact one. The sort button's own name stays "Sort by 95th" either way: it
+   * names an action, and the action is unchanged. REQUIRED, no default.
+   */
+  exact: boolean;
   labelId: string;
   sort: SortState;
   onSort: (column: SortColumn) => void;
@@ -1269,10 +1292,12 @@ function SortableHeader({
         {/* An `<abbr title>` explains an abbreviated heading without changing
             it — the label itself is what the column is called. */}
         {hint === undefined ? (
-          <span id={labelId}>{label}</span>
+          <span id={labelId}>
+            <Approx exact={exact}>{label}</Approx>
+          </span>
         ) : (
           <abbr id={labelId} title={hint}>
-            {label}
+            <Approx exact={exact}>{label}</Approx>
           </abbr>
         )}
         <SortArrow direction={sorted ? sort.direction : null} />

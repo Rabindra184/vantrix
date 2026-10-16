@@ -6,13 +6,21 @@ import {
   CreateUserRequestSchema,
   PASSWORD_MAX_LENGTH,
   PASSWORD_MIN_LENGTH,
+  RecomputeProgressSchema,
   SetPasswordRequestSchema,
   UpdateUserRequestSchema,
   type AdminProjectListResponse,
   type AdminUser,
   type AdminUserListResponse,
+  type RecomputeProgress,
 } from '@perfportal/contracts';
-import { ProjectMemberRepository, ProjectRepository, UserRepository, type OrgUserRow } from '@perfportal/persistence';
+import {
+  ProjectMemberRepository,
+  ProjectRepository,
+  RecomputeRepository,
+  UserRepository,
+  type OrgUserRow,
+} from '@perfportal/persistence';
 import { fromNodeHeaders } from 'better-auth/node';
 import type { Request } from 'express';
 import { Requires } from '../auth/access.decorator.js';
@@ -61,6 +69,7 @@ export class AdminController {
     private readonly projects: ProjectRepository,
     private readonly projectMembers: ProjectMemberRepository,
     private readonly service: AdminUsersService,
+    private readonly recompute: RecomputeRepository,
   ) {}
 
   /** Every account with a membership of this org, by name. */
@@ -181,6 +190,18 @@ export class AdminController {
         createdAt: r.createdAt.toISOString(),
       })),
     });
+  }
+
+  /**
+   * How far the exact-statistics backfill has got in this org: finished runs
+   * with statistics, the ones still estimated, and the ones it gave up on.
+   * Scoped to the caller's org like every route here — another org's runs are
+   * never counted.
+   */
+  @Get('recompute')
+  @Requires('users:manage')
+  async recomputeProgress(@Req() req: Request): Promise<RecomputeProgress> {
+    return RecomputeProgressSchema.parse(await this.recompute.progress(req.tenant!.orgId));
   }
 
   /** The org-scoped lookup every `:userId` starts with: not in this org is 404. */
