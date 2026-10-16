@@ -280,6 +280,6 @@ describe('bucket histograms', () => {
     }
     const union = fine.buckets().reduce((acc, b) => { acc.merge(b.histogramOk); return acc; }, new Histogram());
     const merged = coarse.buckets().reduce((acc, b) => { acc.merge(b.histogramOk); return acc; }, new Histogram());
-    expect(merged.quantile(0.95)).toBe(union.quantile(0.95));
+    expect(merged.percentile(95)).toBe(union.percentile(95));
   });
 });

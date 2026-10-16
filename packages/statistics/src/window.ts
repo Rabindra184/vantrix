@@ -85,72 +85,18 @@ export function rollupFromHistograms(
 
 /**
  * The percentiles this window can actually answer — OMITTING any whose rank
- * lands in the histogram's overflow bin, rather than letting that throw.
+ * lands in a legacy histogram's overflow bin, rather than reporting a guess.
  *
- * ═══ WHY THE THROW IS RIGHT AND CATCHING IT HERE IS ALSO RIGHT ═══
- *
- * `Histogram#quantile` refuses a rank above the cap on purpose: the value is
- * genuinely unrecoverable and a percentile that silently guesses is the defect
- * that class exists to avoid. That reasoning is about the HISTOGRAM. It says
- * nothing about what a read handler should do with the refusal, and until this
- * function caught it the answer was "throw out of the request" — a 500 on
- * `GET /v1/runs/:id/stats?from=&to=` for a run whose UNWINDOWED page renders
- * perfectly, because that path reads the uncapped sketch instead.
- *
- * ═══ AND IT IS NOT THE PATHOLOGICAL RUN THE CAP'S COMMENT IMAGINED ═══
- *
- * 120 s is above any realistic HTTP timeout, which is true of REQUESTS and
- * false of the `group_duration` rows the same histograms hold: a group's
- * duration is its wall-clock span, so `group("Browse") { during(5.minutes) }`
- * — ordinary Gatling — produces 300 s observations. Measured on exactly that
- * shape, with a slowest REQUEST of 400 ms:
- *
- *     unwindowed  p50 300700   (the sketch, uncapped)
- *     windowed    THREW at p50 — every rank was in the overflow bin
- *
- * ═══ OMITTED, NOT GUESSED, AND NOT ZERO ═══
- *
- * `bucketLatency`'s `percentilesOf` already answers `{}` for a sketch with
- * nothing in it, on the same reasoning: "a p95 of 0 is a fabricated
- * observation for a bucket that made none". An unrecoverable p95 is the same
- * kind of non-answer, and `StatisticsTable` already renders a missing
- * percentile as a dash rather than as the fastest row in the column.
- *
- * The rest of the row is EXACT and survives: `Histogram#accept` updates
- * `#min`, `#max` and `#sum` BEFORE it folds an observation into the overflow
- * bin, so count, min, max, mean and standard deviation are all still the real
- * figures. The reader loses the estimated columns and keeps the measured ones,
- * which is the right half to lose.
- *
- * THE SIBLING DEFECT IS DONE, AND THIS NOTE USED TO SAY OTHERWISE. It read
- * "NOT DONE, AND RECORDED RATHER THAN MISSED: `bandsFrom` reaches
- * `Histogram#countBelow`, which throws on the same bin" — true when written and
- * fixed since: `bandsOrRefuse` in `metrics.controller.ts` converts that refusal
- * into a 400 naming `indicators.higherMs`, and BOTH the windowed and unwindowed
- * callers reach it, so `bandsFrom` has exactly one call site in the app.
- *
- * The reason that note gave for leaving it — that the band call needs an
- * indicator bound ABOVE the cap as well as an overflow observation, where this
- * path needs only the overflow — was correct, and it explained why no FIXTURE
- * reached it rather than whether the PRODUCT handled it. It did not: the
- * unwindowed path was already guarded and the windowed one was not, so this was
- * a fix that had landed on one of two callers. A deferral explaining why a test
- * cannot reach something has not established that the code survives it.
+ * New histograms (`sparse-ms-v2`) are uncapped and never overflow, so every
+ * rank is answered exactly. Legacy v1 rows can still carry an overflow bin;
+ * the ranks it hides stay absent, never 0, and `StatisticsTable` renders the
+ * missing key as a dash while count, min, max, mean and deviation stay exact.
  */
-function recoverablePercentiles(
-  all: Histogram,
-  percentiles: readonly number[],
-): Record<string, number> {
+function recoverablePercentiles(all: Histogram, percentiles: readonly number[]): Record<string, number> {
   const out: Record<string, number> = {};
   for (const p of percentiles) {
-    // Asking is cheaper than re-deriving the rank arithmetic here, and asking
-    // keeps ONE definition of which ranks the overflow covers — `quantile`'s.
-    // A second copy of that boundary is how the two would come to disagree.
-    try {
-      out[`p${p}`] = all.quantile(p / 100);
-    } catch {
-      // Unrecoverable at this rank. The key is absent, never 0.
-    }
+    const value = all.percentile(p);
+    if (value !== undefined) out[`p${p}`] = value; // absent, never 0, for a legacy overflowed rank
   }
   return out;
 }

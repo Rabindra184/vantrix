@@ -55,17 +55,11 @@ const CLAMPER = 'clampPercentile';
  * check. Delete an entry the day its premise stops holding.
  */
 const EXEMPT: ReadonlyArray<{ readonly file: string; readonly why: string }> = [
-  {
-    file: 'packages/statistics/src/window.ts',
-    // The receiver is a `Histogram`, not a `Sketch`: an exact 1 ms structure
-    // whose `quantile` is nearest-rank over observed values and whose min/max
-    // ARE observed values, so its answer is inside its own range by
-    // construction rather than by estimate. Measured across five shapes
-    // including ranges narrower than a bin, seven ranks each: worst escape
-    // 0.000000 ms. If this file ever takes a quantile off a `Sketch`, that
-    // call needs clamping and this exemption needs narrowing.
-    why: 'Histogram quantiles are nearest-rank over observed values, so they cannot escape',
-  },
+  // `packages/statistics/src/window.ts` was the one entry, because it took a
+  // quantile off a `Histogram` rather than a `Sketch`. It calls
+  // `Histogram#percentile` now — exact nearest-rank over observed values, so
+  // inside its own range by construction — and no longer matches `.quantile(`
+  // at all, so the exemption was deleted rather than left naming nothing.
 ];
 
 /** `/* *\/` and `//` removed, so prose about a quantile is never a caller. */

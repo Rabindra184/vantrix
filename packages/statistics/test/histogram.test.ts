@@ -64,33 +64,28 @@ describe('Histogram', () => {
     expect([...back.entries()]).toEqual([]);
   });
 
-  it('folds values above the cap into one overflow bin, keeping count, sum and max exact', () => {
-    const h = new Histogram({ capMs: 1000 });
-    h.accept(500);
-    h.accept(5_000);
-    h.accept(9_000);
+  // Only a LEGACY v1 histogram has an overflow bin now: new histograms are
+  // uncapped. The bytes below are exactly what the pre-2026-10-15 writer
+  // produced, so this is the shape every v1 row still in the database has.
+  it('reads a legacy v1 overflow bin, keeping count, sum and max exact', () => {
+    const h = Histogram.deserialize(Histogram.legacyV1ForTests([500, 125_000, 130_000]));
     expect(h.total).toBe(3);
     expect(h.overflowCount).toBe(2);
-    expect(h.sum).toBe(14_500);
-    expect(h.max).toBe(9_000);
+    expect(h.sum).toBe(255_500);
+    expect(h.max).toBe(130_000);
     expect(h.countBelow(1_000)).toBe(1);
     // Above the cap, countBelow cannot be exact — it must not silently claim to be.
-    expect(() => h.countBelow(6_000)).toThrow(/overflow/i);
-    const back = Histogram.deserialize(h.serialize());
-    expect(back.overflowCount).toBe(2);
-    expect(back.sum).toBe(14_500);
-    expect(back.max).toBe(9_000);
-  });
-
-  it('declares its wire format', () => {
-    expect(HISTOGRAM_KIND).toBe('sparse-ms-v1');
+    expect(() => h.countBelow(121_000)).toThrow(/overflow/i);
   });
 });
 
-describe('Histogram#quantile', () => {
-  /** Ground truth, the nearest-rank convention this repo uses everywhere. */
-  const trueQuantile = (sorted: number[], q: number): number =>
-    sorted[Math.max(0, Math.ceil(q * sorted.length) - 1)] as number;
+describe('Histogram#percentile', () => {
+  /**
+   * Ground truth, the nearest-rank convention this repo uses everywhere. `p` is
+   * an integer here, so `p * n` is exact and the one division is the rounding.
+   */
+  const truePercentile = (sorted: number[], p: number): number =>
+    sorted[Math.max(0, Math.ceil((p * sorted.length) / 100) - 1)] as number;
 
   const sample = (): number[] => {
     const out: number[] = [];
@@ -104,10 +99,10 @@ describe('Histogram#quantile', () => {
     for (const v of values) h.accept(v);
     const sorted = [...values].sort((a, b) => a - b);
 
-    for (const q of [0.5, 0.75, 0.95, 0.99]) {
+    for (const p of [50, 75, 95, 99]) {
       // EXACT, not within RELATIVE_ACCURACY. 1ms bins and integer inputs mean
       // there is no error term at all to allow for.
-      expect(h.quantile(q)).toBe(trueQuantile(sorted, q));
+      expect(h.percentile(p)).toBe(truePercentile(sorted, p));
     }
   });
 
@@ -120,8 +115,9 @@ describe('Histogram#quantile', () => {
     const s = new Sketch();
     for (const v of values) { h.accept(v); s.accept(v); }
 
-    for (const q of [0.5, 0.95, 0.99]) {
-      const relative = Math.abs(h.quantile(q) - s.quantile(q)) / h.quantile(q);
+    for (const p of [50, 95, 99]) {
+      const exact = h.percentile(p) as number;
+      const relative = Math.abs(exact - s.quantile(p / 100)) / exact;
       expect(relative).toBeLessThanOrEqual(RELATIVE_ACCURACY);
     }
   });
@@ -129,39 +125,36 @@ describe('Histogram#quantile', () => {
   it('answers the boundary ranks with min and max', () => {
     const h = new Histogram();
     for (const v of [5, 10, 20, 40]) h.accept(v);
-    expect(h.quantile(0)).toBe(h.min);
-    expect(h.quantile(1)).toBe(h.max);
+    expect(h.percentile(0)).toBe(h.min);
+    expect(h.percentile(100)).toBe(h.max);
   });
 
-  it('returns NaN for an empty histogram rather than a fabricated 0', () => {
-    expect(Number.isNaN(new Histogram().quantile(0.95))).toBe(true);
+  it('answers undefined for an empty histogram rather than a fabricated 0', () => {
+    expect(new Histogram().percentile(95)).toBeUndefined();
   });
 
-  it('throws rather than guess when the rank lands in the overflow bin', () => {
+  it('answers undefined rather than guess when the rank lands in a legacy overflow bin', () => {
     // Same stance as countBelow: an unrecoverable answer is refused, never
-    // approximated. At the 120s default cap this is theoretical, which is
-    // exactly why it must not be silent.
-    const h = new Histogram({ capMs: 100 });
-    for (let i = 0; i < 10; i += 1) h.accept(10);
-    for (let i = 0; i < 90; i += 1) h.accept(5_000);   // all overflow
-    expect(() => h.quantile(0.95)).toThrow(/overflow/i);
+    // approximated. Only legacy v1 bytes can carry the bin now.
+    const legacy = [...Array<number>(10).fill(10), ...Array<number>(90).fill(125_000)]; // 90 overflow
+    const h = Histogram.deserialize(Histogram.legacyV1ForTests(legacy));
+    expect(h.percentile(95)).toBeUndefined();
   });
 
-  it('still answers a rank below the overflow bin', () => {
+  it('still answers a rank below a legacy overflow bin', () => {
     // Overflow poisons only the ranks it actually covers. Refusing every
-    // quantile because the tail is unrecoverable would throw away answers we
+    // percentile because the tail is unrecoverable would throw away answers we
     // genuinely have.
-    const h = new Histogram({ capMs: 100 });
-    for (let i = 0; i < 90; i += 1) h.accept(10);
-    for (let i = 0; i < 10; i += 1) h.accept(5_000);
-    expect(h.quantile(0.5)).toBe(10);
+    const legacy = [...Array<number>(90).fill(10), ...Array<number>(10).fill(125_000)];
+    const h = Histogram.deserialize(Histogram.legacyV1ForTests(legacy));
+    expect(h.percentile(50)).toBe(10);
   });
 
   it('survives a serialize round trip', () => {
     const h = new Histogram();
     for (const v of sample()) h.accept(v);
     const back = Histogram.deserialize(h.serialize());
-    for (const q of [0.5, 0.95, 0.99]) expect(back.quantile(q)).toBe(h.quantile(q));
+    for (const p of [50, 95, 99]) expect(back.percentile(p)).toBe(h.percentile(p));
   });
 });
 
@@ -193,5 +186,97 @@ describe('Histogram#sumOfSquares', () => {
 
   it('is zero for an empty histogram', () => {
     expect(new Histogram().sumOfSquares()).toBe(0);
+  });
+});
+
+describe('Histogram v2 (exact, uncapped)', () => {
+  const sorted = (h: Histogram) => [...h.entries()].flatMap(([v, c]) => Array(c).fill(v) as number[]);
+
+  it('names its format sparse-ms-v2', () => {
+    expect(HISTOGRAM_KIND).toBe('sparse-ms-v2');
+  });
+
+  it('keeps values far above 120 s exactly', () => {
+    const h = new Histogram();
+    for (const v of [400, 300_700, 1_800_000]) h.accept(v);
+    expect(h.overflowCount).toBe(0);
+    expect(h.percentile(50)).toBe(300_700);
+    expect(h.percentile(100)).toBe(1_800_000);
+    expect(h.exact).toBe(true);
+  });
+
+  it('answers percentile(p) as the nearest-rank value of the sorted data', () => {
+    const h = new Histogram();
+    const values = Array.from({ length: 1000 }, (_, i) => i + 1); // 1..1000
+    for (const v of values) h.accept(v);
+    expect(h.percentile(99.9)).toBe(999);   // not 1000
+    expect(h.percentile(0)).toBe(1);
+    expect(h.percentile(100)).toBe(1000);
+  });
+
+  it('answers undefined for an empty histogram', () => {
+    expect(new Histogram().percentile(50)).toBeUndefined();
+  });
+
+  it('round-trips v2 bytes exactly, including huge values', () => {
+    const h = new Histogram();
+    for (const v of [0, 1, 1, 2_147_483_647, 1_800_000]) h.accept(v);
+    const back = Histogram.deserialize(h.serialize());
+    expect(sorted(back)).toEqual(sorted(h));
+    expect([back.total, back.sum, back.min, back.max]).toEqual([h.total, h.sum, h.min, h.max]);
+    expect(back.exact).toBe(true);
+    expect(h.serialize()[0]).toBe(2);
+  });
+
+  it('still reads v1 bytes, and marks them not exact', () => {
+    // A v1 histogram as written before this PR: version 1, cap 120000, one
+    // value 500 and one overflowed 300000.
+    const legacy = Histogram.legacyV1ForTests([500, 300_000]);
+    const back = Histogram.deserialize(legacy);
+    expect(back.exact).toBe(false);
+    expect(back.overflowCount).toBe(1);
+    expect(back.percentile(50)).toBe(500);
+    expect(back.percentile(100)).toBeUndefined(); // hidden in the overflow bin
+  });
+
+  it('refuses to serialize a legacy histogram that overflowed', () => {
+    const back = Histogram.deserialize(Histogram.legacyV1ForTests([300_000]));
+    expect(() => back.serialize()).toThrow(/overflow/);
+  });
+
+  it('merges exactly: any split merged equals the whole', () => {
+    const values = Array.from({ length: 5000 }, (_, i) => Math.floor(((i * 7919) % 4096) ** 1.3));
+    const whole = new Histogram();
+    for (const v of values) whole.accept(v);
+    for (const parts of [2, 3, 7]) {
+      const merged = new Histogram();
+      for (let k = 0; k < parts; k++) {
+        const part = new Histogram();
+        values.filter((_, i) => i % parts === k).forEach((v) => part.accept(v));
+        merged.merge(part);
+      }
+      for (const p of [0, 25, 50, 90, 95, 99, 99.9, 100]) {
+        expect(merged.percentile(p), `parts=${parts} p=${p}`).toBe(whole.percentile(p));
+      }
+      expect(merged.sum).toBe(whole.sum);
+    }
+  });
+
+  it('matches a sorting oracle on heavy-tailed, bimodal and tied data', () => {
+    const shapes: Record<string, number[]> = {
+      ties: Array(500).fill(42) as number[],
+      single: [7],
+      bimodal: [...Array(300).fill(20), ...Array(30).fill(4000)] as number[],
+      heavy: Array.from({ length: 2000 }, (_, i) => Math.floor(10 / (1 - i / 2001) ** 2)),
+    };
+    for (const [name, values] of Object.entries(shapes)) {
+      const h = new Histogram();
+      values.forEach((v) => h.accept(v));
+      const s = [...values].sort((a, b) => a - b);
+      for (const p of [0, 1, 7, 50, 75, 90, 95, 99, 99.9, 100]) {
+        const idx = Math.min(s.length, Math.max(1, Math.ceil(Math.round(p * 10) * s.length / 1000))) - 1;
+        expect(h.percentile(p), `${name} p${p}`).toBe(s[idx]);
+      }
+    }
   });
 });

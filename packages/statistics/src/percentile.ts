@@ -74,9 +74,10 @@
  * describes a mechanism it does not have: a windowed row is built from
  * `Histogram`, not `Sketch`. The conclusion survives and is stronger than the
  * argument it was given — a `Histogram` is an EXACT 1 ms structure whose
- * `quantile` is nearest-rank over observed values and whose `min`/`max` are
+ * `percentile` is nearest-rank over observed values and whose `min`/`max` are
  * observed values, so its answer is inside its own range by construction
- * rather than by estimate. Corrected here rather than quietly, because a
+ * rather than by estimate (and, being `percentile` rather than `.quantile(`,
+ * it is not a caller the guard below collects at all). Corrected here rather than quietly, because a
  * docstring asserting a mechanism the code does not have is the defect this
  * very file was written to fix, and it went in with the fix.
  */

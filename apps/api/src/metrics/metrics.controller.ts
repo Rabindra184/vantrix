@@ -673,8 +673,10 @@ export class MetricsController {
  * Indicator bands, or a refusal that names the setting responsible.
  *
  * `bandsFrom` reaches `Histogram#countBelow`, which REFUSES a bound above the
- * 120s overflow cap while overflow observations exist — the exact count is
- * genuinely unrecoverable there, and that refusal is right. What a read
+ * legacy 120s overflow cap while overflow observations exist — the exact count
+ * is genuinely unrecoverable there, and that refusal is right. Only histograms
+ * of runs ingested before 2026-10-15 (`sparse-ms-v1`) carry that bin; new ones
+ * are uncapped and never refuse. What a read
  * handler must not do is let it out: `ProblemFilter` turns it into a 500
  * whose remediation is "Retry the request", and retrying re-reads the same
  * buckets against the same setting for ever.
@@ -712,8 +714,9 @@ function bandsOrRefuse(
     throw badRequest(
       'PROJECT_SETTINGS_INVALID',
       `The project's "indicators.higherMs" (${indicators.higherMs}) cannot be applied to this run: ${message(err)}`,
-      'This project\'s "indicators.higherMs" exceeds the 120000ms histogram cap, so the bands '
-        + 'cannot be counted. Lower it to at most 120000 — it is a stored project setting with no '
+      'This project\'s "indicators.higherMs" exceeds the legacy 120000ms histogram cap of runs '
+        + 'ingested before 2026-10-15, so the bands cannot be counted for this run. Lower it to at '
+        + 'most 120000 — it is a stored project setting with no '
         + 'editing surface yet, so this needs a direct settings update.',
     );
   }
