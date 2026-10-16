@@ -100,9 +100,11 @@ export class MetricsController {
      *
      * Reading the frozen `percentiles` column here instead would put the
      * statistics table and the trend on DIFFERENT SETS the moment a project
-     * reconfigured, silently — both would look like plausible numbers. It also
-     * disagrees in the last decimal places even when the sets match, which is
-     * what an integration test comparing the two endpoints caught.
+     * reconfigured, silently — both would look like plausible numbers. For a
+     * LEGACY (sketch) row it also disagrees in the last decimal places even
+     * when the sets match, which is what an integration test comparing the two
+     * endpoints caught; an exact row's frozen column holds the same
+     * nearest-rank values the histograms give.
      *
      * THE PARSE IS GUARDED even though this endpoint only reads
      * `percentiles`. `parseProjectSettings` validates the WHOLE document, so a

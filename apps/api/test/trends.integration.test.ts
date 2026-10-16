@@ -668,6 +668,10 @@ describe('GET /v1/runs/:id/trends — exact and legacy rows', () => {
     ctx = await createTestApp();
     const legacyId = await seedRun({ simulation: 'checkout', startedAt: at('2026-08-01T10:00:00Z'), withStat: false });
     const exactId = await seedRun({ simulation: 'checkout', startedAt: at('2026-08-02T10:00:00Z'), withStat: false });
+    // A legacy ROW belongs to a run the old engine produced; the column's
+    // default is 'exact-v1', so without this the fixture would describe a
+    // run that cannot exist.
+    await ctx.pool.query(`UPDATE run SET stats_method = 'estimated' WHERE id = $1`, [legacyId]);
 
     const sketch = new Sketch();
     for (const v of VALUES) sketch.accept(v);

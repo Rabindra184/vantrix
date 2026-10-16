@@ -48,10 +48,10 @@ import { Histogram } from '../src/index.js';
  *
  * Measured rather than asserted, which this file asks for after three branches
  * repaired a false load-bearing claim by ADDING prose instead of correcting the
- * sentence. Measured on 2026-10-16, with `stored-percentiles.ts` and the
- * metrics controller's two recomputations as the callers: with the strip
- * replaced by the identity the collector finds SIX calls rather than three,
- * and all three extras are prose —
+ * sentence. Measured on 2026-10-16, after the metrics controller moved onto
+ * `storedPercentiles`, so `stored-percentiles.ts` is the one caller: with the
+ * strip replaced by the identity the collector finds FOUR calls rather than
+ * one, and all three extras are prose —
  *
  *     packages/statistics/src/percentile.ts (twice)  the clamp's own docstring
  *     apps/web/src/routes/RunSummary.tsx              the docstring correcting Sketch

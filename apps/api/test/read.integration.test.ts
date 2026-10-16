@@ -112,6 +112,20 @@ describe('GET /v1/runs/:id', () => {
     expect(pending.status).toBe(202);
     expect(pending.body.statsMethod).toBe('exact-v1');
   });
+
+  /**
+   * 'exact-v1' is the column's DEFAULT, so the case above passes against a
+   * `lifecycleOf` that hard-codes it. A run marked 'estimated' — every run
+   * ingested before 2026-10-15 — is the value only a real read can produce.
+   */
+  it('sends the run\'s own statsMethod, not the default, for a run the old engine produced', async () => {
+    ctx = await createTestApp();
+    const id = await ingested();
+    await ctx.pool.query(`UPDATE run SET stats_method = 'estimated' WHERE id = $1`, [id]);
+    const res = await readAs(`/v1/runs/${id}`);
+    expect(res.status).toBe(200);
+    expect(res.body.statsMethod).toBe('estimated');
+  });
 });
 
 describe('GET /v1/runs/:id/stats', () => {
