@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "start": "node dist/main.js"
+    "start": "node dist/main.js",
+    "recompute": "node dist/scripts/recompute.js"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.6",
