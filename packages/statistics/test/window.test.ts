@@ -41,7 +41,7 @@ describe('rollupFromHistograms', () => {
   it('agrees with the batch path to the bit, and both with a two-pass oracle, on large tightly packed values', () => {
     // The batch row and a full-extent window must not disagree even in the last
     // bit: the PR 3 verifier holds both to the raw log within 1e-9, and a
-    // one-pass variance is 4.0e-7 off on exactly this shape.
+    // one-pass variance is around 2.5e-7 off on this shape.
     const values = (() => { let s = 1; return Array.from({ length: 200_000 }, () => { s = (s * 1103515245 + 12345) & 0x7fffffff; return 300_000 + Math.floor((s / 0x7fffffff) * 20); }); })();
     const builder = new RollupBuilder();
     const ok = new Histogram();

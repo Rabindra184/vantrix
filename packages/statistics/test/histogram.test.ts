@@ -192,7 +192,8 @@ describe('Histogram#variance', () => {
   /**
    * The case `E[x²] − E[x]²` loses: values far from zero and close together,
    * which is exactly what a long group duration looks like. Measured on the
-   * one-pass form at 4.0e-7 relative error — the PR 3 verifier allows 1e-9.
+   * one-pass form at 2.5e-7 relative error on 300000–300019 ms values — the PR 3
+   * verifier allows 1e-9.
    */
   it('stays within 1e-12 of a two-pass oracle on large, tightly packed values', () => {
     const values = tightLarge();

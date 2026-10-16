@@ -41,8 +41,8 @@ describe('RollupBuilder', () => {
 
   /**
    * `√(Σx²/n − mean²)` cancels catastrophically on values far from zero and
-   * close together — a long group duration. Measured at 4.0e-7 relative error
-   * on exactly this fixture; the PR 3 verifier compares within 1e-9.
+   * close together — a long group duration. Measured at 2.5e-7 relative error
+   * on this shape of data; the PR 3 verifier compares within 1e-9.
    */
   it('keeps the standard deviation of large, tightly packed values within 1e-12 of a two-pass oracle', () => {
     const values = (() => { let s = 1; return Array.from({ length: 200_000 }, () => { s = (s * 1103515245 + 12345) & 0x7fffffff; return 300_000 + Math.floor((s / 0x7fffffff) * 20); }); })();

@@ -44,6 +44,10 @@ export function engineOptionsFrom(settings: Record<string, unknown>): Record<str
  * that schema's `.default()` would. `p0` and `p100` are the min and the max
  * and have their own columns.
  *
+ * More lenient than `parseProjectSettings`, deliberately: a partly bad set
+ * such as [50, 150] keeps 50 here, while that schema refuses the whole
+ * document. Ingest must not fail on a setting the read side would reject.
+ *
  * Only NEW runs are protected: `engineOptions` is frozen onto a run at open,
  * so a run opened with a bad set before this filter existed still carries it.
  */

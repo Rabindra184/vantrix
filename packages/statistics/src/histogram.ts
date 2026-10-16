@@ -73,6 +73,11 @@ export class Histogram {
    * serializer and the distribution bins all want the same order. `null`
    * means stale. Only a NEW key invalidates it; a count increment on a key
    * already present changes no order.
+   *
+   * The cache is kept for the histogram's life, so a live bucket asked for
+   * percentiles holds one number per distinct key beside its bins — the same
+   * retention class that keeps bucket merges un-memoised, accepted here
+   * because it is bounded by the bins themselves.
    */
   #sortedKeys: number[] | null = null;
   /**
@@ -251,8 +256,11 @@ export class Histogram {
    * window and a live snapshot of one run agree to the bit.
    *
    * A legacy v1 overflow bin's observations are in `total` and `sum` but not
-   * in the bins, so for such a row the deviation omits their spread — the
-   * same class of loss as its unrecoverable percentiles.
+   * in the bins, so for such a row the mean includes them while the
+   * deviations do not: the result is UNRELIABLE, not merely narrower (90 × 10
+   * ms and 10 × 125,000 ms reads ~11,858 against a true ~37,496). The old
+   * one-pass form was wrong there too. Same class of loss as that row's
+   * unrecoverable percentiles.
    */
   variance(): number {
     if (this.#total === 0) return 0;
