@@ -79,8 +79,9 @@ export default function RunSummary() {
   // ingested. This consumer wants one entry out of it — the run immediately
   // before this one — which cannot change once it exists. Left on the default,
   // every switch back to the Summary re-issued the heaviest read in the app
-  // (up to 21 DDSketch blobs deserialised and re-quantiled server-side) to
-  // relabel four tiles.
+  // (up to 21 runs' stored distributions deserialised and re-quantiled
+  // server-side — exact histograms, or a DDSketch for a run processed before
+  // exact statistics) to relabel four tiles.
   //
   // `staleTime` is per-OBSERVER in TanStack, so this override buys the Summary
   // its cache without touching the Trends tab's own refetch-on-mount, even
@@ -304,31 +305,18 @@ function LiveSummary({ summary }: { readonly summary: LiveDelta['summary'] }) {
 
 /**
  * A percentile tile's value, straight off the wire — unlike `RunStats`' own
- * `percentileValue`, this has no `clampPercentile` step, and it no longer
- * needs one.
+ * `percentileValue`, this has no `clampPercentile` step, and needs none.
  *
- * That was not always true and the reason it gave was the wrong one. This
- * comment used to end "a live summary carries neither" — accurate about
- * `LiveSummary`, which has no `minMs`/`maxMs`, and it read as though the live
- * tile therefore had to print whatever arrived. It did: the same p99 that read
- * 2515 while a run streamed read 2503 once it finished, one run, one quantity,
- * two answers split by nothing but whether the run was still going.
- *
- * The conclusion survives, and the mechanism named here used to be wrong too.
- * `Sketch.quantile` does NOT project an interior estimate onto anything: that
- * fix was written, and reverted, because a RELOADED sketch's extremes are
- * bucket-reconstructed rather than exact, so clamping against them clamps
- * against the wrong range. It returns `getValueAtQuantile` unmodified for
- * every rank but the two ends.
- *
- * What actually clamps is `RollupBuilder.finish`, against the row's own
- * exactly-tracked `minMs`/`maxMs` — so `runStat.percentiles` really is inside
- * the range before `delta.ts` copies it onto the wire, and there is nothing
- * left for this function to correct and no range on this payload to do it
- * with. Say the mechanism precisely: a reader who believes the projection
- * lives in `Sketch` concludes every `sketch.quantile()` caller is safe, and
- * that belief is exactly how `tool-assertions.ts` came to judge a Gatling
- * assertion against an estimate 12.46 ms above the run's own maximum.
+ * The live fold runs the exact engine (exact statistics, D5):
+ * `RollupBuilder.finish` takes every percentile as the nearest rank of the
+ * row's own merged histogram, the same histogram its `minMs`/`maxMs` come
+ * from. A nearest-rank value is an observed value, so it lies inside that range
+ * by construction — there is nothing to clamp, and the rollup does not clamp.
+ * `delta.ts` copies `runStat.percentiles` onto the wire unchanged, and the live
+ * p99 is the same number the finished run's tile shows for the same data. (It
+ * was not, while percentiles came from a DDSketch: one run's p99 read 2515
+ * streaming and 2503 finished. A run processed before exact statistics never
+ * streams again, so that history does not reach this tile.)
  *
  * `—`, never `0`, for a project configured with no such percentile: a gap in
  * `summary.percentiles` is not a measurement of zero.

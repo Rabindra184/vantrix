@@ -29,7 +29,7 @@ afterEach(() => {
 
 const RUN_ID = '00000000-0000-4000-8000-000000000001';
 
-function readyRun(): RunResponse {
+function readyRun(over: Partial<RunResponse> = {}): RunResponse {
   return {
     id: RUN_ID,
     project: { id: '11111111-1111-4111-8111-111111111111', slug: 'checkout', name: 'Checkout' },
@@ -44,6 +44,7 @@ function readyRun(): RunResponse {
     toolStartedAt: '2026-08-07T05:30:02.171Z',
     assertions: [],
     toolAssertions: [],
+    ...over,
   };
 }
 
@@ -118,8 +119,11 @@ function renderReport({
   window = null,
   stats,
   telemetry,
+  run,
 }: {
   url?: string;
+  /** Fields of the run's identity to override — `statsMethod` among them. */
+  run?: Partial<RunResponse>;
   window?: RunWindowContext['window'];
   /** What `/stats` answers; `null` for a 404. Defaults to the reference run's. */
   stats?: unknown;
@@ -128,7 +132,7 @@ function renderReport({
 } = {}) {
   const seen = stubFetch(stats, telemetry);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  client.setQueryData(runQueryKey(RUN_ID), { state: 'ready', run: readyRun() });
+  client.setQueryData(runQueryKey(RUN_ID), { state: 'ready', run: readyRun(run) });
   render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[url]}>
@@ -201,6 +205,30 @@ describe('RunReport — GE’s sections', () => {
     expect(within(section).getAllByRole('heading', { name: 'Statistics' }).map((h) => h.tagName)).toEqual(['H3']);
     // The glossary defines the table's words, so it travelled with the table.
     expect(within(section).getByTestId('run-glossary')).toBeInTheDocument();
+  });
+
+  /**
+   * ═══ THE TABLE'S PERCENTILE CAVEAT FOLLOWS THE RUN'S `statsMethod` ═══
+   *
+   * `StatisticsTable.test.tsx` proves the table prints what its `exact` prop
+   * says; nothing there proves THIS page derives the prop from the run's own
+   * identity. A hard-coded `exact` passes that file whichever value it holds,
+   * so the run is rendered three ways here and the description read off the
+   * real Table view: exact-v1 says exact, estimated and an older API's absent
+   * field keep the estimate.
+   */
+  it.each([
+    ['exact-v1', /exact/i, /within 1%|estimat/i],
+    ['estimated', /within 1%/i, /are exact/i],
+    [undefined, /within 1%/i, /are exact/i],
+  ] as const)('the Statistics info for a %s run says what it should', async (statsMethod, says, never) => {
+    renderReport({ run: statsMethod === undefined ? {} : { statsMethod } });
+    const section = screen.getByTestId('section-requests');
+    await userEvent.click(within(section).getByRole('button', { name: 'Table' }));
+    await within(section).findByRole('table', { name: /statistics/i });
+    const trigger = within(section).getByRole('button', { name: 'About Statistics' });
+    expect(trigger).toHaveAccessibleDescription(says);
+    expect(trigger).not.toHaveAccessibleDescription(never);
   });
 
   it('narrows every Requests query to the window', async () => {

@@ -270,14 +270,21 @@ describe('RunGlossary — the Gatling parity promise names its exception', () =>
  * percentiles are estimates must not survive anywhere in the meaning.
  */
 describe('RunGlossary — percentiles are defined by nearest rank', () => {
-  const entry = ENTRIES.find((e) => /percentile/i.test(e.meaning) && /gatling/i.test(e.meaning));
+  /* Found by its headword, and required to EXIST in each case: a lookup that
+     came back undefined would make the "must not" assertions below pass
+     against nothing. */
+  const entry = ENTRIES.find((e) => e.term === 'Percentiles, estimated');
 
   it('states the nearest-rank definition', () => {
-    expect(entry?.meaning).toMatch(/nearest rank/i);
+    expect(entry, 'no "Percentiles, estimated" entry').toBeDefined();
+    expect(entry!.meaning).toMatch(/nearest rank/i);
   });
 
   it('does not call percentiles in general estimates; within 1% names only older runs', () => {
-    const meaning = entry?.meaning ?? '';
+    expect(entry, 'no "Percentiles, estimated" entry').toBeDefined();
+    const meaning = entry!.meaning;
+    // The scoped check below must have a sentence to scope, or it is vacuous.
+    expect(meaning).toMatch(/within 1%/i);
     expect(meaning).not.toMatch(/percentiles[^.]*\bare estimated\b|estimated from a sketch/i);
     const sentences = meaning.split(/(?<=\.)\s+/);
     for (const s of sentences.filter((x) => /within 1%/i.test(x))) {

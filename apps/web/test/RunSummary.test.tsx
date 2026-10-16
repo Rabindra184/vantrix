@@ -70,11 +70,13 @@ function readyRun({
   durationMs = 63161,
   assertions = [],
   toolAssertions = [],
+  statsMethod,
 }: {
   status?: RunResponse['status'];
   durationMs?: number | null;
   assertions?: readonly Assertion[];
   toolAssertions?: readonly ToolAssertion[];
+  statsMethod?: RunResponse['statsMethod'];
 } = {}): RunResponse {
   return {
     id: RUN_ID,
@@ -90,6 +92,7 @@ function readyRun({
     toolStartedAt: '2026-08-07T05:30:02.171Z',
     assertions: [...assertions],
     toolAssertions: [...toolAssertions],
+    statsMethod,
   };
 }
 
@@ -146,6 +149,7 @@ function renderSummary({
   assertions,
   toolAssertions,
   access = UNKNOWN_ACCESS,
+  statsMethod,
 }: {
   url?: string;
   window?: RunWindowContext['window'];
@@ -159,10 +163,12 @@ function renderSummary({
   toolAssertions?: readonly ToolAssertion[];
   /** The run's project access, as `RunShell` would share it. */
   access?: ProjectAccess;
+  /** Which engine processed the run; absent is an API that predates the field. */
+  statsMethod?: RunResponse['statsMethod'];
 } = {}) {
   const seen = stubFetch(statsBody, statsStatus);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const run = readyRun({ status, durationMs, assertions, toolAssertions });
+  const run = readyRun({ status, durationMs, assertions, toolAssertions, statsMethod });
   client.setQueryData(runQueryKey(RUN_ID), { state: 'ready', run });
   render(
     <QueryClientProvider client={client}>
@@ -195,6 +201,27 @@ describe('RunSummary — always the whole run', () => {
     const metric = seen.filter((u) => /\/v1\/runs\//.test(u));
     expect(metric.length).toBeGreaterThan(2);
     for (const url of metric) expect(url).not.toMatch(/[?&](from|to)=/);
+  });
+
+  /**
+   * ═══ THE p95 ⓘ FOLLOWS THE RUN'S `statsMethod` ═══
+   *
+   * `RunStats.test.tsx` proves the tile obeys its `exact` prop; only this page
+   * derives the prop from the run's body, and a hard-coded value passes that
+   * file either way. An exact-v1 run's tile has no ⓘ; an estimated run, and an
+   * older API that sends no `statsMethod`, keep the estimate caveat.
+   */
+  it('draws the p95 estimate caveat only for a run that is not exact', async () => {
+    renderSummary({ statsMethod: 'exact-v1' });
+    await screen.findByTestId('stat-p95');
+    expect(screen.queryByRole('button', { name: 'About p95' })).toBeNull();
+    cleanup();
+    for (const statsMethod of ['estimated', undefined] as const) {
+      renderSummary({ statsMethod });
+      await screen.findByTestId('stat-p95');
+      expect(screen.getByRole('button', { name: 'About p95' }), String(statsMethod)).toHaveAccessibleDescription(/within 1%/i);
+      cleanup();
+    }
   });
 
   it('leads with GE’s four numbers, in GE’s order', async () => {
