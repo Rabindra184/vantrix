@@ -13,8 +13,13 @@ import {
   SeriesResponseSchema,
   StatsResponseSchema,
 } from '@perfportal/contracts';
+import { nearestRankIndex } from '@perfportal/statistics';
 import { createTestApp, type TestContext } from './support/app.js';
 import { runPipelineFor } from './support/pipeline.js';
+// Relative cross-package import, the precedent parity.e2e.test.ts sets:
+// apps/api does not depend on plugin-gatling, and a test-only decode of the
+// reference log is not a reason to add one.
+import { parseSimulationLog } from '../../../packages/plugin-gatling/src/records.js';
 
 const FIXTURE_LOG = fileURLToPath(
   new URL('../../../fixtures/gatling-3.15.1.2/reference-report/simulation.log', import.meta.url),
@@ -37,7 +42,12 @@ afterEach(async () => {
   await ctx?.close();
 });
 
-async function ingested(extra: Record<string, unknown> = {}): Promise<string> {
+/**
+ * POSTs the reference bundle and returns the run's id WITHOUT processing it,
+ * so the run stays `pending` and is read through the 202 builder. `waitMs: 0`
+ * because no worker runs in this process: a wait would only expire.
+ */
+async function postWithoutProcessing(extra: Record<string, unknown> = {}): Promise<string> {
   const q = new Queue('ingest', { connection: { url: process.env.REDIS_URL ?? 'redis://localhost:6380' } });
   await q.obliterate({ force: true });
   await q.close();
@@ -47,11 +57,19 @@ async function ingested(extra: Record<string, unknown> = {}): Promise<string> {
     .set('Authorization', `Bearer ${ctx.ingestToken}`)
     .field('metadata', JSON.stringify({ tool: 'gatling', waitMs: 0, ...extra }))
     .attach('bundle', bundle, 'bundle.tgz');
-  await runPipelineFor(ctx, res.body.id);
   return res.body.id;
 }
 
+async function ingested(extra: Record<string, unknown> = {}): Promise<string> {
+  const id = await postWithoutProcessing(extra);
+  await runPipelineFor(ctx, id);
+  return id;
+}
+
 const auth = () => ({ Authorization: `Bearer ${ctx.readToken}` });
+
+/** An authenticated GET with the read token, the way every case here reads. */
+const readAs = (path: string) => request(ctx.app.getHttpServer()).get(path).set(auth());
 
 describe('GET /v1/runs/:id', () => {
   it('rejects a malformed id with 400 and remediation that says what a valid value looks like, not "retry"', async () => {
@@ -75,6 +93,24 @@ describe('GET /v1/runs/:id', () => {
     expect(res.body).toHaveProperty('durationMs');
     expect(res.body.simulation).toBe('example.ParitySimulation');
     expect(res.body.durationMs).toBeGreaterThan(60_000);
+  });
+
+  /**
+   * Both identity builders, because a field sent by only one of them is
+   * missing exactly while a reader watches the run (CLAUDE.md, warmupMs).
+   * The pending run is read through `respondWithRun`'s hand-written 202.
+   */
+  it('sends statsMethod on the run in both the 202 and the finished response', async () => {
+    ctx = await createTestApp();
+    const id = await ingested();
+    const done = await readAs(`/v1/runs/${id}`);
+    expect(done.status).toBe(200);
+    expect(done.body.statsMethod).toBe('exact-v1');
+
+    const pendingId = await postWithoutProcessing();
+    const pending = await readAs(`/v1/runs/${pendingId}`);
+    expect(pending.status).toBe(202);
+    expect(pending.body.statsMethod).toBe('exact-v1');
   });
 });
 
@@ -103,6 +139,59 @@ describe('GET /v1/runs/:id/stats', () => {
     expect(runStat.okCount).toBe(871);
     expect(runStat.koCount).toBe(24);
     expect(Math.round(runStat.maxMs)).toBe(2503);
+  });
+
+  /**
+   * The expectation is computed from the RAW LOG, never from the engine: the
+   * nearest-rank value of every request's duration. A sketch estimate (the
+   * pre-2026-10-15 path) misses several of these by a fraction of a
+   * millisecond, so equality is the whole claim.
+   */
+  it('serves a new run exactly: /stats percentiles equal nearest-rank values of the raw log', async () => {
+    ctx = await createTestApp();
+    const id = await ingested();
+    const values = [...parseSimulationLog(readFileSync(FIXTURE_LOG))]
+      .filter((e): e is Extract<typeof e, { type: 'request' }> => e.type === 'request')
+      .map((e) => e.endMs - e.startMs)
+      .sort((a, b) => a - b);
+
+    const res = await readAs(`/v1/runs/${id}/stats`);
+    expect(res.status).toBe(200);
+    const runRow = res.body.stats.find(
+      (s: { scope: string; family: string }) => s.scope === 'run' && s.family === 'response_time',
+    );
+    // Vacuity guard: the same population, or equality below proves nothing.
+    expect(runRow.count).toBe(values.length);
+    expect(Object.keys(runRow.percentiles).length).toBeGreaterThan(0);
+    for (const [key, value] of Object.entries(runRow.percentiles)) {
+      expect(value, key).toBe(values[nearestRankIndex(Number(key.slice(1)), values.length)]);
+    }
+
+    // At a set the frozen column does not hold: the default set above is
+    // answered by the column written at ingest, which is already exact, so
+    // only a RECONFIGURED set proves the endpoint recomputes from the
+    // histograms rather than from a sketch these rows no longer carry.
+    await ctx.pool.query(
+      `UPDATE project SET settings = jsonb_set(settings, '{percentiles}', $1::jsonb) WHERE id = $2`,
+      [JSON.stringify([90, 99.9]), ctx.projectId],
+    );
+    try {
+      const after = await readAs(`/v1/runs/${id}/stats`);
+      expect(after.status).toBe(200);
+      const afterRow = after.body.stats.find(
+        (s: { scope: string; family: string }) => s.scope === 'run' && s.family === 'response_time',
+      );
+      expect(Object.keys(afterRow.percentiles).sort()).toEqual(['p90', 'p99.9']);
+      for (const [key, value] of Object.entries(afterRow.percentiles)) {
+        expect(value, key).toBe(values[nearestRankIndex(Number(key.slice(1)), values.length)]);
+      }
+    } finally {
+      // Settings are shared state for the rest of this file.
+      await ctx.pool.query(
+        `UPDATE project SET settings = jsonb_set(settings, '{percentiles}', $1::jsonb) WHERE id = $2`,
+        [JSON.stringify([50, 75, 95, 99]), ctx.projectId],
+      );
+    }
   });
 
   it('reports the indicator bands the Gatling report shows', async () => {

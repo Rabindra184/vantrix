@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   IngestMetadataSchema,
   ProblemDetailsSchema,
+  RunIdentitySchema,
   RunResponseSchema,
   TrendRunSchema,
 } from '../src/index.js';
@@ -188,6 +189,18 @@ describe('RunResponseSchema test identity', () => {
 
   it('accepts a body from an API pod that predates the field, mid-rolling-deploy', () => {
     expect(RunResponseSchema.parse(base).test).toBeUndefined();
+  });
+
+  /**
+   * `statsMethod` says whether a run's statistics are exact or were estimated
+   * by the pre-2026-10-15 sketch engine. Optional for the same rolling-deploy
+   * reason as `test`, and an ENUM, so a value outside the two cannot reach a
+   * reader who would then guess what it means.
+   */
+  it('accepts a run identity with and without statsMethod (rolling deploy)', () => {
+    expect(RunIdentitySchema.safeParse({ ...base, statsMethod: 'exact-v1' }).success).toBe(true);
+    expect(RunIdentitySchema.safeParse(base).success).toBe(true);
+    expect(RunIdentitySchema.safeParse({ ...base, statsMethod: 'sketch' }).success).toBe(false);
   });
 
   /**
