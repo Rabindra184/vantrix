@@ -50,6 +50,7 @@ export default function RunStats({
   baseline,
   current,
   assertions,
+  exact,
 }: {
   readonly stats: StatsResponse;
   /**
@@ -78,6 +79,16 @@ export default function RunStats({
    * leaves every tile untinted — see `slaTone`.
    */
   readonly assertions?: readonly Assertion[];
+  /**
+   * Whether this run's statistics are exact (`isExact(identity.statsMethod)`).
+   * An exact run's p95 is the observed value at the nearest rank, so the
+   * "estimated … within 1%" caveat would be false over it; the tile has no
+   * other caveat, so it carries no ⓘ at all. REQUIRED, with no default: a
+   * caller that forgot it would either print a false caveat or drop a true
+   * one, and nothing would fail — this repo's rule for a prop whose wrong
+   * value is silent.
+   */
+  readonly exact: boolean;
 }) {
   const run = stats.stats.find((row) => row.scope === 'run');
   if (run === undefined) {
@@ -201,7 +212,7 @@ export default function RunStats({
           value={percentileValue(run, 'p95')}
           unit={percentileUnit(run, 'p95')}
           tone={slaTone(assertions, 'p95')}
-          info={<InfoTip label="About p95">{P95_INFO}</InfoTip>}
+          info={exact ? undefined : <InfoTip label="About p95">{P95_INFO}</InfoTip>}
           delta={vs(deltaFor(percentileMs(run, 'p95'), percentileMs(baseline, 'p95'), 'lower'))}
           data-testid="stat-p95"
         />
@@ -280,7 +291,11 @@ function baselineName(previous: TrendRun): string {
 /** A tile's change against the baseline, before it is joined to the run it names. */
 type Delta = { readonly change: string; readonly tone: DeltaTone };
 
-/** p95's caveat, behind its tile's ⓘ — the one estimate on the row. */
+/**
+ * p95's caveat, behind its tile's ⓘ — the one estimate on the row, and ONLY
+ * on a run processed before exact statistics (`exact` false). An exact run's
+ * p95 is an observed value and is drawn with no ⓘ.
+ */
 const P95_INFO =
   'p95 is estimated from a sketch of the whole run, accurate to within 1%, and shown clamped to the ' +
   'run’s own minimum and maximum. Error rate, requests and peak users are counted, not estimated.';

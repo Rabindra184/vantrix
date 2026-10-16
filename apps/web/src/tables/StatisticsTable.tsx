@@ -590,10 +590,21 @@ export default function StatisticsTable({
   runId,
   runStatus,
   windowSelected,
+  exact,
   headingLevel = 2,
 }: {
   stats: StatsResponse;
   runId: string;
+  /**
+   * Whether this run's statistics are exact (`isExact(identity.statsMethod)`),
+   * which decides one sentence of the methodology behind the heading's ⓘ: an
+   * exact run's percentiles are observed values at the nearest rank, an
+   * estimated run's are sketch estimates within 1%, clamped to their row's
+   * range. REQUIRED, with no default, for the reason `windowSelected` gives: a
+   * caller that forgot it would print a false caveat or drop a true one, and
+   * nothing would fail.
+   */
+  readonly exact: boolean;
   /**
    * WHY THIS TABLE IS EMPTY, WHICH IT CANNOT WORK OUT FOR ITSELF.
    *
@@ -941,7 +952,7 @@ export default function StatisticsTable({
           id={headingId}
           level={headingLevel}
           overline="Run telemetry"
-          info={<InfoTip label="About Statistics">{TABLE_INFO}</InfoTip>}
+          info={<InfoTip label="About Statistics">{tableInfo(exact)}</InfoTip>}
         >
           Statistics
         </SectionHeading>
@@ -1011,7 +1022,7 @@ export default function StatisticsTable({
           {/* The table's accessible NAME, a word — `getByRole('table', { name:
               /statistics/i })` is how this suite and the Playwright specs find
               it. The methodology a reader needs (GROUP rows are aggregates,
-              milliseconds, percentiles are estimates within 1%) rides behind
+              milliseconds, and how the percentiles were taken) rides behind
               the section heading's info: the clean-UI text rule, and the
               review C06 ask that the name not be the whole methodology. */}
           <caption className="sr-only">{TABLE_NAME}</caption>
@@ -1149,13 +1160,27 @@ const TABLE_NAME = 'Statistics';
  * heading's info. "Statistics for every request and group in this run, with
  * the run’s own totals in the first row" only described what is on screen, so
  * it is gone; the rest is a caveat about how to read the numbers.
+ *
+ * THE PERCENTILE SENTENCE DEPENDS ON THE RUN. An exact run (`statsMethod:
+ * 'exact-v1'`) reports the observed value at the nearest rank — nothing to be
+ * within 1% of, and nothing to clamp, since an observed value cannot lie
+ * outside the range it was observed in. Only a run processed before exact
+ * statistics keeps the estimate and its clamp.
  */
-const TABLE_INFO =
+const TABLE_INFO_BASE =
   'A row tagged GROUP is an aggregate — the cumulated response time of the requests inside it — ' +
   'so its counts already include theirs and the two must never be added together; every untagged ' +
-  'row is a single request. Response times are in milliseconds. The percentile columns are ' +
-  'estimates, accurate to within 1%, and are shown clamped to their own row’s minimum and ' +
-  'maximum — a percentile of a sample cannot lie outside that sample’s range.';
+  'row is a single request. Response times are in milliseconds.';
+
+const PERCENTILES_EXACT = 'Percentiles are exact: the value at that rank in the run’s own data.';
+
+const PERCENTILES_ESTIMATED =
+  'The percentile columns are estimates, accurate to within 1%, and are shown clamped to their own ' +
+  'row’s minimum and maximum — a percentile of a sample cannot lie outside that sample’s range.';
+
+function tableInfo(exact: boolean): string {
+  return `${TABLE_INFO_BASE} ${exact ? PERCENTILES_EXACT : PERCENTILES_ESTIMATED}`;
+}
 
 /* ======================================================================== *
  * 6. THE COLUMN HEADINGS, WHICH ARE THE SORT CONTROLS

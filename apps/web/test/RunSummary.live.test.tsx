@@ -162,8 +162,8 @@ describe('RunSummary — live', () => {
    * that is the state in which a tile read off the connection would vanish.
    */
   /** Clean UI, PR 2: the live twin of the finished tiles carries no hint
-   *  lines either, and offers the same p95 caveat behind an ⓘ. */
-  it('gives the live tiles no hint lines and the same p95 info', () => {
+   *  lines either, and offers a p95 caveat behind an ⓘ. */
+  it('gives the live tiles no hint lines and a p95 info', () => {
     renderSummary({
       live: liveWith({ count: 1200, okCount: 1176, koCount: 24, errorRate: 0.02, maxUsers: 8, percentiles: { p95: 450 } }),
     });
@@ -171,6 +171,23 @@ describe('RunSummary — live', () => {
     expect(section.textContent ?? '').not.toMatch(/so far$|of [\d,]+ requests|successful, /);
     expect(screen.queryByText(/concurrent, so far|an estimate, so far/)).toBeNull();
     expect(screen.getByRole('button', { name: 'About p95' })).toBeInTheDocument();
+  });
+
+  /**
+   * ═══ A LIVE p95 IS EXACT, SO IT IS NOT CALLED AN ESTIMATE ═══
+   *
+   * The live fold uses the same exact engine as the finished run (exact
+   * statistics, D5), and every live run is new, so "estimated from a sketch …
+   * within 1%" was false for every run this tile can show. What stays true is
+   * that the number covers only what has arrived so far.
+   */
+  it('says the live p95 covers what has arrived so far, and does not call it an estimate', () => {
+    renderSummary({
+      live: liveWith({ count: 1200, okCount: 1176, koCount: 24, errorRate: 0.02, maxUsers: 8, percentiles: { p95: 450 } }),
+    });
+    const trigger = screen.getByRole('button', { name: 'About p95' });
+    expect(trigger).toHaveAccessibleDescription(/so far/i);
+    expect(trigger).not.toHaveAccessibleDescription(/estimat|within 1%/i);
   });
 
   it('keeps the tiles on screen, unblanked, once the run has left running', () => {

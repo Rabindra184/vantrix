@@ -22,6 +22,7 @@ import GroupsList from './GroupsList';
 import LiveNotice from './LiveNotice';
 import { Payload, TableSection, explain, type Slot } from './payload';
 import RunGlossary from './RunGlossary';
+import { isExact } from './statsMethod';
 import RunTelemetry from './RunTelemetry';
 import { PERCENTILES, REQUESTS_AND_RESPONSES } from './runSlots';
 import {
@@ -92,11 +93,13 @@ export default function RunReport() {
     return <WaitingPanel status={run.data.run.status} />;
   }
   const runStatus = run.data.run.status;
+  // Decides whether the statistics table's percentile caveat is an estimate's.
+  const exact = isExact(run.data.run.statsMethod);
 
   return (
     <div className="flex flex-col gap-4">
       <CollapsibleSection id="requests" title="Requests" defaultOpen>
-        {() => <RequestsSection runId={runId} runStatus={runStatus} />}
+        {() => <RequestsSection runId={runId} runStatus={runStatus} exact={exact} />}
       </CollapsibleSection>
       <CollapsibleSection id="groups" title="Groups">
         {() => <GroupsSection runId={runId} />}
@@ -121,7 +124,15 @@ export default function RunReport() {
  * shared sorted view lands on what was shared. The choice itself stays out
  * of the URL, as GE keeps it.
  */
-function RequestsSection({ runId, runStatus }: { readonly runId: string; readonly runStatus: RunResponse['status'] }) {
+function RequestsSection({
+  runId,
+  runStatus,
+  exact,
+}: {
+  readonly runId: string;
+  readonly runStatus: RunResponse['status'];
+  readonly exact: boolean;
+}) {
   const [params] = useSearchParams();
   const [view, setView] = useState<'charts' | 'table'>(() =>
     params.has('sort') || params.has('q') ? 'table' : 'charts',
@@ -141,7 +152,7 @@ function RequestsSection({ runId, runStatus }: { readonly runId: string; readonl
           </button>
         ))}
       </div>
-      {view === 'charts' ? <RequestsCharts runId={runId} /> : <RequestsTable runId={runId} runStatus={runStatus} />}
+      {view === 'charts' ? <RequestsCharts runId={runId} /> : <RequestsTable runId={runId} runStatus={runStatus} exact={exact} />}
     </div>
   );
 }
@@ -237,7 +248,15 @@ function RequestsCharts({ runId }: { readonly runId: string }) {
 
 /** The statistics table as the Overview drew it, one heading level down, with
  *  the glossary under it. */
-function RequestsTable({ runId, runStatus }: { readonly runId: string; readonly runStatus: RunResponse['status'] }) {
+function RequestsTable({
+  runId,
+  runStatus,
+  exact,
+}: {
+  readonly runId: string;
+  readonly runStatus: RunResponse['status'];
+  readonly exact: boolean;
+}) {
   const { terminal } = useRunTerminal(runId);
   const window = useWindowFromShell();
   const compact = useIsCompact();
@@ -255,6 +274,7 @@ function RequestsTable({ runId, runStatus }: { readonly runId: string; readonly 
                 runId={runId}
                 runStatus={runStatus}
                 windowSelected={window !== null}
+                exact={exact}
                 headingLevel={3}
               />
             )}

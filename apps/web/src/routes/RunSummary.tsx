@@ -18,6 +18,7 @@ import { FRAGMENT_SCROLL_MARGIN } from './fragment';
 import { Payload, TableSection, explain } from './payload';
 import { baselineRun, cohortRun } from './runBaseline';
 import RunStats from './RunStats';
+import { isExact } from './statsMethod';
 import { PERCENTILES, REQUESTS_AND_RESPONSES } from './runSlots';
 import { peakConcurrentUsers } from './runUsers';
 import {
@@ -158,6 +159,7 @@ export default function RunSummary() {
                conditions. */
             current={cohortRun(trends.data, runId)}
             assertions={body.assertions}
+            exact={isExact(body.statsMethod)}
           />
         )}
         {/* `data === undefined` as well as `isError`: a background refetch that
@@ -222,10 +224,14 @@ function OverTimeCharts({ series, domainMs, warmupMs }: { readonly series: Serie
   );
 }
 
-/** The live p95's caveat, behind its tile's ⓘ — the finished tile's, read while the run streams. */
-const LIVE_P95_INFO =
-  'p95 is estimated from a sketch of what has arrived so far, accurate to within 1%. Error rate, ' +
-  'requests and peak users are counted, not estimated.';
+/**
+ * The live p95's caveat, behind its tile's ⓘ. The live fold uses the same
+ * exact engine as the finished run (exact statistics, D5) and every live run
+ * is new, so the value is the observed one at the nearest rank — never
+ * "estimated … within 1%", which this once said. What remains true, and is
+ * not on the tile's own label, is that it covers only what has arrived.
+ */
+const LIVE_P95_INFO = 'p95 of the responses that have arrived so far.';
 
 /**
  * The live wire's own headline numbers, read DIRECTLY from a delta's

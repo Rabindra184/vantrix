@@ -82,7 +82,7 @@ function trendRun(over: Partial<TrendRun> = {}): TrendRun {
 
 describe('RunStats', () => {
   it('shows the run row’s own totals', () => {
-    renderStats(<RunStats stats={stats} peakUsers={12} runStatus="complete" />);
+    renderStats(<RunStats exact={false} stats={stats} peakUsers={12} runStatus="complete" />);
     // Plain digits — `String(runRow.count)`, not `.toLocaleString()`. The
     // fixture's run has 895 requests, where the two happen to produce the
     // same string; the test below (four digits or more) is what actually
@@ -115,7 +115,7 @@ describe('RunStats', () => {
         row.scope === 'run' ? { ...row, count: bigCount, okCount: bigOk, koCount: bigKo } : row,
       ),
     };
-    renderStats(<RunStats stats={bigRun} peakUsers={12} runStatus="complete" />);
+    renderStats(<RunStats exact={false} stats={bigRun} peakUsers={12} runStatus="complete" />);
 
     const tile = screen.getByTestId('stat-total-requests');
     expect(tile).toHaveTextContent(String(bigCount));
@@ -142,7 +142,7 @@ describe('RunStats', () => {
    * from the first, free to disagree the day the server's rounding changes.
    */
   it('reads error rate from the same field the table does', () => {
-    renderStats(<RunStats stats={stats} peakUsers={12} runStatus="complete" />);
+    renderStats(<RunStats exact={false} stats={stats} peakUsers={12} runStatus="complete" />);
     const expected = (runRow.errorRate * 100).toFixed(2);
     expect(screen.getByTestId('stat-error-rate')).toHaveTextContent(expected);
   });
@@ -150,6 +150,7 @@ describe('RunStats', () => {
   it('shows comparison deltas when a previous cohort run is provided', () => {
     renderStats(
       <RunStats
+        exact={false}
         stats={stats}
         peakUsers={12}
         runStatus="complete"
@@ -214,6 +215,7 @@ describe('RunStats', () => {
   it('names what differed between this run and the baseline it compares against', () => {
     renderStats(
       <RunStats
+        exact={false}
         stats={stats}
         peakUsers={12}
         runStatus="complete"
@@ -243,6 +245,7 @@ describe('RunStats', () => {
   it('names the baseline by its number, linked from each delta', () => {
     renderStats(
       <RunStats
+        exact={false}
         stats={stats}
         peakUsers={12}
         runStatus="complete"
@@ -260,6 +263,7 @@ describe('RunStats', () => {
     const shared = { environment: 'staging', branch: 'main', commitSha: 'abcdef1234' };
     renderStats(
       <RunStats
+        exact={false}
         stats={stats}
         peakUsers={12}
         runStatus="complete"
@@ -280,6 +284,7 @@ describe('RunStats', () => {
     const baselineClamped = clamped * 2;
     renderStats(
       <RunStats
+        exact={false}
         stats={stats}
         peakUsers={12}
         runStatus="complete"
@@ -366,7 +371,7 @@ describe('RunStats', () => {
    * estimates and drift further.
    */
   it('keeps the estimate caveat behind the p95 info, once', () => {
-    renderStats(<RunStats stats={stats} peakUsers={12} runStatus="complete" />);
+    renderStats(<RunStats exact={false} stats={stats} peakUsers={12} runStatus="complete" />);
     // Behind the tile's ⓘ now (clean UI, PR 2), as its trigger's description —
     // and still reachable exactly once, in the info's hidden copy.
     expect(screen.getByRole('button', { name: 'About p95' })).toHaveAccessibleDescription(/estimated .* within 1%/);
@@ -377,13 +382,14 @@ describe('RunStats', () => {
    *  verbatim, and a disclosure that contributed one would break it — the
    *  shell-must-not-add-an-h2 rule, one component over. */
   it('contributes no heading', () => {
-    renderStats(<RunStats stats={stats} peakUsers={12} runStatus="complete" />);
+    renderStats(<RunStats exact={false} stats={stats} peakUsers={12} runStatus="complete" />);
     expect(screen.queryAllByRole('heading')).toHaveLength(0);
   });
 
   it('tints a metric whose SLA rule failed, and leaves an ungated one alone', () => {
     renderStats(
       <RunStats
+        exact={false}
         stats={stats}
         peakUsers={12}
         runStatus="complete"
@@ -403,6 +409,7 @@ describe('RunStats', () => {
     // of 0.1% against a 5% limit is nowhere near it.
     renderStats(
       <RunStats
+        exact={false}
         stats={stats}
         peakUsers={12}
         runStatus="complete"
@@ -423,6 +430,7 @@ describe('RunStats', () => {
   it('judges error rate, which needs no new rule family', () => {
     renderStats(
       <RunStats
+        exact={false}
         stats={stats}
         peakUsers={12}
         runStatus="complete"
@@ -444,6 +452,7 @@ describe('RunStats', () => {
   it('ignores a rule on a different family that shares the metric name', () => {
     renderStats(
       <RunStats
+        exact={false}
         stats={stats}
         peakUsers={12}
         runStatus="complete"
@@ -469,7 +478,7 @@ describe('RunStats', () => {
    * that none existed.
    */
   it('renders the table’s own empty sentence when the run kept nothing', () => {
-    renderStats(<RunStats stats={{ ...stats, stats: [] }} peakUsers={null} runStatus="incomplete" />);
+    renderStats(<RunStats exact={false} stats={{ ...stats, stats: [] }} peakUsers={null} runStatus="incomplete" />);
     expect(screen.getByText('No statistics were retained for this run')).toBeVisible();
     expect(screen.queryByTestId('stat-p95')).toBeNull();
   });
@@ -478,7 +487,7 @@ describe('RunStats', () => {
   // "recorded", and a component that ignored `runStatus` would say "retained"
   // here (or "recorded" above) and pass whichever case it was written against.
   it('says a finished run recorded nothing, rather than that it kept nothing', () => {
-    renderStats(<RunStats stats={{ ...stats, stats: [] }} peakUsers={null} runStatus="complete" />);
+    renderStats(<RunStats exact={false} stats={{ ...stats, stats: [] }} peakUsers={null} runStatus="complete" />);
     expect(screen.getByText('No statistics were recorded for this run')).toBeVisible();
     expect(screen.queryByText('No statistics were retained for this run')).toBeNull();
   });
@@ -503,7 +512,7 @@ describe('RunStats', () => {
    * four.)
    */
   it('names the response-time tile after the metric a gate is authored against', () => {
-    renderStats(<RunStats stats={stats} peakUsers={12} runStatus="complete" />);
+    renderStats(<RunStats exact={false} stats={stats} peakUsers={12} runStatus="complete" />);
     // The label's own span: the `<dt>` also holds p95's ⓘ, whose hidden
     // description would otherwise join the label's text.
     const labels = [...document.querySelectorAll('section[aria-label="Run totals"] dt')].map(
@@ -534,7 +543,7 @@ describe('RunStats', () => {
    * tile is not that surface, so it speaks the product's own language.
    */
   it('never uses the tool’s OK/KO words', () => {
-    renderStats(<RunStats stats={stats} peakUsers={12} runStatus="complete" />);
+    renderStats(<RunStats exact={false} stats={stats} peakUsers={12} runStatus="complete" />);
     const section = document.querySelector('section[aria-label="Run totals"]')!;
     const text = section.textContent ?? '';
 
@@ -573,7 +582,7 @@ describe('RunStats — the tile reading order', () => {
      `run-charts.spec.ts` already makes for asserting `CHART_IDS` as a list so
      a reorder cannot pass silently. */
   it('leads with GE’s four, in GE’s order', () => {
-    renderStats(<RunStats stats={stats} peakUsers={12} runStatus="complete" />);
+    renderStats(<RunStats exact={false} stats={stats} peakUsers={12} runStatus="complete" />);
     const ids = [
       ...document.querySelectorAll('section[aria-label="Run totals"] dd[data-testid^="stat-"]'),
     ].map((dd) => dd.getAttribute('data-testid'));
@@ -585,10 +594,10 @@ describe('RunStats — the tile reading order', () => {
   });
 
   it('shows the peak users it is handed, and a dash while it has none', () => {
-    const { unmount } = renderStats(<RunStats stats={stats} peakUsers={12} runStatus="complete" />);
+    const { unmount } = renderStats(<RunStats exact={false} stats={stats} peakUsers={12} runStatus="complete" />);
     expect(screen.getByTestId('stat-peak-users')).toHaveTextContent('12');
     unmount();
-    renderStats(<RunStats stats={stats} peakUsers={null} runStatus="complete" />);
+    renderStats(<RunStats exact={false} stats={stats} peakUsers={null} runStatus="complete" />);
     // A dash, never `0`: zero is a measurement, and the users series has either
     // not arrived or recorded no bucket.
     expect(screen.getByTestId('stat-peak-users')).toHaveTextContent('—');
@@ -671,7 +680,7 @@ describe('RunStats — clean tiles', () => {
 
   it('names the run each delta compares against, as a link', () => {
     renderStats(
-      <RunStats stats={stats} peakUsers={12} runStatus="complete" current={trendRun({ runNumber: 11 })}
+      <RunStats exact={false} stats={stats} peakUsers={12} runStatus="complete" current={trendRun({ runNumber: 11 })}
         baseline={trendRun({ id: BASE_ID, runNumber: 10 })} />,
     );
     const links = screen.getAllByRole('link', { name: 'Run 10' });
@@ -682,13 +691,13 @@ describe('RunStats — clean tiles', () => {
 
   it('says vs previous run when the baseline has no number', () => {
     renderStats(
-      <RunStats stats={stats} peakUsers={12} runStatus="complete" current={trendRun()} baseline={trendRun({ id: BASE_ID })} />,
+      <RunStats exact={false} stats={stats} peakUsers={12} runStatus="complete" current={trendRun()} baseline={trendRun({ id: BASE_ID })} />,
     );
     expect(screen.getAllByRole('link', { name: 'previous run' })).toHaveLength(3);
   });
 
   it('shows no deltas and no comparison row on a test’s first run', () => {
-    renderStats(<RunStats stats={stats} peakUsers={12} runStatus="complete" baseline={null} />);
+    renderStats(<RunStats exact={false} stats={stats} peakUsers={12} runStatus="complete" baseline={null} />);
     // The paired positive: the tiles drew, so the absences below are not an
     // empty section.
     for (const id of ['stat-p95', 'stat-error-rate', 'stat-total-requests', 'stat-peak-users']) {
@@ -701,7 +710,7 @@ describe('RunStats — clean tiles', () => {
   });
 
   it('carries no hint lines and no percentile disclosure', () => {
-    renderStats(<RunStats stats={stats} peakUsers={12} runStatus="complete" />);
+    renderStats(<RunStats exact={false} stats={stats} peakUsers={12} runStatus="complete" />);
     expect(screen.queryByText(/of [\d,]+ requests/)).toBeNull();
     expect(screen.queryByText(/successful, .* failed/)).toBeNull();
     expect(screen.queryByText(/busiest moment/)).toBeNull();
@@ -709,14 +718,34 @@ describe('RunStats — clean tiles', () => {
     expect(screen.queryByText(/How percentiles are measured/)).toBeNull();
   });
 
+  /**
+   * ═══ EXACT STATISTICS: THE CAVEAT FOLLOWS THE RUN, NOT THE TILE ═══
+   *
+   * A run processed by the exact engine (`statsMethod: 'exact-v1'`) reports
+   * the observed value at the nearest rank — no sketch, no 1%, no clamp — so
+   * "estimated … within 1%" over it is a false sentence. The tile has no other
+   * caveat, so its ⓘ goes entirely. A run processed before the change still
+   * carries the estimate and keeps the caveat; both halves are asserted, since
+   * either alone passes against a tile that always or never shows it.
+   */
+  it('drops the p95 estimate caveat on an exact run and keeps it on an estimated one', () => {
+    renderStats(<RunStats exact stats={stats} peakUsers={12} runStatus="complete" />);
+    expect(screen.getByTestId('stat-p95')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /about p95/i })).toBeNull();
+    expect(document.body.textContent ?? '').not.toMatch(/estimat|within 1%|clamp/i);
+    cleanup();
+    renderStats(<RunStats exact={false} stats={stats} peakUsers={12} runStatus="complete" />);
+    expect(screen.getByRole('button', { name: /about p95/i })).toHaveAccessibleDescription(/within 1%/i);
+  });
+
   it('puts the p95 caveat behind an info beside its label', () => {
-    renderStats(<RunStats stats={stats} peakUsers={12} runStatus="complete" />);
+    renderStats(<RunStats exact={false} stats={stats} peakUsers={12} runStatus="complete" />);
     expect(screen.getByRole('button', { name: 'About p95' })).toHaveAccessibleDescription(/within 1%/);
   });
 
   it('shows the differs chip only when the runs differ, and the comparison info whenever a finding exists', () => {
     renderStats(
-      <RunStats stats={stats} peakUsers={12} runStatus="complete"
+      <RunStats exact={false} stats={stats} peakUsers={12} runStatus="complete"
         current={trendRun({ ...shared, environment: 'staging', branch: null })}
         baseline={trendRun({ ...shared, id: BASE_ID, runNumber: 10, environment: 'production' })} />,
     );
@@ -727,7 +756,7 @@ describe('RunStats — clean tiles', () => {
 
     cleanup();
     renderStats(
-      <RunStats stats={stats} peakUsers={12} runStatus="complete"
+      <RunStats exact={false} stats={stats} peakUsers={12} runStatus="complete"
         current={trendRun({ ...shared, branch: null })}
         baseline={trendRun({ ...shared, id: BASE_ID, runNumber: 10 })} />,
     );
@@ -742,7 +771,7 @@ describe('RunStats — clean tiles', () => {
    *  and its colour off its own style, and measures that pair, both themes. */
   it.each(['light', 'dark'] as const)('draws the differs chip legibly in %s mode', (mode) => {
     renderStats(
-      <RunStats stats={stats} peakUsers={12} runStatus="complete"
+      <RunStats exact={false} stats={stats} peakUsers={12} runStatus="complete"
         current={trendRun({ ...shared, environment: 'staging' })}
         baseline={trendRun({ ...shared, id: BASE_ID, runNumber: 10, environment: 'production' })} />,
     );
@@ -761,7 +790,7 @@ describe('RunStats — clean tiles', () => {
 
   it('renders no comparison row when the runs match on every condition', () => {
     renderStats(
-      <RunStats stats={stats} peakUsers={12} runStatus="complete" current={trendRun(shared)}
+      <RunStats exact={false} stats={stats} peakUsers={12} runStatus="complete" current={trendRun(shared)}
         baseline={trendRun({ ...shared, id: BASE_ID, runNumber: 10 })} />,
     );
     expect(screen.queryByTestId('comparison-note')).toBeNull();

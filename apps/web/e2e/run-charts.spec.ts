@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import {
+  markEstimated,
   seedAdmin,
   seedCompleteRunWithoutMetrics,
   seedPendingRun,
@@ -1540,6 +1541,11 @@ test('an empty window in the URL leaves the Summary’s totals alone', async ({ 
 test('the Summary’s percentile note names the whole run, with or without a window', async ({ page }) => {
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
+  /* The note exists only on a run processed before exact statistics: an exact
+     run's p95 is an observed value and its tile carries no ⓘ (the case below).
+     So this run is labelled 'estimated', which is the one thing the caveat
+     reads. */
+  await markEstimated(runId);
   await signIn(page, admin);
 
   // The note is the p95 tile's ⓘ now (clean UI, PR 2): its caveat is the
@@ -1560,4 +1566,25 @@ test('the Summary’s percentile note names the whole run, with or without a win
   await expect(page.getByTestId('stat-total-requests')).toBeVisible();
   await expect(note).toHaveAccessibleDescription(/sketch of the whole run/i);
   await expect(note).not.toHaveAccessibleDescription(/sketch of the selected window/i);
+});
+
+/**
+ * AN EXACT RUN'S p95 IS NOT AN ESTIMATE, SO IT CARRIES NO CAVEAT. Every run
+ * this harness seeds is 'exact-v1', read through the real API — which is the
+ * half the unit cases cannot prove: that the identity's `statsMethod` reaches
+ * the tile. Asserted after the tile has a value, because an absent ⓘ is also
+ * what a page that failed to render shows.
+ */
+test('an exact run’s p95 tile carries no estimate caveat, with or without a window', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+
+  const note = page.getByRole('button', { name: 'About p95', exact: true });
+  for (const url of [runPath(runId), `${runPath(runId)}?from=0&to=2000`]) {
+    await page.goto(url);
+    await expect(page.getByTestId('stat-p95')).toHaveText(/\d/);
+    await expect(note).toHaveCount(0);
+    await expect(page.getByRole('region', { name: 'Run totals' })).not.toContainText(/within 1%|estimat/i);
+  }
 });
