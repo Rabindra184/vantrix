@@ -134,7 +134,10 @@ export type FigureMismatch = z.infer<typeof FigureMismatchSchema>;
  * read, so it follows a changed setting. Retention keeps the log past that day
  * while the run is still to be verified or recomputed, or its verification
  * found a mismatch. `rawLogDeleted` says whether retention has already
- * removed it, which is what makes a never-verified run unverifiable for good.
+ * removed it. Retention waits for a run to be verified first, so a deleted
+ * log normally sits under a settled answer; the one exception is a
+ * verification requested in the instant retention was deleting the log, which
+ * is settled as unverifiable for good rather than left pending.
  */
 export const VerificationSchema = z.object({
   status: VerificationStatusSchema,

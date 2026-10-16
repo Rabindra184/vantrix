@@ -178,16 +178,26 @@ describe('loadWorkerConfig', () => {
   /**
    * `setInterval(fn, 0)` walks every candidate back to back, and a negative
    * delay is clamped to the same thing: neither is what an operator means.
-   * Both scans read a non-positive interval as their default, through ONE
-   * helper, so the two queues cannot drift apart on it.
+   * Nor is anything under a second — `500` or `0.5` is seconds typed into a
+   * milliseconds field. Both scans read such an interval as their default,
+   * through ONE helper, so the two queues cannot drift apart on it.
    */
   describe('scan intervals', () => {
-    it.each(['0', '-5'])('reads %s as the default for both scans', (v) => {
+    it.each(['0', '-5', '0.5', '500', '999'])('reads %s as the default for both scans', (v) => {
       const config = loadWorkerConfig({
         ...BASE_ENV, RECOMPUTE_SCAN_INTERVAL_MS: v, VERIFY_SCAN_INTERVAL_MS: v,
       });
       expect(config.recomputeScanIntervalMs).toBe(600_000);
       expect(config.verifyScanIntervalMs).toBe(600_000);
+    });
+
+    /** The other side of the line: a second is honoured, so the floor is not the default in disguise. */
+    it('keeps an interval of one second or more', () => {
+      const config = loadWorkerConfig({
+        ...BASE_ENV, RECOMPUTE_SCAN_INTERVAL_MS: '1000', VERIFY_SCAN_INTERVAL_MS: '1500',
+      });
+      expect(config.recomputeScanIntervalMs).toBe(1000);
+      expect(config.verifyScanIntervalMs).toBe(1500);
     });
   });
 });

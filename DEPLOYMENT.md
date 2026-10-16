@@ -292,7 +292,7 @@ docker compose -f infra/docker-compose.yml --profile onprem up -d runner
 |---|---|
 | `PERFPORTAL_RAW_LOG_RETENTION_DAYS` | Days after ingest a run's raw log becomes eligible for deletion. **Empty means 90.** `0` keeps raw logs for ever. Anything that is not a whole number of days from 0 to 36500 stops the worker (and the API) at startup, naming the variable |
 | `PERFPORTAL_VERIFY_ENABLED` | Empty means on. `false` (exactly that word) defers verification; the backlog is checked once it is switched back on, and the raw logs it needs are kept meanwhile |
-| `PERFPORTAL_VERIFY_SCAN_INTERVAL_MS` | How often the worker looks for runs still to verify. Empty, zero or negative means every 10 minutes (600000) |
+| `PERFPORTAL_VERIFY_SCAN_INTERVAL_MS` | How often the worker looks for runs still to verify, in milliseconds. Empty, or anything under 1000 (a second), means every 10 minutes (600000) |
 
 After every upload and every recompute the worker re-reads the run's stored
 `simulation.log` and checks every stored figure against it — each statistic
@@ -326,6 +326,12 @@ So on an install with history older than the retention, setting
 `PERFPORTAL_RAW_LOG_RETENTION_DAYS=0` before upgrading is **optional**: the
 backfill and the verifier reach those runs first, and only then are their logs
 deleted. Set `0` if you want to keep every raw log regardless.
+
+A large backlog is deleted **at most 500 runs per sweep**, each sweep carrying
+on where the last stopped, so the sweeper's other work — finishing live runs
+whose producer vanished, re-queueing stuck uploads — is never held up behind
+it. Lowering the retention on an install with a hundred thousand old logs
+therefore clears them over a couple of hours rather than in one long pass.
 
 `PERFPORTAL_VERIFY_ENABLED=false` defers verification **and keeps the logs it
 would need**: while it is off, every run not yet verified reads
@@ -422,8 +428,8 @@ it.
 To defer the backlog, set `PERFPORTAL_RECOMPUTE_ENABLED=false` in
 `infra/.env` (exactly that word; empty means on) and `up` again; the worker
 then leaves it for `pnpm recompute`. `PERFPORTAL_RECOMPUTE_SCAN_INTERVAL_MS`
-sets how often the worker looks for runs still to recompute (empty, zero or
-negative means every 10 minutes).
+sets how often the worker looks for runs still to recompute, in milliseconds
+(empty, or anything under 1000, means every 10 minutes).
 
 A run that cannot be recomputed — its stored log is gone, no longer matches
 the checksum recorded at ingest, or cannot be parsed — keeps its estimated

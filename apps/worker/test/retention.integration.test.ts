@@ -12,7 +12,7 @@ import { Redis } from 'ioredis';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { loadWorkerConfig, type WorkerConfig } from '../src/config.js';
 import { PipelineService, RUN_INGEST_LOCK_NAMESPACE } from '../src/pipeline/pipeline.service.js';
-import { Sweeper } from '../src/sweeper.js';
+import { RETENTION_LIMITS, Sweeper, type RetentionLimits } from '../src/sweeper.js';
 import { VerifyService } from '../src/verify/verify.service.js';
 
 const FIXTURE_LOG = fileURLToPath(
@@ -49,6 +49,11 @@ beforeAll(async () => {
 beforeEach(async () => {
   await pool.query(`TRUNCATE TABLE ${TABLES.map((t) => `"${t}"`).join(', ')} CASCADE`);
   scope = null;
+  // A sweeper carries its retention cursor from one sweep to the next, so one
+  // kept across cases would start a case's walk after a run of the case
+  // before. Each case gets its own; the old ones are closed in afterAll.
+  for (const s of sweepers.values()) retired.push(s);
+  sweepers.clear();
 });
 
 afterEach(() => {
@@ -56,7 +61,7 @@ afterEach(() => {
 });
 
 afterAll(async () => {
-  for (const s of sweepers.values()) await s.close();
+  for (const s of [...retired, ...sweepers.values()]) await s.close();
   redis.disconnect();
   await pool.end();
   await prisma.$disconnect();
@@ -177,6 +182,7 @@ async function seedVerifiedDirect(n: number, ageDays: number): Promise<Seeded[]>
  * behind it — on a loaded machine, a dozen short-lived sweepers here did.
  */
 const sweepers = new Map<number, Sweeper>();
+const retired: Sweeper[] = [];
 function sweeper(days: number): Sweeper {
   let s = sweepers.get(days);
   if (s === undefined) {
@@ -184,6 +190,13 @@ function sweeper(days: number): Sweeper {
     s = new Sweeper(c, pool, chunks, blobs, redis);
     sweepers.set(days, s);
   }
+  return s;
+}
+
+/** A sweeper with its own retention limits, closed in afterAll like the rest. */
+function limitedSweeper(days: number, limits: RetentionLimits, overrides: Partial<WorkerConfig> = {}): Sweeper {
+  const s = new Sweeper({ ...config, ...overrides, rawLogRetentionDays: days }, pool, chunks, blobs, redis, limits);
+  retired.push(s);
   return s;
 }
 
@@ -354,9 +367,13 @@ describe('raw-log retention keeps a log something still needs', () => {
   /**
    * A hundred runs whose deletes keep failing fill the first page; the sweep
    * walks on to the next one in the same pass, so they cannot hold back the
-   * run behind them.
+   * run behind them. Two pages, at the production limits: inside one sweep's
+   * cap, which the first assertion pins so the case cannot pass by the cap
+   * having shrunk under it.
    */
-  it('(h) walks every page in one sweep, past a page of runs whose deletes fail', async () => {
+  it('(h) walks on past a page of runs whose deletes fail, in the same sweep', async () => {
+    expect(RETENTION_LIMITS.pageSize).toBe(100);
+    expect(RETENTION_LIMITS.pagesPerSweep).toBeGreaterThanOrEqual(2);
     const runs = await seedVerifiedDirect(101, 31);
     let calls = 0;
     const real = blobs.delete.bind(blobs);
@@ -381,6 +398,138 @@ describe('raw-log retention keeps a log something still needs', () => {
     expect(due).toHaveBeenCalledTimes(1);
   });
 });
+
+/**
+ * ═══ A FEW PAGES A SWEEP, RESUMED FROM A CURSOR ═══
+ *
+ * Two runs a page and two pages a sweep, so six runs are more than one
+ * sweep's worth without seeding five hundred. The two OLDEST runs' deletes
+ * always fail: they stay due, so a sweep that started from the beginning again
+ * would try them again, and that is what tells a resumed walk from a restarted
+ * one (a deleted run is no longer due, and would vanish from either walk).
+ */
+describe('raw-log retention spreads a backlog across sweeps', () => {
+  const LIMITS: RetentionLimits = { pageSize: 2, pagesPerSweep: 2 };
+
+  /** Six due runs, oldest first, and a delete that fails for the two oldest. */
+  async function backlog(): Promise<{ runs: Seeded[]; attempts: string[][] }> {
+    // seedVerifiedDirect ages run i by i seconds more, so reversed is oldest first.
+    const runs = (await seedVerifiedDirect(6, 31)).reverse();
+    const failing = new Set([runs[0]!.bundleKey, runs[1]!.bundleKey]);
+    const attempts: string[][] = [];
+    const real = blobs.delete.bind(blobs);
+    vi.spyOn(blobs, 'delete').mockImplementation(async (key: string) => {
+      attempts[attempts.length - 1]!.push(key);
+      if (failing.has(key)) throw new Error('bucket refused');
+      await real(key);
+    });
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    return { runs, attempts };
+  }
+
+  async function sweepRecording(s: Sweeper, attempts: string[][]): Promise<string[]> {
+    attempts.push([]);
+    await s.sweep();
+    return attempts[attempts.length - 1]!;
+  }
+
+  it('stops one sweep at its page cap, and leaves the rest due', async () => {
+    const { runs, attempts } = await backlog();
+    const due = vi.spyOn(VerificationRepository.prototype, 'retentionDue');
+    const tried = await sweepRecording(limitedSweeper(30, LIMITS), attempts);
+
+    expect(due).toHaveBeenCalledTimes(2);
+    expect(tried).toEqual(runs.slice(0, 4).map((r) => r.bundleKey));
+    expect(await deletedAt(runs[2]!.id)).not.toBeNull();
+    expect(await deletedAt(runs[3]!.id)).not.toBeNull();
+    for (const run of runs.slice(4)) expect(await deletedAt(run.id)).toBeNull();
+  });
+
+  it('resumes the next sweep from where the last one stopped, not from the oldest run', async () => {
+    const { runs, attempts } = await backlog();
+    const s = limitedSweeper(30, LIMITS);
+    await sweepRecording(s, attempts);
+    const due = vi.spyOn(VerificationRepository.prototype, 'retentionDue');
+    const tried = await sweepRecording(s, attempts);
+
+    // The first page asked for starts after the fourth run, where the cap stopped.
+    expect(due.mock.calls[0]![2]).toEqual({ ingestedAt: expect.any(Date), id: runs[3]!.id });
+    expect(tried).toEqual([runs[4]!.bundleKey, runs[5]!.bundleKey]);
+    for (const run of runs.slice(2)) expect(await deletedAt(run.id)).not.toBeNull();
+    for (const run of runs.slice(0, 2)) expect(await deletedAt(run.id)).toBeNull();
+  });
+
+  it('starts from the beginning again after a short page, where the failed runs are tried again', async () => {
+    const { runs, attempts } = await backlog();
+    const s = limitedSweeper(30, LIMITS);
+    await sweepRecording(s, attempts);
+    // Two full pages; the third comes back empty, so this walk reached the end.
+    await sweepRecording(s, attempts);
+    const due = vi.spyOn(VerificationRepository.prototype, 'retentionDue');
+    const tried = await sweepRecording(s, attempts);
+
+    expect(due.mock.calls[0]![2]).toBeNull();
+    expect(tried).toEqual([runs[0]!.bundleKey, runs[1]!.bundleKey]);
+  });
+
+  /**
+   * The reason for the cap. A run abandoned at running is finalized by the
+   * sweep that finds it, while the retention backlog is still there for the
+   * sweeps after it.
+   */
+  it('recovers a stale run on every sweep while a retention backlog remains', async () => {
+    const runs = (await seedVerifiedDirect(10, 31)).reverse();
+    const s = limitedSweeper(30, LIMITS);
+
+    const first = await seedAbandoned();
+    await s.sweep();
+    expect(await statusOf(first)).toBe('incomplete');
+
+    const second = await seedAbandoned();
+    await s.sweep();
+    expect(await statusOf(second)).toBe('incomplete');
+
+    // Eight of the ten are gone after two sweeps; the backlog is still there.
+    for (const run of runs.slice(0, 8)) expect(await deletedAt(run.id)).not.toBeNull();
+    for (const run of runs.slice(8)) expect(await deletedAt(run.id)).toBeNull();
+  });
+
+  /** Recovery runs first, so a retention pass that throws cannot keep it from a run. */
+  it('recovers a stale run even when the retention pass fails', async () => {
+    await seedVerifiedDirect(1, 31);
+    const stale = await seedAbandoned();
+    vi.spyOn(VerificationRepository.prototype, 'retentionDue').mockRejectedValueOnce(new Error('database refused'));
+
+    await expect(limitedSweeper(30, LIMITS).sweep()).rejects.toThrow('database refused');
+    expect(await statusOf(stale)).toBe('incomplete');
+  });
+});
+
+/**
+ * A live run whose producer stopped an hour ago before sending a byte: past
+ * `runningStaleAfterMs`, so the sweep finalizes it `incomplete` in place.
+ */
+async function seedAbandoned(): Promise<string> {
+  const { orgId, projectId } = await project();
+  const run = await prisma.run.create({
+    data: {
+      orgId, projectId, status: 'running', tool: 'gatling',
+      bundleKey: `live/${randomUUID()}/simulation.log`, bundleSha256: '', bundleBytes: BigInt(0),
+      startedAt: new Date('2026-08-07T10:00:00Z'), startedOn: new Date('2026-08-07T00:00:00Z'),
+      engineOptions: {},
+    },
+  });
+  await pool.query(
+    `UPDATE run SET created_at = now() - interval '1 hour', stream_updated_at = now() - interval '1 hour' WHERE id = $1`,
+    [run.id],
+  );
+  return run.id;
+}
+
+async function statusOf(runId: string): Promise<string> {
+  const { rows } = await pool.query<{ status: string }>('SELECT status FROM run WHERE id = $1', [runId]);
+  return rows[0]!.status;
+}
 
 async function sweepAt(days: number): Promise<void> {
   await sweeper(days).sweep();

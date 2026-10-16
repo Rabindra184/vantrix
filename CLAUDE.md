@@ -194,7 +194,8 @@ worker's queue (`enqueueVerification` marks the row `pending` FIRST, so the
 header reads "Verifying…", then adds the job — the other order lets the answer
 land under the pending write; the `pnpm recompute` CLI only marks the row
 pending and leaves the job to the scan), and found by a scan every
-`VERIFY_SCAN_INTERVAL_MS` (10 min; empty, zero or negative is the default, one
+`VERIFY_SCAN_INTERVAL_MS` (10 min; empty, or anything under 1000 ms, is the
+default — `500` and `0.5` are seconds typed into a milliseconds field — one
 helper shared with `RECOMPUTE_SCAN_INTERVAL_MS`) that keyset-pages every
 candidate and re-queues failed jobs. A candidate is one `verifyCandidateSql`
 (persistence): verifiable, log not deleted, and no row, a pending one, an older
@@ -230,14 +231,25 @@ a `recompute_error`), and NOT `mismatch` — a mismatched run's log is the
 evidence, and a fixed verifier or a recompute needs it. The absent-row
 protection is scoped by `VERIFIABLE_RUN_SQL`, so a failed run or one with no
 statistics (never verifiable, never a row) is still deleted on schedule. The
-pass keyset-pages `(ingested_at, id)` to the end in every sweep (100 runs that
-keep failing no longer stall the rest), try-locks each run, re-checks
-`isRetentionDue` UNDER the lock (a scan or a version bump may have made it a
-candidate since the page was read), deletes the object, then stamps
-`run.raw_log_deleted_at`; a `#sweeping` guard stops two sweeps overlapping. A
-`markPending` landing between the re-check and the stamp is the residual window
-(only the scan can produce it, and the outcome is honest: pending becomes
-`unverifiable`/`raw_log_deleted`), documented rather than locked. So setting `0`
+pass keyset-pages `(ingested_at, id)` (100 runs that keep failing no longer
+stall the rest), try-locks each run, re-checks `isRetentionDue` UNDER the lock
+(a scan or a version bump may have made it a candidate since the page was
+read), deletes the object, then stamps `run.raw_log_deleted_at`; a `#sweeping`
+guard stops two sweeps overlapping. **A SWEEP WALKS AT MOST
+`RETENTION_PAGES_PER_SWEEP` (5) PAGES OF 100**, from `#retentionCursor`, the
+page after where the last sweep stopped; a short page resets it to null, so the
+next sweep starts from the oldest run again and retries what it skipped. The
+first version walked every page in one sweep, and because a firing that finds
+a sweep running returns at once, retention lowered from 0 to 90 on ~100k old
+verified runs held stale-run recovery off for about an hour (the scoped
+re-review's Important). Recovery runs FIRST in each sweep, so a retention pass
+that throws has already let it finish. A `markPending` landing between the
+re-check and the stamp is the residual window: the verify scan, the pipeline
+and both recompute paths issue one without the lock, and only the scan's can
+land on a run retention has just found due (an ingested run is not past
+retention, and a recomputed one is already a verify candidate). The outcome is
+honest — pending becomes `unverifiable`/`raw_log_deleted` — and documented
+rather than locked. So setting `0`
 before upgrading is OPTIONAL now, and `VERIFY_ENABLED=false` keeps the logs the
 backlog needs — those runs read "Verifying…" meanwhile.
 

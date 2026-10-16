@@ -159,19 +159,25 @@ function numberOr(value: string | undefined, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
+/** The shortest scan interval honoured; anything below it reads as the default. */
+const MIN_SCAN_INTERVAL_MS = 1000;
+
 /**
- * A scan interval: a positive number of milliseconds, else the default. Blank
+ * A scan interval: at least a second, in milliseconds, else the default. Blank
  * is unset (compose passes an unset variable as an EMPTY string, and
  * `Number('')` is 0), a non-numeric value is the default (`numberOr`), and so
- * is zero or a negative — `setInterval(fn, 0)` would walk every candidate back
- * to back, which no operator means by "0". ONE helper for both scans, so the
- * recompute and verify queues cannot disagree about what a bad interval means.
- * (Not folded into `numberOr` itself: LIVE_TICK_MS has a case pinning '' to
- * its floor rather than its default.)
+ * is anything under a second, zero and negatives among it — `setInterval(fn,
+ * 0)` would walk every candidate back to back, which no operator means by "0",
+ * and `500` or `0.5` is far more likely seconds typed into a milliseconds
+ * field than a wish to rescan the database twice a second. ONE helper for both
+ * scans, so the recompute and verify queues cannot disagree about what a bad
+ * interval means. (Not folded into `numberOr` itself: LIVE_TICK_MS has a case
+ * pinning '' to its floor rather than its default, and floors rather than
+ * defaults a low value.)
  */
 function scanIntervalOr(value: string | undefined, fallback: number): number {
   const n = numberOr(value?.trim() || undefined, fallback);
-  return n > 0 ? n : fallback;
+  return n >= MIN_SCAN_INTERVAL_MS ? n : fallback;
 }
 
 export function loadWorkerConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
@@ -205,8 +211,8 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv = process.env): WorkerCo
     maxOwnedRuns: numberOr(env.MAX_OWNED_RUNS, 25),
     // `=== 'false'`, not truthiness -- see the field's own doc comment.
     recomputeEnabled: env.RECOMPUTE_ENABLED !== 'false',
-    // scanIntervalOr: a NaN, blank, zero or negative interval would rescan the
-    // database continuously -- see its doc comment.
+    // scanIntervalOr: a NaN, blank or sub-second interval would rescan the
+    // database all but continuously -- see its doc comment.
     recomputeScanIntervalMs: scanIntervalOr(env.RECOMPUTE_SCAN_INTERVAL_MS, 600_000),
     rawLogRetentionDays: parseRawLogRetentionDays(env.RAW_LOG_RETENTION_DAYS),
     // `=== 'false'` and blank-is-default: recompute's two rules, for the same reasons.
