@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import type { RecomputeProgress as RecomputeProgressCounts } from '@perfportal/contracts';
 import { fetchRecomputeProgress, recomputeProgressQueryKey } from '../api/admin';
 import { formatCount } from '../tables/StatisticsTable';
 
@@ -35,7 +36,18 @@ export function RecomputeProgress() {
     refetchInterval: (query) => ((query.state.data?.remaining ?? 0) > 0 ? POLL_MS : false),
   });
   const data = progress.data;
-  if (progress.isError || data === undefined || data.remaining <= 0) return null;
+  if (progress.isError || data === undefined) return null;
+  return <RecomputeLine progress={data} />;
+}
+
+/**
+ * The line itself, for a progress already in hand — Administration › Data
+ * integrity reads the same three counts off its own answer and says them in
+ * these words, rather than asking `/v1/admin/recompute` a second time.
+ * Nothing once no run remains.
+ */
+export function RecomputeLine({ progress: data }: { readonly progress: RecomputeProgressCounts }) {
+  if (data.remaining <= 0) return null;
   const done = data.total - data.remaining;
   return (
     <p data-testid="recompute-progress" className="text-[0.8125rem] text-muted">

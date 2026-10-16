@@ -121,6 +121,11 @@ export interface RunRecord {
   recomputeError: RecomputeError | null;
   /** When a recompute last rewrote this run's statistics; null otherwise. */
   recomputedAt: Date | null;
+  /**
+   * When retention deleted this run's raw log, or null while it is kept. A
+   * run with a deleted raw log can no longer be verified or recomputed.
+   */
+  rawLogDeletedAt: Date | null;
 }
 
 export interface CreateRunInput {
@@ -202,6 +207,7 @@ interface RunRow {
   statsMethod: string;
   recomputeError: string | null;
   recomputedAt: Date | null;
+  rawLogDeletedAt: Date | null;
 }
 
 /**
@@ -262,6 +268,7 @@ function toRecord(row: RunRow): RunRecord {
     // the same way statsMethod is above.
     recomputeError: row.recomputeError as RunRecord['recomputeError'],
     recomputedAt: row.recomputedAt,
+    rawLogDeletedAt: row.rawLogDeletedAt,
   };
 }
 
@@ -1217,6 +1224,7 @@ export class RunRepository {
         r.parsing_started_at AS "parsingStartedAt", r.stream_updated_at AS "streamUpdatedAt",
         r.tool_assertions AS "toolAssertions", r.stats_method AS "statsMethod",
         r.recompute_error AS "recomputeError", r.recomputed_at AS "recomputedAt",
+        r.raw_log_deleted_at AS "rawLogDeletedAt",
         r.note, r.note_updated_at AS "noteUpdatedAt", r.note_updated_by AS "noteUpdatedBy",
         nu.name AS "noteAuthorName",
         p.slug AS "projectSlug", p.name AS "projectName",

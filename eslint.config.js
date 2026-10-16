@@ -7,6 +7,17 @@ const FORBIDDEN_IN_PURE = [
   { group: ['@nestjs/*'], message: 'Pure packages must not depend on the web framework (PRD 15.1).' },
 ];
 
+const VERIFIER_INDEPENDENCE = 'The verifier must not share code with the engine it checks.';
+const FORBIDDEN_IN_VERIFIER = [
+  { group: ['@perfportal/statistics', '@perfportal/statistics/*'], message: VERIFIER_INDEPENDENCE },
+  // A relative path into the engine's tree is the same import by another name.
+  { regex: '^\\.\\.?/(.*/)?statistics/(src|dist)(/|$)', message: VERIFIER_INDEPENDENCE },
+  {
+    group: ['@perfportal/persistence', '@perfportal/persistence/*'],
+    message: 'The verifier is handed stored figures by the worker; it must not read the database layer.',
+  },
+];
+
 // apps/web/package.json declares @perfportal/persistence and
 // @perfportal/storage as devDependencies so apps/web/e2e/fixtures.ts can
 // import them (Node-side, run by Playwright, never bundled) — see Task 3's
@@ -231,6 +242,37 @@ export default tseslint.config(
     files: ['packages/{core,plugin-gatling,statistics,sla}/src/**/*.ts'],
     rules: {
       'no-restricted-imports': ['error', { patterns: FORBIDDEN_IN_PURE }],
+    },
+  },
+  /*
+   * ═══ THE VERIFIER MAY NOT SHARE CODE WITH THE ENGINE IT CHECKS ═══
+   *
+   * `packages/verify` recomputes every stored figure from the raw log and
+   * compares. If it reached for the engine's own rank function, rollup or
+   * sketch, a defect there would be in both answers and the comparison would
+   * agree with it — the verifier would pass exactly the bug it exists to
+   * catch. So its source is pure (FORBIDDEN_IN_PURE) AND may not import
+   * @perfportal/statistics, by name or by a relative path into its tree; it
+   * may not read the database layer either, because the worker hands it the
+   * stored figures. Its tests are held to the same independence (they may use
+   * node:fs, to read the reference fixture).
+   *
+   * SEPARATE blocks on purpose: flat config REPLACES a rule's options rather
+   * than merging them (see the no-restricted-syntax note above), so these
+   * patterns could not simply be appended in another block matching the same
+   * files. These globs match nothing else that sets `no-restricted-imports`.
+   * Guarded by packages/core/test/lint-rules-compose.test.ts.
+   */
+  {
+    files: ['packages/verify/src/**/*.ts'],
+    rules: {
+      'no-restricted-imports': ['error', { patterns: [...FORBIDDEN_IN_PURE, ...FORBIDDEN_IN_VERIFIER] }],
+    },
+  },
+  {
+    files: ['packages/verify/test/**/*.ts'],
+    rules: {
+      'no-restricted-imports': ['error', { patterns: FORBIDDEN_IN_VERIFIER }],
     },
   },
   {

@@ -250,6 +250,8 @@ describe('the adaptive verdict', () => {
       // Never recomputed: a run parsed exact the first time has nothing to redo.
       recomputeError: null,
       recomputedAt: null,
+      // Its raw log is kept: nothing has deleted it.
+      rawLogDeletedAt: null,
     };
 
     expect(runsService.statusFor(run)).toBe(413);

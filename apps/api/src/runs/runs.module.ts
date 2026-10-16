@@ -1,15 +1,16 @@
 import { Module } from '@nestjs/common';
-import { MetricReader } from '@perfportal/persistence';
+import { MetricReader, VerificationRepository } from '@perfportal/persistence';
 import pg from 'pg';
 import { CONFIG } from '../auth/auth.module.js';
 import type { AppConfig } from '../config.js';
 import { RunEventsController } from './run-events.controller.js';
+import { RunVerificationController } from './run-verification.controller.js';
 import { ProjectRunsController, RunsController } from './runs.controller.js';
 import { RunsService } from './runs.service.js';
 import { TerminalWaiter } from './terminal-waiter.js';
 
 @Module({
-  controllers: [RunsController, ProjectRunsController, RunEventsController],
+  controllers: [RunsController, ProjectRunsController, RunEventsController, RunVerificationController],
   providers: [
     RunsService,
     // `windowable` on a run response is one EXISTS against that run's own
@@ -17,6 +18,13 @@ import { TerminalWaiter } from './terminal-waiter.js';
     // MetricsModule provides it — a factory over the shared pool, not a second
     // connection.
     { provide: MetricReader, useFactory: (pool: pg.Pool) => new MetricReader(pool), inject: [pg.Pool] },
+    // `GET /v1/runs/{id}/verification` reads the run's verification row. Raw
+    // SQL on a pg pool like MetricReader, so a factory over the same pool.
+    {
+      provide: VerificationRepository,
+      useFactory: (pool: pg.Pool) => new VerificationRepository(pool),
+      inject: [pg.Pool],
+    },
     {
       provide: TerminalWaiter,
       useFactory: (config: AppConfig) => new TerminalWaiter(config.databaseUrl),

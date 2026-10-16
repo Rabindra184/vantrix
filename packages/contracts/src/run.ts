@@ -19,6 +19,15 @@ export type RunStatus = z.infer<typeof RunStatusSchema>;
 export const RunVerdictSchema = z.enum(['passed', 'failed', 'not_evaluated']);
 export type RunVerdict = z.infer<typeof RunVerdictSchema>;
 
+/**
+ * Which engine produced a run's figures: 'exact-v1' (every figure exact
+ * against the raw log) or 'estimated' (the pre-2026-10-15 sketch engine).
+ * ONE definition, carried by the run identity, the run list, trends and the
+ * test catalogue — five places that spelled the enum by hand before.
+ */
+export const StatsMethodSchema = z.enum(['estimated', 'exact-v1']);
+export type StatsMethod = z.infer<typeof StatsMethodSchema>;
+
 export const AssertionOutcomeSchema = z.enum(['passed', 'failed', 'not_applicable']);
 export type AssertionOutcome = z.infer<typeof AssertionOutcomeSchema>;
 
@@ -70,6 +79,77 @@ export const VerdictChangeSchema = z.object({
   changedAt: z.string().datetime(),
 });
 export type VerdictChange = z.infer<typeof VerdictChangeSchema>;
+
+/*
+ * ═══ A RUN'S VERIFICATION — ITS STORED FIGURES CHECKED AGAINST ITS RAW LOG ═══
+ * (docs/superpowers/plans/2026-10-16-exact-statistics-pr3-verifier.md)
+ *
+ * The four statuses and four reasons are the words `run_verification`'s two
+ * CHECK constraints hold the stored columns to, so an enum here describes
+ * what the database can hold rather than narrowing it.
+ */
+export const VerificationStatusSchema = z.enum(['pending', 'verified', 'mismatch', 'unverifiable']);
+export type VerificationStatus = z.infer<typeof VerificationStatusSchema>;
+
+/** Why a run could not be verified; null for every status but `unverifiable`. */
+export const UnverifiableReasonSchema = z.enum(['raw_log_deleted', 'raw_log_missing', 'raw_log_unreadable', 'not_exact']);
+export type UnverifiableReason = z.infer<typeof UnverifiableReasonSchema>;
+
+/** What the run header's mark reads: the status, and why when unverifiable. */
+export const VerificationSummarySchema = z.object({
+  status: VerificationStatusSchema,
+  reason: UnverifiableReasonSchema.nullable(),
+});
+export type VerificationSummary = z.infer<typeof VerificationSummarySchema>;
+
+/**
+ * One stored figure the verifier re-derived from the raw log and got a
+ * different answer for — `FigureMismatch` in
+ * packages/persistence/src/repositories/verification.ts, field for field.
+ *
+ * `family` is a plain string, not the statistics-family enum: an error-table
+ * mismatch carries the error MESSAGE there. `stored`/`recomputed` are a number
+ * for a measurement, a string for a text figure, and null on the side that
+ * has no such row ('row' figures).
+ */
+export const FigureMismatchSchema = z.object({
+  scope: z.string(),
+  name: z.string(),
+  family: z.string(),
+  population: z.enum(['all', 'ok', 'ko']).nullable(),
+  bucket: z.number().nullable(),
+  table: z.enum(['run_stat', 'run_series_bucket', 'run_error', 'run_error_bucket', 'run_user_bucket', 'run']),
+  figure: z.string(),
+  stored: z.union([z.number(), z.string()]).nullable(),
+  recomputed: z.union([z.number(), z.string()]).nullable(),
+});
+export type FigureMismatch = z.infer<typeof FigureMismatchSchema>;
+
+/**
+ * `GET /v1/runs/{id}/verification`: the whole verification record. A run with
+ * no row yet answers `pending` with nothing recorded. `rawLogRetainedUntil`
+ * is a CALENDAR DAY (UTC): the day retention may delete the raw log under the
+ * deployment's CURRENT setting — the ingest's day plus the retention — and
+ * null once the log is deleted or when logs are kept for ever. Derived when
+ * read, so it follows a changed setting. Retention keeps the log past that day
+ * while the run is still to be verified or recomputed, or its verification
+ * found a mismatch. `rawLogDeleted` says whether retention has already
+ * removed it. Retention waits for a run to be verified first, so a deleted
+ * log normally sits under a settled answer; the one exception is a
+ * verification requested in the instant retention was deleting the log, which
+ * is settled as unverifiable for good rather than left pending.
+ */
+export const VerificationSchema = z.object({
+  status: VerificationStatusSchema,
+  reason: UnverifiableReasonSchema.nullable(),
+  checkedAt: z.string().datetime().nullable(),
+  verifierVersion: z.number().int().nullable(),
+  figuresChecked: z.number().int().nonnegative(),
+  mismatches: z.array(FigureMismatchSchema),
+  rawLogRetainedUntil: z.string().date().nullable(),
+  rawLogDeleted: z.boolean(),
+});
+export type Verification = z.infer<typeof VerificationSchema>;
 
 export const AssertionSchema = z.object({
   ruleId: z.string().uuid(),
@@ -339,12 +419,20 @@ export const RunIdentitySchema = z.object({
    *  by the pre-2026-10-15 sketch engine ('estimated'). OPTIONAL for the
    *  rolling-deploy reason the stamps above give; a reader treats absent as
    *  "not known to be exact". */
-  statsMethod: z.enum(['estimated', 'exact-v1']).optional(),
+  statsMethod: StatsMethodSchema.optional(),
   /** Every SLA assertion the exact recompute of this run's statistics
    *  changed, in the order recorded; empty when it changed none or the run
    *  was never recomputed. OPTIONAL for the rolling-deploy reason the stamps
    *  above give. */
   verdictChanges: z.array(VerdictChangeSchema).optional(),
+  /** Whether this run's stored figures were checked against its raw log,
+   *  and what that found: `pending` for a run with statistics the verifier
+   *  has not reached yet. NULL means NOT VERIFIABLE — a run with no
+   *  statistics to check (a failed run, or an incomplete one nothing
+   *  processed), which a reader draws no verification mark for. OPTIONAL as
+   *  well as nullable, for the rolling-deploy reason the stamps above give;
+   *  an absent field is read the same way as null. */
+  verification: VerificationSummarySchema.nullable().optional(),
   /** The note a person wrote on this run (run-note.ts), or null for none.
    *  OPTIONAL as well as nullable, for the rolling-deploy reason the lifecycle
    *  stamps above give: a required field blanks the run page against an API
@@ -495,6 +583,13 @@ export const RunListResponseSchema = z.object({
        * one to ignore" and nothing more.
        */
       note: z.string().nullable().optional(),
+      /**
+       * Which engine produced this run's figures — `RunIdentity.statsMethod`,
+       * for a row. An `'estimated'` run's p95 cell carries ≈. OPTIONAL for the
+       * rolling-deploy reason the block above gives; absent reads as "not
+       * known to be exact".
+       */
+      statsMethod: StatsMethodSchema.optional(),
     }),
   ),
   nextCursor: z.string().nullable(),

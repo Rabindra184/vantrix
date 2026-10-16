@@ -341,9 +341,26 @@ describe('GET /v1/tests', () => {
       durationMs: 61_000,
       checks: { failed: 1, total: 2 },
       p95Ms: 90,
+      statsMethod: 'exact-v1',
     });
     // The history point is the same figure the latest run's own row carries.
-    expect(row!.p95History).toEqual([{ runId: latest, runNumber: 2, p95Ms: 90 }]);
+    expect(row!.p95History).toEqual([{ runId: latest, runNumber: 2, p95Ms: 90, statsMethod: 'exact-v1' }]);
+  });
+
+  /**
+   * 'exact-v1' is the column's DEFAULT, so the case above passes against a
+   * mapper that hard-codes it. An estimated run — every run ingested before
+   * 2026-10-15 until the backfill reaches it — is what only a real read of
+   * the run's own column can produce, on the latest run AND its point.
+   */
+  it('sends an estimated run’s own statsMethod on the latest run and its history point', async () => {
+    const t = await seedTest('checkout-smoke');
+    const runId = await seedRun(t.id, '2026-09-02T10:00:00Z', { runNumber: 1, statsMethod: 'estimated' });
+    await seedRunStat(runId, 90, { minMs: 5, maxMs: 300 });
+
+    const [row] = parse((await asSession(PATH)).body).items;
+    expect(row!.latestRun!.statsMethod).toBe('estimated');
+    expect(row!.p95History.map((p) => p.statsMethod)).toEqual(['estimated']);
   });
 
   /**
@@ -367,7 +384,9 @@ describe('GET /v1/tests', () => {
     // Clamped to the run's own maximum, not the stored 450.
     expect(run?.metrics?.p95Ms).toBe(300);
     expect(row!.latestRun!.p95Ms).toBe(run!.metrics!.p95Ms);
-    expect(row!.p95History.at(-1)).toEqual({ runId, runNumber: 1, p95Ms: run!.metrics!.p95Ms });
+    expect(row!.p95History.at(-1)).toEqual({
+      runId, runNumber: 1, p95Ms: run!.metrics!.p95Ms, statsMethod: 'exact-v1',
+    });
   });
 
   it('reports a test that has never run with no latest run and no history', async () => {

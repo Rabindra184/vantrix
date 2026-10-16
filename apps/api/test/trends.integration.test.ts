@@ -108,6 +108,7 @@ async function seedRun(opts: {
   environment?: string | null;
   branch?: string | null;
   commitSha?: string | null;
+  statsMethod?: 'estimated' | 'exact-v1';
 }): Promise<string> {
   const id = randomUUID();
   const startedAt = opts.startedAt;
@@ -133,6 +134,9 @@ async function seedRun(opts: {
       environment: opts.environment ?? null,
       branch: opts.branch ?? null,
       commitSha: opts.commitSha ?? null,
+      // The column's own default when unstated, so every other case reads
+      // the run exactly as it always did.
+      statsMethod: opts.statsMethod ?? 'exact-v1',
       bundleKey: `k/${id}`,
       bundleSha256: 'x'.repeat(64),
       bundleBytes: BigInt(1),
@@ -318,6 +322,29 @@ describe('GET /v1/runs/:id/trends', () => {
     // Environment rides with them and was already sent; asserted here so the
     // three axes the break rule reads are pinned in one place.
     expect(only?.environment).toBe('staging');
+  });
+
+  /**
+   * ═══ EACH RUN SAYS WHICH ENGINE PRODUCED IT ═══
+   *
+   * The trend table marks an estimated run's percentiles with ≈, per run —
+   * so the field has to come back for each row from the run's OWN column,
+   * not one answer for the cohort. Two runs that disagree are the only
+   * fixture that can tell those apart.
+   */
+  it('carries each run’s statsMethod', async () => {
+    ctx = await createTestApp();
+    const estimated = await seedRun({
+      simulation: 'checkout', startedAt: at('2026-08-01T10:00:00Z'), statsMethod: 'estimated',
+    });
+    const exact = await seedRun({
+      simulation: 'checkout', startedAt: at('2026-08-02T10:00:00Z'), statsMethod: 'exact-v1',
+    });
+
+    const body = TrendsResponseSchema.parse((await trends(exact)).body);
+    const byId = new Map(body.runs.map((r) => [r.id, r.statsMethod]));
+    expect(byId.get(estimated)).toBe('estimated');
+    expect(byId.get(exact)).toBe('exact-v1');
   });
 
   it('follows test_id rather than the simulation string when they disagree', async () => {

@@ -1256,6 +1256,40 @@ const paths: Record<string, PathItemObject> = {
     },
   },
 
+  '/v1/runs/{id}/verification': {
+    get: {
+      operationId: 'getRunVerification',
+      summary: 'Whether a run\'s stored figures were checked against its raw log',
+      tags: ['runs'],
+      description:
+        sessionAccessSentence('project:read') + ' ' +
+        'Requires the "read" scope. The verification the run header\'s mark opens: the worker ' +
+        're-derives every stored figure of the run from its raw simulation.log, independently of ' +
+        'the engine that stored them, and compares — counts, extremes and percentiles exactly; ' +
+        'means, standard deviations, rates and ratios within a relative 1e-9. "status" is ' +
+        '"verified" when every figure agreed, "mismatch" when any did not (each listed with its ' +
+        'stored and recomputed value; an error-table mismatch names the error message in ' +
+        '"family"), "unverifiable" with a "reason" when it could not be checked, and "pending" ' +
+        'until it has been — a run with no verification yet answers "pending" with nothing ' +
+        'recorded. "rawLogRetainedUntil" is the calendar day (UTC) retention may delete the raw ' +
+        'log under the deployment\'s current setting — the ingest\'s day plus the retention — ' +
+        'and null once it is deleted or when raw logs are kept for ever; retention keeps the log ' +
+        'past that day while the run is still to be verified or recomputed, or its verification ' +
+        'found a mismatch. "rawLogDeleted" is whether retention has already removed it. A run ' +
+        'outside the caller\'s organisation or project answers 404.',
+      parameters: [parameters['RunId']!],
+      responses: {
+        '200': {
+          description: 'This run\'s verification.',
+          content: json(schemaRef('Verification')),
+        },
+        '400': ref('BadRequest'),
+        '404': ref('NotFound'),
+        ...authFailureResponses,
+      },
+    },
+  },
+
   '/v1/runs/{id}/series': {
     get: {
       operationId: 'getRunSeries',
@@ -2819,6 +2853,32 @@ const paths: Record<string, PathItemObject> = {
         '200': {
           description: 'The backfill\'s progress in this organisation.',
           content: json(schemaRef('RecomputeProgress')),
+        },
+        '401': ref('Unauthorized'),
+        '403': ref('SessionRequired'),
+      },
+    },
+  },
+
+  '/v1/admin/data-integrity': {
+    get: {
+      operationId: 'getDataIntegrity',
+      summary: 'This organisation\'s backfill, verification and raw-log retention',
+      tags: ['admin'],
+      security: [{ cookieAuth: [] }],
+      description:
+        sessionAccessSentence('users:manage') + ' ' +
+        'What Administration › Data integrity shows. "recompute" is the exact-statistics ' +
+        'backfill\'s progress, as GET /v1/admin/recompute answers it. "verification" counts this ' +
+        'organisation\'s verifiable runs by verification status — a run not checked yet counts ' +
+        'as pending. "problems" lists the runs whose verification found a mismatch or could not ' +
+        'be done, most recently checked first, at most 100. "rawLogRetentionDays" is the ' +
+        'deployment\'s RAW_LOG_RETENTION_DAYS, read-only: days a run\'s raw log is kept after ' +
+        'its ingest, 0 for for ever. No other organisation\'s runs are counted or listed.',
+      responses: {
+        '200': {
+          description: 'This organisation\'s data-integrity summary.',
+          content: json(schemaRef('DataIntegrity')),
         },
         '401': ref('Unauthorized'),
         '403': ref('SessionRequired'),

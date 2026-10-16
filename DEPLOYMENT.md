@@ -4,6 +4,17 @@ Run the whole platform on one machine with Docker. A fresh deployment comes up
 with a database, an object store, an org, a project, an API token and an admin
 account you can sign in with immediately.
 
+> **Raw logs are deleted after 90 days by default, once nothing needs them.**
+> From the release that verifies every run, the worker deletes a run's stored
+> `simulation.log` once it is older than the retention (90 days after its
+> ingest unless you set otherwise) **and** the run no longer needs it: it has
+> been verified or settled as not verifiable, any estimated figures have been
+> recomputed or the recompute has given up on it, and its verification did not
+> find a mismatch. Its figures stay; what goes is the ability to re-verify or
+> recompute it. To keep every raw log, set
+> `PERFPORTAL_RAW_LOG_RETENTION_DAYS=0` in `infra/.env`. See
+> [Raw logs and verification](#raw-logs-and-verification).
+
 - [Requirements](#requirements)
 - [Quick start](#quick-start)
 - [First sign-in](#first-sign-in)
@@ -275,6 +286,59 @@ first boot. Fill them in, then:
 docker compose -f infra/docker-compose.yml --profile onprem up -d runner
 ```
 
+### Raw logs and verification
+
+| Variable | Notes |
+|---|---|
+| `PERFPORTAL_RAW_LOG_RETENTION_DAYS` | Days after ingest a run's raw log becomes eligible for deletion. **Empty means 90.** `0` keeps raw logs for ever. Anything that is not a whole number of days from 0 to 36500 stops the worker (and the API) at startup, naming the variable |
+| `PERFPORTAL_VERIFY_ENABLED` | Empty means on. `false` (exactly that word) defers verification; the backlog is checked once it is switched back on, and the raw logs it needs are kept meanwhile |
+| `PERFPORTAL_VERIFY_SCAN_INTERVAL_MS` | How often the worker looks for runs still to verify, in milliseconds. Empty, or anything under 1000 (a second), means every 10 minutes (600000) |
+
+After every upload and every recompute the worker re-reads the run's stored
+`simulation.log` and checks every stored figure against it — each statistic
+for the run, every request and group, every time-series bucket, the error
+tables and the virtual-user series. The run header then reads **✓ Verified**,
+**Verifying…**, **✕ Verification failed** (the panel lists each figure with
+its stored and recomputed value) or **Not verified** with the reason, and
+**Administration › Data integrity** lists failures and unverifiable runs and
+states the retention setting.
+
+**Deleting a raw log is irreversible, and the worker does it on its own —
+but only once nothing needs the log.** The sweeper (every 30 seconds) deletes
+a log past retention, oldest first, only when the run:
+
+- has been **verified**, or settled as **not verifiable** — a run the verifier
+  has not reached yet, or last checked with an older version of it, keeps its
+  log until it is checked;
+- has **no estimated figures left to recompute** — a run still carrying ≈
+  keeps its log until the exact-statistics backfill recomputes it, or gives up
+  on it with a reason (Administration › Data integrity counts those);
+- did **not** fail verification — a mismatched run's log is the evidence for
+  what went wrong, and a fixed verifier or a recompute needs it, so it is kept.
+
+A run whose verification is still to come reads **Verifying…** in the run
+header, and the verification panel names the day retention may delete its log
+under the current setting; that day moves with the setting. A run without
+statistics (a failed upload) is never verified and its log is deleted on
+schedule.
+
+So on an install with history older than the retention, setting
+`PERFPORTAL_RAW_LOG_RETENTION_DAYS=0` before upgrading is **optional**: the
+backfill and the verifier reach those runs first, and only then are their logs
+deleted. Set `0` if you want to keep every raw log regardless.
+
+A large backlog is deleted **at most 500 runs per sweep**, each sweep carrying
+on where the last stopped, so the sweeper's other work — finishing live runs
+whose producer vanished, re-queueing stuck uploads — is never held up behind
+it. Lowering the retention on an install with a hundred thousand old logs
+therefore clears them over a couple of hours rather than in one long pass.
+
+`PERFPORTAL_VERIFY_ENABLED=false` defers verification **and keeps the logs it
+would need**: while it is off, every run not yet verified reads
+**Verifying…** and keeps its raw log, however old. The deletions resume as the
+backlog is checked once it is switched back on. The same holds for the
+backfill with `PERFPORTAL_RECOMPUTE_ENABLED=false`.
+
 ---
 
 ## Before you expose it
@@ -319,6 +383,15 @@ it. Run directly, it answers every signed-in request with a 500. To go back
 past it, restore the backup you took before upgrading
 ([below](#backup-and-restore)).
 
+**Upgrading to run verification starts deleting raw logs older than 90
+days, once nothing needs them.** That release adds
+`PERFPORTAL_RAW_LOG_RETENTION_DAYS`, empty means 90. A stored log already past
+it is kept until the verifier has checked its run and the exact-statistics
+backfill has recomputed (or retired) it, and is never deleted for a run whose
+verification found a mismatch — so nothing is deleted before it is checked,
+and setting `0` before upgrading is optional. Set `0` to keep every raw log;
+see [Raw logs and verification](#raw-logs-and-verification).
+
 **Upgrading past exact statistics: migrate, then the API, then the worker.**
 Under Compose one `up` replaces them together and the order takes care of
 itself; it matters when you replace processes one at a time. A run the new
@@ -355,8 +428,8 @@ it.
 To defer the backlog, set `PERFPORTAL_RECOMPUTE_ENABLED=false` in
 `infra/.env` (exactly that word; empty means on) and `up` again; the worker
 then leaves it for `pnpm recompute`. `PERFPORTAL_RECOMPUTE_SCAN_INTERVAL_MS`
-sets how often the worker looks for runs still to recompute (empty means
-every 10 minutes).
+sets how often the worker looks for runs still to recompute, in milliseconds
+(empty, or anything under 1000, means every 10 minutes).
 
 A run that cannot be recomputed — its stored log is gone, no longer matches
 the checksum recorded at ingest, or cannot be parsed — keeps its estimated

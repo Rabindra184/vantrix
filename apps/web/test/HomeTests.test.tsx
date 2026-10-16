@@ -69,9 +69,9 @@ const SOAK = {
     p95Ms: 812.6,
   },
   p95History: [
-    { runId: id(101), runNumber: 10, p95Ms: 610.4 },
-    { runId: id(102), runNumber: 11, p95Ms: 700.2 },
-    { runId: id(103), runNumber: 12, p95Ms: 812.6 },
+    { runId: id(101), runNumber: 10, p95Ms: 610.4, statsMethod: 'exact-v1' },
+    { runId: id(102), runNumber: 11, p95Ms: 700.2, statsMethod: 'exact-v1' },
+    { runId: id(103), runNumber: 12, p95Ms: 812.6, statsMethod: 'exact-v1' },
   ],
 };
 /** Fine: nothing about its latest run needs attention. */
@@ -93,9 +93,9 @@ const SMOKE = {
     p95Ms: 120.4,
   },
   p95History: [
-    { runId: id(201), runNumber: 2, p95Ms: 118 },
-    { runId: id(202), runNumber: 3, p95Ms: 121 },
-    { runId: id(203), runNumber: 4, p95Ms: 120.4 },
+    { runId: id(201), runNumber: 2, p95Ms: 118, statsMethod: 'exact-v1' },
+    { runId: id(202), runNumber: 3, p95Ms: 121, statsMethod: 'exact-v1' },
+    { runId: id(203), runNumber: 4, p95Ms: 120.4, statsMethod: 'exact-v1' },
   ],
 };
 /**
@@ -121,8 +121,8 @@ const STUCK = {
     p95Ms: null,
   },
   p95History: [
-    { runId: id(301), runNumber: 1, p95Ms: 400 },
-    { runId: id(302), runNumber: 2, p95Ms: 410 },
+    { runId: id(301), runNumber: 1, p95Ms: 400, statsMethod: 'exact-v1' },
+    { runId: id(302), runNumber: 2, p95Ms: 410, statsMethod: 'exact-v1' },
   ],
 };
 /** Created, never run. */
@@ -154,7 +154,7 @@ const LATE = {
     checks: null,
     p95Ms: 90,
   },
-  p95History: [{ runId: id(403), runNumber: 1, p95Ms: 90 }],
+  p95History: [{ runId: id(403), runNumber: 1, p95Ms: 90, statsMethod: 'exact-v1' }],
 };
 
 const list = (items: unknown[], nextCursor: string | null): OrgTestListResponse =>
@@ -428,6 +428,30 @@ describe('HomeTests, the table', () => {
 });
 
 // ─── The filter ──────────────────────────────────────────────────────────────
+
+/**
+ * The SEAM the Sparkline's own cases cannot reach: each history point's
+ * `statsMethod` travels from `GET /v1/tests` to the line's words. A test whose
+ * history spans the backfill says "approximately" in its range; one that is
+ * exact throughout says neither — asserted in the same render, because a
+ * table that marked every row, or none, would pass either half alone.
+ */
+describe('HomeTests, estimated p95s', () => {
+  it('says "approximately" for a test with an estimated point, and not for an exact one', async () => {
+    const mixed = {
+      ...SOAK,
+      p95History: SOAK.p95History.map((point, i) =>
+        i === 0 ? { ...point, statsMethod: 'estimated' as const } : point,
+      ),
+    };
+    renderTests('/', () => json(list([mixed, SMOKE], null)));
+    await screen.findAllByTestId('home-test-row');
+
+    expect(within(rowOf(SOAK.name)).getByText(/^last 3 runs: approximately /)).toBeInTheDocument();
+    expect(within(rowOf(SMOKE.name)).getByText(/^last 3 runs: \d/)).toBeInTheDocument();
+    expect(within(rowOf(SMOKE.name)).getByTestId('sparkline').textContent).not.toContain('approximately');
+  });
+});
 
 describe('HomeTests, the filter', () => {
   it('writes ?q= and asks for it only once typing has paused, replacing the history entry', async () => {

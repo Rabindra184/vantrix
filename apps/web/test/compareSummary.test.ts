@@ -41,8 +41,8 @@ describe('compareSummary', () => {
   it('marks lower latency as better and names the best selected run', () => {
     const summary = buildCompareSummary(
       [
-        { id: 'current', label: 'Current', stats: stats({ percentiles: { p95: 240 } }) },
-        { id: 'baseline', label: 'Baseline', stats: stats({ percentiles: { p95: 300 } }) },
+        { id: 'current', label: 'Current', exact: true, stats: stats({ percentiles: { p95: 240 } }) },
+        { id: 'baseline', label: 'Baseline', exact: true, stats: stats({ percentiles: { p95: 300 } }) },
       ],
       'current',
       'p95',
@@ -56,8 +56,8 @@ describe('compareSummary', () => {
   it('marks higher throughput as better', () => {
     const summary = buildCompareSummary(
       [
-        { id: 'current', label: 'Current', stats: stats({ throughputRps: 80 }) },
-        { id: 'baseline', label: 'Baseline', stats: stats({ throughputRps: 100 }) },
+        { id: 'current', label: 'Current', exact: true, stats: stats({ throughputRps: 80 }) },
+        { id: 'baseline', label: 'Baseline', exact: true, stats: stats({ throughputRps: 100 }) },
       ],
       'current',
       'throughput',
@@ -86,6 +86,7 @@ describe('buildCompareSummary — why a delta is missing', () => {
   const row = (id: string, value: number) => ({
     id,
     label: id,
+    exact: true,
     stats: {
       runId: id,
       stats: [
@@ -131,5 +132,56 @@ describe('buildCompareSummary — why a delta is missing', () => {
     const summary = buildCompareSummary([row('b', 1), row('a', 2)], 'a', 'errors');
     expect(summary.deltaPercent).toBeCloseTo(100, 6);
     expect(summary.deltaUnavailable).toBeNull();
+  });
+});
+
+/**
+ * ═══ ≈ ON A TILE WHOSE FIGURE CAME FROM AN ESTIMATE ═══
+ *
+ * Per run, from each run's own `statsMethod` (carried as `exact`). The delta
+ * is approximate when EITHER side was estimated — a difference is no more
+ * exact than its least exact term — and "Best selected" follows the run it
+ * names. Only for a PERCENTILE: an estimated run's max, throughput and error
+ * rate are exact counts and extremes, and a ≈ on them would mark a figure
+ * that is not an estimate.
+ */
+describe('buildCompareSummary — which figures are estimates', () => {
+  const at = (id: string, p95: number, exact: boolean) => ({
+    id,
+    label: id,
+    exact,
+    stats: stats({ percentiles: { p95 }, throughputRps: p95 }),
+  });
+
+  it('marks the delta when either side is estimated, and the best by its own run', () => {
+    const bothExact = buildCompareSummary([at('a', 200, true), at('b', 300, true)], 'a', 'p95');
+    expect([bothExact.deltaExact, bothExact.bestExact]).toEqual([true, true]);
+
+    const baselineEstimated = buildCompareSummary([at('a', 200, true), at('b', 300, false)], 'a', 'p95');
+    // The best (a, 200) is exact; the delta leans on the estimated baseline.
+    expect([baselineEstimated.deltaExact, baselineEstimated.bestExact]).toEqual([false, true]);
+
+    const currentEstimated = buildCompareSummary([at('a', 200, false), at('b', 300, true)], 'a', 'p95');
+    expect([currentEstimated.deltaExact, currentEstimated.bestExact]).toEqual([false, false]);
+  });
+
+  /** "Select a baseline run" and "Not measured" state no number: no ≈, even
+   *  when a run is estimated. One rule, in the model — not patched in by the tile. */
+  it('makes no estimate claim where the tile states no figure', () => {
+    const noBaseline = buildCompareSummary([at('a', 200, false)], 'a', 'p95');
+    expect(noBaseline.deltaUnavailable).toBe('no-baseline');
+    expect(noBaseline.deltaExact).toBe(true);
+
+    const unmeasured = { id: 'b', label: 'b', exact: false, stats: stats({ percentiles: {} }) };
+    const notMeasured = buildCompareSummary([at('a', 200, false), unmeasured], 'a', 'p95');
+    expect(notMeasured.deltaUnavailable).toBe('not-measured');
+    expect(notMeasured.deltaExact).toBe(true);
+  });
+
+  it('makes no estimate claim for a metric that is not a percentile', () => {
+    for (const metric of ['max', 'throughput', 'errors'] as const) {
+      const summary = buildCompareSummary([at('a', 200, false), at('b', 300, false)], 'a', metric);
+      expect([summary.deltaExact, summary.bestExact], metric).toEqual([true, true]);
+    }
   });
 });

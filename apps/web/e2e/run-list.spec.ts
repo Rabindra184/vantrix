@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import {
+  markEstimated,
   seedAdmin,
   seedAdminForEmptyOrg,
   seedIncompleteRun,
@@ -558,4 +559,28 @@ test('an incomplete run is reachable by its own filter and counted as needing at
   await expect(page).toHaveURL(new RegExp(incompleteId));
   // The decision band's Execution sentence moved into the lifecycle strip.
   await expect(page.getByRole('region', { name: 'Run lifecycle' })).toContainText(/stopped early/i);
+});
+
+/**
+ * ≈ IS PER RUN, AND ONLY A REAL LIST OF TWO CAN SHOW IT. A page can hold runs
+ * either side of the exact-statistics backfill, so each row's p95 reads its
+ * OWN `statsMethod` through the real run-list response: the estimated run's
+ * carries ≈ (and "approximately" for a screen reader), the exact one's does
+ * not. The unit cases hand `P95` a row of their own making; this is the seam
+ * between the API's list and the cell. The exact cell is asserted to HOLD a
+ * figure first — an absent ≈ is also what an empty cell shows.
+ */
+test('marks the estimated run’s p95 with ≈ and leaves the exact one bare', async ({ page }) => {
+  const admin = await seedAdmin();
+  const estimatedId = await seedRunWithData(admin.orgId);
+  const exactId = await seedRunWithData(admin.orgId);
+  await markEstimated(estimatedId);
+  await signIn(page, admin);
+  await page.goto('/runs');
+
+  const p95Of = (runId: string) => page.locator(`[data-testid="run-row"][data-run-id="${runId}"]`).getByTestId('run-p95');
+
+  await expect(p95Of(exactId)).toHaveText(/^\d+ ms$/);
+  await expect(p95Of(estimatedId)).toHaveText(/^≈approximately \d+ ms$/);
+  await expect(p95Of(estimatedId).locator('[aria-hidden="true"]')).toHaveText('≈');
 });

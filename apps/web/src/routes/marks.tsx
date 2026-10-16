@@ -1,4 +1,4 @@
-import type { AssertionOutcome, RunStatus, RunVerdict } from '@perfportal/contracts';
+import type { AssertionOutcome, RunStatus, RunVerdict, VerificationStatus } from '@perfportal/contracts';
 
 /**
  * The one vocabulary this app uses to render a status, a verdict or an
@@ -97,4 +97,21 @@ export const ASSERTION_OUTCOME: Record<AssertionOutcome, Mark> = {
     label: 'not applicable',
     colour: 'var(--color-status-not-applicable)',
   },
+};
+
+/**
+ * Whether a run's stored figures were checked against its raw log
+ * (`run_verification`). Four states, four words and four shapes, for the
+ * reason `ASSERTION_OUTCOME` gives: "we checked and it was fine" (Verified)
+ * and "we could not check" (Not verified) must never read alike.
+ *
+ * `pending` is MUTED rather than the pending-status amber: a run waiting for
+ * the verifier is not a run in trouble, and an amber word in the header would
+ * read as a warning on every run the verifier has not reached yet.
+ */
+export const VERIFICATION: Record<VerificationStatus, Mark> = {
+  verified: { glyph: '✓', label: 'Verified', colour: 'var(--color-status-passed)' },
+  pending: { glyph: '○', label: 'Verifying…', colour: 'var(--color-text-muted)' },
+  mismatch: { glyph: '✕', label: 'Verification failed', colour: 'var(--color-status-failed)' },
+  unverifiable: { glyph: '–', label: 'Not verified', colour: 'var(--color-status-not-applicable)' },
 };

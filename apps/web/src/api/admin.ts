@@ -2,11 +2,13 @@ import {
   AdminProjectListResponseSchema,
   AdminUserListResponseSchema,
   AdminUserSchema,
+  DataIntegritySchema,
   RecomputeProgressSchema,
   type AdminProjectListResponse,
   type AdminUser,
   type AdminUserListResponse,
   type CreateUserRequest,
+  type DataIntegrity,
   type RecomputeProgress,
   type SetPasswordRequest,
   type UpdateUserRequest,
@@ -71,4 +73,15 @@ export const recomputeProgressQueryKey = ['admin-recompute'] as const;
 
 export function fetchRecomputeProgress(): Promise<RecomputeProgress> {
   return apiFetch(RecomputeProgressSchema, '/v1/admin/recompute');
+}
+
+/**
+ * `GET /v1/admin/data-integrity`: Administration › Data integrity — the
+ * backfill's progress, how many runs are in each verification state, the runs
+ * with a problem, and the raw-log retention setting.
+ */
+export const dataIntegrityQueryKey = ['admin-data-integrity'] as const;
+
+export function fetchDataIntegrity(): Promise<DataIntegrity> {
+  return apiFetch(DataIntegritySchema, '/v1/admin/data-integrity');
 }

@@ -322,6 +322,7 @@ export class MetricReader {
         tool: r.tool,
         simulation: r.simulation,
         runNumber: r.run_number,
+        statsMethod: r.stats_method,
         count: r.count,
         okCount: r.ok_count,
         koCount: r.ko_count,

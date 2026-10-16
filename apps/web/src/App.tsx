@@ -7,6 +7,7 @@ import RouteFallback from './components/RouteFallback';
 import RouteErrorBoundary from './components/RouteErrorBoundary';
 import {
   ACCOUNT_PASSWORD_ROUTE,
+  ADMIN_DATA_INTEGRITY_ROUTE,
   ADMIN_PROJECTS_ROUTE,
   ADMIN_USERS_ROUTE,
   DEFAULT_ROUTE,
@@ -34,6 +35,7 @@ import {
  * module that way are `RunSummary` now, and a module of their own.)
  */
 const AccountPassword = lazy(() => import('./routes/AccountPassword'));
+const AdminDataIntegrity = lazy(() => import('./routes/AdminDataIntegrity'));
 const AdminProjects = lazy(() => import('./routes/AdminProjects'));
 const AdminUsers = lazy(() => import('./routes/AdminUsers'));
 const GroupDetail = lazy(() => import('./routes/GroupDetail'));
@@ -99,6 +101,7 @@ export default function App() {
                 reaches these URLs and is shown the API's own refusal. */}
             <Route path={ADMIN_USERS_ROUTE} element={<AdminUsers />} />
             <Route path={ADMIN_PROJECTS_ROUTE} element={<AdminProjects />} />
+            <Route path={ADMIN_DATA_INTEGRITY_ROUTE} element={<AdminDataIntegrity />} />
             <Route path="/projects/:slug/run/new" element={<NewRunnerRun />} />
             <Route path="/projects/:slug/setup" element={<ProjectSetup />} />
             <Route path="/projects/:slug/packages" element={<ProjectPackages />} />

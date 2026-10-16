@@ -5,8 +5,55 @@ import type { Redis } from 'ioredis';
 import type pg from 'pg';
 import { truncateToWholeRecords } from '@perfportal/plugin-gatling';
 import type { BlobStore, LiveChunkStore } from '@perfportal/storage';
+import { VerificationRepository, type RetentionCursor, type RetentionPage } from '@perfportal/persistence';
+import { VERIFIER_VERSION } from '@perfportal/verify';
 import type { WorkerConfig } from './config.js';
 import { holdClient } from './held-client.js';
+import { RUN_INGEST_LOCK_NAMESPACE } from './pipeline/pipeline.service.js';
+
+/** How many retention-due runs one page of the retention pass holds. */
+const RETENTION_PAGE = 100;
+
+/**
+ * ═══ AT MOST FIVE PAGES A SWEEP ═══
+ *
+ * How many pages of retention-due runs ONE sweep walks before it stops and
+ * leaves the rest to the next, from where it stopped (`#retentionCursor`).
+ *
+ * A sweep holds `#sweeping` for its whole length, and every firing that finds
+ * one running returns without doing anything — the stale-run recovery
+ * included. Walking every page, as this pass first did, made one sweep last as
+ * long as the backlog: lowering retention from 0 to 90 days on an install with
+ * a hundred thousand old verified runs is a hundred thousand try-locks,
+ * re-checks, object deletes and stamps, about an hour, and for that hour no
+ * abandoned live run was finalized and no stuck pending or parsing run
+ * re-queued.
+ *
+ * Five pages of 100 is 500 runs a sweep. Each is five round trips (try-lock,
+ * re-check, DeleteObject, stamp, unlock), so on a healthy database and bucket
+ * that is seconds, inside the 30 s `SWEEP_INTERVAL_MS`: the next firing finds
+ * this one finished, and recovery runs on every firing while a backlog drains. A
+ * hundred thousand runs then take two hundred sweeps, under two hours at the
+ * default interval, which is slower than one sweep doing it all and is the
+ * price: a raw log that goes an hour late costs storage, a run left at
+ * `running` an hour late is a reader's page answering 202 for that hour.
+ */
+const RETENTION_PAGES_PER_SWEEP = 5;
+
+/**
+ * The retention pass's page size and per-sweep page cap. Injected so a test
+ * can reach "more than one sweep's worth" with a handful of runs rather than
+ * five hundred; production takes `RETENTION_LIMITS`.
+ */
+export interface RetentionLimits {
+  pageSize: number;
+  pagesPerSweep: number;
+}
+
+export const RETENTION_LIMITS: RetentionLimits = {
+  pageSize: RETENTION_PAGE,
+  pagesPerSweep: RETENTION_PAGES_PER_SWEEP,
+};
 
 /**
  * Recovers the three inconsistencies the ingest/parse/stream paths can
@@ -49,6 +96,29 @@ import { holdClient } from './held-client.js';
  */
 export class Sweeper {
   readonly #queue: Queue;
+  /**
+   * True while a sweep runs. `main.ts` fires `sweep()` on a timer and does not
+   * await the previous firing, and the retention pass walks object deletes
+   * against a bucket that may be slow: two overlapping sweeps would hold
+   * twice the clients `SWEEPER_CLIENTS` budgets for. A firing that finds one
+   * running does nothing — `createVerifyScan`'s guard, and the fold owner's.
+   */
+  #sweeping = false;
+  /**
+   * Where the retention pass stopped when it reached its per-sweep page cap:
+   * the next sweep's first page starts after this run, so a backlog drains
+   * across sweeps rather than being re-read from its oldest run every time.
+   * Null when the last page came back short — the walk reached the end, and
+   * the next sweep starts from the beginning again, which is what picks up a
+   * run skipped behind the cursor (its lock held, its delete failed) and one
+   * that became due before it (a verification that finished late).
+   *
+   * In memory, per sweeper: a restarted worker starts from the beginning, and
+   * two replicas walk independently. Both are only extra reads — the
+   * try-lock and the re-check under it are what keep a run from being taken
+   * twice.
+   */
+  #retentionCursor: RetentionCursor | null = null;
 
   constructor(
     private readonly config: WorkerConfig,
@@ -80,11 +150,146 @@ export class Sweeper {
      * to diagnose, not better.
      */
     private readonly redis: Redis,
+    /** The retention pass's page size and page cap; see `RetentionLimits`. */
+    private readonly retention: RetentionLimits = RETENTION_LIMITS,
   ) {
     this.#queue = new Queue('ingest', { connection: { url: config.redisUrl } });
   }
 
+  /**
+   * The stale-run recovery below, then the raw-log retention pass — AFTER the
+   * recovery's transaction has committed and released its client, never
+   * inside it: the retention pass deletes objects from the bucket, and object
+   * store latency must not hold row locks (the reason `#assembleAbandoned`
+   * runs after COMMIT too).
+   *
+   * RECOVERY FIRST, ON PURPOSE. It is the half a reader is waiting on — a run
+   * answering 202 for ever until it runs — and retention is housekeeping that
+   * loses nothing by waiting a sweep. So a retention pass that throws (the
+   * database or the bucket refusing a page) has already let recovery finish,
+   * and a retention backlog costs recovery at most one capped pass
+   * (`RETENTION_PAGES_PER_SWEEP`) of delay, never the whole backlog.
+   */
   async sweep(): Promise<number> {
+    if (this.#sweeping) return 0;
+    this.#sweeping = true;
+    try {
+      const swept = await this.#recoverStale();
+      await this.#retainRawLogs();
+      return swept;
+    } finally {
+      this.#sweeping = false;
+    }
+  }
+
+  /**
+   * ═══ RAW LOGS PAST RETENTION ARE DELETED, AND THE RUN SAYS SO ═══
+   *
+   * `rawLogRetentionDays` of 0 keeps every raw log for ever, and this pass
+   * does nothing at all. Otherwise each run `retentionDue` answers has its
+   * stored object deleted and then its row stamped (`markRawLogDeleted`).
+   * Object first, row second: a row stamped over an object that a failed
+   * delete left behind would claim a log gone that is still billed for, and
+   * never be selected again to finish the job; the other order is retried
+   * next sweep.
+   *
+   * ═══ ONLY A LOG NOTHING STILL NEEDS ═══
+   *
+   * `retentionDue` keeps the log of a run the verifier has yet to check
+   * against it, of a run the recompute has yet to make exact, and of a run
+   * whose verification found a mismatch (the log is the evidence). So with
+   * verification or the recompute switched off, those runs keep their logs
+   * past retention until they are done.
+   *
+   * ═══ NEVER UNDER A RUN SOMEBODY IS WORKING ON ═══
+   *
+   * A verify or a recompute holds the run's advisory lock for as long as it
+   * reads the log. Deleting the object under it would turn a clean
+   * verification into raw_log_missing. So each run is taken with a TRY-lock
+   * on that lock, held across the delete and the stamp; a run already held is
+   * skipped and comes up again on the next sweep. An object already missing
+   * counts as deleted: S3's DeleteObject answers success for an absent key.
+   *
+   * ═══ ASKED AGAIN ONCE THE LOCK IS HELD ═══
+   *
+   * A page is read before any lock is taken, and in between a verify scan or
+   * a verifier version bump may have marked the run pending. So, holding the
+   * lock, `isRetentionDue` asks the same question for that one run, and a run
+   * no longer due is left alone. One window remains, and it is left open on
+   * purpose: a `markPending` that does not take the lock, landing between
+   * that re-check and `markRawLogDeleted`. The verify scan, the pipeline after
+   * an ingest and both recompute paths after a recompute issue one, and only
+   * the scan's can land on a run retention has just found due: an ingested
+   * run is not past retention, and a recomputed one is a verify candidate
+   * already (no row, or a stale not_exact), which retention never selects.
+   * The outcome is still honest — `markRawLogDeleted` settles the pending row
+   * as unverifiable/raw_log_deleted, which is what that run now is.
+   *
+   * ═══ A FEW PAGES A SWEEP, RESUMED WHERE THE LAST ONE STOPPED ═══
+   *
+   * Keyset-paged on (ingested_at, id), so a run whose delete keeps failing
+   * does not hold every run behind it: the walk goes on past it to the next
+   * page. At most `pagesPerSweep` pages a sweep (`RETENTION_PAGES_PER_SWEEP`
+   * says why), starting after `#retentionCursor`; a short page ends the walk
+   * and the next sweep starts from the beginning, where the run that failed
+   * is selected again. One run's failure is logged and the rest go on: a
+   * bucket that refuses one delete must not stop retention for every other
+   * run.
+   *
+   * The cursor is stored after EVERY page, not once at the end: a page that
+   * throws leaves the cursor after the last page that finished, so the next
+   * sweep re-reads at most the page that failed.
+   */
+  async #retainRawLogs(): Promise<void> {
+    const days = this.config.rawLogRetentionDays;
+    if (!(days > 0)) return;
+    const verifications = new VerificationRepository(this.pool);
+    for (let pages = 0; pages < this.retention.pagesPerSweep; pages += 1) {
+      const page: RetentionPage = await verifications.retentionDue(
+        days,
+        VERIFIER_VERSION,
+        this.#retentionCursor,
+        this.retention.pageSize,
+      );
+      for (const run of page.runs) await this.#retainOne(verifications, run, days);
+      this.#retentionCursor = page.next;
+      if (page.next === null) return;
+    }
+  }
+
+  async #retainOne(
+    verifications: VerificationRepository,
+    run: { id: string; bundleKey: string },
+    days: number,
+  ): Promise<void> {
+    const held = holdClient(await this.pool.connect());
+    const client = held.client;
+    let broken: Error | undefined;
+    try {
+      const { rows } = await client.query<{ got: boolean }>(
+        'SELECT pg_try_advisory_lock($1, hashtext($2)) AS got',
+        [RUN_INGEST_LOCK_NAMESPACE, run.id],
+      );
+      if (!rows[0]?.got) return;
+      try {
+        if (!(await verifications.isRetentionDue(run.id, days, VERIFIER_VERSION))) return;
+        await this.blobs.delete(run.bundleKey);
+        await verifications.markRawLogDeleted(run.id);
+      } catch (err) {
+        console.error(`sweeper: could not delete run ${run.id}'s raw log; the next sweep will try again:`, err);
+      } finally {
+        try {
+          await client.query('SELECT pg_advisory_unlock($1, hashtext($2))', [RUN_INGEST_LOCK_NAMESPACE, run.id]);
+        } catch (err) {
+          broken = err instanceof Error ? err : new Error(String(err));
+        }
+      }
+    } finally {
+      held.release(broken);
+    }
+  }
+
+  async #recoverStale(): Promise<number> {
     // Held, not merely checked out: this client is kept across a whole
     // transaction and the assembly after it, and a connection that dies in
     // that time -- a database restart, a failover -- would otherwise emit an

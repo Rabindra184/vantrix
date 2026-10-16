@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { PROJECT_ROLES } from './access.js';
 import { PasswordSchema } from './me.js';
+import { UnverifiableReasonSchema } from './run.js';
 
 /**
  * The schemas behind `/v1/admin`: an admin managing every account and seeing
@@ -174,3 +175,34 @@ export const RecomputeProgressSchema = z.object({
   failed: z.number().int().nonnegative(),
 });
 export type RecomputeProgress = z.infer<typeof RecomputeProgressSchema>;
+
+/**
+ * `GET /v1/admin/data-integrity`: Administration › Data integrity for the
+ * caller's org. `recompute` is `GET /v1/admin/recompute`'s own answer;
+ * `verification` counts the org's verifiable runs by status (one with no
+ * row yet counts as pending); `problems` lists the mismatched and
+ * unverifiable runs, most recently checked first, at most 100; and
+ * `rawLogRetentionDays` is the deployment's setting, read-only, 0 meaning raw
+ * logs are kept for ever.
+ */
+export const DataIntegritySchema = z.object({
+  recompute: RecomputeProgressSchema,
+  verification: z.object({
+    verified: z.number().int().nonnegative(),
+    mismatch: z.number().int().nonnegative(),
+    unverifiable: z.number().int().nonnegative(),
+    pending: z.number().int().nonnegative(),
+  }),
+  problems: z.array(
+    z.object({
+      runId: z.string().uuid(),
+      projectSlug: z.string(),
+      status: z.enum(['mismatch', 'unverifiable']),
+      reason: UnverifiableReasonSchema.nullable(),
+      mismatchCount: z.number().int().nonnegative(),
+      checkedAt: z.string().datetime().nullable(),
+    }),
+  ),
+  rawLogRetentionDays: z.number().int().nonnegative(),
+});
+export type DataIntegrity = z.infer<typeof DataIntegritySchema>;

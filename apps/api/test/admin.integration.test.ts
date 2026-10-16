@@ -4,6 +4,7 @@ import {
   AdminProjectListResponseSchema,
   AdminUserListResponseSchema,
   AdminUserSchema,
+  DataIntegritySchema,
   RecomputeProgressSchema,
 } from '@perfportal/contracts';
 import {
@@ -16,7 +17,9 @@ import {
 import { PrismaClient } from '@prisma/client';
 import request from 'supertest';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { CONFIG } from '../src/auth/auth.module.js';
 import { auth } from '../src/auth/better-auth.instance.js';
+import { loadConfig } from '../src/config.js';
 import { createTestApp, type TestContext } from './support/app.js';
 import { signIn, signInAsAdmin, signInAsProjectMember, TEST_PASSWORD } from './support/session.js';
 
@@ -349,6 +352,94 @@ describe('GET /v1/admin/recompute', () => {
     ctx = await createTestApp();
     const res = await request(ctx.app.getHttpServer())
       .get('/v1/admin/recompute')
+      .set('Authorization', `Bearer ${ctx.readToken}`);
+    expect([res.status, res.body.code]).toEqual([403, 'FORBIDDEN']);
+  });
+});
+
+/** A verification row for `runId`, written the way the verifier writes one. */
+async function verify(
+  runId: string,
+  status: 'pending' | 'verified' | 'mismatch' | 'unverifiable',
+  opts: { reason?: string; checkedAt?: string; mismatches?: number } = {},
+): Promise<void> {
+  const mismatches = Array.from({ length: opts.mismatches ?? 0 }, (_, i) => ({
+    scope: 'run', name: '', family: 'response_time', population: 'all', bucket: null,
+    table: 'run_stat', figure: `p${90 + i}`, stored: 1, recomputed: 2,
+  }));
+  await ctx.pool.query(
+    `INSERT INTO run_verification (run_id, status, checked_at, mismatches, unverifiable_reason)
+     VALUES ($1::uuid, $2, $3::timestamptz, $4::jsonb, $5)`,
+    [runId, status, opts.checkedAt ?? null, JSON.stringify(mismatches), opts.reason ?? null],
+  );
+}
+
+describe('GET /v1/admin/data-integrity', () => {
+  /*
+   * One run of each verification status in this org, a verifiable run with
+   * no row yet (pending, waiting just the same), and a mismatched and an
+   * unverifiable run in ANOTHER org that must appear in neither the counts
+   * nor the problems. The retention is overridden to 30 days so the answer
+   * can only have come from the deployment's setting, not the default 90.
+   */
+  it('answers an admin this org\u2019s backfill, verification counts, problems newest first, and the retention setting', async () => {
+    const config = loadConfig({ ...process.env, RAW_LOG_RETENTION_DAYS: '30' });
+    ctx = await createTestApp({}, [], [{ provide: CONFIG, useValue: config }]);
+    const admin = await signInAsAdmin(ctx, email('admin'));
+    const base = { orgId: ctx.orgId, projectId: ctx.projectId };
+    const verified = await seedStatRun({ ...base, statsMethod: 'exact-v1', statRow: 'exact' });
+    await verify(verified, 'verified', { checkedAt: '2026-10-16T08:00:00Z' });
+    const older = await seedStatRun({ ...base, statsMethod: 'exact-v1', statRow: 'exact' });
+    await verify(older, 'mismatch', { checkedAt: '2026-10-16T07:00:00Z', mismatches: 2 });
+    const newer = await seedStatRun({ ...base, statsMethod: 'estimated', statRow: 'legacy' });
+    await verify(newer, 'unverifiable', { checkedAt: '2026-10-16T09:00:00Z', reason: 'not_exact' });
+    const queued = await seedStatRun({ ...base, statsMethod: 'exact-v1', statRow: 'exact' });
+    await verify(queued, 'pending');
+    await seedStatRun({ ...base, statsMethod: 'exact-v1', statRow: 'exact' }); // no row yet
+    const elsewhere = await otherOrg();
+    const elsewhereProject = await ctx.prisma.project.create({ data: { orgId: elsewhere, slug: 'aardvark', name: 'Aardvark' } });
+    const theirs = await seedStatRun({ orgId: elsewhere, projectId: elsewhereProject.id, statsMethod: 'exact-v1', statRow: 'exact' });
+    await verify(theirs, 'mismatch', { checkedAt: '2026-10-16T10:00:00Z', mismatches: 1 });
+    const theirsToo = await seedStatRun({ orgId: elsewhere, projectId: elsewhereProject.id, statsMethod: 'exact-v1', statRow: 'exact' });
+    await verify(theirsToo, 'unverifiable', { checkedAt: '2026-10-16T11:00:00Z', reason: 'raw_log_deleted' });
+
+    const res = await api('get', '/v1/admin/data-integrity', admin.cookie).expect(200);
+    expect(DataIntegritySchema.parse(res.body)).toEqual({
+      recompute: { total: 5, remaining: 1, failed: 0 },
+      verification: { verified: 1, mismatch: 1, unverifiable: 1, pending: 2 },
+      problems: [
+        { runId: newer, projectSlug: 'checkout', status: 'unverifiable', reason: 'not_exact', mismatchCount: 0, checkedAt: '2026-10-16T09:00:00.000Z' },
+        { runId: older, projectSlug: 'checkout', status: 'mismatch', reason: null, mismatchCount: 2, checkedAt: '2026-10-16T07:00:00.000Z' },
+      ],
+      rawLogRetentionDays: 30,
+    });
+  });
+
+  it('caps the problems at 100', async () => {
+    ctx = await createTestApp();
+    const admin = await signInAsAdmin(ctx, email('admin'));
+    for (let i = 0; i < 101; i += 1) {
+      const id = await seedStatRun({ orgId: ctx.orgId, projectId: ctx.projectId, statsMethod: 'exact-v1', statRow: 'none' });
+      await verify(id, 'unverifiable', { reason: 'raw_log_missing', checkedAt: new Date(Date.UTC(2026, 9, 1, 0, i)).toISOString() });
+    }
+    const res = await api('get', '/v1/admin/data-integrity', admin.cookie).expect(200);
+    const body = DataIntegritySchema.parse(res.body);
+    expect(body.problems).toHaveLength(100);
+    expect(body.verification.unverifiable).toBe(101);
+    expect(body.problems[0]!.checkedAt).toBe(new Date(Date.UTC(2026, 9, 1, 1, 40)).toISOString());
+  });
+
+  it('refuses a non-admin session with 403 ADMIN_REQUIRED', async () => {
+    ctx = await createTestApp();
+    const manager = await signInAsProjectMember(ctx, email('manager'), [{ projectId: ctx.projectId, role: 'manager' }]);
+    const res = await api('get', '/v1/admin/data-integrity', manager.cookie);
+    expect([res.status, res.body.code]).toEqual([403, 'ADMIN_REQUIRED']);
+  });
+
+  it('refuses a bearer token, whatever its scopes', async () => {
+    ctx = await createTestApp();
+    const res = await request(ctx.app.getHttpServer())
+      .get('/v1/admin/data-integrity')
       .set('Authorization', `Bearer ${ctx.readToken}`);
     expect([res.status, res.body.code]).toEqual([403, 'FORBIDDEN']);
   });

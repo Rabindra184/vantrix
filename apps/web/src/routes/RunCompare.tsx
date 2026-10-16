@@ -32,6 +32,8 @@ import {
   serialiseCompareSelection,
 } from './compareSelection';
 import { buildCompareSummary, type CompareSummaryModel } from './compareSummary';
+import { isExact } from './statsMethod';
+import { Approx } from '../components/Approx';
 import {
   comparability,
   needsComparabilityCheck,
@@ -212,9 +214,20 @@ export default function RunCompare() {
     return data === undefined ? [] : [{ id, label: labelFor(id), series: data }];
   });
 
+  /**
+   * Each run's own `statsMethod`, off the cohort. Per run, because a
+   * selection can span the backfill: the matrix marks an estimated run's
+   * column with ≈ and the summary its tiles, and a ≈ on an exact run is as
+   * false as a missing one. A run the cohort does not carry (or an API that
+   * predates the field) is not known to be exact — `isExact`'s rule.
+   */
+  const statsMethodOf = (id: string) => cohort.data?.runs.find((run) => run.id === id)?.statsMethod;
+
   const matrixRuns: CompareStats[] = selected.flatMap((id, i) => {
     const data = statsResults[i]?.data;
-    return data === undefined ? [] : [{ id, label: labelFor(id), stats: data }];
+    return data === undefined
+      ? []
+      : [{ id, label: labelFor(id), exact: isExact(statsMethodOf(id)), stats: data }];
   });
 
   /**
@@ -552,7 +565,11 @@ function CompareSummary({
           here. */}
       <CompareSummaryTile
         label="Current vs baseline"
+        testId="compare-delta"
         value={deltaText}
+        // ≈ only over a figure: "Select a baseline run" and "Not measured"
+        // state no number, which `deltaExact` already says.
+        exact={summary.deltaExact}
         detail={
           summary.baselineLabel === null
             ? 'Select another run to establish a baseline'
@@ -562,7 +579,9 @@ function CompareSummary({
       />
       <CompareSummaryTile
         label="Best selected"
+        testId="compare-best"
         value={summary.bestValue === null ? '-' : `${formatCell(summary.bestValue)} ${unit}`}
+        exact={summary.bestExact}
         detail={summary.bestLabel ?? 'Waiting for run statistics'}
       />
     </section>
@@ -571,20 +590,30 @@ function CompareSummary({
 
 function CompareSummaryTile({
   label,
+  testId,
   value,
+  exact,
   detail,
   colour = 'var(--color-text-primary)',
 }: {
   readonly label: string;
+  readonly testId: string;
   readonly value: string;
+  /** Whether the figure came from exact statistics; `false` puts ≈ before
+   *  it. REQUIRED, for `Approx`'s reason: a default would be silent. */
+  readonly exact: boolean;
   readonly detail: string;
   readonly colour?: string;
 }) {
   return (
     <div className="rounded-lg border border-default bg-surface px-3 py-3 shadow-panel">
       <p className="text-[0.75rem] font-medium text-muted">{label}</p>
-      <p className="mt-1 font-mono text-xl font-semibold leading-none tabular-nums" style={{ color: colour }}>
-        {value}
+      <p
+        data-testid={testId}
+        className="mt-1 font-mono text-xl font-semibold leading-none tabular-nums"
+        style={{ color: colour }}
+      >
+        <Approx exact={exact}>{value}</Approx>
       </p>
       <p className="mt-2 text-[0.6875rem] leading-snug text-muted">{detail}</p>
     </div>

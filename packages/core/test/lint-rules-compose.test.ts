@@ -111,6 +111,7 @@ const PROBES = [
   'packages/contracts/src/lint-probe.ts',
   'packages/persistence/src/lint-probe.ts',
   'packages/statistics/src/lint-probe.ts',
+  'packages/verify/src/lint-probe.ts',
 ];
 
 let eslint: ESLint;
@@ -193,5 +194,50 @@ describe('every no-restricted-syntax selector set stays in force', () => {
       const stale = [...EXEMPT[r].keys()].filter((f) => !missing[r].includes(f));
       expect(stale, `exempt from the ${r} rule but the rule is in force there -- delete the entry`).toEqual([]);
     }
+  });
+});
+
+/**
+ * THE VERIFIER'S INDEPENDENCE IS A LINT RULE, SO IT GETS THE SAME KIND OF
+ * GUARD. `packages/verify` recomputes the engine's figures to check them; an
+ * import of the engine would make a defect agree with itself. The rule is a
+ * separate `no-restricted-imports` block in eslint.config.js, and an inert
+ * block prints exactly what a clean tree prints — so these lint an offending
+ * import at real verify paths and require the report, and require that the
+ * same import elsewhere (where it is legitimate) is NOT reported.
+ */
+describe('the verifier may not import the engine it checks', () => {
+  const INDEPENDENCE = /The verifier must not share code with the engine it checks/;
+
+  async function restricted(source: string, filePath: string): Promise<string[]> {
+    const [result] = await eslint.lintText(source, { filePath, warnIgnored: true });
+    return (result?.messages ?? []).filter((m) => m.ruleId === 'no-restricted-imports').map((m) => m.message);
+  }
+
+  it.each([
+    ["import { nearestRankIndex } from '@perfportal/statistics';", 'packages/verify/src/lint-probe.ts'],
+    ["import { x } from '@perfportal/statistics/src/rank.js';", 'packages/verify/src/lint-probe.ts'],
+    ["import { x } from '../../statistics/src/rank.js';", 'packages/verify/src/lint-probe.ts'],
+    ["import { runEngine } from '@perfportal/statistics';", 'packages/verify/test/lint-probe.test.ts'],
+  ])('refuses %s in %s', async (line, path) => {
+    const messages = await restricted(`${line}\nexport const y = 1;\n`, path);
+    expect(messages.filter((m) => INDEPENDENCE.test(m)), JSON.stringify(messages)).toHaveLength(1);
+  });
+
+  it('refuses the database layer in the verifier, and keeps the pure-package bans', async () => {
+    const messages = await restricted(
+      "import { x } from '@perfportal/persistence';\nimport { readFileSync } from 'node:fs';\nexport const y = 1;\n",
+      'packages/verify/src/lint-probe.ts',
+    );
+    expect(messages, JSON.stringify(messages)).toHaveLength(2);
+    expect(messages.some((m) => /filesystem/.test(m)), JSON.stringify(messages)).toBe(true);
+  });
+
+  it('leaves the same import alone outside the verifier', async () => {
+    const messages = await restricted(
+      "import { nearestRankIndex } from '@perfportal/statistics';\nexport const y = 1;\n",
+      'packages/sla/src/lint-probe.ts',
+    );
+    expect(messages).toEqual([]);
   });
 });

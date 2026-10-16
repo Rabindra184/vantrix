@@ -3,24 +3,26 @@ import { Link } from 'react-router-dom';
 import { ProblemError } from '../api/fetch';
 import useDocumentTitle from '../useDocumentTitle';
 import { RecomputeProgress } from './RecomputeProgress';
-import { ADMIN_PROJECTS_ROUTE, ADMIN_USERS_ROUTE } from './paths';
+import { ADMIN_DATA_INTEGRITY_ROUTE, ADMIN_PROJECTS_ROUTE, ADMIN_USERS_ROUTE } from './paths';
 
 /**
- * The chrome both Administration pages share: one `<h1>`, and a two-tab strip
- * between Users and Projects — `ProjectShell`'s shape, one level up.
+ * The chrome every Administration page shares: one `<h1>`, and a tab strip
+ * across Users, Projects and Data integrity — `ProjectShell`'s shape, one
+ * level up.
  *
  * As there, the `<h1>` names the area and the section is not a heading: the
  * strip's `aria-current="page"` says which one is showing, and neither page
  * repeats its own name above its content.
  *
  * There is no `/admin` page (ruling W9). The account menu links to Users, and
- * the two tabs link each other.
+ * the tabs link each other.
  */
-export type AdminSection = 'users' | 'projects';
+export type AdminSection = 'users' | 'projects' | 'data-integrity';
 
 const SECTIONS: readonly { section: AdminSection; label: string; path: string }[] = [
   { section: 'users', label: 'Users', path: ADMIN_USERS_ROUTE },
   { section: 'projects', label: 'Projects', path: ADMIN_PROJECTS_ROUTE },
+  { section: 'data-integrity', label: 'Data integrity', path: ADMIN_DATA_INTEGRITY_ROUTE },
 ];
 
 /**
@@ -78,8 +80,9 @@ export default function AdminShell({
 
       {/* Between the tabs and the page, on every Administration page: the
           backfill concerns the whole install, not one section. It renders
-          nothing once no run remains. */}
-      <RecomputeProgress />
+          nothing once no run remains. Data integrity says it itself, from
+          its own answer, so it is not said there twice. */}
+      {current !== 'data-integrity' && <RecomputeProgress />}
 
       {children}
     </div>

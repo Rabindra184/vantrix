@@ -6,6 +6,8 @@ import {
   type RunResponse,
   type ToolAssertionOutcome,
   type VerdictChange,
+  type VerificationSummary,
+  VerificationSummarySchema,
 } from '@perfportal/contracts';
 import { MetricReader, RunRepository, type RunRecord } from '@perfportal/persistence';
 import { PrismaClient } from '@prisma/client';
@@ -58,6 +60,15 @@ export class RunsService {
    * the run, if any. A run has at most one: a retry makes a new job AND a new
    * run. `verdictChanges` is a second indexed lookup
    * (`run_verdict_change_run_id_idx`): what the exact recompute changed.
+   * `verification` is the run's verification row, by primary key: what the
+   * run header's mark says. With no row yet it is `pending` for a run that
+   * HAS statistics (the verifier has not reached it) and null for one that
+   * has none — a failed run, or an incomplete one nothing processed, which
+   * the verifier never checks and the run header must not call
+   * "Verifying…" for ever. That is a fourth lookup, an existence probe on
+   * run_stat, the half of the verifier's own definition of a verifiable run
+   * (VERIFIABLE_RUN_SQL) the run's status does not already answer. The
+   * lookups are independent, so they run together.
    */
   async lifecycleOf(run: RunRecord): Promise<{
     parsingStartedAt: string | null;
@@ -66,21 +77,34 @@ export class RunsService {
     runnerJobId: string | null;
     statsMethod: RunRecord['statsMethod'];
     verdictChanges: VerdictChange[];
+    verification: VerificationSummary | null;
   }> {
-    const job = await this.prisma.runnerJob.findFirst({
-      // The run's own project as well: the runner writes `run_id` only for a
-      // run it opened in the job's own project, so this never narrows a real
-      // answer — it only refuses one that could not be the run's own.
-      where: { runId: run.id, projectId: run.projectId },
-      orderBy: { createdAt: 'asc' },
-      select: { id: true, createdAt: true },
-    });
-    // Through Prisma, not `RecomputeRepository.verdictChanges`: this service
-    // holds no pg pool, and the order is that method's own (changed_at, id).
-    const changes = await this.prisma.runVerdictChange.findMany({
-      where: { runId: run.id },
-      orderBy: [{ changedAt: 'asc' }, { id: 'asc' }],
-    });
+    const [job, changes, verification, stat] = await Promise.all([
+      this.prisma.runnerJob.findFirst({
+        // The run's own project as well: the runner writes `run_id` only for a
+        // run it opened in the job's own project, so this never narrows a real
+        // answer — it only refuses one that could not be the run's own.
+        where: { runId: run.id, projectId: run.projectId },
+        orderBy: { createdAt: 'asc' },
+        select: { id: true, createdAt: true },
+      }),
+      // Through Prisma, not `RecomputeRepository.verdictChanges`: this service
+      // holds no pg pool, and the order is that method's own (changed_at, id).
+      this.prisma.runVerdictChange.findMany({
+        where: { runId: run.id },
+        orderBy: [{ changedAt: 'asc' }, { id: 'asc' }],
+      }),
+      // The primary-key lookup of the run's verification row, through Prisma
+      // for the reason the line above gives. Only the two columns the run
+      // header's mark reads: the whole record is `GET /v1/runs/{id}/verification`.
+      this.prisma.runVerification.findUnique({
+        where: { runId: run.id },
+        select: { status: true, unverifiableReason: true },
+      }),
+      // Whether the run has any statistics for the verifier to check: the
+      // first row of its own index, no more.
+      this.prisma.runStat.findFirst({ where: { runId: run.id }, select: { runId: true } }),
+    ]);
     const iso = (at: Date | null): string | null => (at === null ? null : at.toISOString());
     return {
       parsingStartedAt: iso(run.parsingStartedAt),
@@ -91,6 +115,7 @@ export class RunsService {
       runnerJobId: job?.id ?? null,
       statsMethod: run.statsMethod,
       verdictChanges: changes.flatMap((c) => verdictChangeOf(run.id, c)),
+      verification: verificationSummaryOf(run.id, verification, stat !== null),
     };
   }
 
@@ -141,6 +166,7 @@ export class RunsService {
       runnerJobId: lifecycle.runnerJobId,
       statsMethod: lifecycle.statsMethod,
       verdictChanges: lifecycle.verdictChanges,
+      verification: lifecycle.verification,
       note: noteOf(run),
       // Appendix A G-05. Already evaluated at ingest against the rollups the
       // engine had in hand, so this is a projection, not a computation — and
@@ -269,4 +295,26 @@ function verdictChangeOf(
   });
   if (!change.success) return drop(change.error.issues);
   return [change.data];
+}
+
+/**
+ * The run header's verification mark, from the stored row. With no row: a
+ * run with statistics is `pending` (the verifier has not reached it yet), and
+ * one with none answers null — not verifiable, so no mark at all. The two
+ * columns are held to the contract's words by `run_verification`'s CHECK
+ * constraints; a row that somehow does not parse draws no mark rather than
+ * failing the whole run response, and is logged — the rule `verdictChangeOf`
+ * above follows for a stored snapshot. No mark, not "Verifying…": a row that
+ * exists has been reached, so claiming the verifier has not would be false.
+ */
+function verificationSummaryOf(
+  runId: string,
+  row: { status: string; unverifiableReason: string | null } | null,
+  hasStats: boolean,
+): VerificationSummary | null {
+  if (row === null) return hasStats ? { status: 'pending', reason: null } : null;
+  const parsed = VerificationSummarySchema.safeParse({ status: row.status, reason: row.unverifiableReason });
+  if (parsed.success) return parsed.data;
+  console.warn(`dropping run ${runId}'s verification mark: its row does not parse`, parsed.error.issues);
+  return null;
 }

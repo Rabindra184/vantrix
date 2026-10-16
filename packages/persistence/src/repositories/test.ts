@@ -49,6 +49,8 @@ export interface OrgTestLatestRun {
   toolAssertions: RunRecord['toolAssertions'];
   /** The run-scope p95, clamped; null where it has none. See `runP95`. */
   p95Ms: number | null;
+  /** Which engine produced that p95 (`RunRecord.statsMethod`). */
+  statsMethod: RunRecord['statsMethod'];
 }
 
 /** One point of a test's p95 history. */
@@ -56,6 +58,8 @@ export interface OrgTestP95Point {
   runId: string;
   runNumber: number | null;
   p95Ms: number;
+  /** Which engine produced this point (`RunRecord.statsMethod`). */
+  statsMethod: RunRecord['statsMethod'];
 }
 
 /** A test as the org-wide list sees it: the row, its project, its newest run. */
@@ -123,6 +127,7 @@ interface LatestRunSqlRow {
   startedAt: Date;
   durationMs: number | null;
   toolAssertions: unknown;
+  statsMethod: string;
   statPercentiles: unknown;
   statMinMs: number | null;
   statMaxMs: number | null;
@@ -132,6 +137,7 @@ interface HistorySqlRow {
   testId: string;
   runId: string;
   runNumber: number | null;
+  statsMethod: string;
   statPercentiles: unknown;
   statMinMs: number | null;
   statMaxMs: number | null;
@@ -411,11 +417,12 @@ export class TestRepository {
       SELECT lr.test_id AS "testId", lr.id, lr.run_number AS "runNumber", lr.status, lr.verdict,
              COALESCE(lr.tool_started_at, lr.started_at) AS "startedAt",
              lr.duration_ms AS "durationMs", lr.tool_assertions AS "toolAssertions",
+             lr.stats_method AS "statsMethod",
              s.percentiles AS "statPercentiles", s.min_ms AS "statMinMs", s.max_ms AS "statMaxMs"
       FROM unnest($1::uuid[]) AS t(id)
       CROSS JOIN LATERAL (
         SELECT r.test_id, r.id, r.org_id, r.project_id, r.run_number, r.status, r.verdict,
-               r.tool_started_at, r.started_at, r.duration_ms, r.tool_assertions
+               r.tool_started_at, r.started_at, r.duration_ms, r.tool_assertions, r.stats_method
         FROM run r WHERE r.test_id = t.id AND r.org_id = $2::uuid
         ORDER BY r.created_at DESC, r.id DESC LIMIT 1
       ) lr
@@ -435,6 +442,8 @@ export class TestRepository {
           startedAt: row.startedAt,
           durationMs: row.durationMs,
           toolAssertions: (row.toolAssertions ?? null) as RunRecord['toolAssertions'],
+          // The column's CHECK constraint holds it to the two words.
+          statsMethod: row.statsMethod as RunRecord['statsMethod'],
           p95Ms: runP95({
             percentiles: row.statPercentiles,
             minMs: row.statMinMs,
@@ -471,10 +480,11 @@ export class TestRepository {
     const rows = await this.prisma.$queryRawUnsafe<HistorySqlRow[]>(
       `
       SELECT h.test_id AS "testId", h.id AS "runId", h.run_number AS "runNumber",
+             h.stats_method AS "statsMethod",
              h.percentiles AS "statPercentiles", h.min_ms AS "statMinMs", h.max_ms AS "statMaxMs"
       FROM unnest($1::uuid[]) AS t(id)
       CROSS JOIN LATERAL (
-        SELECT r.test_id, r.id, r.run_number, r.created_at,
+        SELECT r.test_id, r.id, r.run_number, r.created_at, r.stats_method,
                s.percentiles, s.min_ms, s.max_ms
         FROM run r
         JOIN run_stat s ON ${runScopeStatOn('s', 'r')}
@@ -496,7 +506,12 @@ export class TestRepository {
       });
       if (p95Ms === null) continue;
       const points = byTest.get(row.testId) ?? [];
-      points.push({ runId: row.runId, runNumber: row.runNumber, p95Ms });
+      points.push({
+        runId: row.runId,
+        runNumber: row.runNumber,
+        p95Ms,
+        statsMethod: row.statsMethod as RunRecord['statsMethod'],
+      });
       byTest.set(row.testId, points);
     }
     for (const points of byTest.values()) points.reverse();

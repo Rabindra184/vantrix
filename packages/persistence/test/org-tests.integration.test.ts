@@ -88,6 +88,8 @@ interface RunOpts {
   projectId?: string;
   /** Another org's run, for the cases that hand the reads a foreign id. */
   orgId?: string;
+  /** The column's own default ('exact-v1') when unstated. */
+  statsMethod?: 'estimated' | 'exact-v1';
 }
 
 async function seedRun(opts: RunOpts): Promise<string> {
@@ -118,6 +120,7 @@ async function seedRun(opts: RunOpts): Promise<string> {
       durationMs: opts.durationMs ?? null,
       toolAssertions: opts.toolAssertions === undefined ? undefined : (opts.toolAssertions as never),
       engineOptions: {},
+      statsMethod: opts.statsMethod ?? 'exact-v1',
     },
   });
   if (opts.stat) {
@@ -632,6 +635,36 @@ describe('TestRepository.listOrg', () => {
       expect(items[0]!.latestRun!.p95Ms).toBe(300);
     });
 
+    /**
+     * Each point, and the latest run, say which engine produced THEIR p95 —
+     * the sparkline's summary says "approximately" when any point is not
+     * exact, so one answer per test would be wrong for a history that spans
+     * the backfill. Two runs that disagree are what tell the two apart.
+     */
+    it('carries each run’s statsMethod on its point and on the latest run', async () => {
+      const t = await testRow('checkout-smoke');
+      const older = await seedRun({
+        testId: t.id, createdAt: '2026-09-01T10:00:00Z', statsMethod: 'estimated',
+        stat: { percentiles: { p95: 100 }, minMs: 1, maxMs: 1000 },
+      });
+      const newer = await seedRun({
+        testId: t.id, createdAt: '2026-09-01T11:00:00Z', statsMethod: 'exact-v1',
+        stat: { percentiles: { p95: 110 }, minMs: 1, maxMs: 1000 },
+      });
+
+      const { items } = await repo.listOrg(scope(), { limit: 25 });
+      expect(items[0]!.p95History.map((p) => [p.runId, p.statsMethod])).toEqual([
+        [older, 'estimated'],
+        [newer, 'exact-v1'],
+      ]);
+      expect(items[0]!.latestRun!.statsMethod).toBe('exact-v1');
+
+      // And the other way round: the latest run can be the estimated one.
+      await prisma.run.update({ where: { id: newer }, data: { statsMethod: 'estimated' } });
+      const again = await repo.listOrg(scope(), { limit: 25 });
+      expect(again.items[0]!.latestRun!.statsMethod).toBe('estimated');
+    });
+
     it('keeps each test’s history to its own runs', async () => {
       const a = await testRow('a');
       const b = await testRow('b');
@@ -646,8 +679,8 @@ describe('TestRepository.listOrg', () => {
 
       const { items } = await repo.listOrg(scope(), { limit: 25 });
       const bySlug = new Map(items.map((i) => [i.slug, i]));
-      expect(bySlug.get('a')!.p95History).toEqual([{ runId: ra, runNumber: null, p95Ms: 11 }]);
-      expect(bySlug.get('b')!.p95History).toEqual([{ runId: rb, runNumber: null, p95Ms: 22 }]);
+      expect(bySlug.get('a')!.p95History).toEqual([{ runId: ra, runNumber: null, p95Ms: 11, statsMethod: 'exact-v1' }]);
+      expect(bySlug.get('b')!.p95History).toEqual([{ runId: rb, runNumber: null, p95Ms: 22, statsMethod: 'exact-v1' }]);
     });
 
     it('leaves a run with no usable p95 out of the history', async () => {
