@@ -128,10 +128,10 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **247 files / 3967 tests**, it
+`nvm use` first, and if a run reports fewer than **258 files / 4167 tests**, it
 did not run everything — nor did an integration run reporting fewer than
-**225 files / 3466 tests**, an e2e run fewer than **204**, or a
-`pnpm test:e2e:cross` run fewer than **612** (204 on each of three engines).
+**238 files / 3699 tests**, an e2e run fewer than **205**, or a
+`pnpm test:e2e:cross` run fewer than **615** (205 on each of three engines).
 (Update those numbers when a sub-project adds suites, or the next reader
 calibrates against a stale floor and a silently-skipped run looks like a
 pass.)
@@ -154,8 +154,33 @@ see the eighth lesson below.
 The exact-statistics verifier branch (`feat/exact-statistics-verifier`, PR 3
 of `docs/superpowers/specs/2026-10-15-exact-statistics-design.md`, plan
 `docs/superpowers/plans/2026-10-16-exact-statistics-pr3-verifier.md`).
-**Floors: measured after the final fix wave** (unit, integration, e2e and
-e2e:cross — the controller fills them here and in the paragraph above).
+Unit **247 / 3967 to 258 / 4167**, integration **225 / 3466 to 238 / 3699**,
+**e2e 204 to 205** (`run-list.spec.ts`' estimated-run case), **615** on three
+engines. Each was predicted first — unit from per-file deltas, integration from
+`vitest list` — and each run collected exactly that.
+
+**WHAT WAS RUN ON THE FINAL TREE** (`ccfd6db9` plus this entry), Node v22.19.0,
+`perfportal_verify`, Redis db 13 (flushed before integration and e2e), e2e port
+3750, every `.tsbuildinfo` deleted before build and typecheck: `pnpm build`,
+`typecheck` and `lint` exit 0 by their own exit codes; `test:unit`
+**258 / 4167**, exit 0, zero `Errors` lines; `test:integration` COLLECTED
+**238 / 3699** and exited 1 on ONE case, a P1001 "Can't reach database server"
+in `session-auth.integration`'s bearer run-list case (this branch adds only the
+`/verification` endpoint to that file's cross-org list), which then passed 35
+of 35 alone; `pnpm test:e2e --workers=2` read back `Running 205 tests
+using 2 workers`, **205 passed, exit 0**.
+
+**THE FIRST GATE RUN FOUND WHAT NO REVIEW DID: THE REPORT SCROLLED SIDEWAYS AT
+200% TEXT.** The verification mark made the run header's badge group three
+badges on the Report (status, verdict, verification), and the group is
+`shrink-0`, so it sized to its one-line width and at a 32px root outgrew the
+header — `acceptance.spec.ts`' zoom case failed on `/report` every run. The
+Summary passed because it withholds the verdict badge. `max-w-full` caps the
+group so its own `flex-wrap` wraps; `shrink-0` still keeps a long simulation
+name from squeezing it. Four task reviews, a whole-branch review and a scoped
+re-review all read that header; only the browser measured it. That run's two
+integration failures were P1001s while a fix-wave agent drove the same
+Postgres from a second worktree — do not run two suites against one server.
 
 **EVERY RUN IS CHECKED FIGURE BY FIGURE AGAINST ITS OWN RAW LOG, BY CODE THAT
 SHARES NOTHING WITH THE ENGINE THAT WROTE IT.** `packages/verify` decodes the
