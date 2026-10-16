@@ -56,6 +56,7 @@ afterEach(() => {
 });
 
 afterAll(async () => {
+  for (const s of sweepers.values()) await s.close();
   redis.disconnect();
   await pool.end();
   await prisma.$disconnect();
@@ -169,9 +170,21 @@ async function seedVerifiedDirect(n: number, ageDays: number): Promise<Seeded[]>
   return out;
 }
 
+/**
+ * ONE sweeper per retention setting, for the whole file, closed in afterAll.
+ * A Sweeper opens a BullMQ queue in its constructor, and one closed while its
+ * connection is still being made leaves an unhandled "Connection is closed"
+ * behind it — on a loaded machine, a dozen short-lived sweepers here did.
+ */
+const sweepers = new Map<number, Sweeper>();
 function sweeper(days: number): Sweeper {
-  const c: WorkerConfig = { ...config, rawLogRetentionDays: days };
-  return new Sweeper(c, pool, chunks, blobs, redis);
+  let s = sweepers.get(days);
+  if (s === undefined) {
+    const c: WorkerConfig = { ...config, rawLogRetentionDays: days };
+    s = new Sweeper(c, pool, chunks, blobs, redis);
+    sweepers.set(days, s);
+  }
+  return s;
 }
 
 async function deletedAt(runId: string): Promise<Date | null> {
@@ -186,12 +199,7 @@ describe('raw-log retention in the sweeper', () => {
   it('deletes the raw log of a verified run past retention, and not of one inside it', async () => {
     const [old, young] = await seedRuns(31, 29);
     await verified(old!, young!);
-    const s = sweeper(30);
-    try {
-      await s.sweep();
-    } finally {
-      await s.close();
-    }
+    await sweeper(30).sweep();
 
     expect(await blobs.exists(old!.bundleKey)).toBe(false);
     expect(await deletedAt(old!.id)).not.toBeNull();
@@ -202,12 +210,7 @@ describe('raw-log retention in the sweeper', () => {
   it('keeps every raw log for ever at 0 days', async () => {
     const [old] = await seedRuns(4_000);
     await verified(old!);
-    const s = sweeper(0);
-    try {
-      await s.sweep();
-    } finally {
-      await s.close();
-    }
+    await sweeper(0).sweep();
 
     expect(await blobs.exists(old!.bundleKey)).toBe(true);
     expect(await deletedAt(old!.id)).toBeNull();
@@ -230,7 +233,6 @@ describe('raw-log retention in the sweeper', () => {
       expect(await deletedAt(old!.id)).not.toBeNull();
     } finally {
       holder.release();
-      await s.close();
     }
   });
 
@@ -238,12 +240,7 @@ describe('raw-log retention in the sweeper', () => {
     const [old] = await seedRuns(31);
     await verified(old!);
     await blobs.delete(old!.bundleKey);
-    const s = sweeper(30);
-    try {
-      await s.sweep();
-    } finally {
-      await s.close();
-    }
+    await sweeper(30).sweep();
     expect(await deletedAt(old!.id)).not.toBeNull();
   });
 
@@ -380,20 +377,11 @@ describe('raw-log retention keeps a log something still needs', () => {
   it('does not run two sweeps at once: a firing that finds one running does nothing', async () => {
     const due = vi.spyOn(VerificationRepository.prototype, 'retentionDue');
     const s = sweeper(30);
-    try {
-      await Promise.all([s.sweep(), s.sweep()]);
-    } finally {
-      await s.close();
-    }
+    await Promise.all([s.sweep(), s.sweep()]);
     expect(due).toHaveBeenCalledTimes(1);
   });
 });
 
 async function sweepAt(days: number): Promise<void> {
-  const s = sweeper(days);
-  try {
-    await s.sweep();
-  } finally {
-    await s.close();
-  }
+  await sweeper(days).sweep();
 }
