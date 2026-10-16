@@ -1,6 +1,6 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
-import { IngestError, ingestError, type BundleSource } from '@perfportal/core';
+import { IngestError } from '@perfportal/core';
 import {
   MetricWriter,
   ProjectRepository,
@@ -8,10 +8,9 @@ import {
   RuleRepository,
   type RunRecord,
 } from '@perfportal/persistence';
-import { SIMULATION_LOG } from '@perfportal/plugin-gatling';
 import { evaluateRules, toEvaluableStats, type EvaluableRule } from '@perfportal/sla';
 import { runEngineAsync, type EngineOptions } from '@perfportal/statistics';
-import { BlobStore, openTarGzBundle } from '@perfportal/storage';
+import { BlobStore } from '@perfportal/storage';
 import type { PrismaClient } from '@prisma/client';
 import type pg from 'pg';
 import type { WorkerConfig } from '../config.js';
@@ -19,49 +18,8 @@ import { holdClient } from '../held-client.js';
 import { selectPlugin } from './plugins.js';
 import { isTransient } from './retry.js';
 import { numberRunForTest } from './run-number.js';
+import { isRawLogKey, openRunSource, RawLogMissingError, readRunSource } from './run-source.js';
 import { resolveTestId } from './test-resolver.js';
-
-/**
- * A live run's `bundleKey` (Task 9, apps/api/src/ingest/live.service.ts)
- * holds the assembled `simulation.log` AS ITS OWN RAW BYTES —
- * `LiveChunkStore.finalize` (packages/storage/src/live-chunks.ts) writes
- * exactly the concatenated chunk stream, with no tar/gzip wrapping: a live
- * run was never an archive, so there is nothing to wrap. An uploaded run's
- * `bundleKey` (IngestService.accept's `runs/{projectId}/{uuid}.tgz`) is
- * always a real gzipped tar.
- *
- * `openTarGzBundle` assumes the latter unconditionally: it gunzips whatever
- * bytes it is given and throws `BUNDLE_NOT_ARCHIVE` the instant they are not
- * a gzip stream, which every live run's raw log always is. Presenting the
- * raw buffer as a one-file `BundleSource` here — rather than teaching
- * `openTarGzBundle` to detect and skip the unwrap — keeps that function
- * single-purpose (it opens archives; this is not one) and leaves every
- * downstream consumer untouched: `GatlingPlugin.detect`/`parse` only ever
- * call `source.index.files`/`head`/`read`, never anything archive-specific,
- * so a live run's finalized log parses through the exact same plugin code a
- * bundle upload does.
- */
-function rawLogBundleSource(buf: Buffer): BundleSource {
-  const files = [SIMULATION_LOG];
-  return {
-    index: {
-      files,
-      head: async (path, bytes) => {
-        if (path !== SIMULATION_LOG) throw new Error(`no such entry: ${path}`);
-        return new Uint8Array(buf.subarray(0, bytes));
-      },
-    },
-    read: async (path) => {
-      if (path !== SIMULATION_LOG) throw new Error(`no such entry: ${path}`);
-      // `buf` (unlike head()'s small slice above) can be the whole
-      // 150-250 MB log, so this returns the SAME buffer rather than
-      // `new Uint8Array(buf)` -- that constructor form copies every byte,
-      // doubling peak memory for no reason: Buffer already IS a Uint8Array
-      // (Node's own subclass), so no conversion is needed at all.
-      return buf;
-    },
-  };
-}
 
 /**
  * Namespace for the per-run ingest advisory lock. Arbitrary but fixed, and
@@ -223,7 +181,7 @@ export class PipelineService {
    * and `markParsing` both write `'parsing'`, so status alone cannot
    * distinguish a run the fold owner is about to release from one another
    * `process()` call is actively driving. Only a LIVE run's bundleKey (the
-   * `/${SIMULATION_LOG}` suffix `rawLogBundleSource` above already tests
+   * `/simulation.log` suffix `isRawLogKey` in `run-source.ts` tests
    * for) can ever contend with the fold owner for this lock -- the owner
    * only claims runs at `status = 'running'`, and an uploaded run never
    * passes through that state -- so an uploaded run losing the race can
@@ -236,7 +194,7 @@ export class PipelineService {
     if (!run) return;                                                   // swept away or deleted
     if (run.status === 'complete' || run.status === 'failed') return;   // already terminal -- case 1, resolved
 
-    if (run.bundleKey.endsWith(`/${SIMULATION_LOG}`)) {
+    if (isRawLogKey(run.bundleKey)) {
       throw new RunLockedError(runId);                                  // case 2 -- ask BullMQ to retry
     }
     // Case 1: another process() call already owns this run's outcome.
@@ -302,41 +260,25 @@ export class PipelineService {
   }
 
   async #ingest(run: RunRecord): Promise<void> {
-    const archive = await this.blobs.get(run.bundleKey);
-
-    // spec §6.2 step 2: verify SHA-256 against what was recorded at upload
-    // time. A mismatch here means the object fetched back from the blob
-    // store is not the bytes that were durably written — storage-side
-    // corruption, not a malformed bundle — so it must not be blamed on the
-    // caller the way a parse failure would be.
-    const actualSha256 = createHash('sha256').update(archive).digest('hex');
-    if (actualSha256 !== run.bundleSha256) {
-      throw ingestError('BUNDLE_CHECKSUM_MISMATCH', {
-        message:
-          `The bundle fetched from object storage does not match the checksum recorded ` +
-          `at upload time (expected ${run.bundleSha256}, got ${actualSha256}).`,
-        remediation:
-          'This is a storage integrity problem, not a malformed upload — re-upload is unlikely ' +
-          'to help by itself. Escalate to the platform team to check the object store for ' +
-          'corruption or a bad replica before retrying.',
-        detail: { expected: run.bundleSha256, actual: actualSha256 },
-      });
-    }
-
     const project = await new ProjectRepository(this.prisma).byId(run.projectId);
     const maxTotalBytes =
       (project?.settings.maxDecompressedBundleBytes as number | undefined) ??
       this.config.maxDecompressedBundleBytes;
-    // See rawLogBundleSource's docstring: a live run's bundleKey always ends
-    // in `/simulation.log` (createLive's convention) and is never a gzip
-    // stream; an uploaded run's always ends in `.tgz` and always is one.
-    // maxTotalBytes/maxEntryBytes (decompression-bomb guards) do not apply
-    // to the live path — there is no compression to bound in the first
-    // place, since these are exactly the bytes the platform already
-    // received and stored one stream chunk at a time.
-    const source = run.bundleKey.endsWith(`/${SIMULATION_LOG}`)
-      ? rawLogBundleSource(archive)
-      : await openTarGzBundle(archive, { maxTotalBytes });
+    const deps = { blobs: this.blobs, maxTotalBytes };
+    // ═══ A MISSING LOG FAILS THE RUN EXACTLY AS IT ALWAYS HAS ═══
+    //
+    // `RawLogMissingError` is a recompute's "skip this run", and the ingest
+    // pipeline has never had a reason to treat a missing log specially: a
+    // run reaching here with an empty checksum or a vanished object failed
+    // with the object store's own error (recorded as INTERNAL) or with
+    // BUNDLE_CHECKSUM_MISMATCH against `expected ''`. `readRunSource` is the
+    // unguarded read that produced those, so falling back to it reproduces
+    // the identical failure — error, recorded code and wording — rather than
+    // a hand-written imitation of it.
+    const source = await openRunSource(run, deps).catch((err: unknown) => {
+      if (err instanceof RawLogMissingError) return readRunSource(run, deps);
+      throw err;
+    });
     const { plugin, toolVersion } = await selectPlugin(source.index);
 
     const result = await runEngineAsync(plugin.parse(source), run.engineOptions as EngineOptions);

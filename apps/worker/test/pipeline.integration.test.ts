@@ -133,7 +133,7 @@ async function seedLiveRun(rawLog: Buffer) {
 describe('PipelineService', () => {
   // Task 9 (apps/api/src/ingest/live.service.ts): a live run's finalized
   // bundleKey holds simulation.log's raw bytes, never a tar.gz — before
-  // pipeline.service.ts's rawLogBundleSource branch existed, this fell
+  // the rawLogBundleSource branch (run-source.ts now) existed, this fell
   // straight into openTarGzBundle, which gunzips unconditionally and threw
   // BUNDLE_NOT_ARCHIVE on every single streamed run. This is the regression
   // guard for that branch, independent of the fuller apps/api
@@ -280,6 +280,47 @@ describe('PipelineService', () => {
     // Not blamed on the caller: the remediation must not read like a
     // malformed-upload message.
     expect((run?.error as { remediation: string }).remediation).toMatch(/storage/i);
+  });
+
+  /**
+   * ═══ A MISSING LOG FAILS THE RUN THE WAY IT ALWAYS DID ═══
+   *
+   * `openRunSource` refuses an empty checksum and a vanished object with
+   * `RawLogMissingError`, for a recompute to skip. The pipeline must not
+   * start recording that — these pin the two failures it produced before
+   * the reader was extracted, so a pipeline that let the new error through
+   * (recorded as INTERNAL for both) fails the first of them, and one that
+   * mapped it to anything else fails the second.
+   */
+  it('fails a run with an empty recorded checksum as a checksum mismatch against its stored bytes', async () => {
+    const ctx = await seedRun(bundle, {}, '');
+    await expect(pipeline().process(ctx.runId, { queueWillRetry: false })).rejects.toThrow();
+
+    const run = await prisma.run.findUnique({ where: { id: ctx.runId } });
+    expect(run?.status).toBe('failed');
+    expect(run?.error).toMatchObject({
+      code: 'BUNDLE_CHECKSUM_MISMATCH',
+      message: expect.stringContaining(
+        `(expected , got ${createHash('sha256').update(bundle).digest('hex')})`,
+      ),
+    });
+  });
+
+  it('fails a run whose stored object is gone with the generic failure, as the object store error always produced', async () => {
+    const ctx = await seedRun(bundle);
+    const { bundleKey } = await prisma.run.findUniqueOrThrow({ where: { id: ctx.runId } });
+    await blobs.delete(bundleKey);
+    await expect(pipeline().process(ctx.runId, { queueWillRetry: false })).rejects.toMatchObject({
+      name: 'NoSuchKey',
+    });
+
+    const run = await prisma.run.findUnique({ where: { id: ctx.runId } });
+    expect(run?.status).toBe('failed');
+    expect(run?.error).toEqual({
+      code: 'INTERNAL',
+      message: 'The run could not be ingested.',
+      remediation: 'Retry the upload. If it keeps failing, the bundle may be incomplete.',
+    });
   });
 
   it('writes nothing at all when the run fails — no half-persisted statistics', async () => {
