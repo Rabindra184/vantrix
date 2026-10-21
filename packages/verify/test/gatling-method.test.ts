@@ -56,27 +56,23 @@ function agreeingOutput(input: ReturnType<typeof gatlingMethodInput>): GatlingMe
 }
 
 describe('gatlingMethodInput', () => {
-  it('every request feeds run, its request key, all and its status, in log order', () => {
+  it('every request feeds the run in all, and its request key in all and its status, in log order', () => {
     const events: CanonicalEvent[] = [req('X', 0, 10), req('X', 5, 25, false), req('X', 7, 37)];
     const input = gatlingMethodInput(events);
 
     const described = [...input.keys.values()].map((k) => `${k.scope}|${k.name}|${k.population}`).sort();
-    expect(described).toEqual(
-      ['run||all', 'run||ok', 'run||ko', 'request|X|all', 'request|X|ok', 'request|X|ko'].sort(),
-    );
+    expect(described).toEqual(['run||all', 'request|X|all', 'request|X|ok', 'request|X|ko'].sort());
 
     // Opaque, first-seen indices — never a name on the wire.
-    expect([...input.keys.keys()]).toEqual(['k0', 'k1', 'k2', 'k3', 'k4', 'k5']);
+    expect([...input.keys.keys()]).toEqual(['k0', 'k1', 'k2', 'k3']);
     for (const line of input.lines) expect(line).toMatch(/^k\d+\t\d+$/);
 
     const runAll = keyOf(input.keys, 'run', '', 'all')!;
     const reqAll = keyOf(input.keys, 'request', 'X', 'all')!;
-    const runOk = keyOf(input.keys, 'run', '', 'ok')!;
-    const runKo = keyOf(input.keys, 'run', '', 'ko')!;
     expect(valuesOf(input.lines, runAll)).toEqual([10, 20, 30]);
     expect(valuesOf(input.lines, reqAll)).toEqual([10, 20, 30]);
-    expect(valuesOf(input.lines, runOk)).toEqual([10, 30]);
-    expect(valuesOf(input.lines, runKo)).toEqual([20]);
+    expect(valuesOf(input.lines, keyOf(input.keys, 'request', 'X', 'ok')!)).toEqual([10, 30]);
+    expect(valuesOf(input.lines, keyOf(input.keys, 'request', 'X', 'ko')!)).toEqual([20]);
 
     // The first request's lines all come before the second's.
     const firstOfSecond = input.lines.findIndex((l) => l.endsWith('\t20'));
@@ -94,6 +90,21 @@ describe('gatlingMethodInput', () => {
     expect(input.lines.some((l) => l.endsWith('\t500') || l.endsWith('\t800'))).toBe(false);
     // A group feeds neither the run nor any request key.
     expect([...input.keys.values()].every((k) => k.scope === 'group')).toBe(true);
+  });
+
+  /**
+   * Gatling's report prints the run's percentiles in its Total column alone:
+   * the index's percentile columns are Total only and no detail page repeats
+   * the run. A run OK/KO key would put "Gatling's report: X" beside a figure
+   * the report never shows, and take a slot under the panel's row cap.
+   */
+  it('the run is fed in population all only, never by status', () => {
+    const input = gatlingMethodInput([req('X', 0, 10), req('X', 5, 25, false), req('Y', 0, 7)]);
+    const runKeys = [...input.keys.values()].filter((k) => k.scope === 'run');
+    expect(runKeys).toEqual([{ scope: 'run', name: '', population: 'all' }]);
+    // While a request still has both.
+    expect(keyOf(input.keys, 'request', 'X', 'ok')).toBeDefined();
+    expect(keyOf(input.keys, 'request', 'X', 'ko')).toBeDefined();
   });
 
   it('warm-up is included', () => {
@@ -167,8 +178,6 @@ describe('gatlingDifferences', () => {
     const rows = gatlingDifferences(input, output).map((d) => `${d.scope}|${d.name}|${d.population}|${d.figure}`);
     expect(rows).toEqual([
       'run||all|p50', 'run||all|p75',
-      'run||ok|p50', 'run||ok|p75',
-      'run||ko|p50', 'run||ko|p75',
       'request|A|all|p50', 'request|A|all|p75',
       'request|A|ok|p50', 'request|A|ok|p75',
       'request|B|all|p50', 'request|B|all|p75',

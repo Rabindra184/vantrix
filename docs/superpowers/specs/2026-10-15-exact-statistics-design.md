@@ -230,11 +230,15 @@ earlier "equal Gatling's report exactly" rule.**
 4. **The method's population is every request record, warm-up included, at
    Gatling's default percentiles 50, 75, 95 and 99.** Gatling knows no
    warm-up, and the run's own `gatling.conf` is not recorded. The stats keys,
-   in log order: every request record feeds the run (all requests) and its
-   request (`<groups…>/<name>`, unspaced, as `run_stat.name` stores it), each
-   in `all` and its status population; every group record feeds its group in
-   `all` and its status. The exact value a difference compares against is the
-   nearest-rank value over the same values.
+   in log order: every request record feeds the run (all requests) in `all`
+   only, and its request (`<groups…>/<name>`, unspaced, as `run_stat.name`
+   stores it) in `all` and its status population; every group record feeds its
+   group in `all` and its status. The run has no `ok`/`ko` key because
+   Gatling's report prints none: its global table's percentile columns are
+   Total alone, and no detail page repeats the run (amended after the final
+   review: a run OK/KO row named a figure the report never shows). The exact
+   value a difference compares against is the nearest-rank value over the same
+   values.
 
 ## 7. User interface
 

@@ -195,7 +195,10 @@ is what keeps a range honest. Red-verified: compression 50 fails 61 cells,
 NOT ENOUGH ON ITS OWN**: an index parser returning `[]` still checked 193 cells
 through the detail pages and passed, with the run-level cells silently gone.
 The check now requires every key the log produced to have been compared at
-least once (`run/ok` and `run/ko` excepted — Gatling prints them nowhere).
+least once, with no exception: the run is fed in `all` alone, because Gatling's
+report prints no run percentile by status (its global table's percentile
+columns are Total only and no detail page repeats the run) — a run OK/KO row
+would have named a figure the report never shows.
 
 **WHAT A RUN SHOWS.** After `compare`, the verify job builds the tool's input
 from the SAME decoded events, runs it at `GATLING_METHOD_SEEDS` (default 16),
@@ -223,7 +226,10 @@ bucket, the tool run directly at 16 seeds, nearest rank by its own integer
 formula — produced **the identical 43 and 35 rows, value for value**. Examples:
 plugin run all-requests p99 Gatling **2126–2184** against exact 2169, `Cart`
 group ko p50 144 against 133; runner run all-requests p99 **2207–2257** against
-2212, `Catalog` group p95 485 against 474.
+2212, `Catalog` group p95 485 against 474. **Those 43 and 35 predate the
+final fix wave**, which stopped feeding the run's OK and KO populations: the
+plugin run carried 6 run rows and the runner run 8, where only the 4 `all`
+percentiles can be rows now.
 
 **AND GATLING'S OWN ASSERTION LINE NOW AGREES WITH THE PANEL.** Each run's
 `Search: 95th percentile … actual :` printed **1739** and **2071**; the method

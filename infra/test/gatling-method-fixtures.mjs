@@ -171,9 +171,10 @@ export function parseReportPercentiles(html) {
 // ─── The stats keys a log produces ────────────────────────────────────────
 
 /**
- * Gatling's report keys, each in log order: every request feeds the run and
- * its own request, every group its own group with its CUMULATED response time,
- * each in `total` and its status population.
+ * Gatling's report keys, each in log order: every request feeds the run in
+ * `total`, and its own request in `total` and its status population; every
+ * group its own group with its CUMULATED response time, in `total` and its
+ * status.
  */
 export function statsKeys(events) {
   const keys = new Map(); // `${scope}\0${name}\0${pop}` -> number[]
@@ -188,10 +189,9 @@ export function statsKeys(events) {
       const v = e.endMs - e.startMs;
       const status = e.ok ? 'ok' : 'ko';
       const name = [...e.groups, e.name].join('/');
-      for (const [scope, n] of [['run', ''], ['request', name]]) {
-        push(scope, n, 'total', v);
-        push(scope, n, status, v);
-      }
+      push('run', '', 'total', v);
+      push('request', name, 'total', v);
+      push('request', name, status, v);
     } else if (e.type === 'group') {
       const status = e.ok ? 'ok' : 'ko';
       const name = e.groups.join('/');
@@ -342,10 +342,9 @@ async function main() {
     const n = checkReport(dir, ranges, failures, checked);
     // Every key the log produced must have been compared at least once — a
     // floor on the TOTAL cell count cannot see one page's parser going blind,
-    // because the detail pages duplicate most index cells. The run's ok and ko
-    // populations are the only keys Gatling's report prints nowhere.
+    // because the detail pages duplicate most index cells. No exception: the
+    // run is fed in total alone, and every key fed is one the report prints.
     for (const key of keys.keys()) {
-      if (key === 'run\u0000\u0000ok' || key === 'run\u0000\u0000ko') continue;
       if (!checked.has(key)) {
         const [scope, name, pop] = key.split('\u0000');
         failures.push(`${fixture}: ${label(scope, name, pop, '*')}: the log has this key and no report cell was checked against it`);

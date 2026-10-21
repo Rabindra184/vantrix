@@ -52,9 +52,11 @@ time.
 
 Gatling's report keys, each in log order:
 
-- every request record feeds the run (all requests) and its own request
-  (`<groups…>/<name>`), each in `total` and its status population (`ok`/`ko`);
-  the value is `endMs − startMs`;
+- every request record feeds the run (all requests) in `total`, and its own
+  request (`<groups…>/<name>`) in `total` and its status population
+  (`ok`/`ko`); the value is `endMs − startMs`. The run has no status
+  populations: Gatling's report prints its percentiles in the Total column
+  alone;
 - every group record feeds its own group (`<groups path>`) with its
   **cumulated** response time, in `total` and its status.
 

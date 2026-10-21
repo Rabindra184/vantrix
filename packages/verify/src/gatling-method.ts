@@ -12,9 +12,10 @@ import { nearestRankIndex } from './rank.js';
  *
  * Gatling's stats keys, each fed in log order:
  *
- *   - every request record feeds `run` and its own `request`, each in
- *     population `all` and in its own status (`ok` or `ko`); the value is
- *     `endMs - startMs`;
+ *   - every request record feeds `run` in population `all`, and its own
+ *     `request` in `all` and in its own status (`ok` or `ko`); the value is
+ *     `endMs - startMs`. The run has no status populations: Gatling's report
+ *     prints the run's percentiles in its Total column alone;
  *   - every group record feeds its own `group` with its CUMULATED response
  *     time — never its duration (spec amendment 2: every group cell of two real
  *     reports lies inside the cumulated replay, and outside the duration one).
@@ -101,8 +102,11 @@ export function gatlingMethodInput(events: Iterable<CanonicalEvent>): GatlingMet
       const v = observed(e.endMs - e.startMs);
       const status: GatlingPopulation = e.ok ? 'ok' : 'ko';
       const name = [...e.groups, e.name].join('/');
+      // The run in `all` only: Gatling's report prints no run percentile by
+      // status (its global table's percentile columns are Total alone, and no
+      // detail page repeats the run), so a run OK/KO row would name a figure
+      // the report never shows.
       feed('run', '', 'all', v);
-      feed('run', '', status, v);
       feed('request', name, 'all', v);
       feed('request', name, status, v);
     } else if (e.type === 'group') {
