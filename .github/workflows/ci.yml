@@ -356,9 +356,13 @@ jobs:
       # image's Gatling runtime carries, and requires every percentile cell of
       # their reports to lie inside the 200-seed range (and equal it wherever
       # every seed agrees). Gatling's t-digest breaks ties with an unseeded
-      # Random, so a range is the honest form of the claim. The script exits 1
-      # naming each failing cell, and refuses a run that checked 150 cells or
-      # fewer, so a parser that stopped reading the reports cannot pass.
+      # Random, so a range is the honest form of the claim. The tool's input
+      # comes from the worker's own gatlingMethodInput, imported from the
+      # image's built packages/verify, so the production builder is checked
+      # too. The script exits 1 naming each failing cell, refuses a run that
+      # checked 150 cells or fewer (a parser that stopped reading the reports),
+      # and one where fewer than 200 cells were pinned to one value by every
+      # seed (a tool printing wide ranges).
       - name: The Gatling-method tool reproduces three Gatling reports
         run: |
           docker run --rm \

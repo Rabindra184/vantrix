@@ -37,8 +37,13 @@
  *     --tdigest ~/.perfportal/gatling-home/lib/t-digest-3.3.jar \
  *     --fixtures fixtures/gatling-3.15.1.2 [--seeds 200] [--java java]
  *
- * Exits 0 printing the cell count (which must exceed 150), or 1 naming every
- * failing cell.
+ * The tool's input is built by the worker's own `gatlingMethodInput` and
+ * `gatlingMethodLines`, imported from `packages/verify`'s build, so this
+ * checks the production builder as well as the tool.
+ *
+ * Exits 0 printing the cell count (which must exceed 150) and how many cells
+ * every seed pinned to one value (at least 200), or 1 naming every failing
+ * cell.
  *
  * `parseReportPercentiles(html)` is exported for the TypeScript side.
  */
@@ -49,6 +54,15 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const PERCENTILES = ['50', '75', '95', '99'];
 const MIN_CELLS = 150;
+/**
+ * Cells where all 200 seeds agree on ONE value and Gatling printed exactly
+ * it. The range check alone is satisfied by a tool printing [0, 2147483647]
+ * for every percentile; only the equality half refuses that, and only if
+ * enough cells reach it. Measured at 200 seeds: 240 of the 277 cells (129 of
+ * the reference report's 136, 111 of the 2026-10-15 run's 140; the assertion
+ * cell is a range). The floor sits below that the way MIN_CELLS does.
+ */
+const MIN_PINNED = 200;
 
 // ─── The report parser ────────────────────────────────────────────────────
 
@@ -168,53 +182,54 @@ export function parseReportPercentiles(html) {
     : parseDetail(html);
 }
 
-// ─── The stats keys a log produces ────────────────────────────────────────
+// ─── The tool's input, from the PRODUCTION builder ────────────────────────
 
 /**
- * Gatling's report keys, each in log order: every request feeds the run in
- * `total`, and its own request in `total` and its status population; every
- * group its own group with its CUMULATED response time, in `total` and its
- * status.
+ * The verify job's own `gatlingMethodInput` and `gatlingMethodLines`, from
+ * `packages/verify`'s build — never a second implementation here. A copy in
+ * this script would let the worker's builder drift (a group fed its duration,
+ * a population dropped, names spaced) while this check went on passing
+ * against the copy: the "two decoders" shape CLAUDE.md forbids. The image
+ * builds `packages/verify` with everything else, as it builds the decoder.
  */
-export function statsKeys(events) {
-  const keys = new Map(); // `${scope}\0${name}\0${pop}` -> number[]
-  const push = (scope, name, pop, v) => {
-    const k = `${scope}\u0000${name}\u0000${pop}`;
-    let list = keys.get(k);
-    if (!list) keys.set(k, (list = []));
-    list.push(v);
-  };
-  for (const e of events) {
-    if (e.type === 'request') {
-      const v = e.endMs - e.startMs;
-      const status = e.ok ? 'ok' : 'ko';
-      const name = [...e.groups, e.name].join('/');
-      push('run', '', 'total', v);
-      push('request', name, 'total', v);
-      push('request', name, status, v);
-    } else if (e.type === 'group') {
-      const status = e.ok ? 'ok' : 'ko';
-      const name = e.groups.join('/');
-      push('group', name, 'total', e.cumulatedResponseTimeMs);
-      push('group', name, status, e.cumulatedResponseTimeMs);
-    }
+async function verifyBuild() {
+  const here = fileURLToPath(new URL('.', import.meta.url));
+  const index = join(here, '../../packages/verify/dist/src/index.js');
+  if (!existsSync(index)) throw new Error(`packages/verify not built: ${index} (run pnpm build)`);
+  return import(pathToFileURL(index).href);
+}
+
+/** The report's name for a population: the builder's `all` is the report's Total column. */
+function reportKey({ scope, name, population }) {
+  return `${scope}\u0000${name}\u0000${population === 'all' ? 'total' : population}`;
+}
+
+/**
+ * The tool's ranges per report key (`${scope}\0${name}\0${total|ok|ko}`), and
+ * the set of keys the builder produced, from one decoded log.
+ */
+async function replay(args, events) {
+  const { gatlingMethodInput, gatlingMethodLines } = await verifyBuild();
+  const input = gatlingMethodInput(events);
+  const rows = await runTool(args, gatlingMethodLines(input));
+  const ranges = new Map();
+  for (const row of rows) {
+    const key = input.keys.get(row.key);
+    if (key === undefined) throw new Error(`the tool answered for a key it was never sent: ${row.key}`);
+    const sent = input.values.get(row.key).length;
+    if (row.n !== sent) throw new Error(`the tool counted ${row.n} values for ${row.key}, sent ${sent}`);
+    ranges.set(reportKey(key), row);
   }
-  return keys;
+  for (const [id, key] of input.keys) {
+    if (!ranges.has(reportKey(key))) throw new Error(`the tool printed nothing for ${id}`);
+  }
+  return { ranges, keys: new Set([...input.keys.values()].map(reportKey)) };
 }
 
 // ─── Running the tool ─────────────────────────────────────────────────────
 
-function runTool({ java, jar, tdigest, seeds }, keys) {
-  // Opaque keys, as the worker sends them: the readable key never crosses the
-  // process boundary.
-  const ids = new Map();
-  let input = '';
-  let i = 0;
-  for (const [k, values] of keys) {
-    const id = `k${i++}`;
-    ids.set(id, k);
-    for (const v of values) input += `${id}\t${v}\n`;
-  }
+/** Feeds the builder's own stdin chunks to the tool and returns its JSON rows. */
+function runTool({ java, jar, tdigest, seeds }, chunks) {
   return new Promise((resolve, reject) => {
     const child = spawn(
       java,
@@ -241,23 +256,12 @@ function runTool({ java, jar, tdigest, seeds }, keys) {
           : '';
         return reject(new Error(`the tool exited ${code}${hint}: ${err.trim()}`));
       }
-      const result = new Map();
-      for (const line of out.split('\n')) {
-        if (!line.trim()) continue;
-        const row = JSON.parse(line);
-        const k = ids.get(row.key);
-        if (k === undefined) return reject(new Error(`the tool answered for a key it was never sent: ${row.key}`));
-        result.set(k, row);
-      }
-      for (const [id, k] of ids) {
-        if (!result.has(k)) return reject(new Error(`the tool printed nothing for ${id}`));
-        if (result.get(k).n !== keys.get(k).length) {
-          return reject(new Error(`the tool counted ${result.get(k).n} values for ${id}, sent ${keys.get(k).length}`));
-        }
-      }
-      resolve(result);
+      resolve(out.split('\n').filter((line) => line.trim()).map((line) => JSON.parse(line)));
     });
-    child.stdin.end(input);
+    // A tool that dies early closes the pipe; its exit code says why.
+    child.stdin.on('error', () => undefined);
+    for (const chunk of chunks) child.stdin.write(chunk);
+    child.stdin.end();
   });
 }
 
@@ -273,6 +277,7 @@ function label(scope, name, pop, p) {
  */
 function checkReport(dir, ranges, failures, checked) {
   let cells = 0;
+  let pinned = 0;
   const pages = readdirSync(dir).filter((f) => f === 'index.html' || /^(req|group)_.*\.html$/.test(f));
   for (const page of pages.sort()) {
     for (const entry of parseReportPercentiles(readFileSync(join(dir, page), 'utf8'))) {
@@ -291,12 +296,14 @@ function checkReport(dir, ranges, failures, checked) {
             failures.push(`${where}: Gatling printed ${reported}, the method gives [${low}, ${high}]`);
           } else if (low === high && reported !== low) {
             failures.push(`${where}: every seed gives ${low}, Gatling printed ${reported}`);
+          } else if (low === high) {
+            pinned += 1;
           }
         });
       }
     }
   }
-  return cells;
+  return { cells, pinned };
 }
 
 async function decode(logPath) {
@@ -333,25 +340,26 @@ async function main() {
 
   const failures = [];
   let cells = 0;
+  let pinned = 0;
 
   for (const fixture of ['reference-report', 'basic-simulation-2026-10-15']) {
     const dir = join(args.fixtures, fixture);
-    const keys = statsKeys(await decode(join(dir, 'simulation.log')));
-    const ranges = await runTool(args, keys);
+    const { ranges, keys } = await replay(args, await decode(join(dir, 'simulation.log')));
     const checked = new Set();
-    const n = checkReport(dir, ranges, failures, checked);
+    const report = checkReport(dir, ranges, failures, checked);
     // Every key the log produced must have been compared at least once — a
     // floor on the TOTAL cell count cannot see one page's parser going blind,
     // because the detail pages duplicate most index cells. No exception: the
     // run is fed in total alone, and every key fed is one the report prints.
-    for (const key of keys.keys()) {
+    for (const key of keys) {
       if (!checked.has(key)) {
         const [scope, name, pop] = key.split('\u0000');
         failures.push(`${fixture}: ${label(scope, name, pop, '*')}: the log has this key and no report cell was checked against it`);
       }
     }
-    console.log(`${fixture}: ${keys.size} keys, ${n} report cells`);
-    cells += n;
+    console.log(`${fixture}: ${keys.size} keys, ${report.cells} report cells, ${report.pinned} pinned to one value`);
+    cells += report.cells;
+    pinned += report.pinned;
   }
 
   // group-assertions has no HTML: Gatling printed the one percentile it was
@@ -363,8 +371,7 @@ async function main() {
     if (!m) throw new Error('group-assertions: no "Search: 95th percentile … actual" line');
     const reported = Number(m[1]);
     if (reported !== 1853) throw new Error(`group-assertions: expected Gatling's 1853, read ${reported}`);
-    const keys = statsKeys(await decode(join(dir, 'simulation.log')));
-    const ranges = await runTool(args, keys);
+    const { ranges, keys } = await replay(args, await decode(join(dir, 'simulation.log')));
     const row = ranges.get('request\u0000Search\u0000total');
     cells += 1;
     if (!row) failures.push('group-assertions: the log produced no request "Search"');
@@ -374,6 +381,8 @@ async function main() {
         failures.push(`group-assertions: request "Search" total p95: Gatling printed ${reported}, the method gives [${low}, ${high}]`);
       } else if (low === high && reported !== low) {
         failures.push(`group-assertions: request "Search" total p95: every seed gives ${low}, Gatling printed ${reported}`);
+      } else if (low === high) {
+        pinned += 1;
       }
     }
     console.log(`group-assertions: ${keys.size} keys, 1 assertion cell`);
@@ -388,7 +397,14 @@ async function main() {
     console.error(`only ${cells} cells were checked; expected more than ${MIN_CELLS} — the parser has stopped reading the reports`);
     process.exit(1);
   }
-  console.log(`${cells} cells checked across 3 Gatling reports, 0 failing`);
+  if (pinned < MIN_PINNED) {
+    console.error(
+      `only ${pinned} cells were pinned to one value by every seed; expected at least ${MIN_PINNED} — ` +
+        'a tool printing wide ranges would pass every range check, and the equality half is what refuses it',
+    );
+    process.exit(1);
+  }
+  console.log(`${cells} cells checked across 3 Gatling reports, ${pinned} pinned to one value, 0 failing`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
