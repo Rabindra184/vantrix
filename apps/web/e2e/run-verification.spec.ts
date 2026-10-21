@@ -38,7 +38,15 @@ test('the verification panel lists where Gatling’s report differs, as a range'
   const table = panel.getByRole('table', { name: TABLE_NAME, exact: true });
   await expect(table.getByRole('columnheader')).toHaveText(['Request', 'Figure', 'Gatling’s report', 'PerfPortal']);
   const row = table.getByRole('row').nth(1);
-  await expect(row.getByRole('cell')).toHaveText(['Search', 'p95', '2,389–3,410', '2,401']);
+  await expect(row.getByRole('cell')).toHaveText(['request · Search', 'p95', '2389–3410', '2401']);
+
+  // The ⓘ is a popover inside a popover: opening it must not dismiss the
+  // panel it sits in, and it shows the copy.
+  await panel.getByRole('button', { name: 'About differences from Gatling’s report' }).click();
+  await expect(page.getByRole('dialog', { name: 'About differences from Gatling’s report' })).toContainText(
+    'its estimate can change between two reports of the same run',
+  );
+  await expect(panel).toBeVisible();
 });
 
 test('an empty list draws no table', async ({ page }) => {

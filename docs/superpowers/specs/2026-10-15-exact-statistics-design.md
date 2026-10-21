@@ -249,8 +249,8 @@ Clean-UI rules apply: marks and labels on screen, detail one click away.
   its estimate can change between two reports of the same run; PerfPortal
   reports the actual value at that rank."; on mismatch, the figures with stored
   and recomputed values. *(Amended 2026-10-21 for §6's variance: the Gatling
-  cell shows the replay range, rendered `2,389–3,410`, or one value where every
-  replay agreed.)*
+  cell shows the replay range, rendered `2389–3410` in the run page's plain
+  whole-millisecond digits, or one value where every replay agreed.)*
 - **Estimated runs:** percentile figures carry "≈" with ⓘ explaining why.
 - **Verdict changed by backfill:** one line under the verdict, ⓘ with rule
   and both values.

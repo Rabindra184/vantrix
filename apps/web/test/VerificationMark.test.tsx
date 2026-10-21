@@ -297,11 +297,12 @@ describe('VerificationPanel — differences from Gatling’s report', () => {
       'PerfPortal',
     ]);
     const [run, request, group] = within(table).getAllByRole('row').slice(1) as [HTMLElement, HTMLElement, HTMLElement];
-    // The run is "All requests"; a request or group is its stored name, the
-    // path the request and group pages head themselves with.
-    expect(within(run).getAllByRole('cell').map((td) => td.textContent)).toEqual(['All requests', 'p99', '2,349–2,412', '2,503']);
-    expect(within(request).getAllByRole('cell')[0]).toHaveTextContent(/^Cart\/Add To Cart$/);
-    expect(within(group).getAllByRole('cell')[0]).toHaveTextContent(/^Catalog$/);
+    // The run is "All requests"; a request or group is "scope · stored name",
+    // the mismatch table's rule — the stored name is the path the request and
+    // group pages head themselves with.
+    expect(within(run).getAllByRole('cell').map((td) => td.textContent)).toEqual(['All requests', 'p99', '2349–2412', '2503']);
+    expect(within(request).getAllByRole('cell')[0]).toHaveTextContent(/^request · Cart\/Add To Cart$/);
+    expect(within(group).getAllByRole('cell')[0]).toHaveTextContent(/^group · Catalog$/);
     // A verified run with differences: they are Gatling's variance, not a mismatch.
     expect(within(panel).queryByRole('table', { name: 'Mismatches' })).toBeNull();
   });
@@ -317,12 +318,17 @@ describe('VerificationPanel — differences from Gatling’s report', () => {
     expect(within(panel).queryByRole('button', { name: /Gatling/ })).toBeNull();
   });
 
-  it('a range renders low–high with grouping', async () => {
+  /**
+   * PLAIN DIGITS, as every figure on the run page is written — the statistics
+   * table and the p95 tile print 2401, and so does this popover's own
+   * "Figures checked". A separator here would set "2,401" beside them.
+   */
+  it('a range renders low–high in plain digits', async () => {
     const panel = await openPanel({ ...VERIFIED, gatlingDifferences: [difference()] });
     const row = within(within(panel).getByRole('table', { name: 'Differences from Gatling’s report' })).getAllByRole('row')[1]!;
     const [, , gatling, exact] = within(row).getAllByRole('cell');
-    expect(gatling).toHaveTextContent(/^2,389–3,410$/);
-    expect(exact).toHaveTextContent(/^2,401$/);
+    expect(gatling).toHaveTextContent(/^2389–3410$/);
+    expect(exact).toHaveTextContent(/^2401$/);
   });
 
   it('a single value renders once', async () => {
@@ -331,7 +337,29 @@ describe('VerificationPanel — differences from Gatling’s report', () => {
       gatlingDifferences: [difference({ gatlingLow: 1853, gatlingHigh: 1853, exact: 1851 })],
     });
     const row = within(within(panel).getByRole('table', { name: 'Differences from Gatling’s report' })).getAllByRole('row')[1]!;
-    expect(within(row).getAllByRole('cell')[2]).toHaveTextContent(/^1,853$/);
+    expect(within(row).getAllByRole('cell')[2]).toHaveTextContent(/^1853$/);
+  });
+
+  /**
+   * A group's percentile is its CUMULATED response time; a group named like a
+   * request must not read as that request's figure.
+   */
+  it('a group reads as a group, apart from a request of the same name', async () => {
+    const panel = await openPanel({
+      ...VERIFIED,
+      gatlingDifferences: [difference({ scope: 'request', name: 'Cart' }), difference({ scope: 'group', name: 'Cart' })],
+    });
+    const table = within(panel).getByRole('table', { name: 'Differences from Gatling’s report' });
+    const labels = within(table).getAllByRole('row').slice(1).map((tr) => within(tr).getAllByRole('cell')[0]!.textContent);
+    expect(labels).toEqual(['request · Cart', 'group · Cart']);
+  });
+
+  it('shows the first 50 differences and counts the rest', async () => {
+    const many = Array.from({ length: 57 }, (_, i) => difference({ name: `R${i}` }));
+    const panel = await openPanel({ ...VERIFIED, gatlingDifferences: many });
+    const table = within(panel).getByRole('table', { name: 'Differences from Gatling’s report' });
+    expect(within(table).getAllByRole('row')).toHaveLength(51);
+    expect(within(panel).getByTestId('gatling-differences')).toHaveTextContent('and 7 more');
   });
 
   it('OK/KO population is named', async () => {

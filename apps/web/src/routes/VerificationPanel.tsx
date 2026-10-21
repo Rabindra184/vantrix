@@ -4,10 +4,11 @@ import InfoTip from '../components/InfoTip';
 import TableFrame from '../components/TableFrame';
 import { ROW, TABLE, TD, TD_NUM, TH, TH_NUM, THEAD } from '../components/tableStyles';
 import { fetchVerification, verificationQueryKey } from '../api/verification';
-import { formatCount } from '../tables/StatisticsTable';
+import { formatCount, formatMs } from '../tables/StatisticsTable';
 import { formatInstant, formatOffset } from './format';
 
-/** How many mismatches the panel tabulates before it counts the rest. */
+/** How many mismatches — and how many Gatling differences — the panel
+ *  tabulates before it counts the rest. */
 export const MISMATCH_ROWS = 50;
 
 /**
@@ -122,9 +123,22 @@ const DIFFERENCES_INFO =
  * NO HEADING, for the reason `VerificationPanel` has none: this is shell
  * chrome. The title is a `<p>` with the ⓘ beside it, and the table is named
  * by its `sr-only` caption.
+ *
+ * A VISIBLE TITLE, NOT `TableFrame`'s `info` SLOT. The mismatch table above
+ * needs no title — the mark already said "mismatch" — but this one sits under
+ * a mark that says "verified", and a table of disagreeing numbers with no
+ * words over it reads as the mismatch it is not. The slot would put only an
+ * unlabelled ⓘ at the frame's corner. The cost, accepted: in browse mode a
+ * screen reader hears the name twice, once as the title and once as the
+ * table's caption.
+ *
+ * CAPPED LIKE THE MISMATCH LIST, at `MISMATCH_ROWS` and then "and N more":
+ * four figures in three populations per request makes a long run's list long.
  */
 function GatlingDifferences({ differences }: { readonly differences: readonly GatlingDifference[] }) {
   if (differences.length === 0) return null;
+  const shown = differences.slice(0, MISMATCH_ROWS);
+  const rest = differences.length - shown.length;
   return (
     <div className="flex flex-col gap-2" data-testid="gatling-differences">
       <p className="flex items-center gap-1 font-medium">
@@ -151,25 +165,36 @@ function GatlingDifferences({ differences }: { readonly differences: readonly Ga
             </tr>
           </thead>
           <tbody>
-            {differences.map((d) => (
+            {shown.map((d) => (
               <tr key={differenceKey(d)} className={ROW}>
-                <td className={`${TD} break-all`}>{d.scope === 'run' ? 'All requests' : d.name}</td>
+                <td className={`${TD} break-all`}>{differenceRowLabel(d)}</td>
                 <td className={`${TD} font-mono`}>
                   {d.population === 'all' ? d.figure : `${d.figure} (${d.population.toUpperCase()})`}
                 </td>
                 <td className={TD_NUM}>
                   {d.gatlingLow === d.gatlingHigh
-                    ? formatGrouped(d.gatlingLow)
-                    : `${formatGrouped(d.gatlingLow)}–${formatGrouped(d.gatlingHigh)}`}
+                    ? formatMs(d.gatlingLow)
+                    : `${formatMs(d.gatlingLow)}–${formatMs(d.gatlingHigh)}`}
                 </td>
-                <td className={TD_NUM}>{formatGrouped(d.exact)}</td>
+                <td className={TD_NUM}>{formatMs(d.exact)}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </TableFrame>
+      {rest > 0 && <p className="text-muted">and {formatCount(rest)} more</p>}
     </div>
   );
+}
+
+/**
+ * Which row a difference is about: "All requests" for the run, and otherwise
+ * "scope · name" — `rowLabel`'s rule for the mismatch table, so a group reads
+ * as a group. A group's p95 is its CUMULATED response time, and a group named
+ * like a request must not pass for that request's figure.
+ */
+function differenceRowLabel(d: GatlingDifference): string {
+  return d.scope === 'run' ? 'All requests' : `${d.scope} · ${d.name}`;
 }
 
 /**
@@ -179,22 +204,6 @@ function GatlingDifferences({ differences }: { readonly differences: readonly Ga
  */
 function differenceKey(d: GatlingDifference): string {
   return [d.scope, d.name, d.population, d.figure].join('\u0000');
-}
-
-/**
- * Whole milliseconds with a comma every three digits: `2,389–3,410`, as the
- * spec writes the range.
- *
- * NOT `toLocaleString()`, and not `formatCount`: the first would make what a
- * reader sees depend on where the browser runs (`RunStats` records why that
- * is a defect here), and the second writes no separator at all, for the
- * statistics table's own reason — it mirrors Gatling's report column by
- * column. This table is not a mirror; a range of two four-digit numbers with
- * no separator reads as one number. Every value here is a non-negative
- * integer (the contract says so), so the grouping is a plain string edit.
- */
-function formatGrouped(value: number): string {
-  return String(value).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
 
 /**

@@ -49,7 +49,7 @@
 - **UI copy** (spec §7, amended for variance):
   - table header: "Differences from Gatling's report";
   - columns: Request · Figure · Gatling's report · PerfPortal;
-  - a range renders `2,389–3,410`;
+  - a range renders `2389–3410` (plain whole-ms digits, as the run page writes figures);
   - one ⓘ: "Gatling's report estimates percentiles with t-digest, and its estimate can change between two reports of the same run; PerfPortal reports the actual value at that rank."
   - The table is drawn only when the list is non-empty.
 - **Repo rules:**
@@ -225,7 +225,7 @@
 - [ ] **Step 1: Write the failing unit tests:**
   - `'draws the table when there are differences'`;
   - `'no table when the list is empty or absent'`;
-  - `'a range renders low–high with grouping'` (`2,389–3,410`);
+  - `'a range renders low–high in plain digits'` (`2389–3410`);
   - `'a single value renders once'`;
   - `'OK/KO population is named'`;
   - `'the ⓘ carries the copy'`;
