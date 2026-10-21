@@ -4,6 +4,7 @@ import {
   GATLING_PERCENTILES,
   gatlingDifferences,
   gatlingMethodInput,
+  gatlingMethodLines,
   type GatlingKey,
   type GatlingMethodOutput,
 } from '../src/index.js';
@@ -38,9 +39,17 @@ function keyOf(keys: Map<string, GatlingKey>, scope: string, name: string, popul
   return undefined;
 }
 
-/** The values a key was sent, in the order its lines appear. */
-function valuesOf(lines: readonly string[], key: string): number[] {
-  return lines.filter((l) => l.startsWith(`${key}\t`)).map((l) => Number(l.slice(key.length + 1)));
+/** Every line the tool would be sent, read off the chunks gatlingMethodLines renders. */
+function wire(input: ReturnType<typeof gatlingMethodInput>, linesPerChunk?: number): string[] {
+  const text = [...gatlingMethodLines(input, linesPerChunk)].join('');
+  return text === '' ? [] : text.slice(0, -1).split('\n');
+}
+
+/** The values a key was sent ON THE WIRE, in the order its lines appear. */
+function valuesOf(input: ReturnType<typeof gatlingMethodInput>, key: string): number[] {
+  return wire(input)
+    .filter((l) => l.startsWith(`${key}\t`))
+    .map((l) => Number(l.slice(key.length + 1)));
 }
 
 /** A tool row that agrees with `exact` on every percentile. */
@@ -52,7 +61,7 @@ function agreeing(key: string, n: number, exact: Record<string, number>): Gatlin
 
 /** A tool output that agrees everywhere, built from the input itself. */
 function agreeingOutput(input: ReturnType<typeof gatlingMethodInput>): GatlingMethodOutput[] {
-  return [...input.keys.keys()].map((k) => agreeing(k, valuesOf(input.lines, k).length, input.exact.get(k)!));
+  return [...input.keys.keys()].map((k) => agreeing(k, valuesOf(input, k).length, input.exact.get(k)!));
 }
 
 describe('gatlingMethodInput', () => {
@@ -65,29 +74,25 @@ describe('gatlingMethodInput', () => {
 
     // Opaque, first-seen indices — never a name on the wire.
     expect([...input.keys.keys()]).toEqual(['k0', 'k1', 'k2', 'k3']);
-    for (const line of input.lines) expect(line).toMatch(/^k\d+\t\d+$/);
+    for (const line of wire(input)) expect(line).toMatch(/^k\d+\t\d+$/);
 
+    // Each key's values in log order — the only order the tool's contract keeps.
     const runAll = keyOf(input.keys, 'run', '', 'all')!;
     const reqAll = keyOf(input.keys, 'request', 'X', 'all')!;
-    expect(valuesOf(input.lines, runAll)).toEqual([10, 20, 30]);
-    expect(valuesOf(input.lines, reqAll)).toEqual([10, 20, 30]);
-    expect(valuesOf(input.lines, keyOf(input.keys, 'request', 'X', 'ok')!)).toEqual([10, 30]);
-    expect(valuesOf(input.lines, keyOf(input.keys, 'request', 'X', 'ko')!)).toEqual([20]);
-
-    // The first request's lines all come before the second's.
-    const firstOfSecond = input.lines.findIndex((l) => l.endsWith('\t20'));
-    const lastOfFirst = input.lines.map((l) => l.endsWith('\t10')).lastIndexOf(true);
-    expect(lastOfFirst).toBeLessThan(firstOfSecond);
+    expect(valuesOf(input, runAll)).toEqual([10, 20, 30]);
+    expect(valuesOf(input, reqAll)).toEqual([10, 20, 30]);
+    expect(valuesOf(input, keyOf(input.keys, 'request', 'X', 'ok')!)).toEqual([10, 30]);
+    expect(valuesOf(input, keyOf(input.keys, 'request', 'X', 'ko')!)).toEqual([20]);
   });
 
   it('a group feeds its cumulated time, never its duration', () => {
     // Duration 500, cumulated 120: only 120 may reach the tool.
     const input = gatlingMethodInput([grp(['Cart'], 0, 500, 120), grp(['Cart'], 600, 1400, 90, false)]);
     const all = keyOf(input.keys, 'group', 'Cart', 'all')!;
-    expect(valuesOf(input.lines, all)).toEqual([120, 90]);
-    expect(valuesOf(input.lines, keyOf(input.keys, 'group', 'Cart', 'ok')!)).toEqual([120]);
-    expect(valuesOf(input.lines, keyOf(input.keys, 'group', 'Cart', 'ko')!)).toEqual([90]);
-    expect(input.lines.some((l) => l.endsWith('\t500') || l.endsWith('\t800'))).toBe(false);
+    expect(valuesOf(input, all)).toEqual([120, 90]);
+    expect(valuesOf(input, keyOf(input.keys, 'group', 'Cart', 'ok')!)).toEqual([120]);
+    expect(valuesOf(input, keyOf(input.keys, 'group', 'Cart', 'ko')!)).toEqual([90]);
+    expect(wire(input).some((l) => l.endsWith('\t500') || l.endsWith('\t800'))).toBe(false);
     // A group feeds neither the run nor any request key.
     expect([...input.keys.values()].every((k) => k.scope === 'group')).toBe(true);
   });
@@ -112,7 +117,7 @@ describe('gatlingMethodInput', () => {
     // takes no engine options at all, so there is nothing to drop it with.
     expect(gatlingMethodInput.length).toBe(1);
     const input = gatlingMethodInput([req('X', 0, 40)]);
-    expect(valuesOf(input.lines, keyOf(input.keys, 'run', '', 'all')!)).toEqual([40]);
+    expect(valuesOf(input, keyOf(input.keys, 'run', '', 'all')!)).toEqual([40]);
   });
 
   it('a KO-only request has no ok key', () => {
@@ -132,7 +137,7 @@ describe('gatlingMethodInput', () => {
 
   it('values are whole, non-negative milliseconds, as the stored figures are', () => {
     const input = gatlingMethodInput([req('X', 10, 5), { ...req('X', 0, 0), endMs: RUN_START + 12.6 }]);
-    expect(valuesOf(input.lines, keyOf(input.keys, 'run', '', 'all')!)).toEqual([0, 13]);
+    expect(valuesOf(input, keyOf(input.keys, 'run', '', 'all')!)).toEqual([0, 13]);
   });
 
   it('names are the stored identity', () => {
@@ -140,6 +145,105 @@ describe('gatlingMethodInput', () => {
     expect(keyOf(input.keys, 'request', 'Cart/Add To Cart', 'all')).toBeDefined();
     expect(keyOf(input.keys, 'group', 'Catalog/Search', 'all')).toBeDefined();
     expect([...input.keys.values()].some((k) => k.name.includes(' / '))).toBe(false);
+  });
+});
+
+/**
+ * ═══ THE TOOL'S STDIN, A CHUNK AT A TIME ═══
+ *
+ * The input keeps numbers per key, never one string per line; the text is
+ * rendered while the runner writes it. These pin what the tool is sent:
+ * every value, each key's in arrival order, whole lines only.
+ */
+describe('gatlingMethodLines', () => {
+  /** Interleaved across keys in the log, so key-by-key order is a real reordering. */
+  function interleaved(): CanonicalEvent[] {
+    const events: CanonicalEvent[] = [];
+    for (let i = 0; i < 25; i += 1) {
+      events.push(req('A', 0, 100 + i, i % 7 !== 0), req('B', 0, 900 - i * 3), grp(['G'], 0, 5000, 40 + (i % 5)));
+    }
+    return events;
+  }
+
+  it('carries every value per key, in arrival order, key by key in first-seen order', () => {
+    const events = interleaved();
+    const input = gatlingMethodInput(events);
+
+    // Each key's values written down from the events, in log order.
+    const want = new Map<string, number[]>();
+    const add = (scope: string, name: string, population: string, v: number): void => {
+      const k = keyOf(input.keys, scope, name, population)!;
+      want.set(k, [...(want.get(k) ?? []), v]);
+    };
+    for (const e of events) {
+      if (e.type === 'request') {
+        const v = e.endMs - e.startMs;
+        add('run', '', 'all', v);
+        add('request', e.name, 'all', v);
+        add('request', e.name, e.ok ? 'ok' : 'ko', v);
+      } else if (e.type === 'group') {
+        add('group', e.groups.join('/'), 'all', e.cumulatedResponseTimeMs);
+        add('group', e.groups.join('/'), e.ok ? 'ok' : 'ko', e.cumulatedResponseTimeMs);
+      }
+    }
+
+    const lines = wire(input, 7);
+    expect(lines).toHaveLength([...want.values()].reduce((n, vs) => n + vs.length, 0));
+    const got = new Map<string, number[]>();
+    for (const line of lines) {
+      const [k, v] = line.split('\t') as [string, string];
+      got.set(k, [...(got.get(k) ?? []), Number(v)]);
+    }
+    expect(got).toEqual(want);
+    // Key by key: a key's lines are contiguous, in first-seen (k0, k1, …) order.
+    const runs = lines.map((l) => l.split('\t')[0]!).filter((k, i, all) => k !== all[i - 1]);
+    expect(runs).toEqual([...input.keys.keys()]);
+  });
+
+  it('chunks are whole lines, at most the chunk size, each ending in a newline', () => {
+    const input = gatlingMethodInput(interleaved());
+    const chunks = [...gatlingMethodLines(input, 7)];
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const chunk of chunks) {
+      expect(chunk.endsWith('\n')).toBe(true);
+      const lines = chunk.slice(0, -1).split('\n');
+      expect(lines.length).toBeLessThanOrEqual(7);
+      for (const line of lines) expect(line).toMatch(/^k\d+\t\d+$/);
+    }
+    // Every chunk but the last is full.
+    for (const chunk of chunks.slice(0, -1)) expect(chunk.slice(0, -1).split('\n')).toHaveLength(7);
+  });
+
+  it('an empty run renders nothing', () => {
+    expect([...gatlingMethodLines(gatlingMethodInput([]))]).toEqual([]);
+  });
+
+  /**
+   * Through a stand-in tool that reads the chunks the way the real one reads
+   * stdin — per key, in arrival order — and answers each key's nearest-rank
+   * value: Gatling "agrees" everywhere, so nothing is a difference.
+   */
+  it('round-trips through a stand-in tool reading the chunks', () => {
+    const input = gatlingMethodInput(interleaved());
+    const seen = new Map<string, number[]>();
+    for (const chunk of gatlingMethodLines(input)) {
+      for (const line of chunk.split('\n')) {
+        if (line === '') continue;
+        const tab = line.lastIndexOf('\t');
+        const k = line.slice(0, tab);
+        seen.set(k, [...(seen.get(k) ?? []), Number(line.slice(tab + 1))]);
+      }
+    }
+    const output: GatlingMethodOutput[] = [...seen].map(([key, vs]) => {
+      const sorted = [...vs].sort((a, b) => a - b);
+      const p: Record<string, [number, number]> = {};
+      for (const q of GATLING_PERCENTILES) {
+        const v = sorted[Math.max(0, Math.ceil((q / 100) * sorted.length) - 1)]!;
+        p[String(q)] = [v, v];
+      }
+      return { key, n: vs.length, p };
+    });
+    expect(gatlingDifferences(input, output)).toEqual([]);
   });
 });
 

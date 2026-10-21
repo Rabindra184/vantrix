@@ -16,6 +16,8 @@ export { compare, Ledger, matchRows, type Comparator, type RowPlace } from './co
 export {
   GATLING_PERCENTILES,
   gatlingMethodInput,
+  gatlingMethodLines,
+  GATLING_LINES_PER_CHUNK,
   gatlingDifferences,
   type GatlingKey,
   type GatlingScope,

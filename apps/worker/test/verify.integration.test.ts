@@ -11,6 +11,7 @@ import { GatlingPlugin, parseSimulationLog } from '@perfportal/plugin-gatling';
 import { BlobStore } from '@perfportal/storage';
 import {
   gatlingMethodInput,
+  gatlingMethodLines,
   Ledger,
   VERIFIER_VERSION,
   type GatlingMethodInput,
@@ -153,14 +154,9 @@ function agreeingAnswer(
   input: GatlingMethodInput,
   tweak: (key: string, label: string, exact: number) => [number, number] = (_k, _l, exact) => [exact, exact],
 ): GatlingMethodOutput[] {
-  const counts = new Map<string, number>();
-  for (const line of input.lines) {
-    const key = line.slice(0, line.lastIndexOf('\t'));
-    counts.set(key, (counts.get(key) ?? 0) + 1);
-  }
   return [...input.keys.keys()].map((key) => ({
     key,
-    n: counts.get(key)!,
+    n: input.values.get(key)!.length,
     p: Object.fromEntries(Object.entries(input.exact.get(key)!).map(([label, exact]) => [label, tweak(key, label, exact)])),
   }));
 }
@@ -471,10 +467,10 @@ describe('VerifyService and Gatling\'s method', () => {
 
     expect(await service(runner).verify(runId)).toBe('verified');
 
-    // The SAME decode the verifier checked against: one parse, and the lines it fed are the fixture's own.
+    // The SAME decode the verifier checked against: one parse, and the text it fed is the fixture's own.
     expect(parse).toHaveBeenCalledTimes(1);
     expect(runner).toHaveBeenCalledTimes(1);
-    expect(runner.mock.calls[0]![0]).toEqual(fixture.lines);
+    expect([...runner.mock.calls[0]![0]].join('')).toBe([...gatlingMethodLines(fixture)].join(''));
     expect(runner.mock.calls[0]![1]).toBe(16);
     const exact = fixture.exact.get(key)!['99']!;
     const row = (await verifications.find(runId))!;

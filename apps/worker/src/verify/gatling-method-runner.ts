@@ -9,9 +9,11 @@ import type { WorkerConfig } from '../config.js';
 /**
  * ═══ GATLING'S OWN METHOD, AS A PROCESS ═══
  *
- * Runs tools/gatling-method (see its README for the contract) over the lines
- * `gatlingMethodInput` built, and hands back its rows. The process lives here
- * and not in packages/verify, which stays pure.
+ * Runs tools/gatling-method (see its README for the contract) over the stdin
+ * chunks `gatlingMethodLines` renders from `gatlingMethodInput`, and hands
+ * back its rows. The process lives here and not in packages/verify, which
+ * stays pure. The chunks are an ITERABLE, written one at a time with
+ * backpressure, so the input's text is never held whole.
  *
  * Every way the tool can let a caller down REJECTS — a non-zero exit, a spawn
  * that fails (no `java` on PATH), the timeout (the child is killed first), a
@@ -22,7 +24,7 @@ import type { WorkerConfig } from '../config.js';
  * that gets through: a `[551]` where `[low, high]` belongs would read later as
  * a Gatling range of 551 to undefined.
  */
-export type GatlingMethodRunner = (lines: string[], seeds: number) => Promise<GatlingMethodOutput[]>;
+export type GatlingMethodRunner = (chunks: Iterable<string>, seeds: number) => Promise<GatlingMethodOutput[]>;
 
 /** `spawn`, narrowed to the one overload used here, so a test can stand a script in for java. */
 export type SpawnImpl = (
@@ -41,9 +43,6 @@ const MAIN_CLASS = 'io.perfportal.gatlingmethod.GatlingMethod';
 
 /** `java` from PATH: the image's JRE 21, as the runner's (apps/runner's JAVA_BIN default). */
 const JAVA = 'java';
-
-/** Lines per write: one `write` per line would cost a syscall each on a million-request run. */
-const LINES_PER_WRITE = 4096;
 
 /** How much of the tool's stderr a rejection quotes. Its errors are one line; a JVM's are not. */
 const STDERR_KEPT = 2000;
@@ -66,11 +65,11 @@ export function createGatlingMethodRunner(
 ): GatlingMethodRunner | null {
   if (gatlingMethodUnavailable(config) !== null) return null;
   const classpath = [config.gatlingMethodJar, config.gatlingMethodTdigestJar].join(delimiter);
-  return (lines, seeds) =>
+  return (chunks, seeds) =>
     runTool(
       spawnImpl,
       ['-cp', classpath, MAIN_CLASS, '--seeds', String(seeds), '--percentiles', GATLING_PERCENTILES.join(',')],
-      lines,
+      chunks,
       config.gatlingMethodTimeoutMs,
     );
 }
@@ -78,7 +77,7 @@ export function createGatlingMethodRunner(
 function runTool(
   spawnImpl: SpawnImpl,
   args: string[],
-  lines: readonly string[],
+  chunks: Iterable<string>,
   timeoutMs: number,
 ): Promise<GatlingMethodOutput[]> {
   return new Promise((resolve, reject) => {
@@ -131,15 +130,18 @@ function runTool(
       }
     });
 
-    feed(child.stdin, lines, feeding.signal).catch(() => undefined);
+    feed(child.stdin, chunks, feeding.signal).catch(() => undefined);
   });
 }
 
-/** Streams the lines with backpressure, then closes stdin so the tool answers. */
-async function feed(stdin: Writable, lines: readonly string[], signal: AbortSignal): Promise<void> {
-  for (let i = 0; i < lines.length; i += LINES_PER_WRITE) {
+/**
+ * Writes each chunk with backpressure — the next is asked for only once the
+ * last is written — then closes stdin so the tool answers. Each chunk is whole
+ * lines ending in a newline (`gatlingMethodLines`' contract).
+ */
+async function feed(stdin: Writable, chunks: Iterable<string>, signal: AbortSignal): Promise<void> {
+  for (const chunk of chunks) {
     if (signal.aborted) return;
-    const chunk = `${lines.slice(i, i + LINES_PER_WRITE).join('\n')}\n`;
     if (!stdin.write(chunk)) await once(stdin, 'drain', { signal });
   }
   stdin.end();

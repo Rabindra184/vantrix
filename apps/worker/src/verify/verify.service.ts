@@ -16,6 +16,7 @@ import {
   expectedFrom,
   gatlingDifferences,
   gatlingMethodInput,
+  gatlingMethodLines,
   optionsFrom,
   VERIFIER_VERSION,
   type Stored,
@@ -214,6 +215,11 @@ export class VerifyService {
    * check recorded without differences. The last of those matters because a
    * stored row the API could not parse would answer 500 on the run's page long
    * after this job had finished.
+   *
+   * It runs INSIDE the run's advisory lock, which this job holds until
+   * `record()`: a re-ingest or recompute of this one run waits behind the
+   * tool, for at most GATLING_METHOD_TIMEOUT_MS. Moving it out would need a
+   * second, guarded write of the differences after the status.
    */
   async #gatlingMethod(
     runId: string,
@@ -223,7 +229,7 @@ export class VerifyService {
     const seeds = this.config.gatlingMethodSeeds;
     try {
       const input = gatlingMethodInput(events);
-      const output = await this.gatlingMethod(input.lines, seeds);
+      const output = await this.gatlingMethod(gatlingMethodLines(input), seeds);
       const differences = GatlingDifferenceSchema.array().parse(gatlingDifferences(input, output));
       return { differences, replays: seeds };
     } catch (err) {

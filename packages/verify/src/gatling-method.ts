@@ -49,13 +49,23 @@ export type GatlingKey = { scope: GatlingScope; name: string; population: Gatlin
  * `keys` maps an OPAQUE key — `k0`, `k1`, … in first-seen order — to what it
  * stands for. Only the opaque key crosses the process boundary, so no request
  * name can break the tab-and-newline line protocol or need JSON escaping on the
- * way back. `lines` are `k<i>\t<integer ms>` in log order; `exact` holds the
- * nearest-rank value per key at each of `GATLING_PERCENTILES`, labelled the way
- * the tool labels its output (`'50'`, `'75'`, `'95'`, `'99'`).
+ * way back. `values` holds each key's integer milliseconds in log order;
+ * `exact` holds the nearest-rank value per key at each of
+ * `GATLING_PERCENTILES`, labelled the way the tool labels its output (`'50'`,
+ * `'75'`, `'95'`, `'99'`).
+ *
+ * ═══ VALUES PER KEY, NOT LINES ═══
+ *
+ * The stdin text is never held whole: `gatlingMethodLines` renders it a chunk
+ * at a time while the runner writes. Holding every line as a string was ALL
+ * of this input's retained memory — measured at +131 MB of heap per million
+ * requests, one string per line — against roughly 32 MB for the same values as
+ * numbers. Key by key is the same answer as log order: each key has its own
+ * digest, and the tool's contract keeps only the order of one key's values.
  */
 export type GatlingMethodInput = {
   keys: Map<string, GatlingKey>;
-  lines: string[];
+  values: Map<string, number[]>;
   exact: Map<string, Record<string, number>>;
 };
 
@@ -81,7 +91,6 @@ export function gatlingMethodInput(events: Iterable<CanonicalEvent>): GatlingMet
   const keys = new Map<string, GatlingKey>();
   const values = new Map<string, number[]>();
   const index = new Map<string, string>();
-  const lines: string[] = [];
 
   const feed = (scope: GatlingScope, name: string, population: GatlingPopulation, value: number): void => {
     // A private lookup key; the NUL cannot occur in a name, so it cannot collide.
@@ -94,7 +103,6 @@ export function gatlingMethodInput(events: Iterable<CanonicalEvent>): GatlingMet
       values.set(key, []);
     }
     values.get(key)!.push(value);
-    lines.push(`${key}\t${String(value)}`);
   };
 
   for (const e of events) {
@@ -120,27 +128,46 @@ export function gatlingMethodInput(events: Iterable<CanonicalEvent>): GatlingMet
 
   const exact = new Map<string, Record<string, number>>();
   for (const [key, vs] of values) {
-    const sorted = [...vs].sort((a, b) => a - b);
+    // A typed array sorts numerically and is dropped as soon as the ranks are read.
+    const sorted = Float64Array.from(vs).sort();
     const ranked: Record<string, number> = {};
     for (const p of GATLING_PERCENTILES) ranked[String(p)] = sorted[nearestRankIndex(p, sorted.length)]!;
     exact.set(key, ranked);
   }
 
-  return { keys, lines, exact };
+  return { keys, values, exact };
+}
+
+/** Lines per chunk: one `write` per line would cost a syscall each on a million-request run. */
+export const GATLING_LINES_PER_CHUNK = 4096;
+
+/**
+ * The tool's stdin, rendered a chunk at a time: `k<i>\t<integer ms>` lines,
+ * every chunk ending in a newline, key by key in first-seen order and each
+ * key's values in log order — the only order the tool's contract keeps. A
+ * generator, so a caller that writes each chunk before asking for the next
+ * never holds more than one chunk of text.
+ */
+export function* gatlingMethodLines(
+  input: Pick<GatlingMethodInput, 'values'>,
+  linesPerChunk: number = GATLING_LINES_PER_CHUNK,
+): Generator<string, void, undefined> {
+  let chunk: string[] = [];
+  for (const [key, vs] of input.values) {
+    for (const v of vs) {
+      chunk.push(`${key}\t${String(v)}`);
+      if (chunk.length === linesPerChunk) {
+        yield `${chunk.join('\n')}\n`;
+        chunk = [];
+      }
+    }
+  }
+  if (chunk.length > 0) yield `${chunk.join('\n')}\n`;
 }
 
 const SCOPE_ORDER: Record<GatlingScope, number> = { run: 0, request: 1, group: 2 };
 const POPULATION_ORDER: Record<GatlingPopulation, number> = { all: 0, ok: 1, ko: 2 };
-
-/** The number of lines each key was sent, read off the lines themselves. */
-function countsOf(lines: readonly string[]): Map<string, number> {
-  const counts = new Map<string, number>();
-  for (const line of lines) {
-    const key = line.slice(0, line.lastIndexOf('\t'));
-    counts.set(key, (counts.get(key) ?? 0) + 1);
-  }
-  return counts;
-}
+const FIGURE_ORDER: Record<GatlingFigure, number> = { p50: 0, p75: 1, p95: 2, p99: 3 };
 
 /**
  * One row per (key, percentile) where Gatling's range is not exactly the exact
@@ -154,7 +181,6 @@ function countsOf(lines: readonly string[]): Map<string, number> {
  * compared.
  */
 export function gatlingDifferences(input: GatlingMethodInput, output: GatlingMethodOutput[]): GatlingDifference[] {
-  const counts = countsOf(input.lines);
   const answered = new Set<string>();
   const rows: GatlingDifference[] = [];
 
@@ -167,7 +193,7 @@ export function gatlingDifferences(input: GatlingMethodInput, output: GatlingMet
     if (answered.has(out.key)) throw new Error(`Gatling-method answered for key ${out.key} twice.`);
     answered.add(out.key);
 
-    const sent = counts.get(out.key) ?? 0;
+    const sent = input.values.get(out.key)?.length ?? 0;
     if (out.n !== sent) {
       throw new Error(`Gatling-method counted ${String(out.n)} values for key ${out.key}; ${String(sent)} were sent.`);
     }
@@ -199,7 +225,6 @@ export function gatlingDifferences(input: GatlingMethodInput, output: GatlingMet
     throw new Error(`Gatling-method left out ${String(missing.length)} key(s): ${missing.join(', ')}.`);
   }
 
-  const FIGURE_ORDER: Record<GatlingFigure, number> = { p50: 0, p75: 1, p95: 2, p99: 3 };
   rows.sort(
     (a, b) =>
       SCOPE_ORDER[a.scope] - SCOPE_ORDER[b.scope] ||

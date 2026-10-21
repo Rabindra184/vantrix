@@ -6,6 +6,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import {
   createGatlingMethodRunner,
   gatlingMethodUnavailable,
+  parseOutput,
   type GatlingMethodConfig,
   type SpawnImpl,
 } from '../src/verify/gatling-method-runner.js';
@@ -83,14 +84,26 @@ beforeAll(() => {
 });
 
 describe('createGatlingMethodRunner', () => {
-  it('streams every line to the tool and parses its JSON lines', async () => {
+  /**
+   * The chunks arrive as an ITERABLE that renders each one only when asked
+   * (gatlingMethodLines is a generator): every chunk must reach the tool, not
+   * just the first, and nothing may assume an array.
+   */
+  it('streams every chunk of an iterable to the tool and parses its JSON lines', async () => {
     // 5,000 keys of 20 values: 100,000 lines, far past a pipe's buffer, so the
     // writes have to wait on 'drain' rather than land in one go.
-    const lines: string[] = [];
-    for (let v = 0; v < 20; v += 1) for (let k = 0; k < 5000; k += 1) lines.push(`k${String(k)}\t${String(v)}`);
+    let rendered = 0;
+    function* chunks(): Generator<string> {
+      for (let k = 0; k < 5000; k += 1) {
+        rendered += 1;
+        yield Array.from({ length: 20 }, (_, v) => `k${String(k)}\t${String(v)}\n`).join('');
+      }
+    }
     const { spawnImpl, calls } = stubbed('echo');
 
-    const rows = await createGatlingMethodRunner(config, spawnImpl)!(lines, 16);
+    const rows = await createGatlingMethodRunner(config, spawnImpl)!(chunks(), 16);
+
+    expect(rendered).toBe(5000);
 
     expect(rows).toHaveLength(5000);
     expect(rows[0]).toEqual({ key: 'k0', n: 20, p: { 50: [20, 20], 75: [20, 20], 95: [20, 20], 99: [20, 20] } });
@@ -108,7 +121,7 @@ describe('createGatlingMethodRunner', () => {
 
   it('rejects on a non-zero exit, quoting what the tool said', async () => {
     const { spawnImpl } = stubbed('fail');
-    await expect(createGatlingMethodRunner(config, spawnImpl)!(['k0\t1'], 16)).rejects.toThrow(
+    await expect(createGatlingMethodRunner(config, spawnImpl)!(['k0\t1\n'], 16)).rejects.toThrow(
       /exited with code 2: bad input on line 1/,
     );
   });
@@ -118,7 +131,7 @@ describe('createGatlingMethodRunner', () => {
     const runner = createGatlingMethodRunner({ ...config, gatlingMethodTimeoutMs: 1000 }, spawnImpl)!;
     const started = Date.now();
 
-    await expect(runner(['k0\t1'], 16)).rejects.toThrow(/did not finish within 1000 ms and was killed/);
+    await expect(runner(['k0\t1\n'], 16)).rejects.toThrow(/did not finish within 1000 ms and was killed/);
     expect(Date.now() - started).toBeLessThan(10_000);
 
     const child = children[0]!;
@@ -128,13 +141,13 @@ describe('createGatlingMethodRunner', () => {
 
   it('rejects on a malformed line', async () => {
     const { spawnImpl } = stubbed('notJson');
-    await expect(createGatlingMethodRunner(config, spawnImpl)!(['k0\t1'], 16)).rejects.toThrow(/not JSON: not json/);
+    await expect(createGatlingMethodRunner(config, spawnImpl)!(['k0\t1\n'], 16)).rejects.toThrow(/not JSON: not json/);
   });
 
   /** A [551] where [low, high] belongs would read later as a range from 551 to undefined. */
   it('rejects a row whose percentile is not a [low, high] pair', async () => {
     const { spawnImpl } = stubbed('shortRange');
-    await expect(createGatlingMethodRunner(config, spawnImpl)!(['k0\t1'], 16)).rejects.toThrow(
+    await expect(createGatlingMethodRunner(config, spawnImpl)!(['k0\t1\n'], 16)).rejects.toThrow(
       /not the contract's \(no \[low, high\] for 50\)/,
     );
   });
@@ -142,7 +155,7 @@ describe('createGatlingMethodRunner', () => {
   it('rejects when java cannot be started', async () => {
     const spawnImpl: SpawnImpl = (_command, args, options) =>
       spawn(join(dir, 'no-such-java'), [...args], options);
-    await expect(createGatlingMethodRunner(config, spawnImpl)!(['k0\t1'], 16)).rejects.toThrow(/could not be started/);
+    await expect(createGatlingMethodRunner(config, spawnImpl)!(['k0\t1\n'], 16)).rejects.toThrow(/could not be started/);
   });
 
   it('null when the jar is missing', () => {
@@ -161,6 +174,23 @@ describe('createGatlingMethodRunner', () => {
   });
 });
 
+/**
+ * A tool's last line may end without a newline (a stdout closed mid-flush, a
+ * tool that never prints one): it is still a row, and it is still checked.
+ */
+describe('parseOutput', () => {
+  it('reads a final line with no trailing newline', () => {
+    const row = { key: 'k1', n: 2, p: { 50: [1, 1], 75: [1, 2], 95: [2, 2], 99: [2, 2] } };
+    const first = { ...row, key: 'k0' };
+    expect(parseOutput(`${JSON.stringify(first)}\n${JSON.stringify(row)}`)).toEqual([first, row]);
+    expect(parseOutput(JSON.stringify(row))).toEqual([row]);
+  });
+
+  it('refuses a final line with no trailing newline that is not a contract row', () => {
+    expect(() => parseOutput('{"key":"k0","n":1,"p":{"50":[1]}}')).toThrow(/not the contract's/);
+  });
+});
+
 /** The contract check on its own, row by row. */
 describe('the tool row contract', () => {
   const ROW = { key: 'k0', n: 3, p: { 50: [1, 1], 75: [1, 2], 95: [2, 3], 99: [3, 3] } };
@@ -172,7 +202,7 @@ describe('the tool row contract', () => {
     const file = join(dir, `row-${String(Math.random()).slice(2)}.cjs`);
     writeFileSync(file, source);
     const spawnImpl: SpawnImpl = (_c, args, options) => spawn(process.execPath, [file, ...args], options);
-    return createGatlingMethodRunner(config, spawnImpl)!(['k0\t1'], 16);
+    return createGatlingMethodRunner(config, spawnImpl)!(['k0\t1\n'], 16);
   }
 
   it('accepts a contract row', async () => {
