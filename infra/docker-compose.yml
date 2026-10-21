@@ -155,6 +155,21 @@ services:
       RAW_LOG_RETENTION_DAYS: ${PERFPORTAL_RAW_LOG_RETENTION_DAYS:-}
       VERIFY_ENABLED: ${PERFPORTAL_VERIFY_ENABLED:-}
       VERIFY_SCAN_INTERVAL_MS: ${PERFPORTAL_VERIFY_SCAN_INTERVAL_MS:-}
+      # ═══ GATLING'S OWN METHOD, BESIDE EACH VERIFICATION (the worker reads these) ═══
+      #
+      # The verifier also replays a run's response times through Gatling's
+      # t-digest, to say where Gatling's HTML report would differ from the
+      # exact figures. The image ships the tool and t-digest; the defaults
+      # point at them, and `java` is the image's own. Passed as EMPTY when
+      # unset, and the worker reads empty as its default: the tool at
+      # /opt/perfportal/gatling-method.jar, t-digest under RUNNER_GATLING_HOME,
+      # 16 replays (a whole number from 1 to 200, else 16) and a five-minute
+      # limit (at least 1000 ms, else 300000). A missing jar or a failed run
+      # never changes a verification; the worker logs it.
+      GATLING_METHOD_JAR: ${PERFPORTAL_GATLING_METHOD_JAR:-}
+      GATLING_METHOD_TDIGEST_JAR: ${PERFPORTAL_GATLING_METHOD_TDIGEST_JAR:-}
+      GATLING_METHOD_SEEDS: ${PERFPORTAL_GATLING_METHOD_SEEDS:-}
+      GATLING_METHOD_TIMEOUT_MS: ${PERFPORTAL_GATLING_METHOD_TIMEOUT_MS:-}
       RUNNER_ARTIFACT_DIR: /var/lib/perfportal/runner-artifacts
       RUNNER_WORK_DIR: /var/lib/perfportal/runner-work
       RUNNER_LOG_DIR: /var/log/perfportal/runner

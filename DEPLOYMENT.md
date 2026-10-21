@@ -293,6 +293,10 @@ docker compose -f infra/docker-compose.yml --profile onprem up -d runner
 | `PERFPORTAL_RAW_LOG_RETENTION_DAYS` | Days after ingest a run's raw log becomes eligible for deletion. **Empty means 90.** `0` keeps raw logs for ever. Anything that is not a whole number of days from 0 to 36500 stops the worker (and the API) at startup, naming the variable |
 | `PERFPORTAL_VERIFY_ENABLED` | Empty means on. `false` (exactly that word) defers verification; the backlog is checked once it is switched back on, and the raw logs it needs are kept meanwhile |
 | `PERFPORTAL_VERIFY_SCAN_INTERVAL_MS` | How often the worker looks for runs still to verify, in milliseconds. Empty, or anything under 1000 (a second), means every 10 minutes (600000) |
+| `PERFPORTAL_GATLING_METHOD_JAR` | The tool that replays Gatling's percentile method. Empty means `/opt/perfportal/gatling-method.jar`, where the image puts it |
+| `PERFPORTAL_GATLING_METHOD_TDIGEST_JAR` | t-digest 3.3, the library Gatling's reports use. Empty means `$RUNNER_GATLING_HOME/lib/t-digest-3.3.jar` (`/opt/gatling` in the image) |
+| `PERFPORTAL_GATLING_METHOD_SEEDS` | How many replays per run (Gatling breaks ties at random, so its report can change between two renderings). A whole number from 1 to 200; empty or anything else means 16 |
+| `PERFPORTAL_GATLING_METHOD_TIMEOUT_MS` | How long one replay may take before it is stopped, in milliseconds. Empty, or anything under 1000, means 300000 (five minutes) |
 
 After every upload and every recompute the worker re-reads the run's stored
 `simulation.log` and checks every stored figure against it — each statistic
@@ -302,6 +306,16 @@ tables and the virtual-user series. The run header then reads **✓ Verified**,
 its stored and recomputed value) or **Not verified** with the reason, and
 **Administration › Data integrity** lists failures and unverifiable runs and
 states the retention setting.
+
+The same check replays the run's response times through **Gatling's own
+percentile method** (t-digest, as Gatling's HTML report computes them) and
+records where that report would print a different percentile from the exact
+one. It needs only what the image ships, and the worker says at startup
+whether it is available. If it cannot run — a jar moved, the replay timed out
+— the verification is recorded without those differences and the worker logs
+one line; the run's verification outcome is never changed by it. Upgrading
+re-checks every run verified by the previous version whose raw log is still
+stored, to fill them in.
 
 **Deleting a raw log is irreversible, and the worker does it on its own —
 but only once nothing needs the log.** The sweeper (every 30 seconds) deletes

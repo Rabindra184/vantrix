@@ -9,7 +9,13 @@ import { INGEST_QUEUE, type CanonicalEvent } from '@perfportal/core';
 import { createPool, createPrisma, VerificationRepository } from '@perfportal/persistence';
 import { GatlingPlugin, parseSimulationLog } from '@perfportal/plugin-gatling';
 import { BlobStore } from '@perfportal/storage';
-import { Ledger, VERIFIER_VERSION } from '@perfportal/verify';
+import {
+  gatlingMethodInput,
+  Ledger,
+  VERIFIER_VERSION,
+  type GatlingMethodInput,
+  type GatlingMethodOutput,
+} from '@perfportal/verify';
 import type { Prisma } from '@prisma/client';
 import { Queue, type Worker } from 'bullmq';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -19,6 +25,7 @@ import { RECOMPUTE_QUEUE, enqueueCandidates, startRecomputeConsumer } from '../s
 import { RecomputeService } from '../src/recompute/recompute.service.js';
 import { RecomputeRepository } from '@perfportal/persistence';
 import { enqueueVerification, VERIFY_QUEUE } from '../src/verify/verify-queue.js';
+import type { GatlingMethodRunner } from '../src/verify/gatling-method-runner.js';
 import { VerifyService } from '../src/verify/verify.service.js';
 import { until } from './backends.js';
 
@@ -132,8 +139,35 @@ function pipeline(requestVerification?: (runId: string) => Promise<void>): Pipel
   return new PipelineService(config, prisma, pool, blobs, requestVerification);
 }
 
-function service(): VerifyService {
-  return new VerifyService(config, prisma, pool, blobs);
+function service(gatlingMethod?: GatlingMethodRunner | null): VerifyService {
+  return new VerifyService(config, prisma, pool, blobs, gatlingMethod);
+}
+
+/**
+ * What the tool would answer if Gatling agreed with every exact value: each
+ * key's count and, per percentile, [exact, exact] — computed from the same
+ * fixture through the same pure builder, so the stand-in answers exactly the
+ * keys the service sends. `tweak` then moves one cell.
+ */
+function agreeingAnswer(
+  input: GatlingMethodInput,
+  tweak: (key: string, label: string, exact: number) => [number, number] = (_k, _l, exact) => [exact, exact],
+): GatlingMethodOutput[] {
+  const counts = new Map<string, number>();
+  for (const line of input.lines) {
+    const key = line.slice(0, line.lastIndexOf('\t'));
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return [...input.keys.keys()].map((key) => ({
+    key,
+    n: counts.get(key)!,
+    p: Object.fromEntries(Object.entries(input.exact.get(key)!).map(([label, exact]) => [label, tweak(key, label, exact)])),
+  }));
+}
+
+/** The opaque key the fixture's run/all population was given, read off the builder's own map. */
+function runAllKey(input: GatlingMethodInput): string {
+  return [...input.keys].find(([, k]) => k.scope === 'run' && k.population === 'all')![0];
 }
 
 /** The reference fixture, through the REAL pipeline, ready to verify. */
@@ -413,6 +447,148 @@ describe('VerifyService', () => {
     await pool.query(`UPDATE run SET status = 'parsing' WHERE id = $1`, [runId]);
     expect(await service().verify(runId)).toBe('not_eligible');
     expect(await verifications.find(runId)).toBeNull();
+  });
+});
+
+/**
+ * ═══ GATLING'S OWN METHOD, BESIDE THE CHECK ═══
+ *
+ * The tool itself is stood in for by an injected runner (the process plumbing
+ * is gatling-method-runner.test.ts's): these cases are about what the job
+ * records, and that no failure of the method moves a verification's outcome.
+ */
+describe('VerifyService and Gatling\'s method', () => {
+  const input = () => gatlingMethodInput(parseSimulationLog(log));
+
+  it('records the method\'s differences and the seed count', async () => {
+    const { runId } = await ingested();
+    const fixture = input();
+    const key = runAllKey(fixture);
+    const runner = vi.fn<GatlingMethodRunner>(async () =>
+      agreeingAnswer(fixture, (k, label, exact) => (k === key && label === '99' ? [exact - 3, exact + 40] : [exact, exact])),
+    );
+    const parse = vi.spyOn(GatlingPlugin.prototype, 'parse');
+
+    expect(await service(runner).verify(runId)).toBe('verified');
+
+    // The SAME decode the verifier checked against: one parse, and the lines it fed are the fixture's own.
+    expect(parse).toHaveBeenCalledTimes(1);
+    expect(runner).toHaveBeenCalledTimes(1);
+    expect(runner.mock.calls[0]![0]).toEqual(fixture.lines);
+    expect(runner.mock.calls[0]![1]).toBe(16);
+    const exact = fixture.exact.get(key)!['99']!;
+    const row = (await verifications.find(runId))!;
+    expect(row.gatlingDifferences).toEqual([
+      { scope: 'run', name: '', population: 'all', figure: 'p99', gatlingLow: exact - 3, gatlingHigh: exact + 40, exact },
+    ]);
+    expect(row.gatlingReplays).toBe(16);
+    expect(row.status).toBe('verified');
+  });
+
+  it('records the configured seed count, and an empty list when Gatling agrees everywhere', async () => {
+    const { runId } = await ingested();
+    const fixture = input();
+    const runner = vi.fn<GatlingMethodRunner>(async () => agreeingAnswer(fixture));
+
+    expect(await new VerifyService({ ...config, gatlingMethodSeeds: 3 }, prisma, pool, blobs, runner).verify(runId)).toBe('verified');
+
+    expect(runner.mock.calls[0]![1]).toBe(3);
+    expect(await verifications.find(runId)).toMatchObject({ gatlingDifferences: [], gatlingReplays: 3 });
+  });
+
+  it('a runner that throws leaves the status verified, gatlingReplays null, and logs one warn', async () => {
+    const { runId } = await ingested();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    expect(await service(async () => { throw new Error('Gatling-method exited with code 3'); }).verify(runId)).toBe('verified');
+
+    expect(await verifications.find(runId)).toMatchObject({
+      status: 'verified', mismatches: [], gatlingDifferences: [], gatlingReplays: null,
+    });
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]![0])).toContain(runId);
+    expect(String(warn.mock.calls[0]![0])).toContain('exited with code 3');
+  });
+
+  /** gatlingDifferences throws when the answer does not account for exactly the keys sent. */
+  it('an answer missing a key is a tool failure, not a 500 later', async () => {
+    const { runId } = await ingested();
+    const fixture = input();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    expect(await service(async () => agreeingAnswer(fixture).slice(1)).verify(runId)).toBe('verified');
+
+    expect(await verifications.find(runId)).toMatchObject({ status: 'verified', gatlingDifferences: [], gatlingReplays: null });
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]![0])).toMatch(/left out 1 key/);
+  });
+
+  /**
+   * A row the API's own schema refuses (a fractional bound here) is refused
+   * BEFORE it is stored: the run's verification page parses the column with
+   * that schema and would answer 500 long after this job had finished.
+   */
+  it('a difference the API schema would refuse is a tool failure, and is never stored', async () => {
+    const { runId } = await ingested();
+    const fixture = input();
+    const key = runAllKey(fixture);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    const runner: GatlingMethodRunner = async () =>
+      agreeingAnswer(fixture, (k, label, exact) => (k === key && label === '50' ? [exact + 0.5, exact + 1] : [exact, exact]));
+    expect(await service(runner).verify(runId)).toBe('verified');
+
+    expect(await verifications.find(runId)).toMatchObject({ status: 'verified', gatlingDifferences: [], gatlingReplays: null });
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('no runner: gatlingReplays null, differences []', async () => {
+    const { runId } = await ingested();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    expect(await service(null).verify(runId)).toBe('verified');
+
+    expect(await verifications.find(runId)).toMatchObject({ status: 'verified', gatlingDifferences: [], gatlingReplays: null });
+    // Not a failure: the method is simply not installed here, and main.ts said so once at startup.
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('a mismatch run still gets its differences', async () => {
+    const { runId } = await ingested();
+    await pool.query(`UPDATE run_stat SET count = count + 1 WHERE run_id = $1 AND scope = 'run'`, [runId]);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const fixture = input();
+    const key = runAllKey(fixture);
+    const runner: GatlingMethodRunner = async () =>
+      agreeingAnswer(fixture, (k, label, exact) => (k === key && label === '99' ? [exact + 1, exact + 1] : [exact, exact]));
+
+    expect(await service(runner).verify(runId)).toBe('mismatch');
+
+    const row = (await verifications.find(runId))!;
+    expect(row.status).toBe('mismatch');
+    expect(row.mismatches).toHaveLength(1);
+    expect(row.gatlingDifferences).toHaveLength(1);
+    expect(row.gatlingDifferences[0]).toMatchObject({ scope: 'run', population: 'all', figure: 'p99' });
+    expect(row.gatlingReplays).toBe(16);
+  });
+
+  /**
+   * ═══ A RUN VERIFIED BEFORE THE METHOD EXISTED IS CHECKED AGAIN ═══
+   *
+   * Version 1 never ran Gatling's method, so its rows carry no differences;
+   * the bump to 2 is what makes the scan select them again and fill them in.
+   */
+  it('the scan re-checks a run verified by version 1', async () => {
+    const { runId } = await ingested();
+    await verifications.record(runId, {
+      status: 'verified', verifierVersion: 1, figuresChecked: 1, mismatches: [], rawLogRetainedUntil: null,
+      gatlingDifferences: [], gatlingReplays: null,
+    });
+
+    expect((await verifications.candidatePage(VERIFIER_VERSION, null, 10)).ids).toEqual([runId]);
+    // And once checked by this version, it is not selected again.
+    expect(await service().verify(runId)).toBe('verified');
+    expect((await verifications.candidatePage(VERIFIER_VERSION, null, 10)).ids).toEqual([]);
   });
 });
 

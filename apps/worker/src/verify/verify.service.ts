@@ -1,3 +1,4 @@
+import { GatlingDifferenceSchema, type GatlingDifference } from '@perfportal/contracts';
 import { retainedUntil, type BundleSource, type CanonicalEvent } from '@perfportal/core';
 import {
   NOT_EXACT_RUN_SQL,
@@ -10,7 +11,15 @@ import {
   type UnverifiableReason,
 } from '@perfportal/persistence';
 import type { BlobStore } from '@perfportal/storage';
-import { compare, expectedFrom, optionsFrom, VERIFIER_VERSION, type Stored } from '@perfportal/verify';
+import {
+  compare,
+  expectedFrom,
+  gatlingDifferences,
+  gatlingMethodInput,
+  optionsFrom,
+  VERIFIER_VERSION,
+  type Stored,
+} from '@perfportal/verify';
 import type { PrismaClient } from '@prisma/client';
 import type pg from 'pg';
 import type { WorkerConfig } from '../config.js';
@@ -19,6 +28,7 @@ import { RUN_INGEST_LOCK_NAMESPACE } from '../pipeline/pipeline.service.js';
 import { selectPlugin } from '../pipeline/plugins.js';
 import { isTransient } from '../pipeline/retry.js';
 import { openRunSource, RawLogMissingError } from '../pipeline/run-source.js';
+import type { GatlingMethodRunner } from './gatling-method-runner.js';
 
 /**
  * What one verification did. `locked` asks the caller to try again later;
@@ -58,6 +68,12 @@ export class VerifyService {
     private readonly prisma: PrismaClient,
     private readonly pool: pg.Pool,
     private readonly blobs: BlobStore,
+    /**
+     * Gatling's own method (gatling-method-runner.ts); null, or omitted, where
+     * its jars are not installed. A verification then records no differences
+     * and no replay count, which is what says the method did not run.
+     */
+    private readonly gatlingMethod: GatlingMethodRunner | null = null,
   ) {}
 
   /**
@@ -160,6 +176,9 @@ export class VerifyService {
     const { figuresChecked, mismatches } = compare(expected, stored);
 
     const status = mismatches.length === 0 ? 'verified' : 'mismatch';
+    // After compare, whatever it found: a mismatched run's report differs from
+    // Gatling's in its own right, and the reader of that run wants both.
+    const gatling = await this.#gatlingMethod(runId, events);
     await verifications.record(runId, {
       status,
       verifierVersion: VERIFIER_VERSION,
@@ -169,10 +188,8 @@ export class VerifyService {
       // ingested_at is the retention clock, and every terminal writer stamps
       // it: now stands in only for a row somehow missing it.
       rawLogRetainedUntil: retainedUntil(run.ingestedAt ?? new Date(), this.config.rawLogRetentionDays),
-      // The Gatling method has not run: nothing compared, no replays. Stated
-      // rather than defaulted, so the job that does run it has to say so here.
-      gatlingDifferences: [],
-      gatlingReplays: null,
+      gatlingDifferences: gatling.differences,
+      gatlingReplays: gatling.replays,
     });
     if (status === 'mismatch') {
       // ONE line: the list is on the row, and the Data integrity page shows it.
@@ -181,6 +198,39 @@ export class VerifyService {
       );
     }
     return status;
+  }
+
+  /**
+   * ═══ WHERE GATLING'S OWN REPORT WOULD DIFFER, OR NOTHING ═══
+   *
+   * Built from the SAME events the verifier just decoded — never a second read
+   * of the log. The replay count is recorded only beside an answer the method
+   * actually gave; when it did not run ([] and null) the row says so.
+   *
+   * A TOOL FAILURE NEVER CHANGES THE VERIFICATION: no jar, no `java`, a
+   * timeout, a crash, a row outside the tool's contract, an answer that does
+   * not account for exactly the keys sent (gatlingDifferences throws), or a
+   * difference the API's own schema would refuse — each is one warn line and a
+   * check recorded without differences. The last of those matters because a
+   * stored row the API could not parse would answer 500 on the run's page long
+   * after this job had finished.
+   */
+  async #gatlingMethod(
+    runId: string,
+    events: readonly CanonicalEvent[],
+  ): Promise<{ differences: GatlingDifference[]; replays: number | null }> {
+    if (this.gatlingMethod === null) return { differences: [], replays: null };
+    const seeds = this.config.gatlingMethodSeeds;
+    try {
+      const input = gatlingMethodInput(events);
+      const output = await this.gatlingMethod(input.lines, seeds);
+      const differences = GatlingDifferenceSchema.array().parse(gatlingDifferences(input, output));
+      return { differences, replays: seeds };
+    } catch (err) {
+      const why = err instanceof Error ? err.message : String(err);
+      console.warn(`verify: run ${runId}: Gatling's method did not run, so no differences were recorded: ${why}`);
+      return { differences: [], replays: null };
+    }
   }
 
   /**
