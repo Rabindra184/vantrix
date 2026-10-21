@@ -434,9 +434,10 @@ export class VerificationRepository {
   /**
    * Whether ONE run is still due, by the same definition retentionDue pages
    * by. The sweeper asks it again once it holds the run's lock: a page is read
-   * before any lock is taken, and in between a scan or a version bump may have
-   * marked the run pending — deleting it then would leave a run the verifier
-   * was about to check settled as unverifiable/raw_log_deleted instead.
+   * before any lock is taken, and in between the run may have become a verify
+   * candidate (a re-ingest or recompute marked it pending, or the scan first
+   * gave it a row) — deleting it then would leave a run the verifier was about
+   * to check settled as unverifiable/raw_log_deleted instead.
    */
   async isRetentionDue(runId: string, days: number, version: number): Promise<boolean> {
     if (!(days > 0)) return false;

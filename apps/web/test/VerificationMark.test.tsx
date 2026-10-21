@@ -392,7 +392,7 @@ describe('VerificationPanel — differences from Gatling’s report', () => {
     expect(panel).toHaveTextContent(DIFFERENCES);
     const tip = within(panel).getByRole('button', { name: 'About differences from Gatling’s report' });
     expect(tip).toHaveAccessibleDescription(
-      'Gatling’s report estimates percentiles with t-digest, and its estimate can change between two reports of the same run; PerfPortal reports the actual value at that rank. Both are taken over every request, warm-up included, as Gatling counts them.',
+      'Gatling’s report estimates percentiles with t-digest, and its estimate can change between two reports of the same run; PerfPortal reports the actual value at that rank. Both count every request and group record, warm-up included, as Gatling does.',
     );
   });
 });

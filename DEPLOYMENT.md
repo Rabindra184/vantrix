@@ -342,7 +342,8 @@ method is available, have the scan pick them up again:
 docker compose -f infra/docker-compose.yml exec postgres \
   psql -U perfportal -d perfportal -c \
   "UPDATE run_verification SET verifier_version = 1
-     WHERE gatling_replays IS NULL AND status IN ('verified', 'mismatch');"
+     WHERE gatling_replays IS NULL AND status IN ('verified', 'mismatch')
+       AND run_id IN (SELECT id FROM run WHERE raw_log_deleted_at IS NULL);"
 ```
 
 Each keeps its answer while it waits, as above.

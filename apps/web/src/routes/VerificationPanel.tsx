@@ -114,7 +114,7 @@ const DIFFERENCES_NAME = 'Differences from Gatling’s report';
  * would read as a claim about that table.
  */
 const DIFFERENCES_INFO =
-  'Gatling’s report estimates percentiles with t-digest, and its estimate can change between two reports of the same run; PerfPortal reports the actual value at that rank. Both are taken over every request, warm-up included, as Gatling counts them.';
+  'Gatling’s report estimates percentiles with t-digest, and its estimate can change between two reports of the same run; PerfPortal reports the actual value at that rank. Both count every request and group record, warm-up included, as Gatling does.';
 
 /**
  * Each percentile where Gatling's own method, replayed over this run's raw

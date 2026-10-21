@@ -251,8 +251,8 @@ Clean-UI rules apply: marks and labels on screen, detail one click away.
   (Request · Figure · Gatling's report · PerfPortal) only when non-empty, with
   one ⓘ sentence: "Gatling's report estimates percentiles with t-digest, and
   its estimate can change between two reports of the same run; PerfPortal
-  reports the actual value at that rank. Both are taken over every request,
-  warm-up included, as Gatling counts them." (the last sentence amended after
+  reports the actual value at that rank. Both count every request and group
+  record, warm-up included, as Gatling does." (the last sentence amended after
   the final review: on a warm-up run the run's own table excludes the warm-up,
   so without it the PerfPortal column read as a claim about that table); on
   mismatch, the figures with stored

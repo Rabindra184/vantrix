@@ -128,10 +128,10 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **258 files / 4167 tests**, it
+`nvm use` first, and if a run reports fewer than **260 files / 4239 tests**, it
 did not run everything — nor did an integration run reporting fewer than
-**238 files / 3699 tests**, an e2e run fewer than **205**, or a
-`pnpm test:e2e:cross` run fewer than **615** (205 on each of three engines).
+**240 files / 3777 tests**, an e2e run fewer than **207**, or a
+`pnpm test:e2e:cross` run fewer than **621** (207 on each of three engines).
 (Update those numbers when a sub-project adds suites, or the next reader
 calibrates against a stale floor and a silently-skipped run looks like a
 pass.)
@@ -155,7 +155,16 @@ The exact-statistics Gatling-method branch
 (`feat/exact-statistics-gatling-method`, PR 4 of
 `docs/superpowers/specs/2026-10-15-exact-statistics-design.md`, plan
 `docs/superpowers/plans/2026-10-21-exact-statistics-pr4-gatling-method.md`).
-Floors: measured after the final fix wave.
+Unit **258 / 4167 to 260 / 4239**, integration **238 / 3699 to 240 / 3777**,
+**e2e 205 to 207** (`run-verification.spec.ts`, 2), **621** on three engines.
+Each was predicted first (unit from per-file deltas, integration from `vitest
+list`, e2e from `--list`) and each run collected exactly that, on the final
+tree (`a3c849ec` plus the wording commit), Node v22.19.0, `perfportal_gatling`,
+Redis db 13 flushed before integration and e2e, port 3760: `pnpm build`,
+`typecheck` (every `.tsbuildinfo` deleted first) and `lint` exit 0 by their own
+exit codes; `test:unit` **260 / 4239**, exit 0; `test:integration`
+**240 / 3777, exit 0, zero failures**; `pnpm test:e2e --workers=2` read back
+`Running 207 tests using 2 workers`, **207 passed, exit 0**.
 
 **GATLING'S REPORT IS NOT DETERMINISTIC, SO "WHAT GATLING SAYS" IS A RANGE.**
 t-digest 3.3's `AVLTreeDigest.add` breaks a tie between two equidistant
@@ -224,7 +233,7 @@ version would have turned every ✓ and every mismatch list on an install back t
 · Gatling's report · PerfPortal) only when the list is non-empty, a range as
 `2389–3410`, groups labelled as groups, 50 rows then "and N more", and one ⓘ
 saying Gatling's estimate can change between two reports of the same run and
-that both columns count every request, warm-up included (the run's own table
+that both columns count every request and group record, warm-up included (the run's own table
 leaves a configured warm-up out). A Java older than 21, a timeout or a
 malformed answer is one `console.warn` per run and `[]` / null; a missing jar
 is one startup `console.log` and nothing per run — **neither ever changes the
