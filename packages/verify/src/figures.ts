@@ -5,7 +5,12 @@
  * because this package may not import persistence (eslint.config.js).
  */
 
-export const VERIFIER_VERSION = 1;
+/**
+ * 2: Gatling's own method runs beside the check (gatling-method.ts), so the
+ * scan re-checks every run verified by 1 whose raw log still exists and fills
+ * in where Gatling's report differs.
+ */
+export const VERIFIER_VERSION = 2;
 
 /**
  * The finest bucket width the engine writes, before any coalescing: one

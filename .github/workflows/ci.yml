@@ -348,6 +348,33 @@ jobs:
           docker run --rm perfportal:ci sh -c \
             'java --add-opens=java.base/java.lang=ALL-UNNAMED -cp "$RUNNER_GATLING_HOME/lib/*" io.gatling.app.Gatling 2>&1 | grep -q "Missing simulation class"'
 
+      # ═══ THE GATLING-METHOD TOOL REPRODUCES GATLING'S OWN REPORTS ═══
+      #
+      # The verifier's "Differences from Gatling's report" are only true if
+      # the tool computes what Gatling's report prints. This replays three
+      # real runs through the jar THE IMAGE SHIPS, against the t-digest the
+      # image's Gatling runtime carries, and requires every percentile cell of
+      # their reports to lie inside the 200-seed range (and equal it wherever
+      # every seed agrees). Gatling's t-digest breaks ties with an unseeded
+      # Random, so a range is the honest form of the claim. The tool's input
+      # comes from the worker's own gatlingMethodInput, imported from the
+      # image's built packages/verify, so the production builder is checked
+      # too. The script exits 1 naming each failing cell, refuses a run that
+      # checked 150 cells or fewer (a parser that stopped reading the reports),
+      # and one where fewer than 200 cells were pinned to one value by every
+      # seed (a tool printing wide ranges).
+      - name: The Gatling-method tool reproduces three Gatling reports
+        run: |
+          docker run --rm \
+            -v "$PWD/fixtures:/app/fixtures:ro" \
+            -v "$PWD/infra/test:/app/infra/test:ro" \
+            perfportal:ci \
+            node infra/test/gatling-method-fixtures.mjs \
+              --jar /opt/perfportal/gatling-method.jar \
+              --tdigest /opt/gatling/lib/t-digest-3.3.jar \
+              --fixtures fixtures/gatling-3.15.1.2 \
+              --seeds 200
+
       # A production container with no BETTER_AUTH_SECRET must die at startup
       # with a message naming the variable — not start, pass its health check,
       # and then fail every sign-in, which is what it did before

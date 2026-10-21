@@ -126,6 +126,38 @@ export const FigureMismatchSchema = z.object({
 export type FigureMismatch = z.infer<typeof FigureMismatchSchema>;
 
 /**
+ * ═══ ONE PERCENTILE WHERE GATLING'S OWN REPORT DIFFERS ═══
+ * (docs/superpowers/plans/2026-10-21-exact-statistics-pr4-gatling-method.md)
+ *
+ * `GatlingDifference` in packages/verify/src/gatling-method.ts, field for
+ * field — restated, because contracts cannot import that package.
+ *
+ * Gatling's report estimates a percentile with t-digest, and its estimate
+ * changes between two reports of one log (it breaks ties with an unseeded
+ * random number), so its side is a RANGE: every value the method produced
+ * across the seeded replays, `gatlingLow` to `gatlingHigh`. `exact` is the
+ * nearest-rank value over the same population. A row exists only where the
+ * range is not exactly `exact`. `name` is the stored identity (path segments
+ * joined with `/`, unspaced; '' for the run). Whole milliseconds, never
+ * negative, and a range never reversed.
+ */
+export const GatlingDifferenceSchema = z
+  .object({
+    scope: z.enum(['run', 'request', 'group']),
+    name: z.string(),
+    population: z.enum(['all', 'ok', 'ko']),
+    figure: z.enum(['p50', 'p75', 'p95', 'p99']),
+    gatlingLow: z.number().int().nonnegative(),
+    gatlingHigh: z.number().int().nonnegative(),
+    exact: z.number().int().nonnegative(),
+  })
+  .refine((d) => d.gatlingLow <= d.gatlingHigh, {
+    message: 'gatlingLow must not be above gatlingHigh',
+    path: ['gatlingLow'],
+  });
+export type GatlingDifference = z.infer<typeof GatlingDifferenceSchema>;
+
+/**
  * `GET /v1/runs/{id}/verification`: the whole verification record. A run with
  * no row yet answers `pending` with nothing recorded. `rawLogRetainedUntil`
  * is a CALENDAR DAY (UTC): the day retention may delete the raw log under the
@@ -148,6 +180,16 @@ export const VerificationSchema = z.object({
   mismatches: z.array(FigureMismatchSchema),
   rawLogRetainedUntil: z.string().date().nullable(),
   rawLogDeleted: z.boolean(),
+  /**
+   * Where Gatling's own report would differ from these exact figures. Empty
+   * when nothing differs OR the method did not run — `gatlingReplays` tells
+   * the two apart: null when it did not run, the number of seeded replays
+   * when it did. Both OPTIONAL for the rolling-deploy reason every added
+   * field here gives: the browser drops a body that fails this schema, so a
+   * required field would blank the panel whenever an older API pod answered.
+   */
+  gatlingDifferences: z.array(GatlingDifferenceSchema).optional(),
+  gatlingReplays: z.number().int().positive().nullable().optional(),
 });
 export type Verification = z.infer<typeof VerificationSchema>;
 

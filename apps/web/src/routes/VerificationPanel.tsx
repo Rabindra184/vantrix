@@ -1,19 +1,22 @@
 import { useQuery } from '@tanstack/react-query';
-import type { FigureMismatch, Verification } from '@perfportal/contracts';
+import type { FigureMismatch, GatlingDifference, Verification } from '@perfportal/contracts';
+import InfoTip from '../components/InfoTip';
 import TableFrame from '../components/TableFrame';
 import { ROW, TABLE, TD, TD_NUM, TH, TH_NUM, THEAD } from '../components/tableStyles';
 import { fetchVerification, verificationQueryKey } from '../api/verification';
-import { formatCount } from '../tables/StatisticsTable';
+import { formatCount, formatMs } from '../tables/StatisticsTable';
 import { formatInstant, formatOffset } from './format';
 
-/** How many mismatches the panel tabulates before it counts the rest. */
+/** How many mismatches — and how many Gatling differences — the panel
+ *  tabulates before it counts the rest. */
 export const MISMATCH_ROWS = 50;
 
 /**
  * What the run header's verification mark opens onto: the figures checked,
  * the verifier's version, when it ran, what became of the raw log — and on a
- * mismatch, each figure that disagreed with both its values. Nothing else
- * (clean UI); the reason a run is NOT verified is the mark's own ⓘ.
+ * mismatch, each figure that disagreed with both its values; and where
+ * Gatling's own report of this run would print a different percentile. Nothing
+ * else (clean UI); the reason a run is NOT verified is the mark's own ⓘ.
  *
  * Mounted only while the panel is open (`VerificationMark`), so this query is
  * the fetch-on-open. No heading: it is shell chrome, which contributes none to
@@ -94,8 +97,120 @@ function Detail({ verification: v }: { readonly verification: Verification }) {
         </TableFrame>
       )}
       {rest > 0 && <p className="text-muted">and {formatCount(rest)} more</p>}
+      <GatlingDifferences differences={v.gatlingDifferences ?? []} />
     </div>
   );
+}
+
+/** The table's name, and the words above it. */
+const DIFFERENCES_NAME = 'Differences from Gatling’s report';
+
+/**
+ * The ⓘ beside it: why a report of the same run can say otherwise — and over
+ * what. Both columns count every request, warm-up included, because Gatling
+ * knows no warm-up; the run's own statistics leave a configured warm-up out,
+ * so on such a run the PerfPortal column can differ from the run's table too,
+ * and without the last sentence the claim "the actual value at that rank"
+ * would read as a claim about that table.
+ */
+const DIFFERENCES_INFO =
+  'Gatling’s report estimates percentiles with t-digest, and its estimate can change between two reports of the same run; PerfPortal reports the actual value at that rank. Both count every request and group record, warm-up included, as Gatling does.';
+
+/**
+ * Each percentile where Gatling's own method, replayed over this run's raw
+ * log, does not come out at the exact value PerfPortal stores — so a reader
+ * holding Gatling's report beside this run knows which of its figures will
+ * disagree, and that the disagreement is the report's.
+ *
+ * DRAWN ONLY WHEN THERE IS ONE: an empty list (nothing differs, or the method
+ * did not run) and an absent field (an API older than this) both draw
+ * nothing — no title, no ⓘ. A caveat about a table that is not there explains
+ * nothing.
+ *
+ * NO HEADING, for the reason `VerificationPanel` has none: this is shell
+ * chrome. The title is a `<p>` with the ⓘ beside it, and the table is named
+ * by its `sr-only` caption.
+ *
+ * A VISIBLE TITLE, NOT `TableFrame`'s `info` SLOT. The mismatch table above
+ * needs no title — the mark already said "mismatch" — but this one sits under
+ * a mark that says "verified", and a table of disagreeing numbers with no
+ * words over it reads as the mismatch it is not. The slot would put only an
+ * unlabelled ⓘ at the frame's corner. The cost, accepted: in browse mode a
+ * screen reader hears the name twice, once as the title and once as the
+ * table's caption.
+ *
+ * CAPPED LIKE THE MISMATCH LIST, at `MISMATCH_ROWS` and then "and N more":
+ * four figures in three populations per request makes a long run's list long.
+ */
+function GatlingDifferences({ differences }: { readonly differences: readonly GatlingDifference[] }) {
+  if (differences.length === 0) return null;
+  const shown = differences.slice(0, MISMATCH_ROWS);
+  const rest = differences.length - shown.length;
+  return (
+    <div className="flex flex-col gap-2" data-testid="gatling-differences">
+      <p className="flex items-center gap-1 font-medium">
+        {DIFFERENCES_NAME}
+        <InfoTip label="About differences from Gatling’s report">{DIFFERENCES_INFO}</InfoTip>
+      </p>
+      <TableFrame name={DIFFERENCES_NAME} label="Differences from Gatling’s report table">
+        <table className={TABLE}>
+          <caption className="sr-only">{DIFFERENCES_NAME}</caption>
+          <thead className={THEAD}>
+            <tr>
+              <th scope="col" className={TH}>
+                Request
+              </th>
+              <th scope="col" className={TH}>
+                Figure
+              </th>
+              <th scope="col" className={TH_NUM}>
+                Gatling’s report
+              </th>
+              <th scope="col" className={TH_NUM}>
+                PerfPortal
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {shown.map((d) => (
+              <tr key={differenceKey(d)} className={ROW}>
+                <td className={`${TD} break-all`}>{differenceRowLabel(d)}</td>
+                <td className={`${TD} font-mono`}>
+                  {d.population === 'all' ? d.figure : `${d.figure} (${d.population.toUpperCase()})`}
+                </td>
+                <td className={TD_NUM}>
+                  {d.gatlingLow === d.gatlingHigh
+                    ? formatMs(d.gatlingLow)
+                    : `${formatMs(d.gatlingLow)}–${formatMs(d.gatlingHigh)}`}
+                </td>
+                <td className={TD_NUM}>{formatMs(d.exact)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </TableFrame>
+      {rest > 0 && <p className="text-muted">and {formatCount(rest)} more</p>}
+    </div>
+  );
+}
+
+/**
+ * Which row a difference is about: "All requests" for the run, and otherwise
+ * "scope · name" — `rowLabel`'s rule for the mismatch table, so a group reads
+ * as a group. A group's p95 is its CUMULATED response time, and a group named
+ * like a request must not pass for that request's figure.
+ */
+function differenceRowLabel(d: GatlingDifference): string {
+  return d.scope === 'run' ? 'All requests' : `${d.scope} · ${d.name}`;
+}
+
+/**
+ * A React key from what a difference IS — the verifier writes one row per
+ * (scope, name, population, figure), so that tuple is unique without an
+ * occurrence suffix, and a row keeps its key when one above it goes.
+ */
+function differenceKey(d: GatlingDifference): string {
+  return [d.scope, d.name, d.population, d.figure].join('\u0000');
 }
 
 /**

@@ -125,6 +125,10 @@ export async function enqueueVerification(
  * newest page never reaches an older run, and a job that exhausted its
  * attempts sits in the failed set under the run's id, where `add` would
  * silently refuse it for as long as BullMQ kept the record.
+ *
+ * A candidate with no verification row is marked pending; one that has a row
+ * keeps it until its job lands (`ensurePending`), so a version bump re-checks
+ * every run without first wiping what each one was found to be.
  */
 export async function enqueueVerifyCandidates(
   queue: Queue,
@@ -159,16 +163,19 @@ async function enqueuePage(
     if (job === undefined) {
       fresh.push(runId);
     } else if ((await job.getState()) === 'failed') {
-      if (!opts.alreadyPending) await repo.markPending(runId);
+      if (!opts.alreadyPending) await repo.ensurePending(runId);
       await job.retry('failed', { resetAttemptsMade: true });
       console.warn(`verify: re-queued run ${runId}, whose last attempts all failed: ${job.failedReason}`);
       requeued += 1;
     }
   }
   if (fresh.length === 0) return requeued;
-  // Pending before the job, as `enqueueVerification` argues. Every id here
-  // came from candidatePage, which selects verifiable runs only.
-  if (!opts.alreadyPending) for (const runId of fresh) await repo.markPending(runId);
+  // Pending before the job, as `enqueueVerification` argues — but only where
+  // there is no row yet. A run the scan selects because a newer verifier
+  // version exists keeps its last answer, mismatches included, until this job
+  // records the new one (ensurePending says why). Every id here came from
+  // candidatePage, which selects verifiable runs whose raw log is stored.
+  if (!opts.alreadyPending) for (const runId of fresh) await repo.ensurePending(runId);
   await queue.addBulk(
     fresh.map((runId) => ({
       name: 'verify',

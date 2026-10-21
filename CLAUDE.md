@@ -128,10 +128,10 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **258 files / 4167 tests**, it
+`nvm use` first, and if a run reports fewer than **260 files / 4239 tests**, it
 did not run everything — nor did an integration run reporting fewer than
-**238 files / 3699 tests**, an e2e run fewer than **205**, or a
-`pnpm test:e2e:cross` run fewer than **615** (205 on each of three engines).
+**240 files / 3777 tests**, an e2e run fewer than **207**, or a
+`pnpm test:e2e:cross` run fewer than **621** (207 on each of three engines).
 (Update those numbers when a sub-project adds suites, or the next reader
 calibrates against a stale floor and a silently-skipped run looks like a
 pass.)
@@ -150,6 +150,180 @@ still Chromium and still 102; `pnpm test:e2e:cross` was 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The exact-statistics Gatling-method branch
+(`feat/exact-statistics-gatling-method`, PR 4 of
+`docs/superpowers/specs/2026-10-15-exact-statistics-design.md`, plan
+`docs/superpowers/plans/2026-10-21-exact-statistics-pr4-gatling-method.md`).
+Unit **258 / 4167 to 260 / 4239**, integration **238 / 3699 to 240 / 3777**,
+**e2e 205 to 207** (`run-verification.spec.ts`, 2), **621** on three engines.
+Each was predicted first (unit from per-file deltas, integration from `vitest
+list`, e2e from `--list`) and each run collected exactly that, on the final
+tree (`a3c849ec` plus the wording commit), Node v22.19.0, `perfportal_gatling`,
+Redis db 13 flushed before integration and e2e, port 3760: `pnpm build`,
+`typecheck` (every `.tsbuildinfo` deleted first) and `lint` exit 0 by their own
+exit codes; `test:unit` **260 / 4239**, exit 0; `test:integration`
+**240 / 3777, exit 0, zero failures**; `pnpm test:e2e --workers=2` read back
+`Running 207 tests using 2 workers`, **207 passed, exit 0**.
+
+**AND THE AUDIT GATE MEASURED THE WORLD AGAIN, THE DAY THE PR OPENED.** CI's
+`build` failed on `pnpm audit --prod` and on nothing this branch wrote: six
+advisories (one high, four moderate, one low) against vite >=8.2.0 <=8.2.3,
+reached through `apps/web`'s exact pin and `better-auth > vitest > vite`.
+`apps/web` pins 8.2.4 and a `vite@8` override pins the transitive copy to
+EXACTLY 8.2.4 — a caret override resolved to 8.3.5, a minor bump the fix does
+not need. 8.2.4 itself requires rolldown 1.2.15 (from 1.2.3). Because Vite
+builds the web bundle and runs every vitest suite, every gate ran again on
+`6a3e1bb3`: build, typecheck and lint exit 0; unit **260 / 4239**, integration
+**240 / 3777, zero failures**, e2e **207 passed** — the same totals.
+
+**GATLING'S REPORT IS NOT DETERMINISTIC, SO "WHAT GATLING SAYS" IS A RANGE.**
+t-digest 3.3's `AVLTreeDigest.add` breaks a tie between two equidistant
+centroids with `gen.nextDouble()`, and `gen` is an UNSEEDED `java.util.Random`
+— two HTML reports of one `simulation.log` can print different percentiles.
+Replaying the reference fixture with seeds 0..199, its all-requests p99 took
+seven values between **2349 and 2412**; the report printed 2369. On the
+2026-10-15 `BasicSimulation` run, `Session` p95 ranged **2389–3410** and p99
+**10785–13295**. Every one of the two reports' 40 + 44 percentile cells lies
+inside its replay's set. So a difference is stored as `gatlingLow` /
+`gatlingHigh`, never one value — a check demanding one value would be asserting
+a coin toss. Group percentiles are the CUMULATED response time (every group cell
+lies inside that replay and outside the duration one for Catalog and Cart), and
+the population is every request record, warm-up included, at Gatling's default
+50/75/95/99 — Gatling knows no warm-up.
+
+**THE METHOD IS A 6 KB JAVA TOOL OVER GATLING'S OWN t-digest, NOT A PORT.**
+`tools/gatling-method` (Java 21, depends on `com.tdunning:t-digest:3.3` alone,
+on the classpath rather than bundled, so it runs the runtime's own copy) feeds
+each stats key's values in log order into `new AVLTreeDigest(100.0)` with `gen`
+replaced through reflection by `new Random(seed)`, seeds `0..N-1`, and prints
+each percentile's `[low, high]` as `Math.round(digest.quantile(p / 100))`. The
+worker sends opaque keys (`k0`, `k1`, …), so a request name never crosses the
+process boundary. A port to TypeScript would have to match t-digest's float
+arithmetic and its RNG draw order bit for bit; calling the library cannot drift
+from it. The image builds it in a JDK stage and smoke-runs it, so an
+unseedable digest fails the BUILD.
+
+**CI PROVES IT AGAINST THREE REAL REPORTS, 277 CELLS.** The `compose` job runs
+`infra/test/gatling-method-fixtures.mjs` inside the image at 200 seeds:
+`reference-report` (136 cells), `basic-simulation-2026-10-15` (140, committed
+for this) and `group-assertions` (1, Gatling's own `Search` p95 assertion line,
+1853 — the assertion corpus has no Gatling output to compare). Each cell must
+lie in the range and EQUAL it wherever all 200 seeds agree; that `=== low` half
+is what keeps a range honest, and at least 200 cells must reach it (240 of 277
+do): a tool printing `[0, 2147483647]` everywhere passes every range check and
+pins none. The tool's input comes from the worker's own `gatlingMethodInput` and
+`gatlingMethodLines`, imported from `packages/verify`'s build — the check's
+first version fed it from its own `statsKeys`, a second implementation that
+already differed (no `Math.max(0, round)`), so a regression in the worker's
+builder would have passed CI. Red-verified: compression 50 fails 61 cells,
+`Math.floor` for `round` 67, groups fed their duration 80 (in the tool, and
+again inside `gatlingMethodInput`), the wide-range tool 0 pinned. **THE CELL FLOOR WAS
+NOT ENOUGH ON ITS OWN**: an index parser returning `[]` still checked 193 cells
+through the detail pages and passed, with the run-level cells silently gone.
+The check now requires every key the log produced to have been compared at
+least once, with no exception: the run is fed in `all` alone, because Gatling's
+report prints no run percentile by status (its global table's percentile
+columns are Total only and no detail page repeats the run) — a run OK/KO row
+would have named a figure the report never shows.
+
+**WHAT A RUN SHOWS.** After `compare`, the verify job builds the tool's input
+from the SAME decoded events, runs it at `GATLING_METHOD_SEEDS` (default 16),
+and stores one row per (scope, name, population, percentile) where
+`gatlingLow !== exact || gatlingHigh !== exact` in `gatling_differences`, with
+the seed count in the new `gatling_replays` (migration
+`20261021120000_gatling_replays`; null when the method did not run).
+`VERIFIER_VERSION` is 2, so the scan re-checks every run whose raw log still
+exists — and each keeps its previous answer until its re-check lands. The scan
+marks a candidate pending only where it has no row (`ensurePending`, an INSERT
+… ON CONFLICT DO NOTHING); `markPending`, which clears a row, stays for a
+re-ingest or recompute, where the stored figures really changed. The first
+version used `markPending` on the scan path too, so the deploy that bumped the
+version would have turned every ✓ and every mismatch list on an install back to
+"Verifying…" until the one-at-a-time backlog drained. The panel draws **Differences from Gatling's report** (Request · Figure
+· Gatling's report · PerfPortal) only when the list is non-empty, a range as
+`2389–3410`, groups labelled as groups, 50 rows then "and N more", and one ⓘ
+saying Gatling's estimate can change between two reports of the same run and
+that both columns count every request and group record, warm-up included (the run's own table
+leaves a configured warm-up out). A Java older than 21, a timeout or a
+malformed answer is one `console.warn` per run and `[]` / null; a missing jar
+is one startup `console.log` and nothing per run — **neither ever changes the
+verification status.** A run verified while the method could not run is not
+re-filled when it becomes available; `DEPLOYMENT.md` gives the UPDATE that
+re-queues those.
+
+**THE REAL RUNS, ON A SCRATCH DATABASE** (`perfportal_gatling_real`, Redis db
+12, bucket `perfportal-gatling-real`, API :3762, this tree's worker with Java
+21 first on its `PATH` and runner): `ParitySimulation` through the Gradle
+plugin, live (run `1beec9ea`), and through the on-prem runner as a thin
+`gatlingEnterprisePackage` jar the runner lent its runtime to (run `d3abf0ac`).
+Both `complete`, 895 requests, **`verified`, 0 mismatches (21,612 and 21,718
+figures), `gatlingReplays` 16, 43 and 35 differences**. An independent script
+— the fixture check's then `statsKeys` over the run's own raw log read back from the
+bucket, the tool run directly at 16 seeds, nearest rank by its own integer
+formula — produced **the identical 43 and 35 rows, value for value**. Examples:
+plugin run all-requests p99 Gatling **2126–2184** against exact 2169, `Cart`
+group ko p50 144 against 133; runner run all-requests p99 **2207–2257** against
+2212, `Catalog` group p95 485 against 474. **Those 43 and 35 predate the
+final fix wave**, which stopped feeding the run's OK and KO populations: the
+plugin run carried 6 run rows and the runner run 8, where only the 4 `all`
+percentiles can be rows now.
+
+**AND GATLING'S OWN ASSERTION LINE NOW AGREES WITH THE PANEL.** Each run's
+`Search: 95th percentile … actual :` printed **1739** and **2071**; the method
+gives exactly 1739 and 2071 (all 16 seeds agree), and the panel lists `Search`
+p95 as **1739 against 1734** and **2071 against 2028**. That is PR 3's recorded
+observation (Gatling 2106 against a stored, verified 2077) explained: the
+stored figure is the exact one, and the run page now says where and by how much
+Gatling's own estimate differs.
+
+**WHAT IT COSTS, MEASURED.** The tool is single-threaded (user time equals wall
+time). At 16 seeds on a synthetic soak-shaped input of ten requests with
+heavy-tailed times and 2% KO: **1M requests (4M values) 9.3 s and 245 MB peak
+RSS; 2M requests 18.2 s and 337 MB** — linear, so the five-minute default
+timeout is room for roughly 30M requests. Building the input in the worker
+(`gatlingMethodInput`) took **1.5 s and +250 MB RSS per million requests** (2.9
+s / +526 MB at 2M), on top of the decoded events the verification already holds
+— on a very long soak the worker's memory, not the timeout, is the tighter
+limit. The reference run's ~900 requests: 238 ms. **The final fix wave cut
+that input to under a quarter**: it held one string per stdin line, and that
+array was all of its retained memory. It keeps each key's values as numbers
+now, and the runner writes a generator's chunks one at a time
+(`gatlingMethodLines`). The old builder and the new, on one synthetic million
+requests under `--expose-gc`: **+125.2 MB of retained heap (4M strings) against
++27.8 MB (3M numbers — a quarter fewer values, because the run's OK/KO feed
+went too); 62.2 MB at 2M**. The new one builds in 0.53 s and renders the 20 MB
+of stdin in 0.15 s, never more than one 31 KB chunk of text at a time.
+
+**RULINGS, EACH A DECISION RATHER THAN AN OVERSIGHT:**
+
+  - The tool's stdin keys are opaque indices mapped back by
+    `gatlingMethodInput`, which removes every escaping and tab-in-name hazard.
+  - The tool runs INSIDE the run's advisory lock, because `record()` is; moving
+    it out needs a two-write record. A slow tool delays a re-ingest or
+    recompute of that one run, by at most `GATLING_METHOD_TIMEOUT_MS`.
+  - Figures use the product's plain whole-ms digits (`2389–3410`); the spec's
+    `2,389–3,410` came from a wrong belief that the count formatter groups.
+  - A group row is labelled as a group, the way the mismatch table's `rowLabel`
+    does — a group "p95" is cumulated response time and must not read as a
+    request's. The list follows the mismatch list's 50-row cap.
+  - No `GATLING_METHOD_JAVA`: the worker uses `java` from `PATH`, as the
+    runner does; the image's is 21. The startup line checks the two jar FILES,
+    so it can say "available" over a Java 17 that then fails every run with
+    one warn naming `UnsupportedClassVersionError` — `DEPLOYMENT.md` says so.
+  - The full gates run once, after the final whole-branch review's fix wave, so
+    they measure the tree that ships (PR 3's order).
+
+**KNOWN AND LEFT:** an old worker during a rolling deploy can leave a stale
+`gatling_replays` beside `[]` (it writes version 1, so the scan re-checks it);
+a version-1 run whose object vanished without retention becomes
+`unverifiable/raw_log_missing` on the re-check, which is the right signal; the
+method feeds a negative duration (a clock step) as 0 where Gatling feeds it
+raw; the difference type exists in `packages/verify` and in
+`@perfportal/contracts`, joined by the schema parse; the panel's table title
+bypasses `TableFrame`'s info slot. The panel was not opened in a browser on the
+real runs (`run-verification.spec.ts` renders it against seeded rows). The
+worker took a SIGKILL 31 s after SIGTERM at teardown, as this file records.
 
 The exact-statistics verifier branch (`feat/exact-statistics-verifier`, PR 3
 of `docs/superpowers/specs/2026-10-15-exact-statistics-design.md`, plan

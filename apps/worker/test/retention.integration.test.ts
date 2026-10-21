@@ -121,6 +121,8 @@ async function verified(...runs: Seeded[]): Promise<void> {
       figuresChecked: 1,
       mismatches: [],
       rawLogRetainedUntil: null,
+      gatlingDifferences: [],
+      gatlingReplays: null,
     });
   }
 }
@@ -333,6 +335,8 @@ describe('raw-log retention keeps a log something still needs', () => {
       figuresChecked: 9,
       mismatches: [],
       rawLogRetainedUntil: null,
+      gatlingDifferences: [],
+      gatlingReplays: null,
     });
     await sweepAt(30);
     expect(await deletedAt(run!.id)).toBeNull();

@@ -15,8 +15,9 @@ import { runNotFound, uuidParam } from '../common/validation.js';
  *
  * Whether this run's stored figures were re-derived from its raw log and
  * agreed: the status, why it could not be checked, when and by which version
- * of the verifier, every figure that disagreed with both values, and how long
- * the raw log is kept.
+ * of the verifier, every figure that disagreed with both values, how long
+ * the raw log is kept, and where Gatling's own report would differ from the
+ * exact figures (with how many seeded replays of its method found that).
  *
  * Under `/v1/runs/:id` like every other run-scoped read, which is what puts it
  * in the two guards derived from that prefix: session-auth's cross-org list
@@ -43,7 +44,8 @@ import { runNotFound, uuidParam } from '../common/validation.js';
  * ═══ A STORED ROW THAT DOES NOT PARSE IS A 500, ON PURPOSE ═══
  *
  * The run header's mark drops a bad row and logs it (`verificationSummaryOf`);
- * this read does not, so a mismatch list the contract refuses answers 500.
+ * this read does not, so a mismatch list — or a Gatling-differences list —
+ * the contract refuses answers 500.
  * Only the worker writes the column, from typed values, and a NaN figure
  * serialises to null, which the contract allows — so a refusal here means the
  * row was edited by hand, and a panel quietly showing part of it would
@@ -77,6 +79,9 @@ export class RunVerificationController {
       mismatches: row?.mismatches ?? [],
       rawLogRetainedUntil: retentionDay(run.rawLogDeletedAt, run.ingestedAt, this.config.rawLogRetentionDays),
       rawLogDeleted: run.rawLogDeletedAt !== null,
+      // Both always sent by this pod; a run with no row has compared nothing.
+      gatlingDifferences: row?.gatlingDifferences ?? [],
+      gatlingReplays: row?.gatlingReplays ?? null,
     });
   }
 }

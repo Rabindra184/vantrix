@@ -140,6 +140,34 @@ export interface WorkerConfig {
   verifyEnabled: boolean;
   /** How often the scheduler looks for runs still to verify. Ten minutes, as recompute's. */
   verifyScanIntervalMs: number;
+  /**
+   * ═══ GATLING'S OWN METHOD, REPLAYED BESIDE EACH VERIFICATION ═══
+   *
+   * The tool (tools/gatling-method) that computes what Gatling's report would
+   * print, and the t-digest 3.3 it runs against. The image ships the tool at
+   * /opt/perfportal/gatling-method.jar and t-digest inside the Gatling runtime
+   * it lends the runner (RUNNER_GATLING_HOME), which is the library that wrote
+   * Gatling's reports. Either file missing means the method is not run: a
+   * verification then records no differences and no replay count, and says
+   * nothing about Gatling either way. `java` is the one on PATH.
+   */
+  gatlingMethodJar: string;
+  gatlingMethodTdigestJar: string;
+  /**
+   * How many seeded replays of Gatling's t-digest (its tie-break is random,
+   * so two reports of one log can differ). A whole number from 1 to 200, else
+   * 16: run_verification's CHECK refuses a replay count below 1, and a value
+   * above 200 multiplies the tool's time for a range CI already measures at
+   * 200. Blank is unset (compose passes an unset variable as EMPTY).
+   */
+  gatlingMethodSeeds: number;
+  /**
+   * How long one run of the tool may take before it is killed. Five minutes;
+   * at least a second and at most `MAX_TIMER_MS`, else the default
+   * (`timeoutOr`). A timeout is a tool failure, which never changes a
+   * verification's outcome.
+   */
+  gatlingMethodTimeoutMs: number;
 }
 
 /**
@@ -180,6 +208,41 @@ function scanIntervalOr(value: string | undefined, fallback: number): number {
   return n >= MIN_SCAN_INTERVAL_MS ? n : fallback;
 }
 
+/**
+ * The longest delay `setTimeout` honours: 2^31 - 1 ms, about 24.8 days. Node
+ * fires a timer asked for anything longer after 1 ms (with a
+ * TimeoutOverflowWarning), so a timeout configured past it would kill every
+ * run's tool the instant it started.
+ */
+const MAX_TIMER_MS = 2_147_483_647;
+
+/** scanIntervalOr's rule, and no longer than a timer can wait: else the default. */
+function timeoutOr(value: string | undefined, fallback: number): number {
+  const n = scanIntervalOr(value, fallback);
+  return n <= MAX_TIMER_MS ? n : fallback;
+}
+
+/** The default replay count, and the bounds a configured one must sit inside. */
+const GATLING_METHOD_SEEDS_DEFAULT = 16;
+const GATLING_METHOD_SEEDS_MAX = 200;
+
+/**
+ * A replay count: a whole number from 1 to 200, else the default. Not
+ * `numberOr`: `2.5` seeds and `0` seeds are both finite and both meaningless,
+ * and a zero would reach run_verification's CHECK (gatling_replays > 0) as a
+ * failed write after the tool had already run.
+ */
+function seedsOr(value: string | undefined): number {
+  const n = Number(value?.trim() || Number.NaN);
+  return Number.isInteger(n) && n >= 1 && n <= GATLING_METHOD_SEEDS_MAX ? n : GATLING_METHOD_SEEDS_DEFAULT;
+}
+
+/** An unset or blank path is the default, so compose's empty string is not a path. */
+function pathOr(value: string | undefined, fallback: string): string {
+  const v = value?.trim();
+  return v ? v : fallback;
+}
+
 export function loadWorkerConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
   const databaseUrl = env.DATABASE_URL;
   if (!databaseUrl) throw new Error('Missing required environment variable DATABASE_URL');
@@ -218,5 +281,13 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv = process.env): WorkerCo
     // `=== 'false'` and blank-is-default: recompute's two rules, for the same reasons.
     verifyEnabled: env.VERIFY_ENABLED !== 'false',
     verifyScanIntervalMs: scanIntervalOr(env.VERIFY_SCAN_INTERVAL_MS, 600_000),
+    gatlingMethodJar: pathOr(env.GATLING_METHOD_JAR, '/opt/perfportal/gatling-method.jar'),
+    gatlingMethodTdigestJar: pathOr(
+      env.GATLING_METHOD_TDIGEST_JAR,
+      `${pathOr(env.RUNNER_GATLING_HOME, '/opt/gatling')}/lib/t-digest-3.3.jar`,
+    ),
+    gatlingMethodSeeds: seedsOr(env.GATLING_METHOD_SEEDS),
+    // Blank, non-numeric, under a second or past a timer's limit is the default.
+    gatlingMethodTimeoutMs: timeoutOr(env.GATLING_METHOD_TIMEOUT_MS, 300_000),
   };
 }

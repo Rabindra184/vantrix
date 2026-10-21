@@ -570,6 +570,40 @@ describe('OpenAPI document', () => {
     }
   });
 
+  /**
+   * Exact statistics, PR 4: where Gatling's own report differs. The record
+   * carries the list and the replay count, both OPTIONAL (an older API pod
+   * sends neither), and the row has a named schema of its own.
+   */
+  it('documents the Gatling differences on a run\'s verification, with their own schema', async () => {
+    const doc = await fetchDoc();
+    const schemas = (doc.components?.schemas ?? {}) as Record<string, {
+      properties?: Record<string, { items?: { properties?: Record<string, unknown> } }>;
+      required?: string[];
+    }>;
+    const difference = schemas['GatlingDifference'];
+    expect(difference, 'GatlingDifference').toBeDefined();
+    expect(Object.keys(difference?.properties ?? {}).sort()).toEqual(
+      ['exact', 'figure', 'gatlingHigh', 'gatlingLow', 'name', 'population', 'scope'],
+    );
+    // All seven required: a refine is where a zod-to-OpenAPI conversion can
+    // keep the properties and lose the required list, and a client would then
+    // read gatlingHigh as optional.
+    expect([...(difference?.required ?? [])].sort()).toEqual(
+      ['exact', 'figure', 'gatlingHigh', 'gatlingLow', 'name', 'population', 'scope'],
+    );
+
+    const verification = schemas['Verification'];
+    expect(Object.keys(verification?.properties?.['gatlingDifferences']?.items?.properties ?? {}).sort()).toEqual(
+      ['exact', 'figure', 'gatlingHigh', 'gatlingLow', 'name', 'population', 'scope'],
+    );
+    expect(verification?.properties?.['gatlingReplays']).toBeDefined();
+    expect(verification?.required ?? []).not.toContain('gatlingDifferences');
+    expect(verification?.required ?? []).not.toContain('gatlingReplays');
+    // A positive beside the two absences: the record's own fields ARE required.
+    expect(verification?.required ?? []).toContain('mismatches');
+  });
+
   it('answers no path-param GET with a status its own OpenAPI operation does not declare', async () => {
     const doc = await fetchDoc();
     const auth = { Authorization: `Bearer ${ctx.readToken}` };

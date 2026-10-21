@@ -145,6 +145,6 @@ export const ENTRIES: readonly { term: string; meaning: string }[] = [
        names. */
     term: 'Percentiles, estimated',
     meaning:
-      'p95 and the other percentiles are the actual response time at that rank — nearest rank: of n responses, the one at position ⌈p/100 × n⌉. Gatling’s own report estimates them with t-digest, so its tail values can differ. Runs processed before exact statistics show an estimate within 1%.',
+      'p95 and the other percentiles are the actual response time at that rank — nearest rank: of n responses, the one at position ⌈p/100 × n⌉. Gatling’s own report estimates them with t-digest, and that estimate can change between two reports of the same run, so its values can differ from these; the verification mark’s “Differences from Gatling’s report” can list where. Runs processed before exact statistics show an estimate within 1%.',
   },
 ];

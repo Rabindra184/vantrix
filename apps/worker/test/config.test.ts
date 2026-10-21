@@ -200,4 +200,60 @@ describe('loadWorkerConfig', () => {
       expect(config.verifyScanIntervalMs).toBe(1500);
     });
   });
+
+  describe('the Gatling method', () => {
+    it('defaults to the image paths, 16 seeds and five minutes', () => {
+      const config = loadWorkerConfig(BASE_ENV);
+      expect(config.gatlingMethodJar).toBe('/opt/perfportal/gatling-method.jar');
+      expect(config.gatlingMethodTdigestJar).toBe('/opt/gatling/lib/t-digest-3.3.jar');
+      expect(config.gatlingMethodSeeds).toBe(16);
+      expect(config.gatlingMethodTimeoutMs).toBe(300_000);
+    });
+
+    it('finds t-digest under RUNNER_GATLING_HOME, and takes explicit paths over both defaults', () => {
+      expect(loadWorkerConfig({ ...BASE_ENV, RUNNER_GATLING_HOME: '/srv/gatling' }).gatlingMethodTdigestJar)
+        .toBe('/srv/gatling/lib/t-digest-3.3.jar');
+      const config = loadWorkerConfig({
+        ...BASE_ENV, RUNNER_GATLING_HOME: '/srv/gatling',
+        GATLING_METHOD_JAR: '/x/method.jar', GATLING_METHOD_TDIGEST_JAR: '/y/td.jar',
+      });
+      expect(config.gatlingMethodJar).toBe('/x/method.jar');
+      expect(config.gatlingMethodTdigestJar).toBe('/y/td.jar');
+    });
+
+    /** Compose passes an unset variable as an EMPTY string; that is not a path. */
+    it('reads blank paths as unset', () => {
+      const config = loadWorkerConfig({
+        ...BASE_ENV, RUNNER_GATLING_HOME: '', GATLING_METHOD_JAR: '', GATLING_METHOD_TDIGEST_JAR: ' ',
+      });
+      expect(config.gatlingMethodJar).toBe('/opt/perfportal/gatling-method.jar');
+      expect(config.gatlingMethodTdigestJar).toBe('/opt/gatling/lib/t-digest-3.3.jar');
+    });
+
+    it('keeps a whole seed count from 1 to 200', () => {
+      expect(loadWorkerConfig({ ...BASE_ENV, GATLING_METHOD_SEEDS: '1' }).gatlingMethodSeeds).toBe(1);
+      expect(loadWorkerConfig({ ...BASE_ENV, GATLING_METHOD_SEEDS: '200' }).gatlingMethodSeeds).toBe(200);
+      expect(loadWorkerConfig({ ...BASE_ENV, GATLING_METHOD_SEEDS: ' 40 ' }).gatlingMethodSeeds).toBe(40);
+    });
+
+    /** 0 would reach run_verification's CHECK (gatling_replays > 0) as a failed write after the tool ran. */
+    it.each(['', '0', '-1', '2.5', '201', 'many', 'Infinity'])('reads seeds %j as 16', (v) => {
+      expect(loadWorkerConfig({ ...BASE_ENV, GATLING_METHOD_SEEDS: v }).gatlingMethodSeeds).toBe(16);
+    });
+
+    it.each(['', '0', '999', 'soon'])('reads a timeout of %j as five minutes, and keeps one of a second or more', (v) => {
+      expect(loadWorkerConfig({ ...BASE_ENV, GATLING_METHOD_TIMEOUT_MS: v }).gatlingMethodTimeoutMs).toBe(300_000);
+      expect(loadWorkerConfig({ ...BASE_ENV, GATLING_METHOD_TIMEOUT_MS: '1000' }).gatlingMethodTimeoutMs).toBe(1000);
+    });
+
+    /**
+     * Node fires a timer asked for more than 2^31 - 1 ms after 1 ms, so a
+     * longer timeout would kill every run's tool the moment it started.
+     */
+    it('reads a timeout past what a timer can wait as five minutes, and keeps the longest one it can', () => {
+      expect(loadWorkerConfig({ ...BASE_ENV, GATLING_METHOD_TIMEOUT_MS: '3000000000' }).gatlingMethodTimeoutMs).toBe(300_000);
+      expect(loadWorkerConfig({ ...BASE_ENV, GATLING_METHOD_TIMEOUT_MS: '2147483648' }).gatlingMethodTimeoutMs).toBe(300_000);
+      expect(loadWorkerConfig({ ...BASE_ENV, GATLING_METHOD_TIMEOUT_MS: '2147483647' }).gatlingMethodTimeoutMs).toBe(2_147_483_647);
+    });
+  });
 });

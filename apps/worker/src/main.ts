@@ -17,6 +17,7 @@ import { createRecomputeScan, RECOMPUTE_QUEUE, startRecomputeConsumer } from './
 import { RecomputeService } from './recompute/recompute.service.js';
 import { runShutdown } from './shutdown.js';
 import { Sweeper } from './sweeper.js';
+import { createGatlingMethodRunner, gatlingMethodUnavailable } from './verify/gatling-method-runner.js';
 import { createVerifyScan, enqueueVerification, startVerifyConsumer, VERIFY_QUEUE } from './verify/verify-queue.js';
 import { VerifyService } from './verify/verify.service.js';
 
@@ -169,7 +170,17 @@ const worker = startConsumer(config, pipeline);
 
 let verify: { consumer: ReturnType<typeof startVerifyConsumer>; timer: NodeJS.Timeout } | null = null;
 if (verifyQueue) {
-  const consumer = startVerifyConsumer(config, new VerifyService(config, prisma, pool, blobs));
+  // ONE line at startup, so an operator can tell "Gatling agrees" from "never
+  // asked" without reading a verification row: the method runs only where both
+  // jars are installed (the image ships them), and says why not otherwise.
+  const unavailable = gatlingMethodUnavailable(config);
+  console.log(
+    unavailable === null
+      ? `verify: Gatling's method is available (${String(config.gatlingMethodSeeds)} replays per run)`
+      : `verify: Gatling's method is not available, so no differences from Gatling's report are recorded: ${unavailable}`,
+  );
+  const gatlingMethod = createGatlingMethodRunner(config);
+  const consumer = startVerifyConsumer(config, new VerifyService(config, prisma, pool, blobs, gatlingMethod));
   // Fire-and-forget, as the recompute scan below: startup must not wait on it.
   const scan = createVerifyScan(verifyQueue, verifications);
   void scan();

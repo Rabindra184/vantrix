@@ -36,7 +36,24 @@ group-assertions/    a second real run, for assertions that name a GROUP
   simulation.log           BINARY, header carries the group assertions
   GroupAssertions.kt       this simulation plus eight probe assertions
   gatling-report-assertions.txt   what Gatling printed, verbatim
+basic-simulation-2026-10-15/   a third real run, for Gatling's percentile method
+  simulation.log           BINARY, the 2026-10-15 BasicSimulation run
+  index.html               global page
+  req_*.html   (6)         request detail pages
+  group_*.html (3)         group detail pages
 ```
+
+### Why `basic-simulation-2026-10-15/` exists
+
+`infra/test/gatling-method-fixtures.mjs` proves `tools/gatling-method` — the
+replay of Gatling's own t-digest percentile method — against every percentile
+cell Gatling printed, and one report is not enough to trust a method that has
+to be right about randomness. This run (the Gradle demo's `BasicSimulation`,
+1,718 requests, generated 2026-10-15) has a heavy-tailed `Session` request and
+KO populations in every group, which the reference report lacks: its `Session`
+p95 alone spans 2389–3410 across 200 seeded replays, and Gatling printed 3320.
+Copied from `build/reports/gatling/basicsimulation-20261015162147567/`, without
+`js/` and `style/`.
 
 ### Why `group-assertions/` exists as its own run
 

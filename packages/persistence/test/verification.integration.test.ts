@@ -87,6 +87,7 @@ async function verified(id: string, version = 1): Promise<void> {
     figuresChecked: 1,
     mismatches: [],
     rawLogRetainedUntil: null,
+    ...NO_GATLING,
   });
 }
 
@@ -94,6 +95,20 @@ async function verified(id: string, version = 1): Promise<void> {
 async function dueIds(repo: VerificationRepository, days = 30, limit = 100): Promise<string[]> {
   return (await repo.retentionDue(days, 1, null, limit)).runs.map((r) => r.id);
 }
+
+/** A check whose Gatling method did not run: nothing to compare, no replays. */
+const NO_GATLING = { gatlingDifferences: [], gatlingReplays: null };
+
+/** One percentile where Gatling's report differs — the shape packages/verify builds. */
+const DIFFERENCE = {
+  scope: 'request',
+  name: 'Cart/Add To Cart',
+  population: 'all',
+  figure: 'p95',
+  gatlingLow: 2389,
+  gatlingHigh: 3410,
+  exact: 2458,
+};
 
 const MISMATCH: FigureMismatch = {
   scope: 'request',
@@ -143,6 +158,7 @@ describe('VerificationRepository: recording', () => {
       figuresChecked: 0,
       mismatches: [],
       gatlingDifferences: [],
+      gatlingReplays: null,
       unverifiableReason: null,
       rawLogRetainedUntil: null,
     });
@@ -156,6 +172,7 @@ describe('VerificationRepository: recording', () => {
       figuresChecked: 1234,
       mismatches: [MISMATCH, { ...MISMATCH, population: null, bucket: null, table: 'run', figure: 'duration_ms', stored: '1', recomputed: null }],
       rawLogRetainedUntil: retained,
+      ...NO_GATLING,
     });
     const found = await repo.find(runId);
     expect(found?.status).toBe('mismatch');
@@ -180,27 +197,155 @@ describe('VerificationRepository: recording', () => {
       figuresChecked: 7,
       mismatches: [MISMATCH],
       rawLogRetainedUntil: new Date('2026-11-15T00:00:00Z'),
+      gatlingDifferences: [DIFFERENCE],
+      gatlingReplays: 16,
     });
     await repo.markPending(runId);
     const found = await repo.find(runId);
     expect(found?.status).toBe('pending');
     expect(found?.mismatches).toEqual([]);
     expect(found?.figuresChecked).toBe(0);
+    expect(found?.gatlingDifferences).toEqual([]);
+    expect(found?.gatlingReplays).toBeNull();
     expect(found?.rawLogRetainedUntil?.toISOString().slice(0, 10)).toBe('2026-11-15');
+  });
+
+  /**
+   * The scan's write: a run with no row gets a pending one, and a decided
+   * row is left exactly as it was — the version bump that made the scan
+   * select it is no reason to forget what the older verifier found.
+   */
+  it('ensurePending adds a pending row where there is none, and leaves a decided row whole', async () => {
+    const repo = new VerificationRepository(pool);
+    const fresh = await seedRun();
+    const decided = await seedRun();
+    await repo.record(decided, {
+      status: 'mismatch',
+      verifierVersion: 1,
+      figuresChecked: 7,
+      mismatches: [MISMATCH],
+      rawLogRetainedUntil: new Date('2026-11-15T00:00:00Z'),
+      gatlingDifferences: [DIFFERENCE],
+      gatlingReplays: 16,
+    });
+
+    await repo.ensurePending(fresh);
+    await repo.ensurePending(decided);
+
+    expect(await repo.find(fresh)).toMatchObject({ status: 'pending', verifierVersion: null, mismatches: [] });
+    expect(await repo.find(decided)).toMatchObject({
+      status: 'mismatch',
+      verifierVersion: 1,
+      figuresChecked: 7,
+      mismatches: [MISMATCH],
+      gatlingDifferences: [DIFFERENCE],
+      gatlingReplays: 16,
+    });
+  });
+
+  /**
+   * ═══ THE GATLING DIFFERENCES AND HOW MANY REPLAYS FOUND THEM ═══
+   *
+   * Written by record, both at once, and replaced by the next record: a run
+   * re-checked by a verifier whose Gatling method did not run must not keep the
+   * previous check's list or seed count.
+   */
+  it('records the Gatling differences and the replay count, and the next check replaces both', async () => {
+    const runId = await seedRun();
+    const repo = new VerificationRepository(pool);
+    const other = { ...DIFFERENCE, scope: 'run', name: '', population: 'ko', figure: 'p99', gatlingLow: 2349, gatlingHigh: 2412, exact: 2401 };
+    await repo.record(runId, {
+      status: 'verified',
+      verifierVersion: 2,
+      figuresChecked: 10,
+      mismatches: [],
+      rawLogRetainedUntil: null,
+      gatlingDifferences: [DIFFERENCE, other],
+      gatlingReplays: 16,
+    });
+    const found = await repo.find(runId);
+    expect(found?.gatlingDifferences).toEqual([DIFFERENCE, other]);
+    expect(found?.gatlingReplays).toBe(16);
+
+    await repo.record(runId, { status: 'verified', verifierVersion: 2, figuresChecked: 10, mismatches: [], rawLogRetainedUntil: null, ...NO_GATLING });
+    const again = await repo.find(runId);
+    expect(again?.gatlingDifferences).toEqual([]);
+    expect(again?.gatlingReplays).toBeNull();
+  });
+
+  /**
+   * Over a PENDING row, so the count goes through the upsert's ON CONFLICT
+   * arm: the case above writes its values through the INSERT arm, and an
+   * update that dropped the count would pass it.
+   */
+  it('records a replay count with no differences over a pending row: the method ran and Gatling agreed everywhere', async () => {
+    const runId = await seedRun();
+    const repo = new VerificationRepository(pool);
+    await repo.markPending(runId);
+    await repo.record(runId, {
+      status: 'verified', verifierVersion: 2, figuresChecked: 10, mismatches: [], rawLogRetainedUntil: null,
+      gatlingDifferences: [], gatlingReplays: 200,
+    });
+    const found = await repo.find(runId);
+    expect([found?.gatlingDifferences, found?.gatlingReplays]).toEqual([[], 200]);
   });
 
   it('marks a run unverifiable with its reason and version', async () => {
     const runId = await seedRun();
     const repo = new VerificationRepository(pool);
     await repo.markPending(runId);
-    await pool.query(`UPDATE run_verification SET gatling_differences = '["stale"]'::jsonb WHERE run_id = $1`, [runId]);
+    await pool.query(
+      `UPDATE run_verification SET gatling_differences = '["stale"]'::jsonb, gatling_replays = 16 WHERE run_id = $1`,
+      [runId],
+    );
     await repo.markUnverifiable(runId, 'raw_log_unreadable', 2);
     const found = await repo.find(runId);
     expect(found?.gatlingDifferences).toEqual([]);
+    expect(found?.gatlingReplays).toBeNull();
     expect(found?.status).toBe('unverifiable');
     expect(found?.unverifiableReason).toBe('raw_log_unreadable');
     expect(found?.verifierVersion).toBe(2);
     expect(found?.checkedAt).toBeInstanceOf(Date);
+  });
+
+  /**
+   * markRawLogDeleted settles only a PENDING row, which markPending left with
+   * no replays — so the stale values are written straight onto the pending row
+   * here: the statement must clear them itself, not rely on the row it found.
+   */
+  it('markRawLogDeleted clears a pending row\'s Gatling differences and replay count', async () => {
+    const runId = await seedRun();
+    const repo = new VerificationRepository(pool);
+    await repo.markPending(runId);
+    await pool.query(
+      `UPDATE run_verification SET gatling_differences = '["stale"]'::jsonb, gatling_replays = 16 WHERE run_id = $1`,
+      [runId],
+    );
+    await repo.markRawLogDeleted(runId);
+    const found = await repo.find(runId);
+    expect([found?.status, found?.unverifiableReason]).toEqual(['unverifiable', 'raw_log_deleted']);
+    expect(found?.gatlingDifferences).toEqual([]);
+    expect(found?.gatlingReplays).toBeNull();
+  });
+
+  /**
+   * markPending's other arm: a run whose raw log is already gone is settled
+   * as unverifiable/raw_log_deleted in the same upsert — and clears them too.
+   */
+  it('markPending on a deleted-log run clears a pending row\'s Gatling differences and replay count', async () => {
+    const runId = await seedRun();
+    const repo = new VerificationRepository(pool);
+    await repo.markPending(runId);
+    await pool.query(
+      `UPDATE run_verification SET gatling_differences = '["stale"]'::jsonb, gatling_replays = 16 WHERE run_id = $1`,
+      [runId],
+    );
+    await pool.query(`UPDATE run SET raw_log_deleted_at = now() WHERE id = $1`, [runId]);
+    await repo.markPending(runId);
+    const found = await repo.find(runId);
+    expect([found?.status, found?.unverifiableReason]).toEqual(['unverifiable', 'raw_log_deleted']);
+    expect(found?.gatlingDifferences).toEqual([]);
+    expect(found?.gatlingReplays).toBeNull();
   });
 
   it('goes with its run', async () => {
@@ -219,9 +364,9 @@ describe('VerificationRepository.candidatePage', () => {
     const pending = await seedRun();
     await repo.markPending(pending);
     const older = await seedRun();
-    await repo.record(older, { status: 'verified', verifierVersion: 1, figuresChecked: 1, mismatches: [], rawLogRetainedUntil: null });
+    await repo.record(older, { status: 'verified', verifierVersion: 1, figuresChecked: 1, mismatches: [], rawLogRetainedUntil: null, ...NO_GATLING });
     const current = await seedRun();
-    await repo.record(current, { status: 'verified', verifierVersion: 2, figuresChecked: 1, mismatches: [], rawLogRetainedUntil: null });
+    await repo.record(current, { status: 'verified', verifierVersion: 2, figuresChecked: 1, mismatches: [], rawLogRetainedUntil: null, ...NO_GATLING });
     const currentUnverifiable = await seedRun();
     await repo.markUnverifiable(currentUnverifiable, 'raw_log_missing', 2);
     const running = await seedRun({ status: 'running', ingestedAt: null });
@@ -237,7 +382,7 @@ describe('VerificationRepository.candidatePage', () => {
   it('skips a run whose raw log is gone: nothing is left to verify it against', async () => {
     const repo = new VerificationRepository(pool);
     const verifiedOld = await seedRun();
-    await repo.record(verifiedOld, { status: 'verified', verifierVersion: 1, figuresChecked: 1, mismatches: [], rawLogRetainedUntil: null });
+    await repo.record(verifiedOld, { status: 'verified', verifierVersion: 1, figuresChecked: 1, mismatches: [], rawLogRetainedUntil: null, ...NO_GATLING });
     await repo.markRawLogDeleted(verifiedOld);
     const kept = await seedRun();
     expect((await repo.candidatePage(2, null, 100)).ids).toEqual([kept]);
@@ -368,7 +513,7 @@ describe('VerificationRepository: raw-log retention', () => {
     const pending = await seedRun();
     await repo.markPending(pending);
     const verified = await seedRun();
-    await repo.record(verified, { status: 'verified', verifierVersion: 1, figuresChecked: 9, mismatches: [], rawLogRetainedUntil: null });
+    await repo.record(verified, { status: 'verified', verifierVersion: 1, figuresChecked: 9, mismatches: [], rawLogRetainedUntil: null, ...NO_GATLING });
 
     for (const id of [noRow, pending, verified]) await repo.markRawLogDeleted(id);
 
@@ -428,7 +573,7 @@ describe('VerificationRepository: a deleted raw log settles a run, and only a ve
     await repo.markPending(wasPending);
     await deleteLog(wasPending);
     const verified = await seedRun();
-    await repo.record(verified, { status: 'verified', verifierVersion: 1, figuresChecked: 4, mismatches: [], rawLogRetainedUntil: null });
+    await repo.record(verified, { status: 'verified', verifierVersion: 1, figuresChecked: 4, mismatches: [], rawLogRetainedUntil: null, ...NO_GATLING });
     await repo.markRawLogDeleted(verified);
     const failed = await seedRun({ status: 'failed', stats: false });
     await deleteLog(failed);
@@ -456,9 +601,9 @@ describe('VerificationRepository: per-org reads', () => {
   it('summarises one org, counting a run with statistics and no row as pending', async () => {
     const repo = new VerificationRepository(pool);
     const v = await seedRun();
-    await repo.record(v, { status: 'verified', verifierVersion: 1, figuresChecked: 1, mismatches: [], rawLogRetainedUntil: null });
+    await repo.record(v, { status: 'verified', verifierVersion: 1, figuresChecked: 1, mismatches: [], rawLogRetainedUntil: null, ...NO_GATLING });
     const m = await seedRun();
-    await repo.record(m, { status: 'mismatch', verifierVersion: 1, figuresChecked: 1, mismatches: [MISMATCH], rawLogRetainedUntil: null });
+    await repo.record(m, { status: 'mismatch', verifierVersion: 1, figuresChecked: 1, mismatches: [MISMATCH], rawLogRetainedUntil: null, ...NO_GATLING });
     const u = await seedRun();
     await repo.markUnverifiable(u, 'not_exact', 1);
     await seedRun(); // no row: pending
@@ -467,7 +612,7 @@ describe('VerificationRepository: per-org reads', () => {
     await seedRun({ status: 'running', ingestedAt: null }); // not finished: not counted
 
     const elsewhere = await seedRun({ orgId: otherOrgId, projectId: otherProjectId });
-    await repo.record(elsewhere, { status: 'mismatch', verifierVersion: 1, figuresChecked: 1, mismatches: [MISMATCH], rawLogRetainedUntil: null });
+    await repo.record(elsewhere, { status: 'mismatch', verifierVersion: 1, figuresChecked: 1, mismatches: [MISMATCH], rawLogRetainedUntil: null, ...NO_GATLING });
 
     expect(await repo.summary(orgId)).toEqual({ verified: 1, mismatch: 1, unverifiable: 1, pending: 2 });
     expect(await repo.summary(otherOrgId)).toEqual({ verified: 0, mismatch: 1, unverifiable: 0, pending: 0 });
@@ -476,11 +621,11 @@ describe('VerificationRepository: per-org reads', () => {
   it('lists one org\'s problems with the project slug, reason and mismatch count', async () => {
     const repo = new VerificationRepository(pool);
     const m = await seedRun();
-    await repo.record(m, { status: 'mismatch', verifierVersion: 1, figuresChecked: 1, mismatches: [MISMATCH, MISMATCH], rawLogRetainedUntil: null });
+    await repo.record(m, { status: 'mismatch', verifierVersion: 1, figuresChecked: 1, mismatches: [MISMATCH, MISMATCH], rawLogRetainedUntil: null, ...NO_GATLING });
     const u = await seedRun();
     await repo.markUnverifiable(u, 'raw_log_missing', 1);
     const v = await seedRun();
-    await repo.record(v, { status: 'verified', verifierVersion: 1, figuresChecked: 1, mismatches: [], rawLogRetainedUntil: null });
+    await repo.record(v, { status: 'verified', verifierVersion: 1, figuresChecked: 1, mismatches: [], rawLogRetainedUntil: null, ...NO_GATLING });
     const elsewhere = await seedRun({ orgId: otherOrgId, projectId: otherProjectId });
     await repo.markUnverifiable(elsewhere, 'raw_log_missing', 1);
 

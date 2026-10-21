@@ -586,6 +586,43 @@ export async function markEstimated(runId: string): Promise<void> {
 }
 
 /**
+ * Settle a seeded run's verification as `verified`, with the Gatling
+ * differences the verify job would have recorded.
+ *
+ * WRITTEN DIRECTLY, because nothing in this harness runs the verify job — the
+ * webServer starts the API alone, and the Gatling-method tool needs Java and
+ * its jar. What the browser case proves is the seam from `run_verification`
+ * through `GET /v1/runs/{id}/verification` to the panel; the job that writes
+ * the row has its own integration suite. Each difference is in the
+ * contract's shape, so the API's parse is part of what the case exercises.
+ */
+export async function settleVerification(
+  runId: string,
+  gatlingDifferences: readonly {
+    scope: 'run' | 'request' | 'group';
+    name: string;
+    population: 'all' | 'ok' | 'ko';
+    figure: 'p50' | 'p75' | 'p95' | 'p99';
+    gatlingLow: number;
+    gatlingHigh: number;
+    exact: number;
+  }[],
+): Promise<void> {
+  const row = {
+    status: 'verified',
+    checkedAt: new Date(),
+    verifierVersion: 2,
+    figuresChecked: 1482,
+    mismatches: [],
+    gatlingDifferences: [...gatlingDifferences],
+    // Null when the method did not run, so an empty list here is "ran and
+    // found nothing" — the state the no-table case is about.
+    gatlingReplays: 16,
+  };
+  await prisma.runVerification.upsert({ where: { runId }, create: { runId, ...row }, update: row });
+}
+
+/**
  * Write a run's note directly, for the GEOMETRY case — the browser case
  * writes one through the real form, which is the path that proves the
  * feature. No author: note_updated_by is a user id, and nothing that uses

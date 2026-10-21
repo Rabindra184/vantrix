@@ -152,6 +152,21 @@ describe('RunGlossary — every word it defines is a word the product says', () 
     expect(quoted.filter((q) => !product.includes(q))).toEqual([]);
   });
 
+  /**
+   * THE PERCENTILE ENTRY POINTS AT THE PANEL THAT LISTS WHERE GATLING DIFFERS.
+   * Saying the report "can differ" and leaving the reader to find out where is
+   * half an answer; the entry names the verification panel's table, and that
+   * name has to be one the panel itself still renders — the quote check above
+   * would accept the words from any file.
+   */
+  it('sends a reader to the verification panel for where Gatling’s report differs', () => {
+    const entry = ENTRIES.find((e) => e.term === 'Percentiles, estimated');
+    expect(entry, 'the percentile entry is gone').toBeDefined();
+    const quoted = [...entry!.meaning.matchAll(/“([^”]+)”/g)].map((m) => m[1]!);
+    const panel = stripComments(readFileSync(fromRepo('apps/web/src/routes/VerificationPanel.tsx'), 'utf8'));
+    expect(quoted.filter((q) => panel.includes(q)), 'the entry names nothing the verification panel renders').not.toEqual([]);
+  });
+
   /** A word nobody said where to find is a word nothing can check. */
   it('says where every headword lives, and defines nothing it cannot point at', () => {
     expect([...WORDS].sort()).toEqual(Object.keys(RENDERED_IN).sort());

@@ -13,3 +13,17 @@ export {
 } from './errors.js';
 export { expectedUsers, USER_BUCKET_CAP } from './users.js';
 export { compare, Ledger, matchRows, type Comparator, type RowPlace } from './compare.js';
+export {
+  GATLING_PERCENTILES,
+  gatlingMethodInput,
+  gatlingMethodLines,
+  GATLING_LINES_PER_CHUNK,
+  gatlingDifferences,
+  type GatlingKey,
+  type GatlingScope,
+  type GatlingPopulation,
+  type GatlingFigure,
+  type GatlingMethodInput,
+  type GatlingMethodOutput,
+  type GatlingDifference,
+} from './gatling-method.js';

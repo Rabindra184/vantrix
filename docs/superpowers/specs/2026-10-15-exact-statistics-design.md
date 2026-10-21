@@ -103,7 +103,8 @@ Rounding happens only at display, in one shared function.
 | `verifier_version` | Integer, bumped when rules change |
 | `figures_checked` | Count of compared values |
 | `mismatches` | JSON list: scope, name, family, population, bucket?, figure, stored, recomputed |
-| `gatling_differences` | JSON list: scope, name, figure, gatling value, exact value |
+| `gatling_differences` | JSON list: scope, name, population, figure, `gatlingLow`, `gatlingHigh`, exact value — one row per percentile where Gatling's range is not exactly the exact value; `[]` when nothing differs or the method did not run (amended 2026-10-21, §6) |
+| `gatling_replays` | Integer, nullable: the seed count the Gatling method ran with, or null when it did not run (amended 2026-10-21) |
 | `unverifiable_reason` | `raw_log_deleted` / `raw_log_missing` / null |
 | `raw_log_retained_until` | Date, or null for forever |
 
@@ -179,15 +180,65 @@ both exact and keeps them equal.
 
 ### Gatling's method
 
-- A Java tool (~100 lines, depending only on `com.tdunning:t-digest:3.3`)
-  ships in the image that already carries Java 21. It replays response times
-  in log order into `AVLTreeDigest(100)` per request, as Gatling's
-  `GeneralStatsBuffer`, and outputs Gatling's percentile values.
-- CI requires its output to equal Gatling's HTML report exactly on the
-  reference fixture, the assertion corpus, and the 2026-10-15
-  `BasicSimulation` run (committed as a fixture with its report).
+- A Java tool (`tools/gatling-method`, depending only on
+  `com.tdunning:t-digest:3.3`) ships in the image that already carries Java 21,
+  at `/opt/perfportal/gatling-method.jar`, run against the t-digest jar of the
+  image's Gatling runtime. Per stats key it adds every value in log order as
+  `digest.add((double) v)` to `new AVLTreeDigest(100.0)`, as Gatling's
+  `GeneralStatsBuffer`, and a percentile p is
+  `Math.round(digest.quantile(p / 100.0))`. Its I/O contract is in
+  `tools/gatling-method/README.md`.
 - Differences between its values and the exact values are stored in
-  `gatling_differences`.
+  `gatling_differences`. A tool failure, or a missing jar, never changes the
+  verification status: `gatling_replays` stays null and the list `[]`.
+
+**Amended 2026-10-21, from measurement. The four amendments below replace the
+earlier "equal Gatling's report exactly" rule.**
+
+1. **Gatling's report is not deterministic.** `AVLTreeDigest` breaks a tie
+   between equidistant centroids with an UNSEEDED `java.util.Random`
+   (`gen.nextDouble()` in `add`), so two reports of one log can differ. The
+   tool therefore replaces `gen` through reflection with
+   `new java.util.Random(seed)` for seeds `0..N-1` and reports each
+   percentile's lowest and highest value across those replays — reproducible
+   for a given N.
+   - Replaying the reference fixture with seeds 0..199, all-requests p99 took
+     7 values between 2349 and 2412; the report printed 2369.
+   - On the 2026-10-15 `BasicSimulation` run, `Session` p95 ranged 2389–3410
+     (the report printed 3320) and p99 10785–13295.
+   - Every one of the 40 + 44 percentile cells of the two reports' global
+     tables lies inside the replay's set.
+
+   The CI rule is: each report value is one the method produces across 200
+   seeds (low ≤ value ≤ high), and it EQUALS it wherever all 200 seeds agree.
+   `gatling_differences` stores `gatlingLow` / `gatlingHigh`, not one value;
+   a row is written where `gatlingLow ≠ exact` or `gatlingHigh ≠ exact`.
+   Production runs `GATLING_METHOD_SEEDS` replays (default 16); CI uses 200.
+2. **Group percentiles use the cumulated response time.** Every group cell of
+   both reports lies inside the cumulated replay, and outside the duration
+   replay for Catalog and Cart. A group's value is its
+   `cumulatedResponseTimeMs`.
+3. **The assertion corpus is replaced in CI by the `group-assertions` run.**
+   The corpus has no Gatling output committed. `group-assertions` records
+   `Search: 95th percentile … actual : 1853.0` in
+   `gatling-report-assertions.txt`, and CI requires 1853 to lie inside the
+   method's `Search` p95 range. CI checks: the reference report, the
+   2026-10-15 `BasicSimulation` run (committed with its report as
+   `fixtures/gatling-3.15.1.2/basic-simulation-2026-10-15/`) and
+   `group-assertions` — `infra/test/gatling-method-fixtures.mjs`, run in the
+   `compose` job inside the built image.
+4. **The method's population is every request record, warm-up included, at
+   Gatling's default percentiles 50, 75, 95 and 99.** Gatling knows no
+   warm-up, and the run's own `gatling.conf` is not recorded. The stats keys,
+   in log order: every request record feeds the run (all requests) in `all`
+   only, and its request (`<groups…>/<name>`, unspaced, as `run_stat.name`
+   stores it) in `all` and its status population; every group record feeds its
+   group in `all` and its status. The run has no `ok`/`ko` key because
+   Gatling's report prints none: its global table's percentile columns are
+   Total alone, and no detail page repeats the run (amended after the final
+   review: a run OK/KO row named a figure the report never shows). The exact
+   value a difference compares against is the nearest-rank value over the same
+   values.
 
 ## 7. User interface
 
@@ -197,10 +248,17 @@ Clean-UI rules apply: marks and labels on screen, detail one click away.
   failed (failed colour) / Not verified + ⓘ with the reason.
 - **Verification panel** (from the mark): figures checked, verifier version,
   time; raw-log retention date; "Differences from Gatling's report" table
-  (Request · Figure · Gatling report · PerfPortal) only when non-empty, with
-  one ⓘ sentence: "Gatling's report estimates percentiles with t-digest;
-  PerfPortal reports the actual value at that rank."; on mismatch, the
-  figures with stored and recomputed values.
+  (Request · Figure · Gatling's report · PerfPortal) only when non-empty, with
+  one ⓘ sentence: "Gatling's report estimates percentiles with t-digest, and
+  its estimate can change between two reports of the same run; PerfPortal
+  reports the actual value at that rank. Both count every request and group
+  record, warm-up included, as Gatling does." (the last sentence amended after
+  the final review: on a warm-up run the run's own table excludes the warm-up,
+  so without it the PerfPortal column read as a claim about that table); on
+  mismatch, the figures with stored
+  and recomputed values. *(Amended 2026-10-21 for §6's variance: the Gatling
+  cell shows the replay range, rendered `2389–3410` in the run page's plain
+  whole-millisecond digits, or one value where every replay agreed.)*
 - **Estimated runs:** percentile figures carry "≈" with ⓘ explaining why.
 - **Verdict changed by backfill:** one line under the verdict, ⓘ with rule
   and both values.
@@ -221,7 +279,23 @@ Clean-UI rules apply: marks and labels on screen, detail one click away.
 - Live = final: random chunking through the live fold equals batch output.
 - Verifier detects a corrupted count, percentile and bucket value, naming each;
   lint test for verifier independence.
-- Gatling-method tool equals Gatling's HTML report on the three fixtures.
+- Gatling-method tool reproduces Gatling's HTML report on the three fixtures
+  (amended 2026-10-21, §6): every percentile cell of the reference report and
+  the 2026-10-15 `BasicSimulation` report — the global table's Total column
+  and every request and group page's Total, OK and KO columns — lies inside
+  the 200-seed range and equals it wherever every seed agrees, and
+  `group-assertions`' `Search` p95 of 1853 lies inside its range. More than 150
+  cells, or the check fails. Red-verified with compression 50, `Math.floor`,
+  and groups fed their duration. **The cell floor is not the load-bearing
+  guard:** the detail pages repeat most index cells, so an index parser that
+  returned nothing still checked 193 cells and passed. Every key the log
+  produced must have been compared against at least one report cell, with no
+  exception (the run has no OK/KO key, amendment 4). At least 200 cells must be
+  ones every seed pinned to the value Gatling printed (240 of 277 measured): a
+  tool printing `[0, 2147483647]` everywhere passes every range check and pins
+  none. The tool's input is built by the worker's own `gatlingMethodInput` and
+  `gatlingMethodLines`, imported from `packages/verify`'s build, so the check
+  covers the production builder as well as the tool.
 - Backfill integration: exact rows, idempotent re-run, crash mid-transaction,
   verdict change recorded.
 - Browser: verified mark and panel, Gatling difference rows, ≈ label,
