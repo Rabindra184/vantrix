@@ -18,8 +18,10 @@ replaces `gen` (through reflection) with `new java.util.Random(seed)` for seeds
 replays. The output is therefore reproducible, and a report value is "Gatling's"
 when it lies inside the range — and equals it wherever every seed agrees.
 
-Measured on three real reports (`infra/test/gatling-method-fixtures.mjs`):
-every percentile cell lies inside the 200-seed range.
+Measured on three real reports (`infra/test/gatling-method-fixtures.mjs`,
+which builds the input with the worker's own `gatlingMethodInput`): every
+percentile cell lies inside the 200-seed range, and 240 of the 277 are pinned
+to one value by every seed.
 
 ## I/O contract
 
@@ -30,8 +32,9 @@ java -cp gatling-method.jar:t-digest-3.3.jar io.perfportal.gatlingmethod.Gatling
 
 - **stdin:** lines of `<key>\t<integer ms>`. The key is opaque text up to the
   LAST tab; the worker sends `k0`, `k1`, … and maps them back itself. Values of
-  one key are added in the order they arrive. Blank lines are ignored; a
-  trailing `\r` is stripped.
+  one key are added in the order they arrive; lines of different keys may come
+  in any order (the worker sends key by key, each key's values in log order).
+  Blank lines are ignored; a trailing `\r` is stripped.
 - **stdout:** one JSON line per key, in first-seen order:
 
   ```

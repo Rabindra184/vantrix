@@ -190,8 +190,15 @@ unseedable digest fails the BUILD.
 for this) and `group-assertions` (1, Gatling's own `Search` p95 assertion line,
 1853 — the assertion corpus has no Gatling output to compare). Each cell must
 lie in the range and EQUAL it wherever all 200 seeds agree; that `=== low` half
-is what keeps a range honest. Red-verified: compression 50 fails 61 cells,
-`Math.floor` for `round` 67, groups fed their duration 80. **THE CELL FLOOR WAS
+is what keeps a range honest, and at least 200 cells must reach it (240 of 277
+do): a tool printing `[0, 2147483647]` everywhere passes every range check and
+pins none. The tool's input comes from the worker's own `gatlingMethodInput` and
+`gatlingMethodLines`, imported from `packages/verify`'s build — the check's
+first version fed it from its own `statsKeys`, a second implementation that
+already differed (no `Math.max(0, round)`), so a regression in the worker's
+builder would have passed CI. Red-verified: compression 50 fails 61 cells,
+`Math.floor` for `round` 67, groups fed their duration 80 (in the tool, and
+again inside `gatlingMethodInput`), the wide-range tool 0 pinned. **THE CELL FLOOR WAS
 NOT ENOUGH ON ITS OWN**: an index parser returning `[]` still checked 193 cells
 through the detail pages and passed, with the run-level cells silently gone.
 The check now requires every key the log produced to have been compared at
@@ -207,12 +214,23 @@ and stores one row per (scope, name, population, percentile) where
 the seed count in the new `gatling_replays` (migration
 `20261021120000_gatling_replays`; null when the method did not run).
 `VERIFIER_VERSION` is 2, so the scan re-checks every run whose raw log still
-exists. The panel draws **Differences from Gatling's report** (Request · Figure
+exists — and each keeps its previous answer until its re-check lands. The scan
+marks a candidate pending only where it has no row (`ensurePending`, an INSERT
+… ON CONFLICT DO NOTHING); `markPending`, which clears a row, stays for a
+re-ingest or recompute, where the stored figures really changed. The first
+version used `markPending` on the scan path too, so the deploy that bumped the
+version would have turned every ✓ and every mismatch list on an install back to
+"Verifying…" until the one-at-a-time backlog drained. The panel draws **Differences from Gatling's report** (Request · Figure
 · Gatling's report · PerfPortal) only when the list is non-empty, a range as
 `2389–3410`, groups labelled as groups, 50 rows then "and N more", and one ⓘ
-saying Gatling's estimate can change between two reports of the same run. A
-missing jar, a Java older than 21, a timeout or a malformed answer is one
-`console.warn` and `[]` / null — **it never changes the verification status.**
+saying Gatling's estimate can change between two reports of the same run and
+that both columns count every request, warm-up included (the run's own table
+leaves a configured warm-up out). A Java older than 21, a timeout or a
+malformed answer is one `console.warn` per run and `[]` / null; a missing jar
+is one startup `console.log` and nothing per run — **neither ever changes the
+verification status.** A run verified while the method could not run is not
+re-filled when it becomes available; `DEPLOYMENT.md` gives the UPDATE that
+re-queues those.
 
 **THE REAL RUNS, ON A SCRATCH DATABASE** (`perfportal_gatling_real`, Redis db
 12, bucket `perfportal-gatling-real`, API :3762, this tree's worker with Java
@@ -221,7 +239,7 @@ plugin, live (run `1beec9ea`), and through the on-prem runner as a thin
 `gatlingEnterprisePackage` jar the runner lent its runtime to (run `d3abf0ac`).
 Both `complete`, 895 requests, **`verified`, 0 mismatches (21,612 and 21,718
 figures), `gatlingReplays` 16, 43 and 35 differences**. An independent script
-— the fixture check's `statsKeys` over the run's own raw log read back from the
+— the fixture check's then `statsKeys` over the run's own raw log read back from the
 bucket, the tool run directly at 16 seeds, nearest rank by its own integer
 formula — produced **the identical 43 and 35 rows, value for value**. Examples:
 plugin run all-requests p99 Gatling **2126–2184** against exact 2169, `Cart`
@@ -247,7 +265,15 @@ timeout is room for roughly 30M requests. Building the input in the worker
 (`gatlingMethodInput`) took **1.5 s and +250 MB RSS per million requests** (2.9
 s / +526 MB at 2M), on top of the decoded events the verification already holds
 — on a very long soak the worker's memory, not the timeout, is the tighter
-limit. The reference run's ~900 requests: 238 ms.
+limit. The reference run's ~900 requests: 238 ms. **The final fix wave cut
+that input to under a quarter**: it held one string per stdin line, and that
+array was all of its retained memory. It keeps each key's values as numbers
+now, and the runner writes a generator's chunks one at a time
+(`gatlingMethodLines`). The old builder and the new, on one synthetic million
+requests under `--expose-gc`: **+125.2 MB of retained heap (4M strings) against
++27.8 MB (3M numbers — a quarter fewer values, because the run's OK/KO feed
+went too); 62.2 MB at 2M**. The new one builds in 0.53 s and renders the 20 MB
+of stdin in 0.15 s, never more than one 31 KB chunk of text at a time.
 
 **RULINGS, EACH A DECISION RATHER THAN AN OVERSIGHT:**
 
@@ -268,10 +294,12 @@ limit. The reference run's ~900 requests: 238 ms.
   - The full gates run once, after the final whole-branch review's fix wave, so
     they measure the tree that ships (PR 3's order).
 
-**KNOWN AND LEFT:** `GATLING_METHOD_TIMEOUT_MS` above 2^31-1 overflows
-`setTimeout`; the runner has no case for a final stdout line without `\n`;
-an old worker during a rolling deploy can leave a stale `gatling_replays`
-beside `[]`; the difference type exists in `packages/verify` and in
+**KNOWN AND LEFT:** an old worker during a rolling deploy can leave a stale
+`gatling_replays` beside `[]` (it writes version 1, so the scan re-checks it);
+a version-1 run whose object vanished without retention becomes
+`unverifiable/raw_log_missing` on the re-check, which is the right signal; the
+method feeds a negative duration (a clock step) as 0 where Gatling feeds it
+raw; the difference type exists in `packages/verify` and in
 `@perfportal/contracts`, joined by the schema parse; the panel's table title
 bypasses `TableFrame`'s info slot. The panel was not opened in a browser on the
 real runs (`run-verification.spec.ts` renders it against seeded rows). The

@@ -286,7 +286,16 @@ Clean-UI rules apply: marks and labels on screen, detail one click away.
   the 200-seed range and equals it wherever every seed agrees, and
   `group-assertions`' `Search` p95 of 1853 lies inside its range. More than 150
   cells, or the check fails. Red-verified with compression 50, `Math.floor`,
-  and groups fed their duration.
+  and groups fed their duration. **The cell floor is not the load-bearing
+  guard:** the detail pages repeat most index cells, so an index parser that
+  returned nothing still checked 193 cells and passed. Every key the log
+  produced must have been compared against at least one report cell, with no
+  exception (the run has no OK/KO key, amendment 4). At least 200 cells must be
+  ones every seed pinned to the value Gatling printed (240 of 277 measured): a
+  tool printing `[0, 2147483647]` everywhere passes every range check and pins
+  none. The tool's input is built by the worker's own `gatlingMethodInput` and
+  `gatlingMethodLines`, imported from `packages/verify`'s build, so the check
+  covers the production builder as well as the tool.
 - Backfill integration: exact rows, idempotent re-run, crash mid-transaction,
   verdict change recorded.
 - Browser: verified mark and panel, Gatling difference rows, ≈ label,

@@ -58,9 +58,8 @@ export type GatlingKey = { scope: GatlingScope; name: string; population: Gatlin
  *
  * The stdin text is never held whole: `gatlingMethodLines` renders it a chunk
  * at a time while the runner writes. Holding every line as a string was ALL
- * of this input's retained memory — measured at +131 MB of heap per million
- * requests, one string per line — against roughly 32 MB for the same values as
- * numbers. Key by key is the same answer as log order: each key has its own
+ * of this input's retained memory — measured at +125 MB of heap per million
+ * requests, one string per line, against +28 MB for the values as numbers. Key by key is the same answer as log order: each key has its own
  * digest, and the tool's contract keeps only the order of one key's values.
  */
 export type GatlingMethodInput = {

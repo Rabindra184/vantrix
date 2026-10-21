@@ -352,9 +352,10 @@ its time grows with requests × seeds. Measured at the default 16 seeds on a
 soak-shaped input of ten distinct requests: **1 million requests took 9.3 s and peaked
 at 245 MB, 2 million took 18.2 s and 337 MB**. A ~900-request run takes well
 under a second. The worker also holds the replay's input while the tool runs —
-about 250 MB per million requests, on top of the decoded log the verification
-already holds — and on a very long soak that, not the five-minute timeout
-(room for roughly 30 million requests), is the tighter limit. Lowering
+each response time as a number, about 30 MB per million requests, written to
+the tool a small chunk at a time — beside the decoded log the verification
+already holds, which is the larger of the two. The five-minute timeout is room
+for roughly 30 million requests. Lowering
 `PERFPORTAL_GATLING_METHOD_SEEDS` trades the width of the range for time, not
 memory. The replay runs while the verification holds the run, so a re-ingest or
 recompute of that one run waits behind it.
