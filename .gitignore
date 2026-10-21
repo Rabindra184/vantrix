@@ -41,3 +41,7 @@ blob-report/
 # invisible to a runner started from a different directory — point both at one
 # absolute path, or give them a shared volume, as `infra/` does.)
 .perfportal/
+
+# The Gatling-method tool's compiled output; `tools/gatling-method/build.sh`
+# writes it and the image builds its own.
+tools/gatling-method/build/

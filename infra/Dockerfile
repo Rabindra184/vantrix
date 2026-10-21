@@ -16,7 +16,7 @@
 # `main` (21.0.12 at the time of writing), so this is one apt install from a
 # suite with a support policy — and `.github/workflows/ci.yml`'s `compose` job
 # now builds this image on every run, so the next such break is loud.
-FROM node:22-trixie-slim
+FROM node:22-trixie-slim AS runtime
 
 # ═══ JAVA 21, NOT THE 17 THIS IMAGE ONCE SHIPPED ═══
 #
@@ -109,6 +109,38 @@ RUN curl -fsSL -o /tmp/gatling.zip \
   # `apps/runner/src/artifact.ts` reads this exact filename.
   && ls /opt/gatling/lib/gatling-core-*.jar > /dev/null
 ENV RUNNER_GATLING_HOME=/opt/gatling
+
+# ═══ THE GATLING-METHOD TOOL, COMPILED IN A STAGE OF ITS OWN ═══
+#
+# `tools/gatling-method` replays a run's response times through t-digest's
+# `AVLTreeDigest(100)` the way Gatling's report does, so the verifier can say
+# where that report differs from the exact value. Compiling it needs a JDK;
+# RUNNING it needs only the JRE above. So a stage built FROM `runtime` adds
+# `openjdk-21-jdk-headless`, compiles, and is thrown away — the final image
+# keeps one jar and no compiler.
+#
+# It compiles against `/opt/gatling/lib/t-digest-3.3.jar` — the copy the
+# Gatling runtime above already carries, and the one the worker puts on the
+# tool's classpath. Building from `runtime` is what guarantees the two are the
+# same file; a separately downloaded t-digest could drift from the library
+# that actually wrote Gatling's reports.
+#
+# The smoke run fails the build if the tool cannot seed the digest
+# (`gen` renamed, or a t-digest other than 3.3 under that name).
+FROM runtime AS gatling-method
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends openjdk-21-jdk-headless \
+  && rm -rf /var/lib/apt/lists/*
+COPY tools/gatling-method /src/gatling-method
+RUN TDIGEST_JAR=/opt/gatling/lib/t-digest-3.3.jar bash /src/gatling-method/build.sh \
+  && printf 'k0\t1\nk0\t2\nk0\t3\n' \
+     | java -cp /src/gatling-method/build/gatling-method.jar:/opt/gatling/lib/t-digest-3.3.jar \
+         io.perfportal.gatlingmethod.GatlingMethod --seeds 2 --percentiles 50 \
+     | grep -qx '{"key":"k0","n":3,"p":{"50":\[2,2\]}}'
+
+FROM runtime
+
+COPY --from=gatling-method /src/gatling-method/build/gatling-method.jar /opt/perfportal/gatling-method.jar
 
 WORKDIR /app
 

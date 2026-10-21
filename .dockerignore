@@ -37,6 +37,8 @@ dist
 .claude
 
 # ═══ TEST AND TOOL ARTEFACTS ═══
+# A host-built jar of the Gatling-method tool; the image compiles its own.
+tools/gatling-method/build
 test-results
 playwright-report
 blob-report
