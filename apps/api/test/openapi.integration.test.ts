@@ -586,6 +586,12 @@ describe('OpenAPI document', () => {
     expect(Object.keys(difference?.properties ?? {}).sort()).toEqual(
       ['exact', 'figure', 'gatlingHigh', 'gatlingLow', 'name', 'population', 'scope'],
     );
+    // All seven required: a refine is where a zod-to-OpenAPI conversion can
+    // keep the properties and lose the required list, and a client would then
+    // read gatlingHigh as optional.
+    expect([...(difference?.required ?? [])].sort()).toEqual(
+      ['exact', 'figure', 'gatlingHigh', 'gatlingLow', 'name', 'population', 'scope'],
+    );
 
     const verification = schemas['Verification'];
     expect(Object.keys(verification?.properties?.['gatlingDifferences']?.items?.properties ?? {}).sort()).toEqual(

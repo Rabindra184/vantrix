@@ -169,6 +169,15 @@ describe('GatlingDifferenceSchema', () => {
     }
   });
 
+  /**
+   * On its own: the case above makes gatlingLow -1 beside each field, so it
+   * would still pass if `exact` lost its nonnegative() — a negative exact with
+   * a valid range is refused here by `exact` alone.
+   */
+  it('refuses a negative exact beside a valid range', () => {
+    expect(GatlingDifferenceSchema.safeParse({ ...difference, exact: -1 }).success).toBe(false);
+  });
+
   it('refuses a scope, population or figure outside its words', () => {
     expect(GatlingDifferenceSchema.safeParse({ ...difference, scope: 'scenario' }).success).toBe(false);
     expect(GatlingDifferenceSchema.safeParse({ ...difference, population: 'failed' }).success).toBe(false);
