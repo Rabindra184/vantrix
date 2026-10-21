@@ -105,9 +105,16 @@ function Detail({ verification: v }: { readonly verification: Verification }) {
 /** The table's name, and the words above it. */
 const DIFFERENCES_NAME = 'Differences from Gatling’s report';
 
-/** The ⓘ beside it: why a report of the same run can say otherwise. */
+/**
+ * The ⓘ beside it: why a report of the same run can say otherwise — and over
+ * what. Both columns count every request, warm-up included, because Gatling
+ * knows no warm-up; the run's own statistics leave a configured warm-up out,
+ * so on such a run the PerfPortal column can differ from the run's table too,
+ * and without the last sentence the claim "the actual value at that rank"
+ * would read as a claim about that table.
+ */
 const DIFFERENCES_INFO =
-  'Gatling’s report estimates percentiles with t-digest, and its estimate can change between two reports of the same run; PerfPortal reports the actual value at that rank.';
+  'Gatling’s report estimates percentiles with t-digest, and its estimate can change between two reports of the same run; PerfPortal reports the actual value at that rank. Both are taken over every request, warm-up included, as Gatling counts them.';
 
 /**
  * Each percentile where Gatling's own method, replayed over this run's raw

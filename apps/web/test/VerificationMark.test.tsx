@@ -376,12 +376,23 @@ describe('VerificationPanel — differences from Gatling’s report', () => {
     expect(figures).toEqual(['p95 (OK)', 'p99 (KO)', 'p50']);
   });
 
+  /**
+   * On a run with a warm-up, the run's own table leaves it out and both
+   * columns here count it: the ⓘ has to say so, or "the actual value at that
+   * rank" reads as a claim about the run's table.
+   */
+  it('the ⓘ says both columns count the warm-up', async () => {
+    const panel = await openPanel({ ...VERIFIED, gatlingDifferences: [difference()] });
+    const tip = within(panel).getByRole('button', { name: 'About differences from Gatling’s report' });
+    expect(tip).toHaveAccessibleDescription(/warm-up included/);
+  });
+
   it('the ⓘ carries the copy', async () => {
     const panel = await openPanel({ ...VERIFIED, gatlingDifferences: [difference()] });
     expect(panel).toHaveTextContent(DIFFERENCES);
     const tip = within(panel).getByRole('button', { name: 'About differences from Gatling’s report' });
     expect(tip).toHaveAccessibleDescription(
-      'Gatling’s report estimates percentiles with t-digest, and its estimate can change between two reports of the same run; PerfPortal reports the actual value at that rank.',
+      'Gatling’s report estimates percentiles with t-digest, and its estimate can change between two reports of the same run; PerfPortal reports the actual value at that rank. Both are taken over every request, warm-up included, as Gatling counts them.',
     );
   });
 });
