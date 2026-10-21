@@ -30,7 +30,15 @@ export interface VerificationRecord {
   verifierVersion: number | null;
   figuresChecked: number;
   mismatches: FigureMismatch[];
+  /**
+   * Where Gatling's own report would differ from the exact figures —
+   * packages/verify's GatlingDifference rows, which persistence cannot name.
+   * Empty when nothing differed OR the method did not run: gatlingReplays
+   * says which.
+   */
   gatlingDifferences: unknown[];
+  /** How many seeded replays of Gatling's method found them; null when it did not run. */
+  gatlingReplays: number | null;
   unverifiableReason: UnverifiableReason | null;
   rawLogRetainedUntil: Date | null;
 }
@@ -41,6 +49,13 @@ export interface VerificationResult {
   figuresChecked: number;
   mismatches: FigureMismatch[];
   rawLogRetainedUntil: Date | null;
+  /**
+   * REQUIRED, with no default: a check that did not run Gatling's method says
+   * so ([] and null). A default would let a caller that DID run it drop the
+   * list in silence, and the run would read as agreeing with Gatling.
+   */
+  gatlingDifferences: unknown[];
+  gatlingReplays: number | null;
 }
 
 export interface VerificationSummary {
@@ -67,6 +82,7 @@ interface VerificationRow {
   figures_checked: number;
   mismatches: unknown;
   gatling_differences: unknown;
+  gatling_replays: number | null;
   unverifiable_reason: string | null;
   raw_log_retained_until: string | null;
 }
@@ -186,7 +202,8 @@ function jsonArray<T>(value: unknown): T[] {
 
 const SELECT_ROW = `
   SELECT run_id, status, checked_at, verifier_version, figures_checked, mismatches,
-         gatling_differences, unverifiable_reason, raw_log_retained_until::text AS raw_log_retained_until
+         gatling_differences, gatling_replays, unverifiable_reason,
+         raw_log_retained_until::text AS raw_log_retained_until
     FROM run_verification`;
 
 /**
@@ -228,7 +245,7 @@ export class VerificationRepository {
        ON CONFLICT (run_id) DO UPDATE SET
          status = EXCLUDED.status, checked_at = EXCLUDED.checked_at, verifier_version = NULL,
          figures_checked = 0, mismatches = '[]'::jsonb, gatling_differences = '[]'::jsonb,
-         unverifiable_reason = EXCLUDED.unverifiable_reason
+         gatling_replays = NULL, unverifiable_reason = EXCLUDED.unverifiable_reason
         WHERE EXCLUDED.status = 'pending' OR run_verification.status = 'pending'`,
       [runId],
     );
@@ -249,17 +266,22 @@ export class VerificationRepository {
     return rows[0]?.ok === true;
   }
 
+  /**
+   * A finished check: its outcome, and — both at once — the Gatling
+   * differences and the replay count that found them, replacing whatever the
+   * previous check left.
+   */
   async record(runId: string, r: VerificationResult): Promise<void> {
     await this.pool.query(
       `INSERT INTO run_verification
          (run_id, status, checked_at, verifier_version, figures_checked, mismatches,
-          unverifiable_reason, raw_log_retained_until)
-       VALUES ($1::uuid, $2, now(), $3, $4, $5::jsonb, NULL, $6::date)
+          unverifiable_reason, raw_log_retained_until, gatling_differences, gatling_replays)
+       VALUES ($1::uuid, $2, now(), $3, $4, $5::jsonb, NULL, $6::date, $7::jsonb, $8)
        ON CONFLICT (run_id) DO UPDATE SET
          status = EXCLUDED.status, checked_at = EXCLUDED.checked_at,
          verifier_version = EXCLUDED.verifier_version, figures_checked = EXCLUDED.figures_checked,
          mismatches = EXCLUDED.mismatches, unverifiable_reason = NULL,
-         gatling_differences = '[]'::jsonb,
+         gatling_differences = EXCLUDED.gatling_differences, gatling_replays = EXCLUDED.gatling_replays,
          raw_log_retained_until = EXCLUDED.raw_log_retained_until`,
       [
         runId,
@@ -268,6 +290,8 @@ export class VerificationRepository {
         r.figuresChecked,
         JSON.stringify(r.mismatches),
         dayText(r.rawLogRetainedUntil),
+        JSON.stringify(r.gatlingDifferences),
+        r.gatlingReplays,
       ],
     );
   }
@@ -279,7 +303,7 @@ export class VerificationRepository {
        ON CONFLICT (run_id) DO UPDATE SET
          status = 'unverifiable', checked_at = now(), verifier_version = EXCLUDED.verifier_version,
          figures_checked = 0, mismatches = '[]'::jsonb, gatling_differences = '[]'::jsonb,
-         unverifiable_reason = EXCLUDED.unverifiable_reason`,
+         gatling_replays = NULL, unverifiable_reason = EXCLUDED.unverifiable_reason`,
       [runId, reason, verifierVersion],
     );
   }
@@ -297,6 +321,7 @@ export class VerificationRepository {
       figuresChecked: row.figures_checked,
       mismatches: jsonArray<FigureMismatch>(row.mismatches),
       gatlingDifferences: jsonArray<unknown>(row.gatling_differences),
+      gatlingReplays: row.gatling_replays,
       unverifiableReason: row.unverifiable_reason as UnverifiableReason | null,
       rawLogRetainedUntil: utcDay(row.raw_log_retained_until),
     };
@@ -423,7 +448,8 @@ export class VerificationRepository {
         WHERE ${VERIFIABLE_RUN_SQL}
        ON CONFLICT (run_id) DO UPDATE SET
          status = 'unverifiable', checked_at = now(), unverifiable_reason = 'raw_log_deleted',
-         figures_checked = 0, mismatches = '[]'::jsonb, gatling_differences = '[]'::jsonb
+         figures_checked = 0, mismatches = '[]'::jsonb, gatling_differences = '[]'::jsonb,
+         gatling_replays = NULL
         WHERE run_verification.status = 'pending'`,
       [runId],
     );

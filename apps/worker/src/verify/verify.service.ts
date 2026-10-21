@@ -169,6 +169,10 @@ export class VerifyService {
       // ingested_at is the retention clock, and every terminal writer stamps
       // it: now stands in only for a row somehow missing it.
       rawLogRetainedUntil: retainedUntil(run.ingestedAt ?? new Date(), this.config.rawLogRetentionDays),
+      // The Gatling method has not run: nothing compared, no replays. Stated
+      // rather than defaulted, so the job that does run it has to say so here.
+      gatlingDifferences: [],
+      gatlingReplays: null,
     });
     if (status === 'mismatch') {
       // ONE line: the list is on the row, and the Data integrity page shows it.

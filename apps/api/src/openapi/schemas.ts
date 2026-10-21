@@ -11,6 +11,7 @@ import {
   VerdictChangeSchema,
   DataIntegritySchema,
   FigureMismatchSchema,
+  GatlingDifferenceSchema,
   VerificationSchema,
   VerificationSummarySchema,
   ChangePasswordRequestSchema,
@@ -175,6 +176,9 @@ const SOURCE: Record<string, ZodTypeAny> = {
   VerificationSummary: VerificationSummarySchema,
   FigureMismatch: FigureMismatchSchema,
   Verification: VerificationSchema,
+  // EXACT STATISTICS, PR 4: one percentile where Gatling's own report would
+  // differ (the verification record embeds a list of them).
+  GatlingDifference: GatlingDifferenceSchema,
   DataIntegrity: DataIntegritySchema,
   ProjectMember: ProjectMemberSchema,
   MemberListResponse: MemberListResponseSchema,

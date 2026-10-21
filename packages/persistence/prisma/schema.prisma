@@ -860,6 +860,7 @@ model RunVerification {
   figuresChecked      Int       @default(0) @map("figures_checked")
   mismatches          Json      @default("[]")
   gatlingDifferences  Json      @default("[]") @map("gatling_differences")
+  gatlingReplays      Int?      @map("gatling_replays")
   unverifiableReason  String?   @map("unverifiable_reason")
   rawLogRetainedUntil DateTime? @map("raw_log_retained_until") @db.Date
 

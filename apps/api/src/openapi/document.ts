@@ -1275,8 +1275,16 @@ const paths: Record<string, PathItemObject> = {
         'log under the deployment\'s current setting — the ingest\'s day plus the retention — ' +
         'and null once it is deleted or when raw logs are kept for ever; retention keeps the log ' +
         'past that day while the run is still to be verified or recomputed, or its verification ' +
-        'found a mismatch. "rawLogDeleted" is whether retention has already removed it. A run ' +
-        'outside the caller\'s organisation or project answers 404.',
+        'found a mismatch. "rawLogDeleted" is whether retention has already removed it. ' +
+        '"gatlingDifferences" lists each percentile (p50, p75, p95, p99 of a run, request or ' +
+        'group, in all, ok or ko) where Gatling\'s own report would differ from the exact value: ' +
+        'Gatling estimates percentiles with t-digest and its estimate can change between two ' +
+        'reports of the same log, so its side is the range "gatlingLow" to "gatlingHigh" its ' +
+        'method produced across seeded replays, beside the nearest-rank "exact". ' +
+        '"gatlingReplays" is how many replays that was, and null when the method did not run — ' +
+        'an empty list then means nothing was compared, not that nothing differs. Both are ' +
+        'absent from an older server. A run outside the caller\'s organisation or project ' +
+        'answers 404.',
       parameters: [parameters['RunId']!],
       responses: {
         '200': {

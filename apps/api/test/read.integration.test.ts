@@ -224,18 +224,21 @@ async function recordVerification(
     figuresChecked?: number;
     mismatches?: unknown[];
     retainedUntil?: string | null;
+    gatlingDifferences?: unknown[];
+    gatlingReplays?: number | null;
   },
 ): Promise<void> {
   await ctx.pool.query(
     `INSERT INTO run_verification
        (run_id, status, checked_at, verifier_version, figures_checked, mismatches,
-        unverifiable_reason, raw_log_retained_until)
-     VALUES ($1::uuid, $2, $3::timestamptz, $4, $5, $6::jsonb, $7, $8::date)
+        unverifiable_reason, raw_log_retained_until, gatling_differences, gatling_replays)
+     VALUES ($1::uuid, $2, $3::timestamptz, $4, $5, $6::jsonb, $7, $8::date, $9::jsonb, $10)
      ON CONFLICT (run_id) DO UPDATE SET
        status = EXCLUDED.status, checked_at = EXCLUDED.checked_at,
        verifier_version = EXCLUDED.verifier_version, figures_checked = EXCLUDED.figures_checked,
        mismatches = EXCLUDED.mismatches, unverifiable_reason = EXCLUDED.unverifiable_reason,
-       raw_log_retained_until = EXCLUDED.raw_log_retained_until`,
+       raw_log_retained_until = EXCLUDED.raw_log_retained_until,
+       gatling_differences = EXCLUDED.gatling_differences, gatling_replays = EXCLUDED.gatling_replays`,
     [
       runId,
       row.status,
@@ -245,6 +248,8 @@ async function recordVerification(
       JSON.stringify(row.mismatches ?? []),
       row.reason ?? null,
       row.retainedUntil ?? null,
+      JSON.stringify(row.gatlingDifferences ?? []),
+      row.gatlingReplays ?? null,
     ],
   );
 }
@@ -353,6 +358,9 @@ describe('GET /v1/runs/:id/verification', () => {
       // The ingest's UTC day plus 90 days, on a machine in any zone.
       rawLogRetainedUntil: '2027-01-14',
       rawLogDeleted: false,
+      // Recorded with the method not run: nothing compared, no replays.
+      gatlingDifferences: [],
+      gatlingReplays: null,
     });
   });
 
@@ -375,7 +383,53 @@ describe('GET /v1/runs/:id/verification', () => {
       mismatches: [],
       rawLogRetainedUntil: '2027-01-14',
       rawLogDeleted: false,
+      gatlingDifferences: [],
+      gatlingReplays: null,
     });
+  });
+
+  /**
+   * ═══ WHERE GATLING'S REPORT DIFFERS, AND HOW MANY REPLAYS FOUND IT ═══
+   *
+   * Both fields go through the contract parse, so a controller that dropped
+   * either would answer a body the parse reads as absent — the toEqual below
+   * names both, and a replay count only a real row carries.
+   */
+  it('answers the Gatling differences and the number of replays that found them', async () => {
+    ctx = await createTestApp();
+    const id = await ingested();
+    const difference = {
+      scope: 'request', name: 'Cart/Add To Cart', population: 'all', figure: 'p95',
+      gatlingLow: 2389, gatlingHigh: 3410, exact: 2458,
+    };
+    await recordVerification(id, {
+      status: 'verified', checkedAt: '2026-10-21T09:00:00Z', verifierVersion: 2, figuresChecked: 10,
+      gatlingDifferences: [difference], gatlingReplays: 16,
+    });
+    const res = await readAs(`/v1/runs/${id}/verification`);
+    expect(res.status).toBe(200);
+    const body = VerificationSchema.parse(res.body);
+    expect([body.gatlingDifferences, body.gatlingReplays]).toEqual([[difference], 16]);
+  });
+
+  /**
+   * A stored list the contract refuses is a 500, as a refused mismatch list
+   * is (the controller's docstring): only the worker writes the column, from
+   * typed values, so a range with its ends reversed was written by hand — and
+   * a panel quietly showing part of it would misstate the record opened.
+   */
+  it('answers 500 for a stored Gatling difference the contract refuses', async () => {
+    ctx = await createTestApp();
+    const id = await ingested();
+    await recordVerification(id, {
+      status: 'verified', checkedAt: '2026-10-21T09:00:00Z', verifierVersion: 2,
+      gatlingDifferences: [{
+        scope: 'run', name: '', population: 'all', figure: 'p99', gatlingLow: 2412, gatlingHigh: 2349, exact: 2401,
+      }],
+      gatlingReplays: 16,
+    });
+    const res = await readAs(`/v1/runs/${id}/verification`);
+    expect([res.status, res.body.code]).toEqual([500, 'INTERNAL']);
   });
 
   /**

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   FigureMismatchSchema,
+  GatlingDifferenceSchema,
   RunIdentitySchema,
   RunProcessingSchema,
   RunResponseSchema,
@@ -127,5 +128,92 @@ describe('VerificationSchema', () => {
     const rest: Record<string, unknown> = { ...verification };
     delete rest.rawLogDeleted;
     expect(VerificationSchema.safeParse(rest).success).toBe(false);
+  });
+});
+
+/**
+ * ═══ ONE PERCENTILE WHERE GATLING'S REPORT DIFFERS FROM THE EXACT VALUE ═══
+ *
+ * The shape `@perfportal/verify` builds (GatlingDifference in
+ * gatling-method.ts), restated: contracts cannot import that package. A RANGE,
+ * because Gatling's own estimate changes between two reports of one log.
+ */
+describe('GatlingDifferenceSchema', () => {
+  const difference = {
+    scope: 'request',
+    name: 'Cart/Add To Cart',
+    population: 'all',
+    figure: 'p95',
+    gatlingLow: 2389,
+    gatlingHigh: 3410,
+    exact: 2458,
+  };
+
+  it('accepts the stored shape, and a range of one value', () => {
+    expect(GatlingDifferenceSchema.parse(difference)).toEqual(difference);
+    const single = { ...difference, scope: 'run', name: '', population: 'ko', figure: 'p99', gatlingLow: 0, gatlingHigh: 0 };
+    expect(GatlingDifferenceSchema.parse(single)).toEqual(single);
+    // group is a scope Gatling's report has a row for; p50 and p75 its other figures.
+    expect(GatlingDifferenceSchema.safeParse({ ...difference, scope: 'group', figure: 'p50' }).success).toBe(true);
+    expect(GatlingDifferenceSchema.safeParse({ ...difference, population: 'ok', figure: 'p75' }).success).toBe(true);
+  });
+
+  it('refuses a range whose low end is above its high end', () => {
+    expect(GatlingDifferenceSchema.safeParse({ ...difference, gatlingLow: 3411, gatlingHigh: 3410 }).success).toBe(false);
+  });
+
+  it('refuses a fraction or a negative millisecond count, on every side', () => {
+    for (const field of ['gatlingLow', 'gatlingHigh', 'exact'] as const) {
+      expect(GatlingDifferenceSchema.safeParse({ ...difference, [field]: 2400.5 }).success, field).toBe(false);
+      expect(GatlingDifferenceSchema.safeParse({ ...difference, gatlingLow: -1, [field]: -1 }).success, field).toBe(false);
+    }
+  });
+
+  it('refuses a scope, population or figure outside its words', () => {
+    expect(GatlingDifferenceSchema.safeParse({ ...difference, scope: 'scenario' }).success).toBe(false);
+    expect(GatlingDifferenceSchema.safeParse({ ...difference, population: 'failed' }).success).toBe(false);
+    expect(GatlingDifferenceSchema.safeParse({ ...difference, figure: 'p99.9' }).success).toBe(false);
+    expect(GatlingDifferenceSchema.safeParse({ ...difference, figure: 'max' }).success).toBe(false);
+  });
+});
+
+/**
+ * The two Gatling fields on the record are OPTIONAL — an API pod older than
+ * them sends neither — and `gatlingReplays` is null when the method did not
+ * run, the seed count when it did.
+ */
+describe('VerificationSchema: the Gatling differences', () => {
+  const verification = {
+    status: 'verified',
+    reason: null,
+    checkedAt: '2026-10-21T09:00:00.000Z',
+    verifierVersion: 2,
+    figuresChecked: 4120,
+    mismatches: [],
+    rawLogRetainedUntil: '2027-01-14',
+    rawLogDeleted: false,
+  };
+  const difference = {
+    scope: 'run', name: '', population: 'all', figure: 'p99', gatlingLow: 2349, gatlingHigh: 2412, exact: 2401,
+  };
+
+  it('accepts a record without either field (rolling deploy), with null replays, and with both', () => {
+    const absent = VerificationSchema.parse(verification);
+    expect(absent.gatlingDifferences).toBeUndefined();
+    expect(absent.gatlingReplays).toBeUndefined();
+    expect(VerificationSchema.parse({ ...verification, gatlingDifferences: [], gatlingReplays: null })).toEqual({
+      ...verification, gatlingDifferences: [], gatlingReplays: null,
+    });
+    const full = { ...verification, gatlingDifferences: [difference], gatlingReplays: 16 };
+    expect(VerificationSchema.parse(full)).toEqual(full);
+  });
+
+  it('refuses a difference the difference schema refuses, and a replay count that is not a positive integer', () => {
+    expect(
+      VerificationSchema.safeParse({ ...verification, gatlingDifferences: [{ ...difference, gatlingLow: 2413 }] }).success,
+    ).toBe(false);
+    for (const replays of [0, -1, 1.5]) {
+      expect(VerificationSchema.safeParse({ ...verification, gatlingReplays: replays }).success, String(replays)).toBe(false);
+    }
   });
 });
