@@ -36,6 +36,8 @@ import { STATUS, VERDICT } from './marks';
 import { NEW_PROJECT_ROUTE, runPath } from './paths';
 import useDocumentTitle from '../useDocumentTitle';
 import { runName } from '../runNumber';
+import { Approx } from '../components/Approx';
+import { isExact } from './statsMethod';
 
 type RunListItem = RunListResponse['items'][number];
 
@@ -1118,7 +1120,7 @@ function RunCard({
         <div className="flex items-baseline gap-1.5">
           <dt className="text-muted">p95</dt>
           <dd data-testid="run-p95" className="tabular-nums text-primary">
-            {run.metrics?.p95Ms == null ? '—' : `${Math.round(run.metrics.p95Ms)} ms`}
+            <P95 run={run} />
           </dd>
         </div>
         <div className="flex items-baseline gap-1.5">
@@ -1291,7 +1293,7 @@ function RunRow({
        * `tabular-nums` so the digits line up down the column; these exist to
        * be scanned against each other rather than read one at a time. */}
       <td className={`${TD} tabular-nums whitespace-nowrap`} data-testid="run-p95">
-        {run.metrics?.p95Ms == null ? '—' : `${Math.round(run.metrics.p95Ms)} ms`}
+        <P95 run={run} />
       </td>
       <td className={`${TD} tabular-nums whitespace-nowrap`} data-testid="run-error-rate">
         {run.metrics == null ? (
@@ -1362,4 +1364,18 @@ function AssertionLine({ checks }: { readonly checks: RunListItem['checks'] }) {
       {checks.failed} {checks.failed === 1 ? 'assertion' : 'assertions'} failed
     </span>
   );
+}
+
+/**
+ * A row's p95, with ≈ before it when the run's figures were estimated.
+ *
+ * One component for the table cell AND the phone card, so the two cannot
+ * disagree about which runs carry the mark. Per run, from the row's OWN
+ * `statsMethod`: a page can hold runs either side of the backfill, and a ≈ on
+ * an exact run is as false as a missing one on an estimate. A run with no p95
+ * has no figure to qualify, so its "—" stays bare.
+ */
+function P95({ run }: { readonly run: RunListResponse['items'][number] }) {
+  if (run.metrics?.p95Ms == null) return <>—</>;
+  return <Approx exact={isExact(run.statsMethod)}>{`${Math.round(run.metrics.p95Ms)} ms`}</Approx>;
 }

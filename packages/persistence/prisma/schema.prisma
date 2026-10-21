@@ -521,12 +521,15 @@ model Run {
   /// When this run's statistics were last rewritten by a recompute; null for
   /// a run parsed exact the first time.
   recomputedAt     DateTime? @map("recomputed_at") @db.Timestamptz(3)
+  // When retention deleted the raw log; null while it is kept.
+  rawLogDeletedAt  DateTime? @map("raw_log_deleted_at") @db.Timestamptz(3)
 
   project    Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
   package    Package?       @relation(fields: [packageId], references: [id], onDelete: SetNull, onUpdate: NoAction)
   test       Test?          @relation(fields: [testId], references: [id], onDelete: SetNull)
   assertions RunAssertion[]
   verdictChanges RunVerdictChange[]
+  verification   RunVerification?
   runnerJobs RunnerJob[]
   /// SET NULL, not CASCADE: a deleted account keeps its words on the run and
   /// loses only the attribution.
@@ -543,6 +546,8 @@ model Run {
   @@index([projectId, startedAt(sort: Desc)])
   @@index([status, createdAt])
   @@index([packageId])
+  // The retention clock: every terminal writer stamps ingested_at.
+  @@index([ingestedAt])
   // The other six columns of the run list's `?q=` search. See the pair on
   // `Project` above for why every one of them needs its own index.
   @@index([simulation(ops: raw("gin_trgm_ops"))], type: Gin, map: "run_simulation_trgm")
@@ -843,6 +848,25 @@ model RunVerdictChange {
 
   @@index([runId])
   @@map("run_verdict_change")
+}
+
+// One verification per run: whether its stored figures were re-derived from
+// its raw log and agreed. Not Verification, which is Better Auth's table.
+model RunVerification {
+  runId               String    @id @map("run_id") @db.Uuid
+  status              String
+  checkedAt           DateTime? @map("checked_at") @db.Timestamptz(3)
+  verifierVersion     Int?      @map("verifier_version")
+  figuresChecked      Int       @default(0) @map("figures_checked")
+  mismatches          Json      @default("[]")
+  gatlingDifferences  Json      @default("[]") @map("gatling_differences")
+  unverifiableReason  String?   @map("unverifiable_reason")
+  rawLogRetainedUntil DateTime? @map("raw_log_retained_until") @db.Date
+
+  run Run @relation(fields: [runId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([status])
+  @@map("run_verification")
 }
 
 model User {

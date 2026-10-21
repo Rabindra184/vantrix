@@ -1,7 +1,13 @@
 import 'reflect-metadata';
 import { Queue } from 'bullmq';
 import { Redis } from 'ioredis';
-import { createPool, createPrisma, RecomputeRepository, RuleRepository } from '@perfportal/persistence';
+import {
+  createPool,
+  createPrisma,
+  RecomputeRepository,
+  RuleRepository,
+  VerificationRepository,
+} from '@perfportal/persistence';
 import { BlobStore, LiveChunkStore } from '@perfportal/storage';
 import { loadWorkerConfig } from './config.js';
 import { startConsumer } from './consumer.js';
@@ -11,6 +17,8 @@ import { createRecomputeScan, RECOMPUTE_QUEUE, startRecomputeConsumer } from './
 import { RecomputeService } from './recompute/recompute.service.js';
 import { runShutdown } from './shutdown.js';
 import { Sweeper } from './sweeper.js';
+import { createVerifyScan, enqueueVerification, startVerifyConsumer, VERIFY_QUEUE } from './verify/verify-queue.js';
+import { VerifyService } from './verify/verify.service.js';
 
 const config = loadWorkerConfig();
 
@@ -59,11 +67,15 @@ const PRISMA_HEADROOM = 1;
 // The recompute consumer (concurrency 1) reads a run and its project through Prisma, one query at a time.
 // Reserved even when RECOMPUTE_ENABLED=false: one idle connection's worth of budget, not worth a branch.
 const RECOMPUTE_PRISMA_CLIENTS = 1;
+// The verify consumer (concurrency 1) reads a run and its project through Prisma, one query at a time.
+// Reserved even when VERIFY_ENABLED=false, for recompute's reason.
+const VERIFY_PRISMA_CLIENTS = 1;
 const prisma = createPrisma(config.databaseUrl, {
   connectionLimit:
     config.concurrency * PIPELINE_PRISMA_CLIENTS_PER_JOB +
     config.maxOwnedRuns * FOLD_OWNER_CLAIM_PRISMA_CLIENTS +
     RECOMPUTE_PRISMA_CLIENTS +
+    VERIFY_PRISMA_CLIENTS +
     PRISMA_HEADROOM,
 });
 
@@ -107,12 +119,19 @@ const prisma = createPrisma(config.databaseUrl, {
  */
 const FOLD_OWNER_DISCOVERY_CLIENTS = 1;
 const PIPELINE_CLIENTS_PER_JOB = 2;
-const SWEEPER_CLIENTS = 1;
+// `Sweeper.sweep` holds one client for its recovery transaction, and then, one run at a time, a
+// retention pass's lock client beside the pool query that stamps the run: two at once at most.
+const SWEEPER_CLIENTS = 2;
 // `RecomputeService.recompute` holds the run's lock client and, inside it, its write transaction's: two at once.
 const RECOMPUTE_CLIENTS = 2;
 // The recompute scheduler's candidate query, which can run beside a recompute.
 // Both recompute terms are reserved even when RECOMPUTE_ENABLED=false (a ceiling, not an allocation).
 const RECOMPUTE_SCAN_CLIENTS = 1;
+// `VerifyService.verify` holds the run's lock client and, inside it, one pool query at a time (the
+// stored-figure reads are sequential on purpose): two at once. Plus the verify scheduler's
+// candidate query, which can run beside a verification. Reserved even when VERIFY_ENABLED=false.
+const VERIFY_CLIENTS = 2;
+const VERIFY_SCAN_CLIENTS = 1;
 const pool = createPool(config.databaseUrl, {
   max:
     config.maxOwnedRuns +
@@ -120,15 +139,44 @@ const pool = createPool(config.databaseUrl, {
     config.concurrency * PIPELINE_CLIENTS_PER_JOB +
     SWEEPER_CLIENTS +
     RECOMPUTE_CLIENTS +
-    RECOMPUTE_SCAN_CLIENTS,
+    RECOMPUTE_SCAN_CLIENTS +
+    VERIFY_CLIENTS +
+    VERIFY_SCAN_CLIENTS,
   connectionTimeoutMillis: 10_000,
 });
 const blobs = new BlobStore(config.blob);
 await blobs.ensureBucket();
 const chunks = new LiveChunkStore(blobs);
 
-const pipeline = new PipelineService(config, prisma, pool, blobs);
+/**
+ * Verification of every run against its raw log (`verify/verify-queue.ts`):
+ * requested after each successful ingest and each recompute, and found by a
+ * scheduled scan for anything those requests missed (a run ingested while
+ * this was switched off, a request Redis refused, a verifier version bump).
+ * With `VERIFY_ENABLED=false` nothing is requested or scanned; the scan finds
+ * the backlog once it is switched back on.
+ */
+const verifications = new VerificationRepository(pool);
+const verifyQueue = config.verifyEnabled ? new Queue(VERIFY_QUEUE, { connection: { url: config.redisUrl } }) : null;
+const requestVerification = verifyQueue
+  ? async (runId: string): Promise<void> => {
+      await enqueueVerification(verifyQueue, verifications, runId);
+    }
+  : undefined;
+
+const pipeline = new PipelineService(config, prisma, pool, blobs, requestVerification);
 const worker = startConsumer(config, pipeline);
+
+let verify: { consumer: ReturnType<typeof startVerifyConsumer>; timer: NodeJS.Timeout } | null = null;
+if (verifyQueue) {
+  const consumer = startVerifyConsumer(config, new VerifyService(config, prisma, pool, blobs));
+  // Fire-and-forget, as the recompute scan below: startup must not wait on it.
+  const scan = createVerifyScan(verifyQueue, verifications);
+  void scan();
+  const timer = setInterval(() => void scan(), config.verifyScanIntervalMs);
+  timer.unref();
+  verify = { consumer, timer };
+}
 
 /**
  * Background recompute of runs still carrying estimated statistics, behind
@@ -141,7 +189,9 @@ let recompute:
   | null = null;
 if (config.recomputeEnabled) {
   const queue = new Queue(RECOMPUTE_QUEUE, { connection: { url: config.redisUrl } });
-  const consumer = startRecomputeConsumer(config, new RecomputeService(config, prisma, pool, blobs));
+  const consumer = startRecomputeConsumer(config, new RecomputeService(config, prisma, pool, blobs), {
+    requestVerification,
+  });
   const scan = createRecomputeScan(queue, new RecomputeRepository(pool));
   void scan();
   const timer = setInterval(() => void scan(), config.recomputeScanIntervalMs);
@@ -225,6 +275,14 @@ function shutdown(): Promise<void> {
       clearInterval(recompute.timer);
       await recompute.consumer.close();
       await recompute.queue.close();
+    } },
+    // Before pool.end(), for recompute's reason: a verification in flight holds pool clients.
+    { name: 'verify.close', run: async () => {
+      if (verify) {
+        clearInterval(verify.timer);
+        await verify.consumer.close();
+      }
+      await verifyQueue?.close();
     } },
     { name: 'sweeper.close', run: () => sweeper.close() },
     // Before pool.end(): each owned run holds a dedicated pooled client for

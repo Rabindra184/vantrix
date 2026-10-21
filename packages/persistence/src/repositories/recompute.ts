@@ -40,6 +40,30 @@ export interface VerdictChangeRecord {
 }
 
 /**
+ * ═══ A RUN WHOSE STATISTICS ARE NOT ALL EXACT ═══
+ *
+ * Labelled estimated, or carrying a stat row in an older format (a sketch, or
+ * a histogram kind before sparse-ms-v2). By label AND by stored format, for
+ * the reason the candidate predicate below gives. ONE definition, read by the
+ * recompute's selection, by the verifier (which marks such a run
+ * unverifiable/not_exact rather than reporting a flood of mismatches that say
+ * only "estimated") and by the verify scan (which takes such a row back once
+ * a recompute has made the run exact). Parenthesised, so it can be negated.
+ *
+ * Reads the run as r. No backticks in here: this string is interpolated into
+ * template literals, and one of those ends the string.
+ */
+export const NOT_EXACT_RUN_SQL = `
+  (
+    r.stats_method = 'estimated'
+    OR EXISTS (
+      SELECT 1 FROM run_stat s
+       WHERE s.run_id = r.id
+         AND (s.sketch IS NOT NULL OR s.histogram_kind IS DISTINCT FROM 'sparse-ms-v2')
+    )
+  )`;
+
+/**
  * The ONE definition of a run that still needs recomputing. Both by label and
  * by stored format: stats_method is written at INSERT, so a run an older
  * worker parsed during a rolling deploy carries exact-v1 over legacy rows.
@@ -53,14 +77,7 @@ export const CANDIDATE_PREDICATE_SQL = `
   r.status IN ('complete', 'incomplete')
   AND r.recompute_error IS NULL
   AND EXISTS (SELECT 1 FROM run_stat s WHERE s.run_id = r.id)
-  AND (
-    r.stats_method = 'estimated'
-    OR EXISTS (
-      SELECT 1 FROM run_stat s
-       WHERE s.run_id = r.id
-         AND (s.sketch IS NOT NULL OR s.histogram_kind IS DISTINCT FROM 'sparse-ms-v2')
-    )
-  )`;
+  AND ${NOT_EXACT_RUN_SQL}`;
 
 /**
  * Which runs still carry estimated statistics, and the bookkeeping a

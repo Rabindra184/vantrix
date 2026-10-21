@@ -1,5 +1,6 @@
 import { CAPTION, ROW, SCROLLER, TABLE, TD_NUM, TH, THEAD, TH_NUM, TH_ROW } from '../components/tableStyles';
 import type { ChartTableRow } from './types';
+import { Approx } from '../components/Approx';
 
 /**
  * The exact values a chart plots, as a real `<table>` — always in the DOM,
@@ -161,7 +162,10 @@ export default function DataTable({
               // the same formatted offset — so the index is part of the key.
               <tr key={`${row.label}-${rowIndex}`} className={ROW}>
                 <th scope="row" className={TH_ROW}>
-                  {row.label}
+                  {/* ≈ only where the transform made a claim — see
+                      `ChartTableRow.exact`. In the row header, so every cell
+                      in an estimated run's row is announced with it. */}
+                  {row.exact === undefined ? row.label : <Approx exact={row.exact}>{row.label}</Approx>}
                 </th>
                 {row.values.map((value, i) => (
                   <td

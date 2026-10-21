@@ -132,4 +132,72 @@ describe('loadWorkerConfig', () => {
       expect(config.recomputeScanIntervalMs).toBe(600_000);
     });
   });
+
+  describe('verify and raw-log retention', () => {
+    it('defaults: retention 90 days, verification on, a scan every ten minutes', () => {
+      const config = loadWorkerConfig(BASE_ENV);
+      expect(config.rawLogRetentionDays).toBe(90);
+      expect(config.verifyEnabled).toBe(true);
+      expect(config.verifyScanIntervalMs).toBe(600_000);
+    });
+
+    it('reads an empty string, as compose passes an unset variable, as the default', () => {
+      const config = loadWorkerConfig({
+        ...BASE_ENV, RAW_LOG_RETENTION_DAYS: '', VERIFY_ENABLED: '', VERIFY_SCAN_INTERVAL_MS: '  ',
+      });
+      expect(config.rawLogRetentionDays).toBe(90);
+      expect(config.verifyEnabled).toBe(true);
+      expect(config.verifyScanIntervalMs).toBe(600_000);
+    });
+
+    it('keeps raw logs for ever at RAW_LOG_RETENTION_DAYS=0, and passes a positive count through', () => {
+      expect(loadWorkerConfig({ ...BASE_ENV, RAW_LOG_RETENTION_DAYS: '0' }).rawLogRetentionDays).toBe(0);
+      expect(loadWorkerConfig({ ...BASE_ENV, RAW_LOG_RETENTION_DAYS: '30' }).rawLogRetentionDays).toBe(30);
+    });
+
+    /**
+     * A retention that silently fell back to a default would DELETE raw logs
+     * on a schedule the operator did not choose: `-1` meant as "for ever",
+     * or `7.5`, must stop the worker rather than be guessed at.
+     */
+    it.each(['-1', '7.5', 'forever', '1e3x'])('refuses RAW_LOG_RETENTION_DAYS=%s at startup, naming the variable', (v) => {
+      expect(() => loadWorkerConfig({ ...BASE_ENV, RAW_LOG_RETENTION_DAYS: v })).toThrow(/RAW_LOG_RETENTION_DAYS/);
+    });
+
+    it('is on unless VERIFY_ENABLED is exactly "false"', () => {
+      expect(loadWorkerConfig({ ...BASE_ENV, VERIFY_ENABLED: 'false' }).verifyEnabled).toBe(false);
+      expect(loadWorkerConfig({ ...BASE_ENV, VERIFY_ENABLED: '0' }).verifyEnabled).toBe(true);
+    });
+
+    it('falls back to the default scan interval on a non-numeric override', () => {
+      expect(loadWorkerConfig({ ...BASE_ENV, VERIFY_SCAN_INTERVAL_MS: '60000' }).verifyScanIntervalMs).toBe(60_000);
+      expect(loadWorkerConfig({ ...BASE_ENV, VERIFY_SCAN_INTERVAL_MS: 'often' }).verifyScanIntervalMs).toBe(600_000);
+    });
+  });
+
+  /**
+   * `setInterval(fn, 0)` walks every candidate back to back, and a negative
+   * delay is clamped to the same thing: neither is what an operator means.
+   * Nor is anything under a second — `500` or `0.5` is seconds typed into a
+   * milliseconds field. Both scans read such an interval as their default,
+   * through ONE helper, so the two queues cannot drift apart on it.
+   */
+  describe('scan intervals', () => {
+    it.each(['0', '-5', '0.5', '500', '999'])('reads %s as the default for both scans', (v) => {
+      const config = loadWorkerConfig({
+        ...BASE_ENV, RECOMPUTE_SCAN_INTERVAL_MS: v, VERIFY_SCAN_INTERVAL_MS: v,
+      });
+      expect(config.recomputeScanIntervalMs).toBe(600_000);
+      expect(config.verifyScanIntervalMs).toBe(600_000);
+    });
+
+    /** The other side of the line: a second is honoured, so the floor is not the default in disguise. */
+    it('keeps an interval of one second or more', () => {
+      const config = loadWorkerConfig({
+        ...BASE_ENV, RECOMPUTE_SCAN_INTERVAL_MS: '1000', VERIFY_SCAN_INTERVAL_MS: '1500',
+      });
+      expect(config.recomputeScanIntervalMs).toBe(1000);
+      expect(config.verifyScanIntervalMs).toBe(1500);
+    });
+  });
 });

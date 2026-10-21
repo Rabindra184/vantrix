@@ -128,10 +128,10 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **247 files / 3967 tests**, it
+`nvm use` first, and if a run reports fewer than **258 files / 4167 tests**, it
 did not run everything — nor did an integration run reporting fewer than
-**225 files / 3466 tests**, an e2e run fewer than **204**, or a
-`pnpm test:e2e:cross` run fewer than **612** (204 on each of three engines).
+**238 files / 3699 tests**, an e2e run fewer than **205**, or a
+`pnpm test:e2e:cross` run fewer than **615** (205 on each of three engines).
 (Update those numbers when a sub-project adds suites, or the next reader
 calibrates against a stale floor and a silently-skipped run looks like a
 pass.)
@@ -150,6 +150,214 @@ still Chromium and still 102; `pnpm test:e2e:cross` was 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The exact-statistics verifier branch (`feat/exact-statistics-verifier`, PR 3
+of `docs/superpowers/specs/2026-10-15-exact-statistics-design.md`, plan
+`docs/superpowers/plans/2026-10-16-exact-statistics-pr3-verifier.md`).
+Unit **247 / 3967 to 258 / 4167**, integration **225 / 3466 to 238 / 3699**,
+**e2e 204 to 205** (`run-list.spec.ts`' estimated-run case), **615** on three
+engines. Each was predicted first — unit from per-file deltas, integration from
+`vitest list` — and each run collected exactly that.
+
+**WHAT WAS RUN ON THE FINAL TREE** (`ccfd6db9` plus this entry), Node v22.19.0,
+`perfportal_verify`, Redis db 13 (flushed before integration and e2e), e2e port
+3750, every `.tsbuildinfo` deleted before build and typecheck: `pnpm build`,
+`typecheck` and `lint` exit 0 by their own exit codes; `test:unit`
+**258 / 4167**, exit 0, zero `Errors` lines; `test:integration` COLLECTED
+**238 / 3699** and exited 1 on ONE case, a P1001 "Can't reach database server"
+in `session-auth.integration`'s bearer run-list case (this branch adds only the
+`/verification` endpoint to that file's cross-org list), which then passed 35
+of 35 alone; `pnpm test:e2e --workers=2` read back `Running 205 tests
+using 2 workers`, **205 passed, exit 0**.
+
+**THE FIRST GATE RUN FOUND WHAT NO REVIEW DID: THE REPORT SCROLLED SIDEWAYS AT
+200% TEXT.** The verification mark made the run header's badge group three
+badges on the Report (status, verdict, verification), and the group is
+`shrink-0`, so it sized to its one-line width and at a 32px root outgrew the
+header — `acceptance.spec.ts`' zoom case failed on `/report` every run. The
+Summary passed because it withholds the verdict badge. `max-w-full` caps the
+group so its own `flex-wrap` wraps; `shrink-0` still keeps a long simulation
+name from squeezing it. Four task reviews, a whole-branch review and a scoped
+re-review all read that header; only the browser measured it. That run's two
+integration failures were P1001s while a fix-wave agent drove the same
+Postgres from a second worktree — do not run two suites against one server.
+
+**EVERY RUN IS CHECKED FIGURE BY FIGURE AGAINST ITS OWN RAW LOG, BY CODE THAT
+SHARES NOTHING WITH THE ENGINE THAT WROTE IT.** `packages/verify` decodes the
+stored `simulation.log` with the shared decoder (`@perfportal/plugin-gatling`)
+and recomputes, from sorted value arrays, every `run_stat` row (count, ok, ko,
+error rate, min, max, mean, population stddev, throughput, every configured
+percentile), every `run_series_bucket` (started/ended/ok/ko counts, min, max,
+mean, the fixed band set over all, OK and KO), `run_error` (top 200 plus the
+other row), `run_error_bucket` (top 5 plus other, the run series' width),
+`run_user_bucket`, and the run's `duration_ms`/`activity_ms` — Appendix A of
+the plan is the contract, read out of the engine. Counts, extremes and
+percentiles compare EXACTLY; mean, stddev, throughput and error rate within
+relative 1e-9. **NOT verified, on purpose:** `tool_assertions` (re-checking
+Gatling's own assertions is PR 4's) and the histogram BYTES (an encoding; the
+figures derived from them are verified). `VERIFIER_VERSION` (1) is bumped when
+the rules change, and a run verified by an older one is a candidate again.
+
+**ITS INDEPENDENCE IS A LINT RULE AND A SOURCE SCAN, NOT A CONVENTION.**
+`eslint.config.js` forbids `packages/verify` (source AND tests) importing
+`@perfportal/statistics` by name or by a relative path into its tree, and its
+source the database layer too — a verifier that reached for the engine's own
+rank function would agree with exactly the bug it exists to catch.
+`lint-rules-compose.test.ts` guards that the blocks compose. **The lint rule
+alone had a hole**, measured by the final review: `no-restricted-imports` does
+not see a DYNAMIC `import()`, so `await import('../../statistics/src/rank.js')`
+in `packages/verify/src` linted clean (and the root `node_modules` holds the
+engine, so even a bare dynamic specifier resolves).
+`packages/verify/test/independence.test.ts` reads every specifier in the
+package — static `from`, side-effect `import '…'`, `import(…)`, `require(…)`,
+comments stripped — and fails on one naming the engine or persistence, with a
+vacuity floor on the specifiers it found.
+
+**A `verify` QUEUE, CONCURRENCY 1, BEHIND INGEST — RECOMPUTE'S SHAPE.**
+Requested after every successful ingest and every `recomputed` outcome of the
+worker's queue (`enqueueVerification` marks the row `pending` FIRST, so the
+header reads "Verifying…", then adds the job — the other order lets the answer
+land under the pending write; the `pnpm recompute` CLI only marks the row
+pending and leaves the job to the scan), and found by a scan every
+`VERIFY_SCAN_INTERVAL_MS` (10 min; empty, or anything under 1000 ms, is the
+default — `500` and `0.5` are seconds typed into a milliseconds field — one
+helper shared with `RECOMPUTE_SCAN_INTERVAL_MS`) that keyset-pages every
+candidate and re-queues failed jobs. A candidate is one `verifyCandidateSql`
+(persistence): verifiable, log not deleted, and no row, a pending one, an older
+`VERIFIER_VERSION`, or a stale `not_exact` on a run that is exact now — the
+last because `not_exact` is stamped at the current version, so a run marked
+before its recompute (verify deferred while the backfill ran, or a lost
+request) would otherwise read "estimates" for good (final review I2). Ingest work
+waiting/active/delayed pushes a job back 5 s; a run whose advisory lock is held
+(an ingest, a recompute, a live fold) is `locked` and waits 30 s — the lock is
+held from before the log is opened until the stored rows are read, so a
+rewrite lands wholly before or after and a correct run can never read as a
+mismatch. A mismatch writes the row and ONE `console.error` line naming the
+run and the count; the row lists each figure with stored and recomputed values.
+`VERIFY_ENABLED=false` (exactly) defers it.
+
+**UNVERIFIABLE HAS FOUR REASONS, AND TWO ARE DEVIATIONS FROM THE SPEC.**
+`raw_log_deleted` and `raw_log_missing` (the spec's), `raw_log_unreadable` (a
+checksum or parse failure is neither deleted nor missing) and `not_exact` (a
+run labelled estimated, or carrying any sketch / pre-`sparse-ms-v2` row —
+checked BEFORE the log is opened, because verifying estimates would report a
+flood of mismatches that say only "estimated"). `BUNDLE_TOO_LARGE` and
+transport failures are rethrown, never recorded.
+
+**A RAW LOG IS DELETED AFTER 90 DAYS BY DEFAULT, BUT ONLY ONCE NOTHING NEEDS
+IT.** `RAW_LOG_RETENTION_DAYS` (empty is 90, `0` is for ever, anything not a
+whole number of days from 0 to 36500 stops the worker AND the API at startup —
+`parseRawLogRetentionDays` in `@perfportal/core` is the one rule; the bound is
+there because `99999999999` overflowed `make_interval` on every sweep and made
+`Date.UTC` an Invalid Date). `retentionDue` selects a run past retention only
+when it is NOT a verify candidate (verified, or settled unverifiable), NOT a
+recompute candidate (`CANDIDATE_PREDICATE_SQL`: estimated and not retired with
+a `recompute_error`), and NOT `mismatch` — a mismatched run's log is the
+evidence, and a fixed verifier or a recompute needs it. The absent-row
+protection is scoped by `VERIFIABLE_RUN_SQL`, so a failed run or one with no
+statistics (never verifiable, never a row) is still deleted on schedule. The
+pass keyset-pages `(ingested_at, id)` (100 runs that keep failing no longer
+stall the rest), try-locks each run, re-checks `isRetentionDue` UNDER the lock
+(a scan or a version bump may have made it a candidate since the page was
+read), deletes the object, then stamps `run.raw_log_deleted_at`; a `#sweeping`
+guard stops two sweeps overlapping. **A SWEEP WALKS AT MOST
+`RETENTION_PAGES_PER_SWEEP` (5) PAGES OF 100**, from `#retentionCursor`, the
+page after where the last sweep stopped; a short page resets it to null, so the
+next sweep starts from the oldest run again and retries what it skipped. The
+first version walked every page in one sweep, and because a firing that finds
+a sweep running returns at once, retention lowered from 0 to 90 on ~100k old
+verified runs held stale-run recovery off for about an hour (the scoped
+re-review's Important). Recovery runs FIRST in each sweep, so a retention pass
+that throws has already let it finish. A `markPending` landing between the
+re-check and the stamp is the residual window: the verify scan, the pipeline
+and both recompute paths issue one without the lock, and only the scan's can
+land on a run retention has just found due (an ingested run is not past
+retention, and a recomputed one is already a verify candidate). The outcome is
+honest — pending becomes `unverifiable`/`raw_log_deleted` — and documented
+rather than locked. So setting `0`
+before upgrading is OPTIONAL now, and `VERIFY_ENABLED=false` keeps the logs the
+backlog needs — those runs read "Verifying…" meanwhile.
+
+**A RUN WITH NO STATISTICS DRAWS NO MARK, AND THE RETENTION DATE IS DERIVED
+WHEN READ.** `lifecycleOf` probes for one `run_stat` row: no verification row
+answers `pending` with statistics and `null` without, and `VerificationMark`
+draws nothing for a null (or absent) summary — before the fix wave an
+incomplete run nothing processed read "Verifying…" for ever while Data
+integrity correctly left it out (final review I1). `rawLogRetainedUntil` on
+`GET /v1/runs/{id}/verification` is derived from the run's `ingested_at` and
+the API's CURRENT setting (core's `retainedUntil`): null once the log is
+deleted or under `0`, and answered for a run not yet checked too. The stored
+column is still written and is no longer read — it went stale after a
+deletion and after a changed setting (I4).
+
+**THE REAL RUNS, ON A SCRATCH DATABASE** (`perfportal_verify_real`, Redis db
+12, bucket `perfportal-verify-real`, API :3752, this tree's worker and runner):
+
+  - `ParitySimulation` through the Gradle plugin, live (run `d91c9f0c`) and
+    through the on-prem runner as a `gatling_bundle` (run `30b26dd0`): both
+    `complete`, 895 requests, 14 `run_stat` rows, and both **`verified`, 0
+    mismatches — 21,564 and 21,644 figures**, `raw_log_retained_until`
+    2027-01-14, the API's `verification` and `/verification` agreeing.
+  - One stored figure corrupted on each and re-verified, each `mismatch` naming
+    exactly that figure: `run_stat` run-scope `p95` stored 677 / recomputed 676
+    (population `all`); `run_stat` request `Search` `count` 161 / 160 (and only
+    that — ok/ko, error rate and throughput are stored columns, not derived);
+    and, through the RUNNING worker's queue, `run_series_bucket` run-scope
+    bucket 30000 `ok_count` 14 / 13, with the worker's
+    `verify: run 30b26dd0-… has 1 mismatch against its raw log` line. Each
+    restored value re-verified `verified`.
+  - Retention: `RAW_LOG_RETENTION_DAYS=1`, both runs' `ingested_at` moved back
+    two days (one with its verification row deleted, standing in for a run
+    never verified): within one 10 s sweep both objects were gone (bucket
+    empty), both `raw_log_deleted_at` set; the verified run stayed `verified`
+    (API `rawLogDeleted: true`, the panel reads "deleted") and the other read
+    `unverifiable`/`raw_log_deleted`. Re-verifying either afterwards answers
+    `raw_log_deleted` and changes neither row. **That second half is the
+    pre-fix-wave behaviour, recorded as what ran:** since the final fix wave a
+    run with no verification row is a verify candidate and keeps its log.
+  - Gatling's own assertion line agreed with the stored request p95 on the
+    plugin run (Search 1891 = 1891) and not on the runner run (2106 against a
+    stored, verified 2077): Gatling's report percentile is its t-digest, PR 4's
+    subject, and not a verifier finding.
+
+**THE COPY OF THE DEVELOPER DATABASE, THROUGH A SCRIPT, READING THE BUCKET
+READ-ONLY** (a `Proxy` over `BlobStore` refusing everything but `get` and
+`exists`): `pg_dump perfportal` into `perfportal_verify_copy` (29 runs, 346
+`run_stat` rows, 37 migrations), `prisma migrate deploy` (40), then
+`VerifyService.verify` for every run: **26 `not_exact`, 3 `not_eligible`** — the
+copy had not had PR 2's backfill, so every run with statistics was estimated,
+which is exactly what an upgrade reads until the backfill reaches each run (the
+recompute marks it pending, so it is verified again). After `RecomputeService`
+over the same read-only store (26 recomputed): **26 `verified`, 0 mismatch, 0
+unverifiable, 3 `not_eligible`** (the failed run and two incomplete runs with no
+statistics — the two incomplete ones read "Verifying…" in the run header
+before the fix wave, which is how final review I1 was found) — **570,860 figures** (102 to 32,426 a run, runs of 1 to 1,724
+requests), the 29 verifications in 733 ms. The copy was dropped and the
+developer database read back identical: 29 runs, 346 `run_stat` rows, 37
+migrations, the same md5 over every run's id/status/verdict and every
+`run_stat` row's counts and percentiles, no `run_verification` table.
+
+**KNOWN AND LEFT:**
+
+  - FIXED BY THE FINAL FIX WAVE, which this entry once listed as open:
+    retention not waiting for verification or the backfill (it waits now,
+    above), and a stale `raw_log_retained_until` after a deletion (the date is
+    derived when read, above).
+  - The Compare overlay's data table carries no ≈ for an estimated run's
+    percentiles; the overlay's series name, the matrix headers and the summary
+    tiles do. Out of PR 3's brief, recorded.
+  - Left by the final review, each argued there: the verification panel's
+    non-modal popover loops Tab inside itself (Escape closes it and returns
+    focus, tested); the muted "not verified" badge colour is not in
+    `palette.test.ts` (it is `--color-text-muted`, held to AA as text); the
+    `stats` test's throughput expectation echoes the code (the fixture
+    cross-check is the independent one); the recompute CLI's `markPending` is
+    untested (`verifyCandidateSql`'s stale-`not_exact` arm makes it
+    belt-and-braces, and that arm is tested); a stored mismatch list the
+    contract refuses answers 500 on `/verification` (only the worker writes
+    it, from typed values — the controller's docstring says why).
+  - The worker ignored SIGTERM for 30 s at teardown and took a SIGKILL by PID,
+    as this file records.
 
 The exact-statistics backfill branch (`feat/exact-statistics-backfill`, PR 2
 of `docs/superpowers/specs/2026-10-15-exact-statistics-design.md`, plan

@@ -1,3 +1,7 @@
+import type { OrgTestSummary } from '@perfportal/contracts';
+import { Approx } from '../components/Approx';
+import { isExact } from '../routes/statsMethod';
+
 /**
  * ═══ A TEST'S LAST TEN p95s, AS A LINE (home page) ═══
  *
@@ -67,21 +71,32 @@ function layout(values: readonly number[]): Vertex[] {
   }));
 }
 
-/** "last 10 runs: 610–812 ms"; a range that rounds to one number is said once. */
-function summarise(values: readonly number[]): string {
+/**
+ * "last 10 runs: 610–812 ms"; a range that rounds to one number is said once.
+ *
+ * "approximately" before the range when ANY point's run was estimated: the
+ * range is over every point, so it is no more exact than its least exact one
+ * — a test's last ten runs can span the backfill. Said in words, because this
+ * summary IS the words a screen reader gets for the line.
+ */
+function summarise(values: readonly number[], exact: boolean): string {
   const rounded = values.map((v) => Math.round(v));
   const lo = Math.min(...rounded);
   const hi = Math.max(...rounded);
   const range = lo === hi ? `${lo} ms` : `${lo}–${hi} ms`;
-  return `last ${values.length} ${values.length === 1 ? 'run' : 'runs'}: ${range}`;
+  return `last ${values.length} ${values.length === 1 ? 'run' : 'runs'}: ${exact ? '' : 'approximately '}${range}`;
 }
 
 export default function Sparkline({
   points,
   lastNeedsAttention,
 }: {
-  /** Oldest first, as `OrgTestSummary.p95History` is. */
-  readonly points: readonly { readonly p95Ms: number }[];
+  /** Oldest first, as `OrgTestSummary.p95History` is. `statsMethod` is
+   *  each point's run's (`isExact`): absent is not known to be exact. */
+  readonly points: readonly {
+    readonly p95Ms: number;
+    readonly statsMethod?: OrgTestSummary['p95History'][number]['statsMethod'];
+  }[];
   /** Required: a default would let a caller forget it and never colour a failure. */
   readonly lastNeedsAttention: boolean;
 }) {
@@ -128,9 +143,12 @@ export default function Sparkline({
         />
       </svg>
       <span className="font-mono text-[0.8125rem] tabular-nums whitespace-nowrap text-primary">
-        {Math.round(values[values.length - 1]!)} ms
+        {/* ≈ by the LATEST point's own run, which is the one this figure is. */}
+        <Approx exact={isExact(points[points.length - 1]!.statsMethod)}>
+          {`${Math.round(values[values.length - 1]!)} ms`}
+        </Approx>
       </span>
-      <span className="sr-only">{summarise(values)}</span>
+      <span className="sr-only">{summarise(values, points.every((p) => isExact(p.statsMethod)))}</span>
     </div>
   );
 }

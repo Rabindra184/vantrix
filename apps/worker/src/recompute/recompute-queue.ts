@@ -36,6 +36,14 @@ export interface RecomputeConsumerOptions {
   ingestBusyDelayMs?: number;
   /** Test seam; production uses the 30 s default. */
   lockedDelayMs?: number;
+  /**
+   * Asks for a run to be verified once its statistics are rewritten
+   * (`enqueueVerification`). A recompute replaces every figure the last
+   * verification checked, so the run is verified again; only a `recomputed`
+   * outcome asks — nothing else wrote a row. Optional, for a worker with
+   * verification switched off.
+   */
+  requestVerification?: (runId: string) => Promise<void>;
 }
 
 /**
@@ -100,6 +108,25 @@ export function startRecomputeConsumer(
     }
     const outcome = await service.recompute(job.data.runId);
     if (outcome === 'locked') return later(job, token, lockedDelay);
+    if (outcome === 'recomputed' && options.requestVerification) {
+      // Not thrown: the recompute committed, and a retry of this job would
+      // find the run already exact. The verify scan picks up a lost request.
+      //
+      // ═══ THE RACE WITH A VERIFICATION ALREADY UNDER WAY ═══
+      // The two share the run lock, so they never interleave — but a verify
+      // job for this run can still EXIST when this request lands (waiting,
+      // delayed, or active in BullMQ's bookkeeping just after it released
+      // the lock). Its id is the run's, so the request marks the row pending
+      // and queues nothing. A waiting job then verifies the run as it now
+      // is; for one that had already run, this request's pending row is a
+      // candidate the next verify scan re-queues, so the window heals within
+      // one scan interval. A request lost outright leaves the `not_exact`
+      // answer recorded before the recompute committed, and
+      // `verifyCandidateSql`'s stale not_exact arm re-selects that one.
+      await options.requestVerification(job.data.runId).catch((err: unknown) => {
+        console.error(`recompute: could not queue run ${job.data.runId}'s verification; the next verify scan will pick it up:`, err);
+      });
+    }
     return outcome;
   });
 }

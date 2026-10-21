@@ -16,7 +16,8 @@ import Sparkline from '../src/home/Sparkline';
  */
 afterEach(cleanup);
 
-const pts = (...values: number[]) => values.map((p95Ms) => ({ p95Ms }));
+/** Exact points, as every run since 2026-10-15 is; the ≈ cases below vary it. */
+const pts = (...values: number[]) => values.map((p95Ms) => ({ p95Ms, statsMethod: 'exact-v1' as const }));
 
 function draw(values: number[], lastNeedsAttention = false) {
   const utils = render(<Sparkline points={pts(...values)} lastNeedsAttention={lastNeedsAttention} />);
@@ -104,6 +105,46 @@ describe('Sparkline', () => {
   it('collapses a range that rounds to one number instead of printing it twice', () => {
     draw([199.6, 200.2, 200.4]);
     expect(screen.getByText('last 3 runs: 200 ms')).toBeInTheDocument();
+  });
+
+  /**
+   * ═══ "approximately" WHEN ANY POINT WAS ESTIMATED ═══
+   *
+   * A test's last ten runs can span the backfill. The range a screen reader
+   * hears is over every point, so it says "approximately" when ANY of them
+   * was estimated — and the visible latest value carries ≈ by ITS run alone.
+   * Both directions: an exact history says neither, because a mark on an
+   * exact figure is as false as a missing one on an estimate. A point with no
+   * `statsMethod` (an API that predates it) is not known to be exact.
+   */
+  describe('estimated points', () => {
+    const at = (statsMethod: 'estimated' | 'exact-v1' | undefined, p95Ms: number) =>
+      statsMethod === undefined ? { p95Ms } : { p95Ms, statsMethod };
+
+    it('says "approximately" in the summary when an earlier point is estimated, and leaves an exact latest value bare', () => {
+      const { container } = render(
+        <Sparkline points={[at('estimated', 610), at('exact-v1', 812)]} lastNeedsAttention={false} />,
+      );
+      expect(screen.getByText('last 2 runs: approximately 610–812 ms')).toBeInTheDocument();
+      expect(container.textContent).not.toContain('≈');
+    });
+
+    it('marks the latest value when its own run is estimated, or carries no statsMethod', () => {
+      for (const method of ['estimated', undefined] as const) {
+        cleanup();
+        const { container } = render(
+          <Sparkline points={[at('exact-v1', 610), at(method, 812)]} lastNeedsAttention={false} />,
+        );
+        expect(container.textContent, String(method)).toContain('≈approximately 812 ms');
+        expect(screen.getByText('last 2 runs: approximately 610–812 ms')).toBeInTheDocument();
+      }
+    });
+
+    it('says neither for a history that is exact throughout', () => {
+      const { container } = draw([610, 812]);
+      expect(screen.getByText('last 2 runs: 610–812 ms')).toBeInTheDocument();
+      expect(container.textContent).not.toMatch(/≈|approximately/);
+    });
   });
 
   describe('the last point', () => {

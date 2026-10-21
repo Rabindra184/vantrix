@@ -1,6 +1,6 @@
 import type { StatsResponse } from '@perfportal/contracts';
 import { isChangeGood, type CompareMetric } from '../charts/transforms/compare';
-import { metricValue, type CompareStats } from '../tables/buildCompareMatrix';
+import { figureIsExact, metricValue, type CompareStats } from '../tables/buildCompareMatrix';
 
 export interface CompareSummaryModel {
   readonly selectedCount: number;
@@ -26,6 +26,17 @@ export interface CompareSummaryModel {
   readonly deltaGood: boolean | null;
   readonly bestLabel: string | null;
   readonly bestValue: number | null;
+  /**
+   * Whether the delta's figures are exact: BOTH the current run's and the
+   * baseline's (`figureIsExact`), since a difference is no more exact than
+   * its least exact term. True where the tile states no figure — no baseline
+   * selected, or a value not measured — since there is then nothing to
+   * qualify. `false` puts ≈ before the delta. The whole rule lives HERE: the
+   * tile reads it as it is, rather than patching the no-figure cases in.
+   */
+  readonly deltaExact: boolean;
+  /** Whether the best run's figure is exact; true where there is none. */
+  readonly bestExact: boolean;
 }
 
 /**
@@ -81,6 +92,12 @@ export function buildCompareSummary(
     deltaGood: deltaPercent === null ? null : isChangeGood(deltaPercent, metric),
     bestLabel: best?.label ?? null,
     bestValue: best?.value ?? null,
+    deltaExact:
+      deltaUnavailable === 'no-baseline' ||
+      deltaUnavailable === 'not-measured' ||
+      ((current === null || figureIsExact(current.exact, metric)) &&
+        (baseline === null || figureIsExact(baseline.exact, metric))),
+    bestExact: best === null || figureIsExact(best.exact, metric),
   };
 }
 

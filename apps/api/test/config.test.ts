@@ -59,3 +59,26 @@ describe('loadConfig', () => {
     );
   });
 });
+
+/**
+ * The API reads RAW_LOG_RETENTION_DAYS only to STATE it (Administration ›
+ * Data integrity), but it must state the setting the worker acts on — so it
+ * is parsed by the worker's own rule, shared through `@perfportal/core`, and
+ * these cases mirror `apps/worker/test/config.test.ts`'s.
+ */
+describe('loadConfig rawLogRetentionDays', () => {
+  it('defaults to 90 days when unset or blank (compose passes unset as empty)', () => {
+    expect(loadConfig({ ...base }).rawLogRetentionDays).toBe(90);
+    expect(loadConfig({ ...base, RAW_LOG_RETENTION_DAYS: '' }).rawLogRetentionDays).toBe(90);
+    expect(loadConfig({ ...base, RAW_LOG_RETENTION_DAYS: '  ' }).rawLogRetentionDays).toBe(90);
+  });
+
+  it('reads 0 as "for ever" and passes a positive count through', () => {
+    expect(loadConfig({ ...base, RAW_LOG_RETENTION_DAYS: '0' }).rawLogRetentionDays).toBe(0);
+    expect(loadConfig({ ...base, RAW_LOG_RETENTION_DAYS: '30' }).rawLogRetentionDays).toBe(30);
+  });
+
+  it.each(['-1', '7.5', 'forever', '1e3x'])('refuses RAW_LOG_RETENTION_DAYS=%s at startup, naming the variable', (v) => {
+    expect(() => loadConfig({ ...base, RAW_LOG_RETENTION_DAYS: v })).toThrow(/RAW_LOG_RETENTION_DAYS/);
+  });
+});

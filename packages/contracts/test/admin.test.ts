@@ -5,6 +5,7 @@ import {
   AdminUserListResponseSchema,
   AdminUserSchema,
   CreateUserRequestSchema,
+  DataIntegritySchema,
   PROJECT_ROLES,
   RecomputeProgressSchema,
   SetPasswordRequestSchema,
@@ -236,5 +237,51 @@ describe('RecomputeProgressSchema', () => {
     expect(RecomputeProgressSchema.safeParse({ total: 12, remaining: -1, failed: 0 }).success).toBe(false);
     expect(RecomputeProgressSchema.safeParse({ total: 1.5, remaining: 0, failed: 0 }).success).toBe(false);
     expect(RecomputeProgressSchema.safeParse({ total: 1, remaining: 0 }).success).toBe(false);
+  });
+});
+
+/**
+ * `GET /v1/admin/data-integrity`: the backfill's progress, the org's runs by
+ * verification status, the ones that need a look, and the retention setting
+ * the page states read-only.
+ */
+describe('DataIntegritySchema', () => {
+  const integrity = {
+    recompute: { total: 12, remaining: 3, failed: 1 },
+    verification: { verified: 8, mismatch: 1, unverifiable: 2, pending: 1 },
+    problems: [
+      {
+        runId: '3fa85f64-5717-4562-b3fc-2c963f66afa6',
+        projectSlug: 'checkout',
+        status: 'mismatch',
+        reason: null,
+        mismatchCount: 2,
+        checkedAt: '2026-10-16T09:00:00.000Z',
+      },
+      {
+        runId: '22222222-2222-4222-8222-222222222222',
+        projectSlug: 'checkout',
+        status: 'unverifiable',
+        reason: 'raw_log_deleted',
+        mismatchCount: 0,
+        checkedAt: null,
+      },
+    ],
+    rawLogRetentionDays: 90,
+  };
+
+  it('accepts the whole summary, and 0 days for "for ever"', () => {
+    expect(DataIntegritySchema.parse(integrity)).toEqual(integrity);
+    expect(DataIntegritySchema.parse({ ...integrity, rawLogRetentionDays: 0 }).rawLogRetentionDays).toBe(0);
+  });
+
+  it('lists only the two problem statuses', () => {
+    const verified = { ...integrity.problems[0]!, status: 'verified' };
+    expect(DataIntegritySchema.safeParse({ ...integrity, problems: [verified] }).success).toBe(false);
+  });
+
+  it('refuses a negative count and a fractional retention', () => {
+    expect(DataIntegritySchema.safeParse({ ...integrity, verification: { ...integrity.verification, pending: -1 } }).success).toBe(false);
+    expect(DataIntegritySchema.safeParse({ ...integrity, rawLogRetentionDays: 1.5 }).success).toBe(false);
   });
 });

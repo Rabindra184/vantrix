@@ -155,6 +155,7 @@ export const SCHEMA_TABLES = [
   'sla_rule',
   'run_assertion',
   'run_verdict_change',
+  'run_verification',
   'runner_artifact',
   'runner_job',
   'runner_job_event',

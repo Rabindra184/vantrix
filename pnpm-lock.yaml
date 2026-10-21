@@ -298,6 +298,9 @@ importers:
       '@perfportal/storage':
         specifier: workspace:*
         version: link:../../packages/storage
+      '@perfportal/verify':
+        specifier: workspace:*
+        version: link:../../packages/verify
       bullmq:
         specifier: ^5.34.0
         version: 5.81.3
@@ -407,6 +410,16 @@ importers:
       '@types/tar-stream':
         specifier: ^3.1.3
         version: 3.1.4
+
+  packages/verify:
+    dependencies:
+      '@perfportal/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@perfportal/plugin-gatling':
+        specifier: workspace:*
+        version: link:../plugin-gatling
 
 packages:
 

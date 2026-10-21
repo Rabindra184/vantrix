@@ -99,6 +99,7 @@ import type { Histogram, Sketch } from '@perfportal/statistics';
 export const TRENDS_SQL = `
   SELECT t.id, t.started_at, t.tool_started_at, t.duration_ms, t.verdict,
          t.environment, t.branch, t.commit_sha, t.tool, t.simulation, t.run_number,
+         t.stats_method,
          t.count, t.ok_count, t.ko_count, t.error_rate,
          t.min_ms, t.max_ms, t.mean_ms, t.throughput_rps, t.percentiles, t.sketch,
          t.histogram_ok, t.histogram_ko,
@@ -110,6 +111,10 @@ export const TRENDS_SQL = `
              -- conditions. See TrendRunSchema's own comment -- a lower p95 at
              -- half the offered load is not an improvement.
              r.environment, r.branch, r.commit_sha, r.tool, r.simulation, r.run_number,
+             -- Which engine produced each run's figures, per run: a trend table
+             -- marks an estimated run's percentiles, and a cohort can span the
+             -- backfill.
+             r.stats_method,
              s.count, s.ok_count, s.ko_count, s.error_rate,
              s.min_ms, s.max_ms, s.mean_ms, s.throughput_rps, s.percentiles, s.sketch,
              s.histogram_ok, s.histogram_ko,
@@ -168,6 +173,9 @@ export interface StoredTrendRun {
   readonly simulation: string | null;
   /** The run's number within its test, or null (run-number.ts). */
   readonly runNumber: number | null;
+  /** Which engine produced this run's figures; the column's CHECK holds it to
+   *  these two words. */
+  readonly statsMethod: 'estimated' | 'exact-v1';
   readonly count: number;
   readonly okCount: number;
   readonly koCount: number;

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { RunStatusSchema, RunVerdictSchema } from './run.js';
+import { RunStatusSchema, RunVerdictSchema, StatsMethodSchema } from './run.js';
 import { RunNumberSchema } from './run-number.js';
 
 /**
@@ -127,6 +127,12 @@ export const OrgTestSummarySchema = z.object({
        * run has no usable one.
        */
       p95Ms: z.number().nullable(),
+      /**
+       * Which engine produced that p95 (`RunIdentity.statsMethod`). OPTIONAL:
+       * the browser drops a body that fails this schema, so a required field
+       * would blank Home against an API pod that predates it.
+       */
+      statsMethod: StatsMethodSchema.optional(),
     })
     .nullable(),
   /**
@@ -143,6 +149,10 @@ export const OrgTestSummarySchema = z.object({
         runId: z.string().uuid(),
         runNumber: RunNumberSchema.nullable(),
         p95Ms: z.number(),
+        /** Which engine produced this point; the sparkline's summary says
+         *  "approximately" when any point is not exact. Optional, for the
+         *  rolling-deploy reason `latestRun.statsMethod` gives. */
+        statsMethod: StatsMethodSchema.optional(),
       }),
     )
     .max(10),

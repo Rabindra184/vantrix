@@ -288,6 +288,37 @@ describe('toPercentileTrend', () => {
   });
 });
 
+/**
+ * ═══ ≈ ON AN ESTIMATED RUN'S ROW, AND ONLY IN THE PERCENTILE TABLE ═══
+ *
+ * A cohort can span the backfill, so each row says whether ITS run's
+ * percentiles are exact — per run, from its own `statsMethod`, and a run with
+ * none (an API that predates it) is not known to be exact. The status and
+ * throughput tables carry no claim: counts and rates are exact on every run,
+ * and a ≈ there would mark a figure that is not an estimate. The SERIES carry
+ * nothing either — a chart line is not where the mark lives.
+ */
+describe('trends — which rows are estimates', () => {
+  const MIXED = response([
+    run({ id: 'c', startedAt: '2026-08-03T10:00:00.000Z', statsMethod: 'exact-v1' }),
+    run({ id: 'b', startedAt: '2026-08-02T10:00:00.000Z' }),
+    run({ id: 'a', startedAt: '2026-08-01T10:00:00.000Z', statsMethod: 'estimated' }),
+  ]);
+
+  it('marks each percentile row by its own run, oldest first', () => {
+    expect(toPercentileTrend(MIXED).rows.map((row) => row.exact)).toEqual([false, false, true]);
+  });
+
+  it('makes no claim on the status and throughput rows, or on any series', () => {
+    for (const transform of [toStatusTrend, toThroughputTrend]) {
+      expect(transform(MIXED).rows.map((row) => row.exact)).toEqual([undefined, undefined, undefined]);
+    }
+    for (const series of toPercentileTrend(MIXED).series) {
+      expect(Object.keys(series)).not.toContain('exact');
+    }
+  });
+});
+
 describe('toThroughputTrend', () => {
   it('splits the rate by the run’s own outcome counts', () => {
     const one = response([

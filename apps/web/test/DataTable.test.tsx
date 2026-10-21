@@ -20,6 +20,37 @@ import DataTable, { formatCell } from '../src/charts/DataTable.js';
 
 afterEach(cleanup);
 
+/**
+ * ═══ A ROW'S LABEL CARRIES ≈ WHEN ITS RUN WAS ESTIMATED ═══
+ *
+ * A trend's percentile table lists one run per row, and a cohort can span the
+ * backfill — so `exact: false` marks that row's label, `exact: true` leaves it
+ * bare, and a row with no `exact` (a time bucket, a request) makes no claim
+ * at all. The mark sits in the row header, so a cell's announced context is
+ * "approximately #12" for an estimated run and stays "#12" for an exact one.
+ */
+describe('DataTable — an estimated run’s row', () => {
+  it('marks a row whose run is not exact, and no other', () => {
+    render(
+      <DataTable
+        id="trend"
+        caption="Trend"
+        columns={['Run', 'p95']}
+        rows={[
+          { label: '#1', values: [10], exact: false },
+          { label: '#2', values: [11], exact: true },
+          { label: '#3', values: [12] },
+        ]}
+        shown
+      />,
+    );
+    const headers = screen.getAllByRole('rowheader');
+    expect(headers.map((th) => th.textContent)).toEqual(['≈approximately #1', '#2', '#3']);
+    expect(headers[0]).toHaveAccessibleName('approximately #1');
+    expect(headers[1]).toHaveAccessibleName('#2');
+  });
+});
+
 describe('DataTable', () => {
   it('renders every plotted value whether or not it is shown', () => {
     const { rerender } = render(

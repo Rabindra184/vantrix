@@ -704,6 +704,7 @@ describe('cross-org isolation on every session-reachable endpoint', () => {
     `/v1/runs/${id}/errors/series`,
     `/v1/runs/${id}/telemetry`,
     `/v1/runs/${id}/events`,
+    `/v1/runs/${id}/verification`,
   ];
 
   /**

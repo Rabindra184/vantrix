@@ -9,3 +9,4 @@ export * from './gatling-jar.js';
 export * from './ingest-queue.js';
 export * from './live-channels.js';
 export * from './shutdown.js';
+export * from './raw-log-retention.js';

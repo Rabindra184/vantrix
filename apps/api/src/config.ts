@@ -1,3 +1,5 @@
+import { parseRawLogRetentionDays } from '@perfportal/core';
+
 export interface AppConfig {
   port: number;
   databaseUrl: string;
@@ -38,6 +40,14 @@ export interface AppConfig {
   betterAuthUrl: string;
   /** See `cookiesAreSecure` — off unless `ALLOW_INSECURE_COOKIES=true`. */
   allowInsecureCookies: boolean;
+  /**
+   * `RAW_LOG_RETENTION_DAYS`, which the WORKER acts on (its sweeper deletes
+   * raw logs past it). The API only states it — Administration › Data
+   * integrity shows it read-only — so it reads it by the worker's own rule,
+   * `parseRawLogRetentionDays`, and refuses to start on a value the worker
+   * would refuse too. 0 keeps raw logs for ever.
+   */
+  rawLogRetentionDays: number;
 }
 
 /**
@@ -139,5 +149,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
      * shape of a setting nobody notices is inverted until sessions are
      * already crossing the network in the clear. */
     allowInsecureCookies: env.ALLOW_INSECURE_COOKIES === 'true',
+    rawLogRetentionDays: parseRawLogRetentionDays(env.RAW_LOG_RETENTION_DAYS),
   };
 }

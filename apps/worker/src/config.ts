@@ -1,3 +1,5 @@
+import { parseRawLogRetentionDays } from '@perfportal/core';
+
 export interface WorkerConfig {
   databaseUrl: string;
   redisUrl: string;
@@ -119,6 +121,25 @@ export interface WorkerConfig {
    * picked up well inside a working hour.
    */
   recomputeScanIntervalMs: number;
+  /**
+   * How many days a run's raw log is kept after its ingest, before the
+   * sweeper deletes it. `0` keeps raw logs for ever. Ninety by default: long
+   * enough to re-verify, recompute or re-download a run inside a quarter.
+   *
+   * REFUSED AT STARTUP when it is not a whole number of days, never guessed:
+   * a value that fell back to the default would delete raw logs on a schedule
+   * the operator did not choose (a `-1` written to mean "for ever" would
+   * become ninety days, and a log once deleted cannot be had back).
+   */
+  rawLogRetentionDays: number;
+  /**
+   * Whether this worker verifies runs against their raw logs
+   * (`verify/verify-queue.ts`). On unless `VERIFY_ENABLED` is EXACTLY
+   * `false`, for the reason `recomputeEnabled` gives.
+   */
+  verifyEnabled: boolean;
+  /** How often the scheduler looks for runs still to verify. Ten minutes, as recompute's. */
+  verifyScanIntervalMs: number;
 }
 
 /**
@@ -136,6 +157,27 @@ function numberOr(value: string | undefined, fallback: number): number {
   if (value === undefined) return fallback;
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
+}
+
+/** The shortest scan interval honoured; anything below it reads as the default. */
+const MIN_SCAN_INTERVAL_MS = 1000;
+
+/**
+ * A scan interval: at least a second, in milliseconds, else the default. Blank
+ * is unset (compose passes an unset variable as an EMPTY string, and
+ * `Number('')` is 0), a non-numeric value is the default (`numberOr`), and so
+ * is anything under a second, zero and negatives among it — `setInterval(fn,
+ * 0)` would walk every candidate back to back, which no operator means by "0",
+ * and `500` or `0.5` is far more likely seconds typed into a milliseconds
+ * field than a wish to rescan the database twice a second. ONE helper for both
+ * scans, so the recompute and verify queues cannot disagree about what a bad
+ * interval means. (Not folded into `numberOr` itself: LIVE_TICK_MS has a case
+ * pinning '' to its floor rather than its default, and floors rather than
+ * defaults a low value.)
+ */
+function scanIntervalOr(value: string | undefined, fallback: number): number {
+  const n = numberOr(value?.trim() || undefined, fallback);
+  return n >= MIN_SCAN_INTERVAL_MS ? n : fallback;
 }
 
 export function loadWorkerConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
@@ -169,12 +211,12 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv = process.env): WorkerCo
     maxOwnedRuns: numberOr(env.MAX_OWNED_RUNS, 25),
     // `=== 'false'`, not truthiness -- see the field's own doc comment.
     recomputeEnabled: env.RECOMPUTE_ENABLED !== 'false',
-    // numberOr: a NaN interval is setInterval's effectively-zero delay, which
-    // would rescan the database continuously. And blank is unset: compose
-    // passes `${PERFPORTAL_RECOMPUTE_SCAN_INTERVAL_MS:-}`, an EMPTY string
-    // when the operator set nothing, and Number('') is 0 -- the same
-    // continuous rescan by another road. (Not changed in numberOr itself:
-    // LIVE_TICK_MS has a case pinning '' to its floor.)
-    recomputeScanIntervalMs: numberOr(env.RECOMPUTE_SCAN_INTERVAL_MS?.trim() || undefined, 600_000),
+    // scanIntervalOr: a NaN, blank or sub-second interval would rescan the
+    // database all but continuously -- see its doc comment.
+    recomputeScanIntervalMs: scanIntervalOr(env.RECOMPUTE_SCAN_INTERVAL_MS, 600_000),
+    rawLogRetentionDays: parseRawLogRetentionDays(env.RAW_LOG_RETENTION_DAYS),
+    // `=== 'false'` and blank-is-default: recompute's two rules, for the same reasons.
+    verifyEnabled: env.VERIFY_ENABLED !== 'false',
+    verifyScanIntervalMs: scanIntervalOr(env.VERIFY_SCAN_INTERVAL_MS, 600_000),
   };
 }

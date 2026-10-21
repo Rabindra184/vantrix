@@ -9,6 +9,7 @@ import RunCompare from '../src/routes/RunCompare';
 import { runMinuteLabel } from '../src/charts/transforms/runLabel';
 import type { RunWindowContext } from '../src/routes/useRunWindow';
 import { UNKNOWN_ACCESS } from './support/access';
+import fixture from './fixtures/reference-run.json';
 
 /**
  * MINOR 5. `/runs/:runId/compare` is a sixth `<Outlet/>` child under
@@ -62,6 +63,10 @@ function renderCompare(
   body: ReturnType<typeof processing> | { state: 'ready'; run: RunResponse },
   trends: unknown = EMPTY_TRENDS,
   search = '',
+  /** What `/stats` answers for every selected run. Unset, it falls through to
+   *  the run body below, which fails the stats schema — every case before the
+   *  ≈ cases relied on that and drew no summary or matrix. */
+  stats?: unknown,
 ) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   client.setQueryData(runQueryKey(RUN_ID), body);
@@ -81,6 +86,9 @@ function renderCompare(
     const url = String(input);
     if (url.includes('/trends')) {
       return new Response(JSON.stringify(trends), { status: 200 });
+    }
+    if (stats !== undefined && url.includes('/stats')) {
+      return new Response(JSON.stringify(stats), { status: 200 });
     }
     // Reads `current` AFTER a microtask, not at call time — see the comment
     // above on why the read has to be deferred for a same-tick `rerenderAs`
@@ -418,5 +426,50 @@ describe('RunCompare — the comparability notice is concise', () => {
 
     const details = await screen.findByTestId('comparability-details');
     expect(details).toHaveProperty('open', true);
+  });
+});
+
+/**
+ * ═══ ≈ FOLLOWS EACH SELECTED RUN'S OWN `statsMethod` ═══
+ *
+ * The seam the pure cases cannot reach: the page reads each run's
+ * `statsMethod` off the COHORT (`/trends`) and hands it to the matrix and the
+ * summary per run. An estimated baseline marks its own column header, the
+ * Change column and the delta tile — and leaves the current, exact run's
+ * header bare. Both directions, because a ≈ on an exact run is as false as a
+ * missing one on an estimate. The default metric is p95, a percentile.
+ */
+describe('RunCompare — ≈ marks an estimated run’s figures', () => {
+  const cohort = (otherMethod: 'estimated' | 'exact-v1') =>
+    populated([
+      cohortRunAt({ statsMethod: 'exact-v1' }),
+      cohortRunAt({
+        id: OTHER,
+        startedAt: '2026-08-15T11:00:00.000Z',
+        toolStartedAt: '2026-08-15T11:00:00.000Z',
+        statsMethod: otherMethod,
+      }),
+    ]);
+
+  const currentLabel = runMinuteLabel('2026-08-15T12:00:00.000Z');
+  const otherLabel = runMinuteLabel('2026-08-15T11:00:00.000Z');
+
+  it('marks the estimated baseline’s column, the change and the delta, not the exact run', async () => {
+    renderCompare({ state: 'ready', run: COMPLETE_RUN }, cohort('estimated'), '', fixture.stats);
+
+    expect(await screen.findByRole('columnheader', { name: `approximately ${otherLabel} (ms)` })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: `${currentLabel} (ms)` })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'approximately Change' })).toBeInTheDocument();
+    expect(screen.getByTestId('compare-delta').textContent).toMatch(/^≈approximately /);
+  });
+
+  it('marks nothing when every selected run is exact', async () => {
+    renderCompare({ state: 'ready', run: COMPLETE_RUN }, cohort('exact-v1'), '', fixture.stats);
+
+    expect(await screen.findByRole('columnheader', { name: `${otherLabel} (ms)` })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Change' })).toBeInTheDocument();
+    const summary = screen.getByRole('region', { name: 'Comparison summary' });
+    expect(summary.textContent).not.toContain('≈');
+    for (const h of screen.getAllByRole('columnheader')) expect(h.textContent).not.toContain('≈');
   });
 });
