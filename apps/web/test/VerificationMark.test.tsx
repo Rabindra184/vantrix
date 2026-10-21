@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { FigureMismatch, RunStatus, Verification, VerificationSummary } from '@perfportal/contracts';
+import type { FigureMismatch, GatlingDifference, RunStatus, Verification, VerificationSummary } from '@perfportal/contracts';
 import VerificationMark from '../src/routes/VerificationMark';
 import { mismatchKeys } from '../src/routes/VerificationPanel';
 import { VERIFICATION } from '../src/routes/marks';
@@ -252,6 +252,109 @@ describe('VerificationMark — the panel', () => {
     await user.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(trigger()).toHaveFocus();
+  });
+});
+
+const difference = (over: Partial<GatlingDifference> = {}): GatlingDifference => ({
+  scope: 'request',
+  name: 'Session',
+  population: 'all',
+  figure: 'p95',
+  gatlingLow: 2389,
+  gatlingHigh: 3410,
+  exact: 2401,
+  ...over,
+});
+
+/** Opens the panel over `verification` and returns it once it has loaded. */
+async function openPanel(verification: Verification): Promise<HTMLElement> {
+  stub(() => json(200, verification));
+  renderMark('complete', { status: verification.status, reason: null });
+  await userEvent.setup().click(trigger());
+  const panel = await screen.findByRole('dialog', { name: 'Verification' });
+  await within(panel).findByText(String(verification.figuresChecked));
+  return panel;
+}
+
+const DIFFERENCES = /Differences from Gatling’s report/;
+
+describe('VerificationPanel — differences from Gatling’s report', () => {
+  it('draws the table when there are differences', async () => {
+    const panel = await openPanel({
+      ...VERIFIED,
+      gatlingReplays: 16,
+      gatlingDifferences: [
+        difference({ scope: 'run', name: '', figure: 'p99', gatlingLow: 2349, gatlingHigh: 2412, exact: 2503 }),
+        difference({ scope: 'request', name: 'Cart/Add To Cart' }),
+        difference({ scope: 'group', name: 'Catalog', figure: 'p75', gatlingLow: 141, gatlingHigh: 141, exact: 140 }),
+      ],
+    });
+    const table = within(panel).getByRole('table', { name: 'Differences from Gatling’s report' });
+    expect(within(table).getAllByRole('columnheader').map((th) => th.textContent)).toEqual([
+      'Request',
+      'Figure',
+      'Gatling’s report',
+      'PerfPortal',
+    ]);
+    const [run, request, group] = within(table).getAllByRole('row').slice(1) as [HTMLElement, HTMLElement, HTMLElement];
+    // The run is "All requests"; a request or group is its stored name, the
+    // path the request and group pages head themselves with.
+    expect(within(run).getAllByRole('cell').map((td) => td.textContent)).toEqual(['All requests', 'p99', '2,349–2,412', '2,503']);
+    expect(within(request).getAllByRole('cell')[0]).toHaveTextContent(/^Cart\/Add To Cart$/);
+    expect(within(group).getAllByRole('cell')[0]).toHaveTextContent(/^Catalog$/);
+    // A verified run with differences: they are Gatling's variance, not a mismatch.
+    expect(within(panel).queryByRole('table', { name: 'Mismatches' })).toBeNull();
+  });
+
+  it.each([
+    ['empty', { gatlingDifferences: [], gatlingReplays: 16 }],
+    ['absent', {}],
+  ])('no table when the list is %s', async (_, over) => {
+    const panel = await openPanel({ ...VERIFIED, ...over });
+    expect(within(panel).queryByRole('table')).toBeNull();
+    expect(panel).not.toHaveTextContent(DIFFERENCES);
+    // No ⓘ either: a caveat about a table that is not there explains nothing.
+    expect(within(panel).queryByRole('button', { name: /Gatling/ })).toBeNull();
+  });
+
+  it('a range renders low–high with grouping', async () => {
+    const panel = await openPanel({ ...VERIFIED, gatlingDifferences: [difference()] });
+    const row = within(within(panel).getByRole('table', { name: 'Differences from Gatling’s report' })).getAllByRole('row')[1]!;
+    const [, , gatling, exact] = within(row).getAllByRole('cell');
+    expect(gatling).toHaveTextContent(/^2,389–3,410$/);
+    expect(exact).toHaveTextContent(/^2,401$/);
+  });
+
+  it('a single value renders once', async () => {
+    const panel = await openPanel({
+      ...VERIFIED,
+      gatlingDifferences: [difference({ gatlingLow: 1853, gatlingHigh: 1853, exact: 1851 })],
+    });
+    const row = within(within(panel).getByRole('table', { name: 'Differences from Gatling’s report' })).getAllByRole('row')[1]!;
+    expect(within(row).getAllByRole('cell')[2]).toHaveTextContent(/^1,853$/);
+  });
+
+  it('OK/KO population is named', async () => {
+    const panel = await openPanel({
+      ...VERIFIED,
+      gatlingDifferences: [
+        difference({ population: 'ok', figure: 'p95' }),
+        difference({ population: 'ko', figure: 'p99' }),
+        difference({ population: 'all', figure: 'p50' }),
+      ],
+    });
+    const table = within(panel).getByRole('table', { name: 'Differences from Gatling’s report' });
+    const figures = within(table).getAllByRole('row').slice(1).map((tr) => within(tr).getAllByRole('cell')[1]!.textContent);
+    expect(figures).toEqual(['p95 (OK)', 'p99 (KO)', 'p50']);
+  });
+
+  it('the ⓘ carries the copy', async () => {
+    const panel = await openPanel({ ...VERIFIED, gatlingDifferences: [difference()] });
+    expect(panel).toHaveTextContent(DIFFERENCES);
+    const tip = within(panel).getByRole('button', { name: 'About differences from Gatling’s report' });
+    expect(tip).toHaveAccessibleDescription(
+      'Gatling’s report estimates percentiles with t-digest, and its estimate can change between two reports of the same run; PerfPortal reports the actual value at that rank.',
+    );
   });
 });
 
