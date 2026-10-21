@@ -166,6 +166,17 @@ exit codes; `test:unit` **260 / 4239**, exit 0; `test:integration`
 **240 / 3777, exit 0, zero failures**; `pnpm test:e2e --workers=2` read back
 `Running 207 tests using 2 workers`, **207 passed, exit 0**.
 
+**AND THE AUDIT GATE MEASURED THE WORLD AGAIN, THE DAY THE PR OPENED.** CI's
+`build` failed on `pnpm audit --prod` and on nothing this branch wrote: six
+advisories (one high, four moderate, one low) against vite >=8.2.0 <=8.2.3,
+reached through `apps/web`'s exact pin and `better-auth > vitest > vite`.
+`apps/web` pins 8.2.4 and a `vite@8` override pins the transitive copy to
+EXACTLY 8.2.4 — a caret override resolved to 8.3.5, a minor bump the fix does
+not need. 8.2.4 itself requires rolldown 1.2.15 (from 1.2.3). Because Vite
+builds the web bundle and runs every vitest suite, every gate ran again on
+`6a3e1bb3`: build, typecheck and lint exit 0; unit **260 / 4239**, integration
+**240 / 3777, zero failures**, e2e **207 passed** — the same totals.
+
 **GATLING'S REPORT IS NOT DETERMINISTIC, SO "WHAT GATLING SAYS" IS A RANGE.**
 t-digest 3.3's `AVLTreeDigest.add` breaks a tie between two equidistant
 centroids with `gen.nextDouble()`, and `gen` is an UNSEEDED `java.util.Random`
