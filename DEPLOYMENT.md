@@ -296,7 +296,7 @@ docker compose -f infra/docker-compose.yml --profile onprem up -d runner
 | `PERFPORTAL_GATLING_METHOD_JAR` | The tool that replays Gatling's percentile method. Empty means `/opt/perfportal/gatling-method.jar`, where the image puts it |
 | `PERFPORTAL_GATLING_METHOD_TDIGEST_JAR` | t-digest 3.3, the library Gatling's reports use. Empty means `$RUNNER_GATLING_HOME/lib/t-digest-3.3.jar` (`/opt/gatling` in the image) |
 | `PERFPORTAL_GATLING_METHOD_SEEDS` | How many replays per run (Gatling breaks ties at random, so its report can change between two renderings). A whole number from 1 to 200; empty or anything else means 16 |
-| `PERFPORTAL_GATLING_METHOD_TIMEOUT_MS` | How long one replay may take before it is stopped, in milliseconds. Empty, or anything under 1000, means 300000 (five minutes) |
+| `PERFPORTAL_GATLING_METHOD_TIMEOUT_MS` | How long the whole replay of one run (every seed) may take before it is stopped, in milliseconds. Empty, or anything under 1000, means 300000 (five minutes) |
 
 After every upload and every recompute the worker re-reads the run's stored
 `simulation.log` and checks every stored figure against it — each statistic
@@ -311,11 +311,37 @@ The same check replays the run's response times through **Gatling's own
 percentile method** (t-digest, as Gatling's HTML report computes them) and
 records where that report would print a different percentile from the exact
 one. It needs only what the image ships, and the worker says at startup
-whether it is available. If it cannot run — a jar moved, the replay timed out
-— the verification is recorded without those differences and the worker logs
-one line; the run's verification outcome is never changed by it. Upgrading
-re-checks every run verified by the previous version whose raw log is still
-stored, to fill them in.
+whether it is available. If it cannot run, the verification still completes
+with its own outcome — ✓ Verified or not is never changed by it — and simply
+records no differences:
+
+- **A jar is missing** (moved, or a host install that never built it): the
+  worker's startup line says "Gatling's method is not available" and names the
+  missing file, and no run gets differences until it is restored. Nothing is
+  logged per run.
+- **`java` is older than 21** (the tool is compiled for Java 21; the image's
+  runtime is 21): the startup line still says "available", because it checks
+  the two files and not the runtime, and every verification logs one line,
+  `verify: run <id>: Gatling's method did not run, so no differences were
+  recorded: … UnsupportedClassVersionError …`. Put a Java 21 first on the
+  worker's `PATH`.
+- **The replay timed out**, or the tool failed: the same one line per run,
+  naming the reason.
+
+Upgrading re-checks every run verified by the previous version whose raw log
+is still stored, to fill them in.
+
+**What it costs.** The replay is one single-threaded JVM per verification, and
+its time grows with requests × seeds. Measured at the default 16 seeds on a
+soak-shaped input of ten distinct requests: **1 million requests took 9.3 s and peaked
+at 245 MB, 2 million took 18.2 s and 337 MB**. A ~900-request run takes well
+under a second. The worker also holds the replay's input while the tool runs —
+about 250 MB per million requests, on top of the decoded log the verification
+already holds — and on a very long soak that, not the five-minute timeout
+(room for roughly 30 million requests), is the tighter limit. Lowering
+`PERFPORTAL_GATLING_METHOD_SEEDS` trades the width of the range for time, not
+memory. The replay runs while the verification holds the run, so a re-ingest or
+recompute of that one run waits behind it.
 
 **Deleting a raw log is irreversible, and the worker does it on its own —
 but only once nothing needs the log.** The sweeper (every 30 seconds) deletes
