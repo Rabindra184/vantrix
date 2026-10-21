@@ -211,6 +211,39 @@ describe('VerificationRepository: recording', () => {
   });
 
   /**
+   * The scan's write: a run with no row gets a pending one, and a decided
+   * row is left exactly as it was — the version bump that made the scan
+   * select it is no reason to forget what the older verifier found.
+   */
+  it('ensurePending adds a pending row where there is none, and leaves a decided row whole', async () => {
+    const repo = new VerificationRepository(pool);
+    const fresh = await seedRun();
+    const decided = await seedRun();
+    await repo.record(decided, {
+      status: 'mismatch',
+      verifierVersion: 1,
+      figuresChecked: 7,
+      mismatches: [MISMATCH],
+      rawLogRetainedUntil: new Date('2026-11-15T00:00:00Z'),
+      gatlingDifferences: [DIFFERENCE],
+      gatlingReplays: 16,
+    });
+
+    await repo.ensurePending(fresh);
+    await repo.ensurePending(decided);
+
+    expect(await repo.find(fresh)).toMatchObject({ status: 'pending', verifierVersion: null, mismatches: [] });
+    expect(await repo.find(decided)).toMatchObject({
+      status: 'mismatch',
+      verifierVersion: 1,
+      figuresChecked: 7,
+      mismatches: [MISMATCH],
+      gatlingDifferences: [DIFFERENCE],
+      gatlingReplays: 16,
+    });
+  });
+
+  /**
    * ═══ THE GATLING DIFFERENCES AND HOW MANY REPLAYS FOUND THEM ═══
    *
    * Written by record, both at once, and replaced by the next record: a run

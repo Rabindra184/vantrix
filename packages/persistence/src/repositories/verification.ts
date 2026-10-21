@@ -252,6 +252,32 @@ export class VerificationRepository {
   }
 
   /**
+   * ═══ THE SCAN'S PENDING ROW: ADDED WHERE THERE IS NONE, NEVER OVER AN ANSWER ═══
+   *
+   * A run the scan selects with no verification row gets a pending one, so
+   * the summary counts it from the moment it is queued. A run that HAS a row
+   * keeps it, whatever it says, until its job records the new answer: what
+   * makes the scan select a decided run is a newer VERIFIER_VERSION, and a
+   * newer verifier is no reason to forget what the older one found. Resetting
+   * here, as markPending does, turned every verified and mismatched run back
+   * to "Verifying…" (its mismatch evidence included) on the deploy that bumped
+   * the version, for as long as the backlog took to drain one run at a time.
+   *
+   * markPending stays the answer for a re-ingest or a recompute: there the
+   * stored figures have changed, and the old answer really is about rows that
+   * no longer exist. No gone branch: the scan selects only runs whose raw log
+   * is still stored, and retention never deletes a candidate's.
+   */
+  async ensurePending(runId: string): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO run_verification (run_id, status)
+       SELECT r.id, 'pending' FROM run r WHERE r.id = $1::uuid
+       ON CONFLICT (run_id) DO NOTHING`,
+      [runId],
+    );
+  }
+
+  /**
    * Whether the run is one markPending may be called for: finished, with
    * statistics to check. The same definition candidatePage selects by, so a
    * caller that queues a run outside the scan (the pipeline, a recompute) can

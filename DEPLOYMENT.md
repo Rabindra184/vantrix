@@ -329,7 +329,23 @@ records no differences:
   naming the reason.
 
 Upgrading re-checks every run verified by the previous version whose raw log
-is still stored, to fill them in.
+is still stored, to fill them in. Each run keeps its previous answer — ✓
+Verified, or a failure with its list — until its own re-check lands, so the
+upgrade never shows a backlog of "Verifying…".
+
+**A run checked while the method could not run is not re-filled** by putting
+Java 21 back or restoring a jar: it was verified by the current version, so
+the scan has no reason to select it again. To re-check those runs once the
+method is available, have the scan pick them up again:
+
+```bash
+docker compose -f infra/docker-compose.yml exec postgres \
+  psql -U perfportal -d perfportal -c \
+  "UPDATE run_verification SET verifier_version = 1
+     WHERE gatling_replays IS NULL AND status IN ('verified', 'mismatch');"
+```
+
+Each keeps its answer while it waits, as above.
 
 **What it costs.** The replay is one single-threaded JVM per verification, and
 its time grows with requests × seeds. Measured at the default 16 seeds on a

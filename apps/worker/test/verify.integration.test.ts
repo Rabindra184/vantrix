@@ -24,7 +24,7 @@ import { PipelineService, RUN_INGEST_LOCK_NAMESPACE } from '../src/pipeline/pipe
 import { RECOMPUTE_QUEUE, enqueueCandidates, startRecomputeConsumer } from '../src/recompute/recompute-queue.js';
 import { RecomputeService } from '../src/recompute/recompute.service.js';
 import { RecomputeRepository } from '@perfportal/persistence';
-import { enqueueVerification, VERIFY_QUEUE } from '../src/verify/verify-queue.js';
+import { enqueueVerification, enqueueVerifyCandidates, VERIFY_QUEUE } from '../src/verify/verify-queue.js';
 import type { GatlingMethodRunner } from '../src/verify/gatling-method-runner.js';
 import { VerifyService } from '../src/verify/verify.service.js';
 import { until } from './backends.js';
@@ -589,6 +589,38 @@ describe('VerifyService and Gatling\'s method', () => {
     // And once checked by this version, it is not selected again.
     expect(await service().verify(runId)).toBe('verified');
     expect((await verifications.candidatePage(VERIFIER_VERSION, null, 10)).ids).toEqual([]);
+  });
+
+  /**
+   * ═══ THE VERSION BUMP RE-CHECKS A RUN WITHOUT FIRST FORGETTING IT ═══
+   *
+   * The scan selects every version-1 row. Reset to pending there, an install's
+   * every ✓ and every mismatch list would read "Verifying…" from the deploy
+   * until a one-at-a-time backlog drained. The row keeps its answer until the
+   * job records the new one.
+   */
+  it('the scan queues a version-1 mismatch and leaves its answer until the re-check lands', async () => {
+    const { runId } = await ingested();
+    const mismatch = {
+      scope: 'request', name: 'Search', family: 'response_time', population: 'ok', bucket: null,
+      table: 'run_stat', figure: 'p95', stored: 412, recomputed: 411,
+    } as const;
+    await verifications.record(runId, {
+      status: 'mismatch', verifierVersion: 1, figuresChecked: 5, mismatches: [mismatch], rawLogRetainedUntil: null,
+      gatlingDifferences: [], gatlingReplays: null,
+    });
+
+    expect(await enqueueVerifyCandidates(verifyQueue, verifications)).toBe(1);
+
+    expect((await verifyQueue.getJob(runId))?.data).toEqual({ runId });
+    expect(await verifications.find(runId)).toMatchObject({
+      status: 'mismatch', verifierVersion: 1, figuresChecked: 5, mismatches: [mismatch],
+    });
+    // The job's answer replaces it: this fixture's stored figures agree with its log.
+    expect(await service().verify(runId)).toBe('verified');
+    expect(await verifications.find(runId)).toMatchObject({
+      status: 'verified', verifierVersion: VERIFIER_VERSION, mismatches: [],
+    });
   });
 });
 
