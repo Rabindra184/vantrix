@@ -163,8 +163,9 @@ export interface WorkerConfig {
   gatlingMethodSeeds: number;
   /**
    * How long one run of the tool may take before it is killed. Five minutes;
-   * at least a second, else the default (scanIntervalOr's rule). A timeout is
-   * a tool failure, which never changes a verification's outcome.
+   * at least a second and at most `MAX_TIMER_MS`, else the default
+   * (`timeoutOr`). A timeout is a tool failure, which never changes a
+   * verification's outcome.
    */
   gatlingMethodTimeoutMs: number;
 }
@@ -205,6 +206,20 @@ const MIN_SCAN_INTERVAL_MS = 1000;
 function scanIntervalOr(value: string | undefined, fallback: number): number {
   const n = numberOr(value?.trim() || undefined, fallback);
   return n >= MIN_SCAN_INTERVAL_MS ? n : fallback;
+}
+
+/**
+ * The longest delay `setTimeout` honours: 2^31 - 1 ms, about 24.8 days. Node
+ * fires a timer asked for anything longer after 1 ms (with a
+ * TimeoutOverflowWarning), so a timeout configured past it would kill every
+ * run's tool the instant it started.
+ */
+const MAX_TIMER_MS = 2_147_483_647;
+
+/** scanIntervalOr's rule, and no longer than a timer can wait: else the default. */
+function timeoutOr(value: string | undefined, fallback: number): number {
+  const n = scanIntervalOr(value, fallback);
+  return n <= MAX_TIMER_MS ? n : fallback;
 }
 
 /** The default replay count, and the bounds a configured one must sit inside. */
@@ -272,7 +287,7 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv = process.env): WorkerCo
       `${pathOr(env.RUNNER_GATLING_HOME, '/opt/gatling')}/lib/t-digest-3.3.jar`,
     ),
     gatlingMethodSeeds: seedsOr(env.GATLING_METHOD_SEEDS),
-    // scanIntervalOr's rule: blank, non-numeric or under a second is the default.
-    gatlingMethodTimeoutMs: scanIntervalOr(env.GATLING_METHOD_TIMEOUT_MS, 300_000),
+    // Blank, non-numeric, under a second or past a timer's limit is the default.
+    gatlingMethodTimeoutMs: timeoutOr(env.GATLING_METHOD_TIMEOUT_MS, 300_000),
   };
 }

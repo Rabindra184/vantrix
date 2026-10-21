@@ -296,7 +296,7 @@ docker compose -f infra/docker-compose.yml --profile onprem up -d runner
 | `PERFPORTAL_GATLING_METHOD_JAR` | The tool that replays Gatling's percentile method. Empty means `/opt/perfportal/gatling-method.jar`, where the image puts it |
 | `PERFPORTAL_GATLING_METHOD_TDIGEST_JAR` | t-digest 3.3, the library Gatling's reports use. Empty means `$RUNNER_GATLING_HOME/lib/t-digest-3.3.jar` (`/opt/gatling` in the image) |
 | `PERFPORTAL_GATLING_METHOD_SEEDS` | How many replays per run (Gatling breaks ties at random, so its report can change between two renderings). A whole number from 1 to 200; empty or anything else means 16 |
-| `PERFPORTAL_GATLING_METHOD_TIMEOUT_MS` | How long the whole replay of one run (every seed) may take before it is stopped, in milliseconds. Empty, or anything under 1000, means 300000 (five minutes) |
+| `PERFPORTAL_GATLING_METHOD_TIMEOUT_MS` | How long the whole replay of one run (every seed) may take before it is stopped, in milliseconds. Empty, anything under 1000, or anything over 2147483647 (the longest a timer can wait), means 300000 (five minutes) |
 
 After every upload and every recompute the worker re-reads the run's stored
 `simulation.log` and checks every stored figure against it — each statistic

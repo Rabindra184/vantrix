@@ -245,5 +245,15 @@ describe('loadWorkerConfig', () => {
       expect(loadWorkerConfig({ ...BASE_ENV, GATLING_METHOD_TIMEOUT_MS: v }).gatlingMethodTimeoutMs).toBe(300_000);
       expect(loadWorkerConfig({ ...BASE_ENV, GATLING_METHOD_TIMEOUT_MS: '1000' }).gatlingMethodTimeoutMs).toBe(1000);
     });
+
+    /**
+     * Node fires a timer asked for more than 2^31 - 1 ms after 1 ms, so a
+     * longer timeout would kill every run's tool the moment it started.
+     */
+    it('reads a timeout past what a timer can wait as five minutes, and keeps the longest one it can', () => {
+      expect(loadWorkerConfig({ ...BASE_ENV, GATLING_METHOD_TIMEOUT_MS: '3000000000' }).gatlingMethodTimeoutMs).toBe(300_000);
+      expect(loadWorkerConfig({ ...BASE_ENV, GATLING_METHOD_TIMEOUT_MS: '2147483648' }).gatlingMethodTimeoutMs).toBe(300_000);
+      expect(loadWorkerConfig({ ...BASE_ENV, GATLING_METHOD_TIMEOUT_MS: '2147483647' }).gatlingMethodTimeoutMs).toBe(2_147_483_647);
+    });
   });
 });
