@@ -89,7 +89,9 @@ function parseIndex(html) {
   for (const m of html.matchAll(rowRe)) {
     const [, id, parent, body] = m;
     const nameMatch = body.match(/class="ellipsed-name">([^<]*)</);
-    if (!nameMatch) continue;
+    // A row the parser cannot name is a report it no longer understands, not
+    // a row to skip: skipping it would drop its cells from the check silently.
+    if (!nameMatch) throw new Error(`index row ${id} has no name`);
     const cells = new Map();
     for (const c of body.matchAll(/<td class="value [^"]*\bcol-(\d+)">([^<]*)<\/td>/g)) {
       cells.set(Number(c[1]), c[2]);
@@ -101,6 +103,9 @@ function parseIndex(html) {
     });
     rows.set(id, { id, parent: parent ?? null, leaf: decodeEntities(nameMatch[1]), total });
   }
+  // Only the index carries the run's own percentiles (no detail page repeats
+  // them), so an index that yields no ROOT row would leave the run unchecked.
+  if (!rows.has('ROOT')) throw new Error('index.html has no ROOT (All Requests) row');
   const out = [];
   for (const row of rows.values()) {
     if (row.id === 'ROOT') {
@@ -230,7 +235,12 @@ function runTool({ java, jar, tdigest, seeds }, keys) {
     child.stderr.on('data', (d) => (err += d));
     child.on('error', reject);
     child.on('close', (code) => {
-      if (code !== 0) return reject(new Error(`the tool exited ${code}: ${err.trim()}`));
+      if (code !== 0) {
+        const hint = /UnsupportedClassVersionError/.test(err)
+          ? ' — the tool is compiled for Java 21; point --java at a Java 21 runtime'
+          : '';
+        return reject(new Error(`the tool exited ${code}${hint}: ${err.trim()}`));
+      }
       const result = new Map();
       for (const line of out.split('\n')) {
         if (!line.trim()) continue;
@@ -257,14 +267,19 @@ function label(scope, name, pop, p) {
   return `${scope}${name ? ` "${name}"` : ''} ${pop} p${p}`;
 }
 
-/** Compares every cell of every page against the tool's ranges. */
-function checkReport(dir, ranges, failures) {
+/**
+ * Compares every cell of every page against the tool's ranges, and records in
+ * `checked` each stats key at least one cell was compared against.
+ */
+function checkReport(dir, ranges, failures, checked) {
   let cells = 0;
   const pages = readdirSync(dir).filter((f) => f === 'index.html' || /^(req|group)_.*\.html$/.test(f));
   for (const page of pages.sort()) {
     for (const entry of parseReportPercentiles(readFileSync(join(dir, page), 'utf8'))) {
       for (const [pop, values] of Object.entries(entry.percentiles)) {
-        const row = ranges.get(`${entry.scope}\u0000${entry.name}\u0000${pop}`);
+        const key = `${entry.scope}\u0000${entry.name}\u0000${pop}`;
+        const row = ranges.get(key);
+        checked.add(key);
         PERCENTILES.forEach((p, i) => {
           const where = `${dir.split('/').pop()}/${page}: ${label(entry.scope, entry.name, pop, p)}`;
           const reported = values[i];
@@ -323,7 +338,19 @@ async function main() {
     const dir = join(args.fixtures, fixture);
     const keys = statsKeys(await decode(join(dir, 'simulation.log')));
     const ranges = await runTool(args, keys);
-    const n = checkReport(dir, ranges, failures);
+    const checked = new Set();
+    const n = checkReport(dir, ranges, failures, checked);
+    // Every key the log produced must have been compared at least once — a
+    // floor on the TOTAL cell count cannot see one page's parser going blind,
+    // because the detail pages duplicate most index cells. The run's ok and ko
+    // populations are the only keys Gatling's report prints nowhere.
+    for (const key of keys.keys()) {
+      if (key === 'run\u0000\u0000ok' || key === 'run\u0000\u0000ko') continue;
+      if (!checked.has(key)) {
+        const [scope, name, pop] = key.split('\u0000');
+        failures.push(`${fixture}: ${label(scope, name, pop, '*')}: the log has this key and no report cell was checked against it`);
+      }
+    }
     console.log(`${fixture}: ${keys.size} keys, ${n} report cells`);
     cells += n;
   }

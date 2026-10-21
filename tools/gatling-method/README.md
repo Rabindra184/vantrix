@@ -66,7 +66,23 @@ Every request record counts, warm-up included: Gatling knows no warm-up.
 bash tools/gatling-method/build.sh     # → tools/gatling-method/build/gatling-method.jar
 ```
 
-Needs a JDK 21 (`javac`, `jar`; `JAVA_HOME` is honoured) and t-digest 3.3:
+**Java 21 throughout.** `build.sh` needs a JDK 21 (`javac`, `jar`; `JAVA_HOME`
+is honoured — on a machine whose default `java` is older, run it with
+`JAVA_HOME=$(/usr/libexec/java_home -v 21)` or equivalent), and the jar is
+`--release 21` bytecode, so RUNNING it needs a Java 21 runtime too: an older
+`java` fails with `UnsupportedClassVersionError`. The fixture check runs
+whichever `java` is first on `PATH` unless given `--java <path to a Java 21
+java>`, and says so when that error is the cause:
+
+```
+node infra/test/gatling-method-fixtures.mjs \
+  --jar tools/gatling-method/build/gatling-method.jar \
+  --tdigest ~/.perfportal/gatling-home/lib/t-digest-3.3.jar \
+  --fixtures fixtures/gatling-3.15.1.2 \
+  [--seeds 200] [--java "$(/usr/libexec/java_home -v 21)/bin/java"]
+```
+
+It also needs t-digest 3.3:
 `TDIGEST_JAR`, else `$RUNNER_GATLING_HOME/lib/t-digest-3.3.jar` (default
 `/opt/gatling`), else `~/.perfportal/gatling-home/lib/t-digest-3.3.jar`.
 t-digest is a compile-time and classpath dependency, deliberately not bundled:
