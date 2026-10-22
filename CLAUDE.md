@@ -128,9 +128,9 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **259 files / 4232 tests**, it
+`nvm use` first, and if a run reports fewer than **259 files / 4233 tests**, it
 did not run everything — nor did an integration run reporting fewer than
-**239 files / 3772 tests**, an e2e run fewer than **207**, or a
+**239 files / 3773 tests**, an e2e run fewer than **207**, or a
 `pnpm test:e2e:cross` run fewer than **621** (207 on each of three engines).
 (Update those numbers when a sub-project adds suites, or the next reader
 calibrates against a stale floor and a silently-skipped run looks like a
@@ -154,9 +154,9 @@ see the eighth lesson below.
 The exact-statistics clean-up branch (`feat/exact-statistics-cleanup`, PR 5
 of `docs/superpowers/specs/2026-10-15-exact-statistics-design.md`, the last).
 **THE FLOORS FALL, AND THAT IS THE MEASUREMENT:** unit **260 / 4239 to
-259 / 4232** (`sketch.test.ts` and its 8 cases leave; `stored-percentiles`
-+2, `histogram` −1, the quantile guard −1 then +1), integration **240 / 3777 to
-239 / 3772** (those `.ts` deltas, plus 2 in `read.integration`), **e2e stays
+259 / 4233** (`sketch.test.ts` and its 8 cases leave; `stored-percentiles`
++3, `histogram` −1, the quantile guard −1 then +1), integration **240 / 3777 to
+239 / 3773** (those `.ts` deltas, plus 2 in `read.integration`), **e2e stays
 207**, **621** on three engines. Each predicted first — unit from per-file
 deltas, integration from `vitest list`, e2e from `--list` — and each collected
 exactly that.
@@ -170,14 +170,16 @@ exactly that.
 `protobufjs`: sketches-js required it at runtime without declaring it, so it
 was only ever here for that (`700f1b8a`); verified from a clean frozen
 install. `clamped-quantiles.test.ts` now asserts no production `.quantile(`
-call and no `@datadog/sketches-js` in any source or manifest, with vacuity
-floors on files scanned.
+call and no `@datadog/sketches-js` in any production source, the root
+`package.json` or a workspace manifest, with vacuity floors on files scanned.
 
 **AN ESTIMATED RUN NOW ANSWERS ONLY THE RANKS IT STORED.**
 `storedPercentiles` reads a legacy row's frozen `percentiles` column, each
 rank `clampPercentile`d to the row's exact min/max, and OMITS a rank it never
-stored — so a project that added p90 sees a dash on such a run, never a
-guessed value or a zero. Who this touches: a run not yet recomputed, and a
+stored, or stored as a non-number (a frozen JSON null) — never a guessed
+value or a zero. A project that added p90 then sees NO p90 column on such a
+run's own page (`percentileColumnsOf` builds columns from the keys present);
+only a mixed trends cohort or Compare shows it as a gap or a dash. Who this touches: a run not yet recomputed, and a
 run retired with a `recompute_error`; both already carry ≈. Red-verified:
 zeroing a missing rank, "interpolating" one from a neighbour, and dropping
 the clamp each fail their own case.
@@ -186,8 +188,11 @@ the clamp each fail their own case.
 SAYS WHY.** Every other release migrates first. Here an older API or worker
 selects (and writes) the dropped columns and fails with "column does not
 exist" the moment they are gone, while the new image never touches them and
-runs on either side of the migration. The same section says to let the
-backfill finish first — the Data integrity progress line gone.
+runs on either side of the migration — but only from `200c4843`'s schema, so
+the section triggers on the migration being PENDING (one `psql` query, since
+there is no tag), stops an older install at `200c4843`, and stops a later
+pull at the drop's own merge commit. `pnpm recompute` reaching 0, not the
+per-org Data integrity line, is what says the backfill is finished.
 
 **THE REAL CHECK, ON A COPY OF THE DEVELOPER DATABASE, WHICH WAS ONLY READ.**
 `pg_dump perfportal` (29 runs, 346 `run_stat` rows, 37 migrations, predating
@@ -241,6 +246,14 @@ workers` and failed ONE, `acceptance.spec.ts`' keyboard-and-chart-table case
 records before; the branch's web diff is comments only). That file failed it
 1 of 3 repeats, the case alone passed **5 of 5**, and a second full run was
 **207 passed, exit 0**.
+
+**THE FINAL REVIEW'S FIX WAVE** added one `stored-percentiles` case (a frozen
+`{p50: null}` omits p50: red-verified, it answered the row's minimum, 100)
+and the root manifest to the DDSketch guard (red-verified by planting the
+specifier there), and made `window.integration`'s full-extent case assert
+EQUALITY. `typecheck` and `lint` exit 0; `test:unit` **259 / 4233**, exit 0;
+`window` and `read.integration` **89 of 89**; integration collects
+**239 / 3773** by `vitest list` (the full suite was not re-run).
 
 **KNOWN AND LEFT:** user-visible wording that calls an ESTIMATED run's
 figures sketch estimates (`RunStats`' p95 ⓘ, `Approx`, the glossary) stays,
