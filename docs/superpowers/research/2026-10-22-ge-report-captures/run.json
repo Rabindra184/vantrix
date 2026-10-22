@@ -1,0 +1,100 @@
+{
+  "data": {
+    "_type": "run",
+    "id": "run_1gaikk6kjidy7ga3hx77gim7jc",
+    "title": "",
+    "description": "",
+    "launch": {
+      "locations": [
+        {
+          "id": "managed_location_jeh3ye6wec7ftb1x8rczcdxztc",
+          "dedicatedIps": [],
+          "weight": 0,
+          "amount": 1
+        }
+      ]
+    },
+    "configuration": {
+      "simulationType": "pkg",
+      "incrementalId": 1,
+      "simulationId": "test_cwkgjd59c7ru8ybhejbcscwctr",
+      "systemProperties": {},
+      "environmentVariables": {},
+      "meaningfulTimeWindow": {
+        "rampUp": 0,
+        "rampDown": 0
+      },
+      "useLocationWeights": false,
+      "stopCriteria": [],
+      "gatlingVersion": "3.15.1",
+      "triggeredById": "user_redacted",
+      "pkgId": "package_dndaajs9djdpx8i4sq6o66w9re",
+      "simulationClass": "example.BasicSimulation"
+    },
+    "execution": {
+      "status": 8,
+      "creditsUsed": 2,
+      "assertions": [
+        {
+          "message": "Global: max of response time is less than 30000.0",
+          "result": true,
+          "actualValue": 4191.0
+        },
+        {
+          "message": "Global: percentage of successful events is greater than 60.0",
+          "result": true,
+          "actualValue": 84.12240184757506
+        },
+        {
+          "message": "Place Order: count of failed events is less than 1.0",
+          "result": false,
+          "actualValue": 176.0
+        }
+      ],
+      "indicators": {
+        "p95": 291.0,
+        "errorRatio": 15.88,
+        "totalRequests": 1732.0,
+        "maxConcurrentVU": 10.0
+      },
+      "buildStart": 1792081210726,
+      "buildEnd": 0,
+      "deployStart": 1792081248793,
+      "deployEnd": 1792081262133,
+      "injectStart": 1792081267555,
+      "injectEnd": 1792081358555
+    },
+    "externalLinks": []
+  },
+  "relatedResources": {
+    "package_dndaajs9djdpx8i4sq6o66w9re": {
+      "id": "package_dndaajs9djdpx8i4sq6o66w9re",
+      "name": "perfportal-parity-demo",
+      "_type": "package",
+      "storage": {
+        "type": "managed",
+        "artifact": {
+          "format": "jvm"
+        }
+      }
+    },
+    "managed_location_jeh3ye6wec7ftb1x8rczcdxztc": {
+      "id": "managed_location_jeh3ye6wec7ftb1x8rczcdxztc",
+      "name": "Europe - Paris",
+      "countryCode": "FR",
+      "_type": "managedLocation"
+    },
+    "test_cwkgjd59c7ru8ybhejbcscwctr": {
+      "id": "test_cwkgjd59c7ru8ybhejbcscwctr",
+      "name": "perfportal-parity-basic",
+      "teamName": "Default team",
+      "teamId": "team_kwm9kaamq7dwdgwixrjihu3g4y",
+      "_type": "simulation",
+      "simulationType": "pkg"
+    },
+    "user_redacted": {
+      "id": "user_redacted",
+      "_type": "user"
+    }
+  }
+}
