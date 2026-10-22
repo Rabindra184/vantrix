@@ -259,7 +259,7 @@ flowchart LR
 
 - **API** (NestJS): `/v1`, authentication, the live WebSocket feed, and the
   built web app.
-- **Worker:** parses Gatling's binary log, computes exact counts and DDSketch
+- **Worker:** parses Gatling's binary log, computes exact counts and exact
   percentiles, evaluates SLA rules and Gatling assertions, and keeps running
   statistics for live runs. Parsing never happens in the API process.
 - **Runner:** an optional single-node executor that launches Gatling and

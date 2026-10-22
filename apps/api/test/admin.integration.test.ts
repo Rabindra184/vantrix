@@ -262,8 +262,8 @@ describe('GET /v1/admin/projects', () => {
 /**
  * A finished run in `orgId`, labelled `statsMethod`, carrying one run_stat
  * row in the given histogram format (or none) and the given recompute error.
- * The row is written raw because its legacy shape — a sketch blob, an old
- * histogram kind — is exactly what nothing in the product writes any more.
+ * The row is written raw because its legacy shape — an old histogram kind —
+ * is exactly what nothing in the product writes any more.
  */
 async function seedStatRun(opts: {
   orgId: string;
@@ -299,16 +299,14 @@ async function seedStatRun(opts: {
          (id, run_id, org_id, project_id, scope, name, family,
           count, ok_count, ko_count, error_rate,
           min_ms, max_ms, mean_ms, stddev_ms, throughput_rps,
-          percentiles, sketch, sketch_kind, histogram_ok, histogram_ko, histogram_kind)
+          percentiles, histogram_ok, histogram_ko, histogram_kind)
        VALUES (gen_random_uuid(), $1, $2, $3, 'run', '', 'response_time',
                1, 1, 0, 0, 10, 10, 10, 0, 1,
-               '{}'::jsonb, $4, $5, $6, NULL, $7)`,
+               '{}'::jsonb, $4, NULL, $5)`,
       [
         run.id,
         opts.orgId,
         opts.projectId,
-        legacy ? Buffer.from([1]) : null,
-        legacy ? 'ddsketch-v1' : null,
         Buffer.from([1]),
         legacy ? 'sparse-ms-v1' : 'sparse-ms-v2',
       ],

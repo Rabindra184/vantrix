@@ -128,9 +128,9 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **260 files / 4239 tests**, it
+`nvm use` first, and if a run reports fewer than **259 files / 4233 tests**, it
 did not run everything — nor did an integration run reporting fewer than
-**240 files / 3777 tests**, an e2e run fewer than **207**, or a
+**239 files / 3773 tests**, an e2e run fewer than **207**, or a
 `pnpm test:e2e:cross` run fewer than **621** (207 on each of three engines).
 (Update those numbers when a sub-project adds suites, or the next reader
 calibrates against a stale floor and a silently-skipped run looks like a
@@ -150,6 +150,115 @@ still Chromium and still 102; `pnpm test:e2e:cross` was 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The exact-statistics clean-up branch (`feat/exact-statistics-cleanup`, PR 5
+of `docs/superpowers/specs/2026-10-15-exact-statistics-design.md`, the last).
+**THE FLOORS FALL, AND THAT IS THE MEASUREMENT:** unit **260 / 4239 to
+259 / 4233** (`sketch.test.ts` and its 8 cases leave; `stored-percentiles`
++3, `histogram` −1, the quantile guard −1 then +1), integration **240 / 3777 to
+239 / 3773** (those `.ts` deltas, plus 2 in `read.integration`), **e2e stays
+207**, **621** on three engines. Each predicted first — unit from per-file
+deltas, integration from `vitest list`, e2e from `--list` — and each collected
+exactly that.
+
+**THE DDSKETCH IS GONE FROM THE PRODUCT.** Migration
+`20261022120000_drop_run_stat_sketch` drops `run_stat.sketch` and
+`sketch_kind`; nothing reads or writes them (`write.ts`, `read.ts`,
+`TRENDS_SQL`, and `NOT_EXACT_RUN_SQL`, which keeps selecting by
+`stats_method` or `histogram_kind`, never by the column — PR 1's rule). The
+`Sketch` class and `@datadog/sketches-js` are deleted, and so is
+`protobufjs`: sketches-js required it at runtime without declaring it, so it
+was only ever here for that (`700f1b8a`); verified from a clean frozen
+install. `clamped-quantiles.test.ts` now asserts no production `.quantile(`
+call and no `@datadog/sketches-js` in any production source, the root
+`package.json` or a workspace manifest, with vacuity floors on files scanned.
+
+**AN ESTIMATED RUN NOW ANSWERS ONLY THE RANKS IT STORED.**
+`storedPercentiles` reads a legacy row's frozen `percentiles` column, each
+rank `clampPercentile`d to the row's exact min/max, and OMITS a rank it never
+stored, or stored as a non-number (a frozen JSON null) — never a guessed
+value or a zero. A project that added p90 then sees NO p90 column on such a
+run's own page (`percentileColumnsOf` builds columns from the keys present);
+only a mixed trends cohort or Compare shows it as a gap or a dash. Who this touches: a run not yet recomputed, and a
+run retired with a `recompute_error`; both already carry ≈. Red-verified:
+zeroing a missing rank, "interpolating" one from a neighbour, and dropping
+the clamp each fail their own case.
+
+**THIS ONE RELEASE ROLLS THE APP BEFORE THE MIGRATION, AND `DEPLOYMENT.md`
+SAYS WHY.** Every other release migrates first. Here an older API or worker
+selects (and writes) the dropped columns and fails with "column does not
+exist" the moment they are gone, while the new image never touches them and
+runs on either side of the migration — but only from `200c4843`'s schema, so
+the section triggers on the migration being PENDING (one `psql` query, since
+there is no tag), stops an older install at `200c4843`, and stops a later
+pull at the drop's own merge commit. `pnpm recompute` reaching 0, not the
+per-org Data integrity line, is what says the backfill is finished.
+
+**THE REAL CHECK, ON A COPY OF THE DEVELOPER DATABASE, WHICH WAS ONLY READ.**
+`pg_dump perfportal` (29 runs, 346 `run_stat` rows, 37 migrations, predating
+PR 1) into `perfportal_pr5_copy`, migrated to 41 with the PARENT build
+(`200c4843`, a worktree at an undotted path): **26 estimated, 3 `exact-v1`**.
+Fingerprints of `/stats` and `/trends` for all 29 runs, at the projects' own
+set and at one adding p90 (project settings changed on the copy only), JSON
+kept under the SDD workspace. One run (`faafe05b`, web-demo, frozen run p99
+2515.46 over a max of 2503) given a `recompute_error`; the parent's
+`pnpm recompute` against the copy, reading the developer bucket: **25
+recomputed, 0 failed, 3.5 s**. Then this branch's migration and API:
+
+  - **every exact run byte-identical** — `/stats` 28 of 29 at both sets, and
+    `/trends` 125 of 130 points, the 5 others being the retired run's own
+    point in its cohort's five responses.
+  - **the retired run** keeps every non-percentile field and differs only in
+    percentile cells the sketch had answered: p90 present on 14 rows before
+    and on 0 after; of 56 cells at the own set, 10 identical, 43 in the last
+    bits (under 1e-9 relative — a RELOADED sketch's float noise against the
+    frozen column written by the live one), and **3 material, all p99 at
+    the top rank**: `Cart` group duration 262.47 → 264, `Add To Cart` 144.04
+    → 145, `Place Order` 94.64 → 95. The new answer is each row's exact max;
+    the old one was the reloaded sketch's bucket-reconstructed extreme, the
+    shape the percentiles-clamped entry measured. Run p99 reads 2503 both
+    ways.
+
+The copy was dropped and the developer database read back identical: 29
+runs, 346 `run_stat` rows, 37 migrations, the same md5 over every run's
+id/status/verdict and every `run_stat` row's counts and percentiles (and over
+both tables whole). The developer bucket listed **1,251,897 objects with the
+same md5 over key/etag/size/mtime** before and after; the APIs pointed at a
+scratch bucket, removed afterwards.
+
+**AND `main` WAS RED ON ARRIVAL, ON THE AUDIT GATE.** CI on `200c4843` failed
+`pnpm audit --prod` on GHSA-qxg6-89mg-rqv8 and GHSA-xp26-3454-mjgp, vitest /
+`@vitest/mocker` below 4.1.12, published after PR 4's green run and reached
+through `better-auth > vitest`. Root `vitest` is `^4.1.12` and a `vitest@4`
+override pins exactly 4.1.12 (the `vite@8` precedent); the lockfile diff is
+the vitest family alone, and the audit is clean.
+
+**WHAT WAS RUN**, Node v22.19.0, `perfportal_pr5` (dropped, recreated,
+migrated to 42), Redis db 12 flushed before integration and each e2e run,
+e2e port 3770, every `.tsbuildinfo` deleted before typecheck: `pnpm build`,
+`typecheck` and `lint` exit 0; `test:unit` **259 / 4232**, exit 0, zero
+`Errors` lines; `test:integration` COLLECTED **239 / 3772** and exited 1 on
+ONE case, a P1001 "Can't reach database server" in `live.integration`'s
+running-run 202 case (load 8-10, swap 83% used), which then passed **33 of 33**
+alone; `pnpm test:e2e --workers=2` read back `Running 207 tests using 2
+workers` and failed ONE, `acceptance.spec.ts`' keyboard-and-chart-table case
+(the menu item never appearing, at load 14 — the intermittent this file
+records before; the branch's web diff is comments only). That file failed it
+1 of 3 repeats, the case alone passed **5 of 5**, and a second full run was
+**207 passed, exit 0**.
+
+**THE FINAL REVIEW'S FIX WAVE** added one `stored-percentiles` case (a frozen
+`{p50: null}` omits p50: red-verified, it answered the row's minimum, 100)
+and the root manifest to the DDSketch guard (red-verified by planting the
+specifier there), and made `window.integration`'s full-extent case assert
+EQUALITY. `typecheck` and `lint` exit 0; `test:unit` **259 / 4233**, exit 0;
+`window` and `read.integration` **89 of 89**; integration collects
+**239 / 3773** by `vitest list` (the full suite was not re-run).
+
+**KNOWN AND LEFT:** user-visible wording that calls an ESTIMATED run's
+figures sketch estimates (`RunStats`' p95 ⓘ, `Approx`, the glossary) stays,
+because it is still true of those values; the deploy-order reversal is
+argued, not tested — no suite runs an old pod against a new schema.
 
 The exact-statistics Gatling-method branch
 (`feat/exact-statistics-gatling-method`, PR 4 of

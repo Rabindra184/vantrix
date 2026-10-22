@@ -3,8 +3,9 @@
  *
  * A quantile of a sample cannot lie outside that sample's own range, so an
  * estimate that does is known to be wrong — and `minMs`/`maxMs` are tracked
- * EXACTLY while percentiles carry DDSketch's 1% relative error. Clamping
- * projects the estimate onto the interval it was always constrained to.
+ * EXACTLY while a legacy ('estimated') row's frozen percentiles carry the
+ * retired DDSketch's 1% relative error. Clamping projects the estimate onto
+ * the interval it was always constrained to.
  *
  * ═══ IT IS A BETTER ESTIMATE, NOT A PRETTIER ONE ═══
  *
@@ -27,18 +28,19 @@
  *
  * The browser copy STAYS, and not by oversight: `apps/web` does not depend on
  * `@perfportal/statistics` and adding that dependency to reach a `Math.min`
- * would pull the engine, the sketch and the histograms into the bundle. It
+ * would pull the engine and the histograms into the bundle. It
  * also still has raw input to correct — rows written before this existed are
  * not rewritten, and `apps/web/test/fixtures/reference-run.json` is a captured
  * payload carrying 2515.46.
  *
- * ═══ AND WHY IT IS NOT INSIDE `Sketch.quantile`, WHICH IS THE OBVIOUS PLACE ═══
+ * ═══ AND WHY IT WAS NEVER INSIDE `Sketch.quantile`, WHICH WAS THE OBVIOUS PLACE ═══
  *
- * That function already answers rank 0 with `min` and rank n-1 with `max`, so
- * clamping an interior rank there looks like the same decision made once. It
- * was written that way first, and it is wrong after a round trip: a sketch's
- * tracked extremes are exact only until it is serialized, after which they are
- * reconstructed from the bucket store. Measured on the plateau fixture —
+ * That function (deleted with the DDSketch in PR 5 of exact statistics)
+ * answered rank 0 with `min` and rank n-1 with `max`, so clamping an interior
+ * rank there looked like the same decision made once. It was written that way
+ * first, and it was wrong after a round trip: a sketch's tracked extremes were
+ * exact only until it was serialized, after which they were reconstructed from
+ * the bucket store. Measured on the plateau fixture —
  *
  *     live      min 100                 max 2503
  *     reloaded  min 100.494567708565    max 2515.4601126101625
@@ -51,11 +53,12 @@
  *
  * So the rule is per ASSEMBLER instead, and it is the one a reader checks:
  * **a percentile is clamped against the same min and max reported beside it.**
- * `storedPercentiles` (`stored-percentiles.ts`) recomputes a LEGACY row's
- * percentile from its stored sketch against a row already assembled, and it
- * is the only one: the metrics controller's /stats and trends reads used to
- * carry their own copies of that recomputation and now call
- * `storedPercentiles` instead. `RollupBuilder.finish`, `bucketLatency`,
+ * `storedPercentiles` (`stored-percentiles.ts`) clamps a LEGACY row's frozen
+ * percentile against the row it sits beside, and it is the only one: the
+ * metrics controller's /stats and trends reads used to carry their own copies
+ * of that rule and now call `storedPercentiles` instead (it recomputed from the
+ * row's stored sketch until PR 5 of exact statistics dropped the column; it
+ * clamps the frozen value now). `RollupBuilder.finish`, `bucketLatency`,
  * `tool-assertions.ts` and `packages/sla`'s `resolveMetric` were callers too
  * until they moved to exact histograms: a nearest-rank value is an observation
  * the row made, so it is inside that row's range by construction and they call
@@ -70,11 +73,12 @@
  * estimate 12.46 ms above the run's own maximum. The names above are kept
  * because they orient a reader; they are NOT what keeps the rule true.
  *
- * `packages/statistics/test/clamped-quantiles.test.ts` derives the set from the
- * source — every `.quantile(` call in production must be wrapped in
- * `clampPercentile` or named in that file's `EXEMPT` with its reason — so a
- * sixth caller joins the check by EXISTING rather than by somebody remembering
- * this paragraph.
+ * `packages/statistics/test/clamped-quantiles.test.ts` derived the set from the
+ * source — every `.quantile(` call in production had to be wrapped in
+ * `clampPercentile` — so a sixth caller joined the check by EXISTING rather
+ * than by somebody remembering this paragraph. Since the sketch column was
+ * dropped there is no estimate left to quantile, and that guard now requires
+ * that NO production code calls `.quantile(` at all.
  *
  * `window.ts` needs no call, and THE REASON FIRST WRITTEN HERE WAS WRONG. It
  * said that file "reports the merged RELOADED sketch's own extremes", which

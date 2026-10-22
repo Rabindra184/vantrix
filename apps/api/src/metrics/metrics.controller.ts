@@ -95,16 +95,18 @@ export class MetricsController {
      * PERCENTILES ARE RECOMPUTED FROM EACH RUN'S STORED ROW, at the project's
      * currently configured set — exactly as `/stats` does, through the same
      * `storedPercentiles`, and for the same reason (spec §9.1, K-03): the
-     * histograms (or, for a run ingested before 2026-10-15, the sketch) are
-     * persisted so that reconfiguring the percentile set needs no re-ingest.
+     * exact histograms are persisted so that reconfiguring the percentile set
+     * needs no re-ingest. A run ingested before 2026-10-15 and not yet
+     * recomputed answers the ranks its frozen column stored, clamped, and
+     * omits the rest — the one rule both endpoints share.
      *
      * Reading the frozen `percentiles` column here instead would put the
      * statistics table and the trend on DIFFERENT SETS the moment a project
-     * reconfigured, silently — both would look like plausible numbers. For a
-     * LEGACY (sketch) row it also disagrees in the last decimal places even
-     * when the sets match, which is what an integration test comparing the two
-     * endpoints caught; an exact row's frozen column holds the same
-     * nearest-rank values the histograms give.
+     * reconfigured, silently — both would look like plausible numbers, and a
+     * legacy row's raw frozen value can sit above its own maximum (the retired
+     * sketch's 1% overshoot) where `storedPercentiles` clamps it. An exact
+     * row's frozen column holds the same nearest-rank values the histograms
+     * give.
      *
      * THE PARSE IS GUARDED even though this endpoint only reads
      * `percentiles`. `parseProjectSettings` validates the WHOLE document, so a
@@ -179,7 +181,7 @@ export class MetricsController {
         maxMs: r.maxMs,
         meanMs: r.meanMs,
         throughputRps: r.throughputRps,
-        // Exact for rows written since 2026-10-15; legacy rows keep the clamped sketch — see storedPercentiles.
+        // Exact for rows written since 2026-10-15; a legacy row answers its stored ranks, clamped — see storedPercentiles.
         percentiles: storedPercentiles(r, settings.percentiles),
       })),
     };
@@ -254,7 +256,7 @@ export class MetricsController {
       meanMs: s.meanMs,
       stddevMs: s.stddevMs,
       throughputRps: s.throughputRps,
-      // Exact for rows written since 2026-10-15; legacy rows keep the clamped sketch — see storedPercentiles.
+      // Exact for rows written since 2026-10-15; a legacy row answers its stored ranks, clamped — see storedPercentiles.
       percentiles: storedPercentiles(s, settings.percentiles),
       indicators: s.histogramOk
         ? bandsOrRefuse(s.histogramOk, s.koCount, settings.indicators)
@@ -675,7 +677,7 @@ export class MetricsController {
  *
  * ═══ AND IT IS NARROWER THAN THE GUARD IT REPLACES ═══
  *
- * That try/catch wrapped the WHOLE row map — the sketch quantile included —
+ * That try/catch wrapped the WHOLE row map — the percentile recomputation included —
  * while its message asserts the cause is `indicators.higherMs`. A comment
  * argued "the only throw reachable from here is that overflow-cap case",
  * which is an argument rather than a guarantee: any future throw in that map

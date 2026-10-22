@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { Histogram, HISTOGRAM_KIND } from '../src/histogram.js';
-import { RELATIVE_ACCURACY, Sketch } from '../src/sketch.js';
 
 describe('Histogram', () => {
   it('counts exact integer-millisecond observations', () => {
@@ -100,25 +99,9 @@ describe('Histogram#percentile', () => {
     const sorted = [...values].sort((a, b) => a - b);
 
     for (const p of [50, 75, 95, 99]) {
-      // EXACT, not within RELATIVE_ACCURACY. 1ms bins and integer inputs mean
+      // EXACT, never within a relative tolerance. 1ms bins and integer inputs mean
       // there is no error term at all to allow for.
       expect(h.percentile(p)).toBe(truePercentile(sorted, p));
-    }
-  });
-
-  it('uses the same rank convention as Sketch#quantile', () => {
-    // A histogram quantile on the linear-interpolation convention would land
-    // one rank away from the full-run value on identical data — a discrepancy
-    // that looks like a windowing bug and is not one.
-    const values = sample();
-    const h = new Histogram();
-    const s = new Sketch();
-    for (const v of values) { h.accept(v); s.accept(v); }
-
-    for (const p of [50, 95, 99]) {
-      const exact = h.percentile(p) as number;
-      const relative = Math.abs(exact - s.quantile(p / 100)) / exact;
-      expect(relative).toBeLessThanOrEqual(RELATIVE_ACCURACY);
     }
   });
 

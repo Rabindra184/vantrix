@@ -167,12 +167,13 @@ describe('end-to-end parity with the Gatling reference report', () => {
     expect(started).toBe(895);
     expect(ended).toBe(895);
 
-    // 8. Percentiles are ESTIMATES and are checked against ground truth, not
-    //    against Gatling — Gatling's own printed percentiles are histogram
-    //    estimates and three of its four never occur in the data (spec §A.9 F-6).
-    //    DDSketch guarantees 1% relative error, and 1.000% is reachable, so
-    //    this bound is <=, never <.
-    expect(Math.abs(global.percentiles.p95 - 654) / 654).toBeLessThanOrEqual(0.01);
+    // 8. Percentiles are checked against ground truth, not against Gatling —
+    //    Gatling's own printed percentiles are t-digest estimates and three of
+    //    its four never occur in the data (spec §A.9 F-6). 654 is the nearest-
+    //    rank p95 of the 895 durations in this simulation.log, and a run
+    //    ingested now is exact ('exact-v1'), so it is asserted EQUAL. This was
+    //    a within-1% bound while percentiles came from the retired DDSketch.
+    expect(global.percentiles.p95).toBe(654);
   });
 
   it('is idempotent end to end — re-posting the same key yields one run', async () => {
@@ -735,11 +736,11 @@ describe('Appendix A — Gatling report parity rows (PT-*)', () => {
       // packages/contracts/src/settings.ts's docstring on ProjectSettingsSchema
       // promises percentiles are "read at REQUEST time, not frozen at ingest" -
       // the same guarantee PT-K-01/02 exercises for indicators, because "with
-      // an exact histogram and a stored sketch, both are display thresholds
-      // applied to complete data, and recomputing them per request yields
-      // exactly what a re-ingest would." Task 21 fixed MetricsController.stats()
-      // to honor that: it now recomputes percentile columns from the sketch
-      // persisted in run_stat.sketch at the project's currently configured
+      // an exact histogram, both are display thresholds applied to complete
+      // data, and recomputing them per request yields exactly what a re-ingest
+      // would." Task 21 fixed MetricsController.stats() to honor that (from the
+      // stored sketch then; from the exact histograms in run_stat since): it
+      // recomputes percentile columns at the project's currently configured
       // percentile set, rather than returning the frozen run_stat.percentiles
       // JSON captured at ingest. Proven below against the already-shared
       // Appendix-A run: changing the setting post-ingest DOES move the

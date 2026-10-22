@@ -79,9 +79,9 @@ describe('GET /v1/runs/:id/stats — windowed', () => {
   });
 
   it('a full-extent window reproduces the unwindowed row', async () => {
-    // Within RELATIVE_ACCURACY, not exactly: the windowed path merges exact
-    // histograms and the unwindowed path reads the 1%-relative sketch. That
-    // divergence is designed and documented; this pins its size.
+    // EQUAL, not within 1%: both paths merge the same exact histograms now
+    // (the 1% bound dated from when the unwindowed path read the retired
+    // DDSketch), so any difference at all is a defect in one of them.
     ctx = await createTestApp();
     const id = await ingested();
 
@@ -94,11 +94,8 @@ describe('GET /v1/runs/:id/stats — windowed', () => {
     expect(windowed.koCount).toBe(whole.koCount);
     expect(windowed.maxMs).toBe(whole.maxMs);
     expect(windowed.minMs).toBe(whole.minMs);
-    for (const key of Object.keys(whole.percentiles)) {
-      const a = whole.percentiles[key]!;
-      const b = windowed.percentiles[key]!;
-      expect(Math.abs(a - b) / a, key).toBeLessThanOrEqual(0.01);
-    }
+    expect(Object.keys(whole.percentiles).length, 'the row carries no percentiles to compare').toBeGreaterThan(0);
+    expect(windowed.percentiles).toEqual(whole.percentiles);
   });
 
   it('a half window reports strictly fewer requests and no larger a max', async () => {
@@ -204,8 +201,8 @@ describe('GET /v1/runs/:id/stats — windowed', () => {
     const cut = offsets[Math.floor(offsets.length / 2)]!;
 
     // The whole run through the WINDOWED path, not the unwindowed one.
-    // Comparing against `run_stat` would mix two sources — the sketch path and
-    // the histogram path — and drag their designed divergence into a test
+    // Comparing against `run_stat` would mix two sources — the stored row and
+    // the merged buckets — and drag any divergence between them into a test
     // about something else entirely. That equivalence has its own case above;
     // this one is purely about the seam.
     const whole = runRowOf(
@@ -242,7 +239,7 @@ describe('GET /v1/runs/:id/stats — windowed', () => {
    * carry those `sparse-ms-v1` bytes with an overflow bin, and
    * `Histogram#percentile` answers `undefined` for a rank hidden in it. That
    * refusal once escaped the handler as a 500 on a brushed read of a run
-   * whose UNWINDOWED page renders fine, because that path reads the sketch.
+   * whose UNWINDOWED page rendered fine, because that path read the sketch.
    *
    * The histograms are written straight onto the stored buckets rather than
    * ingested: producing one through the fixture would mean a five-minute

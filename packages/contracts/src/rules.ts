@@ -58,9 +58,10 @@ const PERCENTILE = /^p(\d+(?:\.\d+)?)$/;
  * pins this against `resolveMetric` has one function to check rather than a
  * regex copied into three files.
  *
- * The bound is STRICT on both ends, matching `metrics.ts:52`'s
- * `p > 0 && p < 100`. `p0` and `p100` are not percentiles the sketch can
- * answer — they are the min and the max, which have their own scalar names.
+ * The bound is STRICT on both ends, matching `resolveMetric`'s
+ * `p > 0 && p < 100` in `packages/sla/src/metrics.ts`. `p0` and `p100` are not
+ * percentiles the evaluator answers — they are the min and the max, which have
+ * their own scalar names.
  */
 export function isResolvableSlaMetric(metric: string): boolean {
   if ((SLA_METRIC_SCALARS as readonly string[]).includes(metric)) return true;

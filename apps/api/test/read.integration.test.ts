@@ -14,7 +14,7 @@ import {
   StatsResponseSchema,
   VerificationSchema,
 } from '@perfportal/contracts';
-import { nearestRankIndex } from '@perfportal/statistics';
+import { Histogram, nearestRankIndex } from '@perfportal/statistics';
 import { CONFIG } from '../src/auth/auth.module.js';
 import { loadConfig } from '../src/config.js';
 import { createTestApp, type TestContext } from './support/app.js';
@@ -568,7 +568,7 @@ describe('GET /v1/runs/:id/stats', () => {
     // At a set the frozen column does not hold: the default set above is
     // answered by the column written at ingest, which is already exact, so
     // only a RECONFIGURED set proves the endpoint recomputes from the
-    // histograms rather than from a sketch these rows no longer carry.
+    // histograms rather than reading back the frozen column.
     await ctx.pool.query(
       `UPDATE project SET settings = jsonb_set(settings, '{percentiles}', $1::jsonb) WHERE id = $2`,
       [JSON.stringify([90, 99.9]), ctx.projectId],
@@ -585,6 +585,109 @@ describe('GET /v1/runs/:id/stats', () => {
       }
     } finally {
       // Settings are shared state for the rest of this file.
+      await ctx.pool.query(
+        `UPDATE project SET settings = jsonb_set(settings, '{percentiles}', $1::jsonb) WHERE id = $2`,
+        [JSON.stringify([50, 75, 95, 99]), ctx.projectId],
+      );
+    }
+  });
+
+  /**
+   * ═══ AN EXACT RUN'S /stats DID NOT MOVE WHEN THE SKETCH WAS DROPPED ═══
+   *
+   * The exact path never read the sketch, so dropping it must change nothing
+   * an exact run answers: at the default set every row — run, request and
+   * group — answers exactly the frozen column written at ingest (which is
+   * already nearest-rank), and at a reconfigured set exactly the nearest rank
+   * of that row's own stored histograms. Asserted on EVERY row, so a legacy
+   * branch that leaked onto exact rows anywhere fails here.
+   */
+  it('serves an exact run unchanged: every row equals its frozen column, and its histograms at a new set', async () => {
+    ctx = await createTestApp();
+    const id = await ingested();
+    const frozen = await ctx.pool.query<{ scope: string; name: string; family: string; percentiles: Record<string, number>; histogram_ok: Buffer; histogram_ko: Buffer }>(
+      `SELECT scope, name, family, percentiles, histogram_ok, histogram_ko FROM run_stat WHERE run_id = $1`, [id]);
+    expect(frozen.rows.length).toBeGreaterThan(3);
+    const key = (r: { scope: string; name: string; family: string }) => `${r.scope}/${r.name}/${r.family}`;
+
+    const before = await readAs(`/v1/runs/${id}/stats`);
+    expect(before.status).toBe(200);
+    const served = new Map<string, Record<string, number>>(
+      before.body.stats.map((s: { scope: string; name: string; family: string; percentiles: Record<string, number> }) => [key(s), s.percentiles]),
+    );
+    expect(served.size).toBe(frozen.rows.length);
+    for (const row of frozen.rows) expect(served.get(key(row)), key(row)).toEqual(row.percentiles);
+
+    await ctx.pool.query(
+      `UPDATE project SET settings = jsonb_set(settings, '{percentiles}', $1::jsonb) WHERE id = $2`,
+      [JSON.stringify([90, 99.9]), ctx.projectId],
+    );
+    try {
+      const after = await readAs(`/v1/runs/${id}/stats`);
+      expect(after.status).toBe(200);
+      const reconfigured = new Map<string, Record<string, number>>(
+        after.body.stats.map((s: { scope: string; name: string; family: string; percentiles: Record<string, number> }) => [key(s), s.percentiles]),
+      );
+      for (const row of frozen.rows) {
+        const ok = Histogram.deserialize(new Uint8Array(row.histogram_ok));
+        const ko = Histogram.deserialize(new Uint8Array(row.histogram_ko));
+        expect(ok.exact && ko.exact, key(row)).toBe(true);
+        const merged = new Histogram();
+        merged.merge(ok);
+        merged.merge(ko);
+        const [p90, p999] = merged.percentiles([90, 99.9]);
+        expect(reconfigured.get(key(row)), key(row)).toEqual({ p90, 'p99.9': p999 });
+      }
+    } finally {
+      await ctx.pool.query(
+        `UPDATE project SET settings = jsonb_set(settings, '{percentiles}', $1::jsonb) WHERE id = $2`,
+        [JSON.stringify([50, 75, 95, 99]), ctx.projectId],
+      );
+    }
+  });
+
+  /**
+   * ═══ A LEGACY RUN AFTER THE SKETCH IS GONE ═══
+   *
+   * An estimated run that was never recomputed (retired with a
+   * recompute_error, say) in a project whose percentile set has since gained
+   * p90. With no sketch left there is nothing to estimate p90 from, so it is
+   * OMITTED rather than zeroed or interpolated, and the frozen p95 — the
+   * retired sketch's overshoot, 12.46 ms above the row's exact maximum — is
+   * answered clamped, the value the browser's own clamp already showed.
+   * Nothing 500s.
+   */
+  it('serves a legacy run its stored ranks, clamped, and omits a rank it never stored', async () => {
+    ctx = await createTestApp();
+    const id = await ingested();
+    await ctx.pool.query(`UPDATE run SET stats_method = 'estimated', recompute_error = 'raw_log_missing' WHERE id = $1`, [id]);
+    const { rows: [runRow] } = await ctx.pool.query<{ min_ms: number; max_ms: number }>(
+      `SELECT min_ms, max_ms FROM run_stat WHERE run_id = $1 AND scope = 'run' AND family = 'response_time'`, [id]);
+    expect(runRow).toBeDefined();
+    const legacyP95 = runRow!.max_ms + 12.46;
+    await ctx.pool.query(
+      `UPDATE run_stat
+          SET histogram_kind = 'sparse-ms-v1', histogram_ok = $2, histogram_ko = $3,
+              percentiles = $4::jsonb
+        WHERE run_id = $1 AND scope = 'run' AND family = 'response_time'`,
+      [id, Buffer.from(Histogram.legacyV1ForTests([100, 200, 300])), Buffer.from(Histogram.legacyV1ForTests([])),
+       JSON.stringify({ p50: 205.5, p75: 300.25, p95: legacyP95 })],
+    );
+    await ctx.pool.query(
+      `UPDATE project SET settings = jsonb_set(settings, '{percentiles}', $1::jsonb) WHERE id = $2`,
+      [JSON.stringify([50, 90, 95]), ctx.projectId],
+    );
+    try {
+      const res = await readAs(`/v1/runs/${id}/stats`);
+      expect(res.status).toBe(200);
+      expect(() => StatsResponseSchema.parse(res.body)).not.toThrow();
+      const row = res.body.stats.find(
+        (s: { scope: string; family: string }) => s.scope === 'run' && s.family === 'response_time',
+      );
+      expect(row.maxMs).toBe(runRow!.max_ms);
+      expect(row.percentiles).toEqual({ p50: 205.5, p95: runRow!.max_ms });
+      expect(row.percentiles).not.toHaveProperty('p90');
+    } finally {
       await ctx.pool.query(
         `UPDATE project SET settings = jsonb_set(settings, '{percentiles}', $1::jsonb) WHERE id = $2`,
         [JSON.stringify([50, 75, 95, 99]), ctx.projectId],
@@ -637,9 +740,10 @@ describe('GET /v1/runs/:id/stats', () => {
     );
   });
 
-  // The claim of AC-PARITY-4 / K-03 for percentiles specifically: the sketch
-  // is persisted precisely so the percentile columns can be recomputed at any
-  // configured set with no re-ingest, exactly like indicators above.
+  // The claim of AC-PARITY-4 / K-03 for percentiles specifically: the exact
+  // histograms are persisted precisely so the percentile columns can be
+  // recomputed at any configured set with no re-ingest, exactly like
+  // indicators above.
   it('recomputes percentile columns when the project changes its percentile set, with no re-ingest', async () => {
     ctx = await createTestApp();
     const id = await ingested();
@@ -665,13 +769,12 @@ describe('GET /v1/runs/:id/stats', () => {
     expect(afterPercentiles['p99.9']!).toBeGreaterThanOrEqual(afterPercentiles['p90']!);
 
     // AND A RECOMPUTED PERCENTILE STAYS INSIDE THE RANGE THIS RESPONSE REPORTS
-    // BESIDE IT. This is the one path where the two do not come from the same
-    // object: `minMs`/`maxMs` are the exact values the engine wrote to the row,
-    // while these percentiles are re-derived from the DESERIALIZED sketch, whose
-    // own extremes are bucket-approximate and sit OUTSIDE the true range. So a
-    // clamp taken against the sketch would leave this serving a percentile above
-    // the maximum printed next to it — which is why `clampPercentile` is called
-    // with the row here (see its docstring).
+    // BESIDE IT. `minMs`/`maxMs` are the exact values the engine wrote to the
+    // row; these percentiles are re-derived from the stored histograms, and a
+    // nearest-rank value is an observation, so it is inside that range by
+    // construction. (This guarded a real escape while legacy rows were
+    // re-derived from a DESERIALIZED sketch, whose own extremes sat outside the
+    // true range.)
     const row = after.body.stats.find(
       (s: { scope: string; family: string }) => s.scope === 'run' && s.family === 'response_time',
     ) as { minMs: number; maxMs: number };

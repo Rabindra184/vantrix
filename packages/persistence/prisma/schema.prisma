@@ -576,11 +576,11 @@ model RunStat {
   meanMs        Float   @map("mean_ms")
   stddevMs      Float   @map("stddev_ms")
   throughputRps Float   @map("throughput_rps")
+  /// The frozen percentiles written at ingest. An exact row's are recomputed
+  /// from the two histograms below; a legacy row (written before 2026-10-15,
+  /// not yet recomputed) answers from this column, each rank clamped. The
+  /// DDSketch columns were dropped in 20261022120000_drop_run_stat_sketch.
   percentiles   Json
-  /// Legacy rows only: a row written since 2026-10-15 carries no DDSketch,
-  /// and its percentiles are recomputed from the two exact histograms.
-  sketch        Bytes?
-  sketchKind    String? @map("sketch_kind")
   histogramOk   Bytes?  @map("histogram_ok")
   histogramKo   Bytes?  @map("histogram_ko")
   histogramKind String? @map("histogram_kind")
@@ -618,7 +618,7 @@ model RunSeriesBucket {
   percentiles    Json
   percentilesOk  Json?    @map("percentiles_ok")
   percentilesKo  Json?    @map("percentiles_ko")
-  /// Exact 1ms histograms of the same observations the bucket sketches hold,
+  /// Exact 1ms histograms of the bucket's own observations (OK and KO apart),
   /// in a form a TIME WINDOW can merge — the frozen `percentiles` above cannot
   /// be re-aggregated, because the 95th of a union is not a function of two
   /// buckets' 95ths. Null for runs ingested before migration

@@ -1,4 +1,4 @@
-import { bandsFrom, bucketLatency, Histogram, HISTOGRAM_KIND, mergedHistogram, percentilesOf, runEngine, Sketch, storedPercentiles } from '@perfportal/statistics';
+import { bandsFrom, bucketLatency, Histogram, HISTOGRAM_KIND, mergedHistogram, percentilesOf, runEngine, storedPercentiles } from '@perfportal/statistics';
 import type { CanonicalEvent } from '@perfportal/core';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { createPool, createPrisma, ERROR_SERIES_SQL, MetricReader, MetricWriter, SERIES_SQL, MAX_OFFSET_MS, USER_SERIES_SQL, WINDOWED_BUCKETS_SQL } from '../src/index.js';
@@ -112,10 +112,9 @@ describe('MetricWriter / MetricReader', () => {
   it('answers a percentile that was never stored in the JSONB — the point of keeping the histograms', async () => {
     // Reads the stored row the way production does: through stats(), whose
     // histograms are what /stats recomputes percentiles from at the project's
-    // current set (K-03), via storedPercentiles. A row written since
-    // 2026-10-15 carries no sketch at all, so the exact histograms are the
-    // ONLY source, and an unstored rank (p99.9) must come back exact — the
-    // same value the engine's own in-memory histograms give.
+    // current set (K-03), via storedPercentiles. The exact histograms are a
+    // written row's ONLY source, and an unstored rank (p99.9) must come back
+    // exact — the same value the engine's own in-memory histograms give.
     const ctx = await seedRun();
     const result = await persist(ctx);
 
@@ -125,7 +124,7 @@ describe('MetricWriter / MetricReader', () => {
     const storedRun = stored.find((s) => s.scope === 'run');
     const engineRun = result.stats.find((s) => s.scope === 'run')!;
 
-    expect(storedRun?.sketch).toBeNull();
+    expect(storedRun).not.toHaveProperty('sketch');
     expect(storedRun?.histogramOk?.exact).toBe(true);
     expect(storedRun?.histogramKo?.exact).toBe(true);
 
@@ -139,43 +138,49 @@ describe('MetricWriter / MetricReader', () => {
     expect(Number.isFinite(recomputed['p99.9'])).toBe(true);
   });
 
-  it('writes new rows with v2 histograms, no sketch, and an exact-v1 run', async () => {
+  it('writes new rows with v2 histograms and an exact-v1 run, and run_stat has no sketch column', async () => {
     const ctx = await seedRun();
     await persist(ctx);
     const { rows } = await pool.query(
-      `SELECT sketch, sketch_kind, histogram_kind, get_byte(histogram_ok, 0) AS v FROM run_stat WHERE run_id = $1`, [ctx.runId]);
+      `SELECT histogram_kind, get_byte(histogram_ok, 0) AS v FROM run_stat WHERE run_id = $1`, [ctx.runId]);
     expect(rows.length).toBeGreaterThan(0);
-    expect(rows.every((r) => r.sketch === null && r.sketch_kind === null && r.histogram_kind === 'sparse-ms-v2' && r.v === 2)).toBe(true);
+    expect(rows.every((r) => r.histogram_kind === 'sparse-ms-v2' && r.v === 2)).toBe(true);
     const run = await pool.query(`SELECT stats_method FROM run WHERE id = $1`, [ctx.runId]);
     expect(run.rows[0].stats_method).toBe('exact-v1');
+    // PR 5 of exact statistics dropped both columns: nothing writes or reads a
+    // DDSketch any more.
+    const cols = await pool.query(
+      `SELECT column_name FROM information_schema.columns WHERE table_name = 'run_stat'`);
+    const names = cols.rows.map((r) => r.column_name as string);
+    expect(names).toContain('histogram_kind');
+    expect(names).not.toContain('sketch');
+    expect(names).not.toContain('sketch_kind');
   });
 
-  it('still reads a legacy row (sketch + v1 histogram) through the legacy path', async () => {
+  /**
+   * A row written before 2026-10-15 and never recomputed: a v1 histogram, and
+   * a frozen column whose p95 is the retired sketch's overshoot above the
+   * row's exact maximum. It reads back through the same rule as every row —
+   * its stored ranks, clamped, and nothing it never stored.
+   */
+  it('reads a legacy row (v1 histogram) from its frozen column, clamped', async () => {
     const ctx = await seedRun();
     await pool.query(`UPDATE run SET stats_method = 'estimated' WHERE id = $1`, [ctx.runId]);
-    const sketch = new Sketch();
-    for (const v of [100, 200, 300]) sketch.accept(v);
     await pool.query(
       `INSERT INTO run_stat (id, run_id, org_id, project_id, scope, name, family, count, ok_count, ko_count,
          error_rate, min_ms, max_ms, mean_ms, stddev_ms, throughput_rps, percentiles,
-         sketch, sketch_kind, histogram_ok, histogram_ko, histogram_kind)
+         histogram_ok, histogram_ko, histogram_kind)
        VALUES (gen_random_uuid(), $1, $2, $3, 'run', '', 'response_time', 3, 3, 0,
-         0, 100, 300, 200, 81.6, 1, '{"p50":200}', $4, 'ddsketch', $5, $6, 'sparse-ms-v1')`,
-      [ctx.runId, ctx.orgId, ctx.projectId, Buffer.from(sketch.serialize()),
+         0, 100, 300, 200, 81.6, 1, '{"p50":200,"p95":303.1}', $4, $5, 'sparse-ms-v1')`,
+      [ctx.runId, ctx.orgId, ctx.projectId,
        Buffer.from(Histogram.legacyV1ForTests([100, 200, 300])), Buffer.from(Histogram.legacyV1ForTests([]))],
     );
-    const { rows } = await pool.query(`SELECT sketch, histogram_ok FROM run_stat WHERE run_id = $1`, [ctx.runId]);
-    expect(rows[0].sketch).not.toBeNull();
-    expect(Histogram.deserialize(new Uint8Array(rows[0].histogram_ok)).exact).toBe(false);
 
-    // Through the reader and the shared rule: a legacy row takes the clamped
-    // sketch path, never the v1 histogram, and stays inside its own range.
     const [stat] = await new MetricReader(pool).stats({ orgId: ctx.orgId, projectId: ctx.projectId }, ctx.runId);
-    expect(stat!.sketch).not.toBeNull();
-    const out = storedPercentiles(stat!, [50, 99]);
-    expect(out.p50).toBeCloseTo(sketch.quantile(0.5), 6);
-    expect(out.p99).toBeGreaterThanOrEqual(100);
-    expect(out.p99).toBeLessThanOrEqual(300);
+    expect(stat).not.toHaveProperty('sketch');
+    expect(stat!.histogramOk?.exact).toBe(false);
+    expect(stat!.percentiles).toEqual({ p50: 200, p95: 303.1 });
+    expect(storedPercentiles(stat!, [50, 90, 95])).toEqual({ p50: 200, p95: 300 });
   });
 
   it('round-trips series buckets and error rows', async () => {

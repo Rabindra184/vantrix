@@ -57,7 +57,7 @@ export class MetricWriter {
         'id', 'run_id', 'org_id', 'project_id', 'scope', 'name', 'family',
         'count', 'ok_count', 'ko_count', 'error_rate',
         'min_ms', 'max_ms', 'mean_ms', 'stddev_ms', 'throughput_rps',
-        'percentiles', 'sketch', 'sketch_kind',
+        'percentiles',
         'histogram_ok', 'histogram_ko', 'histogram_kind',
       ],
       result.stats.map((s) => [
@@ -67,12 +67,8 @@ export class MetricWriter {
         s.count, s.okCount, s.koCount, s.errorRate,
         s.minMs, s.maxMs, s.meanMs, s.stddevMs, s.throughputRps,
         JSON.stringify(s.percentiles),
-        // No DDSketch since 2026-10-15: the two exact histograms below are
-        // what every stored percentile is recomputed from. A row written
-        // before that keeps its sketch, and its readers keep the legacy path
-        // (storedPercentiles in @perfportal/statistics).
-        null,
-        null,
+        // The two exact histograms are what every stored percentile is
+        // recomputed from (storedPercentiles in @perfportal/statistics).
         Buffer.from(s.histogramOk.serialize()),
         Buffer.from(s.histogramKo.serialize()),
         HISTOGRAM_KIND,
@@ -84,7 +80,7 @@ export class MetricWriter {
       for (const b of entry.buckets) {
         // The one derivation, shared with the live publisher — see
         // bucketLatency's own doc comment for why it is not inlined here.
-        // A bucket carries no sketch; its exact histograms are persisted below.
+        // A bucket's exact histograms are persisted below.
         const lat = bucketLatency(b);
         bucketRows.push([
           day, ctx.runId, ctx.orgId, ctx.projectId,

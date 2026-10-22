@@ -8,7 +8,7 @@ import { Queue } from 'bullmq';
 import request from 'supertest';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { parseProjectSettings, StatsResponseSchema, TrendsResponseSchema } from '@perfportal/contracts';
-import { clampPercentile, Histogram, nearestRankIndex, Sketch } from '@perfportal/statistics';
+import { clampPercentile, Histogram, nearestRankIndex } from '@perfportal/statistics';
 import { createTestApp, type TestContext } from './support/app.js';
 import { runPipelineFor } from './support/pipeline.js';
 
@@ -149,32 +149,21 @@ async function seedRun(opts: {
     await ctx.pool.query(
       `INSERT INTO run_stat
          (id, run_id, org_id, project_id, scope, name, family, count, ok_count, ko_count,
-          error_rate, min_ms, max_ms, mean_ms, stddev_ms, throughput_rps, percentiles,
-          sketch, sketch_kind)
-       VALUES ($1,$2,$3,$4,'run','','response_time',$5,$5,0,0,1,9,5,2,1.5,$6,$7,'ddsketch')`,
+          error_rate, min_ms, max_ms, mean_ms, stddev_ms, throughput_rps, percentiles)
+       VALUES ($1,$2,$3,$4,'run','','response_time',$5,$5,0,0,1,9,5,2,1.5,$6)`,
       [
         randomUUID(),
         id,
         ctx.orgId,
         ctx.projectId,
         count,
+        // No histograms, so the endpoint answers this frozen column through
+        // storedPercentiles' legacy rule — the ranks it holds, clamped.
         JSON.stringify({ p95: 8 }),
-        // A REAL SKETCH, not a placeholder byte. The endpoint recomputes
-        // percentiles from this the way /stats does, so a row carrying
-        // unparseable bytes would fail deserialisation inside the reader and
-        // look like a query bug.
-        Buffer.from(sketchOf(count).serialize()),
       ],
     );
   }
   return id;
-}
-
-/** A sketch of `n` observations, so a seeded row can be quantiled. */
-function sketchOf(n: number): Sketch {
-  const s = new Sketch();
-  for (let i = 0; i < n; i += 1) s.accept(i + 1);
-  return s;
 }
 
 const at = (iso: string) => new Date(iso);
@@ -480,16 +469,14 @@ describe('GET /v1/runs/:id/trends', () => {
     await ctx.pool.query(
       `INSERT INTO run_stat
          (id, run_id, org_id, project_id, scope, name, family, count, ok_count, ko_count,
-          error_rate, min_ms, max_ms, mean_ms, stddev_ms, throughput_rps, percentiles,
-          sketch, sketch_kind)
-       VALUES ($1,$2,$3,$4,'run','','latency',7,7,0,0,1,9,5,2,1.5,$5,$6,'ddsketch')`,
+          error_rate, min_ms, max_ms, mean_ms, stddev_ms, throughput_rps, percentiles)
+       VALUES ($1,$2,$3,$4,'run','','latency',7,7,0,0,1,9,5,2,1.5,$5)`,
       [
         randomUUID(),
         a,
         ctx.orgId,
         ctx.projectId,
         JSON.stringify({ p95: 3 }),
-        Buffer.from(sketchOf(7).serialize()),
       ],
     );
 
@@ -662,36 +649,38 @@ describe('GET /v1/runs/:id/trends — comparability fields', () => {
 });
 
 /**
- * EXACT FOR NEW ROWS, UNMOVED FOR OLD ONES (spec §4). Trends recomputes each
+ * EXACT FOR NEW ROWS, FROZEN FOR OLD ONES (spec §4). Trends recomputes each
  * run's percentiles through `storedPercentiles`, so a cohort spanning the
  * 2026-10-15 cut-over holds both kinds of row and each has to keep its own
- * answer: a legacy row reads exactly what it read before this change (its
- * sketch, clamped against its own extremes), and an exact row reads the
+ * answer: a legacy row reads the ranks its frozen column stored, each clamped
+ * against its own extremes (its DDSketch was dropped in PR 5, so there is
+ * nothing left to estimate an unstored rank from), and an exact row reads the
  * nearest-rank values of what it observed.
  *
- * The values are 1..1000, where the sketch's 1% estimate and the nearest-rank
- * value disagree — asserted below, because a population on which the two
- * paths agree would let either expectation pass against the other path.
+ * The legacy row's frozen p95 sits above its own maximum — the retired
+ * sketch's overshoot — so the clamp is visible, and it never stored p75 or
+ * p99, so the omission is too. The two expectations are asserted to differ,
+ * because a pair on which they agree would let either pass against the other.
  */
 describe('GET /v1/runs/:id/trends — exact and legacy rows', () => {
   const VALUES = Array.from({ length: 1000 }, (_, i) => i + 1);
 
   async function insertStat(runId: string, columns: {
-    sketch: Buffer | null; sketchKind: string | null;
+    percentiles: Record<string, number>;
     histogramOk: Buffer; histogramKo: Buffer; histogramKind: string;
   }): Promise<void> {
     await ctx.pool.query(
       `INSERT INTO run_stat (id, run_id, org_id, project_id, scope, name, family, count, ok_count, ko_count,
          error_rate, min_ms, max_ms, mean_ms, stddev_ms, throughput_rps, percentiles,
-         sketch, sketch_kind, histogram_ok, histogram_ko, histogram_kind)
+         histogram_ok, histogram_ko, histogram_kind)
        VALUES ($1, $2, $3, $4, 'run', '', 'response_time', $5, $5, 0,
-         0, $6, $7, 500.5, 288.7, 1, '{"p50":500}', $8, $9, $10, $11, $12)`,
+         0, $6, $7, 500.5, 288.7, 1, $8::jsonb, $9, $10, $11)`,
       [randomUUID(), runId, ctx.orgId, ctx.projectId, VALUES.length, VALUES[0], VALUES.at(-1),
-       columns.sketch, columns.sketchKind, columns.histogramOk, columns.histogramKo, columns.histogramKind],
+       JSON.stringify(columns.percentiles), columns.histogramOk, columns.histogramKo, columns.histogramKind],
     );
   }
 
-  it('keeps a legacy row on its clamped sketch and serves an exact row nearest-rank values', async () => {
+  it('reads a legacy point from its frozen column, clamped, and an exact point nearest-rank', async () => {
     ctx = await createTestApp();
     const legacyId = await seedRun({ simulation: 'checkout', startedAt: at('2026-08-01T10:00:00Z'), withStat: false });
     const exactId = await seedRun({ simulation: 'checkout', startedAt: at('2026-08-02T10:00:00Z'), withStat: false });
@@ -700,10 +689,9 @@ describe('GET /v1/runs/:id/trends — exact and legacy rows', () => {
     // run that cannot exist.
     await ctx.pool.query(`UPDATE run SET stats_method = 'estimated' WHERE id = $1`, [legacyId]);
 
-    const sketch = new Sketch();
-    for (const v of VALUES) sketch.accept(v);
+    const frozen = { p50: 500.25, p95: 1009.97 };
     await insertStat(legacyId, {
-      sketch: Buffer.from(sketch.serialize()), sketchKind: 'ddsketch',
+      percentiles: frozen,
       histogramOk: Buffer.from(Histogram.legacyV1ForTests(VALUES)),
       histogramKo: Buffer.from(Histogram.legacyV1ForTests([])),
       histogramKind: 'sparse-ms-v1',
@@ -711,7 +699,7 @@ describe('GET /v1/runs/:id/trends — exact and legacy rows', () => {
     const ok = new Histogram();
     for (const v of VALUES) ok.accept(v);
     await insertStat(exactId, {
-      sketch: null, sketchKind: null,
+      percentiles: { p50: 500 },
       histogramOk: Buffer.from(ok.serialize()),
       histogramKo: Buffer.from(new Histogram().serialize()),
       histogramKind: 'sparse-ms-v2',
@@ -724,20 +712,21 @@ describe('GET /v1/runs/:id/trends — exact and legacy rows', () => {
     const exact = body.runs.find((r) => r.id === exactId)!;
     expect(legacy).toBeDefined();
     expect(exact).toBeDefined();
+    expect(legacy.statsMethod).toBe('estimated');
 
-    // From the sketch as STORED, deserialised the way the reader does it: the
-    // round trip moves a quantile in its last decimal places (measured), and
-    // "the same percentiles it returned before" means the same bytes read the
-    // same way.
-    const stored = Sketch.deserialize(sketch.serialize());
-    const legacyExpected = Object.fromEntries(
-      set.map((p) => [`p${p}`, clampPercentile(stored.quantile(p / 100), { minMs: VALUES[0]!, maxMs: VALUES.at(-1)! })]),
-    );
+    const range = { minMs: VALUES[0]!, maxMs: VALUES.at(-1)! };
+    const legacyExpected: Record<string, number> = {};
+    for (const p of set) {
+      const stored = (frozen as Record<string, number>)[`p${p}`];
+      if (stored !== undefined) legacyExpected[`p${p}`] = clampPercentile(stored, range);
+    }
     const exactExpected = Object.fromEntries(
       set.map((p) => [`p${p}`, VALUES[nearestRankIndex(p, VALUES.length)]!]),
     );
-    // The two paths must disagree on this population, or the pair below
-    // proves nothing about which path each row took.
+    // Vacuity: the set must reach both stored ranks and at least one the
+    // legacy row never stored, and the clamp must actually move p95.
+    expect(legacyExpected).toEqual({ p50: 500.25, p95: 1000 });
+    expect(Object.keys(exactExpected).length).toBeGreaterThan(Object.keys(legacyExpected).length);
     expect(legacyExpected).not.toEqual(exactExpected);
     expect(legacy.percentiles).toEqual(legacyExpected);
     expect(exact.percentiles).toEqual(exactExpected);

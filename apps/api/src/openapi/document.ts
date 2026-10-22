@@ -1184,7 +1184,11 @@ const paths: Record<string, PathItemObject> = {
         sessionAccessSentence('project:read') + ' ' +
         'Requires the "read" scope. Indicator bands ("indicators" on each row, and the ' +
         'top-level "indicators") are folded from the run\'s stored histogram at the project\'s ' +
-        'current "indicators" bounds — see "configurable" and "bounds" on the response.',
+        'current "indicators" bounds — see "configurable" and "bounds" on the response. ' +
+        'Percentiles are recomputed exactly from each row\'s stored histograms at the project\'s ' +
+        'current percentile set. A run whose statistics are estimated (ingested before ' +
+        '2026-10-15 and not yet recomputed from its raw log) answers only the ranks it stored, ' +
+        'each clamped to the row\'s minMs and maxMs; a rank it never stored is omitted, not zero.',
       parameters: [
         parameters['RunId']!,
         parameters['StatsScope']!,
@@ -1212,10 +1216,10 @@ const paths: Record<string, PathItemObject> = {
         'Requires the "read" scope. The cohort is every complete run of the SAME SIMULATION ' +
         'in the same project, newest first — with a null simulation forming its own cohort ' +
         'rather than matching every run. "cohortSize" is the whole cohort and may exceed the ' +
-        'number of runs returned, which "limit" caps. Percentiles are recomputed from each ' +
-        'run\'s stored histograms (exact) or, for runs ingested before 2026-10-15, its stored ' +
-        'sketch, at the project\'s current percentile set, exactly as ' +
-        'GET /v1/runs/{id}/stats does, so the two cannot disagree.',
+        'number of runs returned, which "limit" caps. Percentiles are answered exactly as ' +
+        'GET /v1/runs/{id}/stats answers them — recomputed from each run\'s stored histograms ' +
+        'at the project\'s current percentile set, or, for an estimated run, only the ranks it ' +
+        'stored, clamped — so the two cannot disagree.',
       parameters: [parameters['RunId']!, parameters['Limit']!],
       responses: {
         '200': {

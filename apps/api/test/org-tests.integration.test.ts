@@ -4,7 +4,6 @@ import {
   RunListResponseSchema,
   type OrgTestListResponse,
 } from '@perfportal/contracts';
-import { Sketch } from '@perfportal/statistics';
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTestApp, type TestContext } from './support/app.js';
@@ -94,14 +93,11 @@ async function seedRunStat(
   p95: number,
   bounds: { minMs: number; maxMs: number },
 ) {
-  const sketch = new Sketch();
-  for (let i = 0; i < 10; i += 1) sketch.accept(i + 1);
   await ctx.pool.query(
     `INSERT INTO run_stat
        (id, run_id, org_id, project_id, scope, name, family, count, ok_count, ko_count,
-        error_rate, min_ms, max_ms, mean_ms, stddev_ms, throughput_rps, percentiles,
-        sketch, sketch_kind)
-     VALUES ($1,$2,$3,$4,'run','','response_time',10,10,0,0,$5,$6,5,2,1.5,$7,$8,'ddsketch')`,
+        error_rate, min_ms, max_ms, mean_ms, stddev_ms, throughput_rps, percentiles)
+     VALUES ($1,$2,$3,$4,'run','','response_time',10,10,0,0,$5,$6,5,2,1.5,$7)`,
     [
       randomUUID(),
       runId,
@@ -110,7 +106,6 @@ async function seedRunStat(
       bounds.minMs,
       bounds.maxMs,
       JSON.stringify({ p95 }),
-      Buffer.from(sketch.serialize()),
     ],
   );
 }

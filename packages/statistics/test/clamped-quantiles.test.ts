@@ -1,80 +1,50 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { Histogram } from '../src/index.js';
+// From its own module, NOT the package index: this guard has to LOAD to report
+// a reintroduced DDSketch import, and a specifier for an uninstalled package
+// anywhere in the index's graph would fail the file at import, naming nothing.
+import { Histogram } from '../src/histogram.js';
 
 /**
- * EVERY SKETCH QUANTILE IN PRODUCTION IS CLAMPED, AND THE LIST IS DERIVED.
+ * NO PRODUCTION CODE TAKES A QUANTILE, AND NOTHING IMPORTS A DDSKETCH.
  *
- * `clampPercentile`'s own docstring states the rule — "a percentile is clamped
- * against the same min and max reported beside it" — and then NAMED its call
- * sites in prose. That enumeration went stale the first time somebody added a
- * caller, which is exactly how `tool-assertions.ts` came to judge a Gatling
- * assertion against an estimate 12.46 ms above the run's own maximum: the
- * clamp branch listed `RollupBuilder.finish`, `bucketLatency`, `resolveMetric`
- * and the metrics controller, and that module is on none of them.
+ * This guard began as "every production sketch quantile is clamped": a
+ * DDSketch's estimate could lie up to 1% outside the sample it summarised, so
+ * every `.quantile(` call had to be wrapped in `clampPercentile` against the
+ * min and max reported beside it. The set of callers was DERIVED from the
+ * source rather than listed, because the list `clampPercentile`'s docstring
+ * once kept drifted — that is how `tool-assertions.ts` came to judge a Gatling
+ * assertion against an estimate 12.46 ms above the run's own maximum.
  *
- * A LIST A HUMAN MAINTAINS IS A LIST THAT DRIFTS — this file already records
- * that for `SCHEMA_TABLES` ("DERIVED … NEVER HAND-MAINTAINED. This was a
- * literal list, and it had already drifted"), for `allColumns` ("A NAME IS NOT
- * A CHECK"), for the cross-org endpoint array, and for the four hard-coded
- * rule scopes. So this asks the SOURCE instead: every `.quantile(` call under
- * `packages/<pkg>/src` and `apps/<app>/src` must either be wrapped in
- * `clampPercentile(...)` or be named in `EXEMPT` with its reason.
+ * Exact statistics (2026-10-15) moved every rollup, bucket, SLA metric and
+ * Gatling assertion onto exact `Histogram`s, whose method is `percentile` —
+ * nearest-rank over observed values, inside its own range by construction —
+ * and PR 5 dropped `run_stat.sketch`, then deleted the sketch wrapper and its
+ * `@datadog/sketches-js` dependency. So the rule has two halves, and either
+ * coming back is an estimate coming back — a decision to make on purpose, not
+ * one to find in review:
  *
- * ═══ WHY THIS IS SYNTACTIC, AND WHAT THAT COSTS ═══
+ *   - no production line calls `.quantile(` at all;
+ *   - no production source and no workspace `package.json` names the DDSketch
+ *     package. A manifest is scanned too, because a dependency re-added
+ *     without an import yet is the first half of the same return.
  *
- * It cannot prove the clamp uses the RIGHT range — `clampPercentile(q, row)`
- * against some unrelated row satisfies it. What it catches is the shape that
- * actually happened: a caller that never clamps at all. The behavioural cases
- * live beside it (`tool-assertions.test.ts` asserts the verdict agrees with the
- * percentile the statistics table prints), which is the division of labour the
- * security guard in `session-auth.integration.test.ts` already uses.
+ * ═══ WHAT THE FLOOR COUNTS ═══
  *
- * ═══ AFTER EXACT STATISTICS, ONE CALLER IS THE POINT ═══
+ * A collector that matches nothing passes exactly as quietly as one that
+ * works, and with no callers left a floor on CALLERS would have to be zero —
+ * so the floor is on FILES SCANNED, for sources and for manifests alike. A
+ * walk that stops finding them fails here rather than reporting a clean tree.
  *
- * Since 2026-10-15 every rollup, bucket, SLA metric and Gatling assertion is a
- * nearest-rank read of an exact `Histogram`, whose method is `percentile` and
- * which has no `quantile` at all. The one production `Sketch#quantile` that
- * remains by design is the LEGACY path in `stored-percentiles.ts`: a row
- * written before 2026-10-15 recomputed from its stored DDSketch, clamped. So
- * the vacuity floor is ONE caller, not zero — a guard over a rule nobody can
- * break any more would still pass, which is exactly what the floor refuses —
- * and the second case pins why every `.quantile(` the collector finds can only
- * be a sketch's: `Histogram` has no such method, and no production line names
- * one as the receiver.
+ * ═══ COMMENTS ARE STRIPPED, AND THAT IS LOAD-BEARING ═══
  *
- * ═══ COMMENTS ARE STRIPPED, AND THIS ONE IS NOT DEFENSIVE ═══
- *
- * Measured rather than asserted, which this file asks for after three branches
- * repaired a false load-bearing claim by ADDING prose instead of correcting the
- * sentence. Measured on 2026-10-16, after the metrics controller moved onto
- * `storedPercentiles`, so `stored-percentiles.ts` is the one caller: with the
- * strip replaced by the identity the collector finds FOUR calls rather than
- * one, and all three extras are prose —
- *
- *     packages/statistics/src/percentile.ts (twice)  the clamp's own docstring
- *     apps/web/src/routes/RunSummary.tsx              the docstring correcting Sketch
- *
- * The first is the one worth seeing. `percentile.ts` explains THIS guard, and
- * the sentence in which it does so says `.quantile(` — so without the strip the
- * rule's own documentation is reported as a caller breaking the rule. The strip
- * is load-bearing here, not defensive.
+ * Measured on 2026-10-22, with no real caller left: replacing the strip with
+ * the identity makes the quantile half fail on three `.quantile(` mentions,
+ * all of them prose in `packages/statistics/src/percentile.ts` — the clamp's
+ * own docstring, which explains this very guard. Prose about a quantile, or
+ * about the DDSketch that was retired, is not a caller.
  */
-
-const CLAMPER = 'clampPercentile';
-
-/**
- * Call sites that legitimately do not clamp, each with the reason a reader can
- * check. Delete an entry the day its premise stops holding.
- */
-const EXEMPT: ReadonlyArray<{ readonly file: string; readonly why: string }> = [
-  // `packages/statistics/src/window.ts` was the one entry, because it took a
-  // quantile off a `Histogram` rather than a `Sketch`. It calls
-  // `Histogram#percentile` now — exact nearest-rank over observed values, so
-  // inside its own range by construction — and no longer matches `.quantile(`
-  // at all, so the exemption was deleted rather than left naming nothing.
-];
 
 /** `/* *\/` and `//` removed, so prose about a quantile is never a caller. */
 function stripComments(source: string): string {
@@ -103,80 +73,89 @@ interface QuantileCall {
   readonly file: string;
   readonly line: number;
   readonly text: string;
-  readonly clamped: boolean;
 }
 
-function quantileCalls(): QuantileCall[] {
+/** The retired estimator's package, spelled once so the two halves agree. */
+const DDSKETCH_PACKAGE = '@datadog/sketches-js';
+
+function scan(): { files: number; calls: QuantileCall[]; ddsketch: QuantileCall[] } {
+  const files = [...productionSources('packages'), ...productionSources('apps')];
   const calls: QuantileCall[] = [];
-  for (const file of [...productionSources('packages'), ...productionSources('apps')]) {
+  const ddsketch: QuantileCall[] = [];
+  for (const file of files) {
     const lines = stripComments(readFileSync(file, 'utf8')).split('\n');
     lines.forEach((line, i) => {
-      if (!line.includes('.quantile(')) return;
-      // The clamp may wrap the call on the same line or open on the line
-      // above, which is how `tool-assertions.ts` and `bucket-latency.ts`
-      // respectively spell it.
-      const window = [lines[i - 1] ?? '', line].join(' ');
-      calls.push({ file, line: i + 1, text: line.trim(), clamped: window.includes(CLAMPER) });
+      if (line.includes('.quantile(')) calls.push({ file, line: i + 1, text: line.trim() });
+      if (line.includes(DDSKETCH_PACKAGE)) ddsketch.push({ file, line: i + 1, text: line.trim() });
     });
   }
-  return calls;
+  return { files: files.length, calls, ddsketch };
 }
 
-describe('every production sketch quantile is clamped', () => {
-  it('finds no caller that neither clamps nor is exempt', () => {
-    const calls = quantileCalls();
+/**
+ * The root manifest, and every workspace package's manifest under packages/
+ * and apps/ — one level deep. The root is where an override or a dev
+ * dependency would bring the estimator back without any package naming it.
+ */
+function workspaceManifests(): string[] {
+  const out: string[] = ['package.json'];
+  for (const root of ['packages', 'apps']) {
+    for (const entry of readdirSync(root, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const manifest = join(root, entry.name, 'package.json');
+      if (existsSync(manifest)) out.push(manifest);
+    }
+  }
+  return out;
+}
 
-    // VACUITY: a collector that matches nothing passes exactly as quietly as
-    // one that works, which this file records for the tokens guard and the
-    // run-route sweep. The floor is ONE, and it holds with
-    // `stored-percentiles.ts`'s legacy sketch path as the only caller — which
-    // is what this guard protects once the metrics controller moves onto
-    // `storedPercentiles`. `RollupBuilder.finish`, `bucketLatency`,
-    // `tool-assertions.ts` and `packages/sla`'s `resolveMetric` read exact
-    // histograms and take no `.quantile(` at all.
-    expect(calls.length).toBeGreaterThanOrEqual(1);
+describe('no production code computes a sketch quantile, and nothing imports a DDSketch', () => {
+  it('finds no .quantile( call in any production source', () => {
+    const { files, calls } = scan();
+
+    // VACUITY: on files scanned, not on callers — there are no callers left.
+    expect(files, 'the production-source walk found almost nothing — the collector has rotted').toBeGreaterThan(100);
+
     expect(
-      calls.some((c) => c.file.endsWith(join('packages', 'statistics', 'src', 'stored-percentiles.ts'))),
-      'the legacy sketch path in stored-percentiles.ts is the caller this guard exists for',
-    ).toBe(true);
-
-    const exemptFiles = new Set(EXEMPT.map((e) => e.file));
-    const offenders = calls
-      .filter((c) => !c.clamped && !exemptFiles.has(c.file))
-      .map((c) => `${c.file}:${c.line}  ${c.text}`);
-
-    expect(
-      offenders,
-      'a percentile must be clamped against the min and max reported beside it — ' +
-        `wrap the call in ${CLAMPER}(...), or add the file to EXEMPT with its reason`,
+      calls.map((c) => `${c.file}:${c.line}  ${c.text}`),
+      'no production code calls .quantile( since the DDSketch was retired — ' +
+        'percentiles come from an exact Histogram#percentile or a legacy row\'s frozen column',
     ).toEqual([]);
   });
 
   it('no production code calls Histogram#quantile — it does not exist', () => {
     // BEHAVIOURAL: the exact histogram answers `percentile`, nearest-rank over
     // observed values, so it needs no clamp and offers no `quantile` to call.
-    // This is what makes every `.quantile(` the case above collects a SKETCH
-    // call — if a `quantile` ever came back on `Histogram`, an unclamped call
-    // on it would type-check and this guard could no longer tell the two apart.
     expect('quantile' in Histogram.prototype).toBe(false);
 
     // SYNTACTIC: and no production line names a histogram as the receiver, so
     // a reintroduced method (or a structurally-typed stand-in) is caught at
     // the call site, not only at the class.
-    const histogramReceivers = quantileCalls()
-      .filter((c) => /histogram\w*!?\.quantile\(/i.test(c.text))
+    const histogramReceivers = scan()
+      .calls.filter((c) => /histogram\w*!?\.quantile\(/i.test(c.text))
       .map((c) => `${c.file}:${c.line}  ${c.text}`);
     expect(histogramReceivers, 'a Histogram has percentile(p), never quantile(q)').toEqual([]);
   });
 
-  it('keeps every exemption earning its place', () => {
-    const calls = quantileCalls();
+  it('finds no DDSketch specifier in any production source, the root manifest or a workspace manifest', () => {
+    const { files, ddsketch } = scan();
+    const manifests = workspaceManifests();
 
-    // An exemption naming a file that no longer takes a quantile is a name
-    // matching nothing, and the list would rot into three such names while the
-    // guard reported green — the shape the remediation guard already pins.
-    const stale = EXEMPT.filter((e) => !calls.some((c) => c.file === e.file)).map((e) => e.file);
+    // VACUITY: on what was scanned. Twelve workspace packages exist today.
+    expect(files, 'the production-source walk found almost nothing — the collector has rotted').toBeGreaterThan(100);
+    expect(manifests.length, 'the manifest walk found almost nothing — the collector has rotted').toBeGreaterThan(8);
+    expect(manifests, 'the root manifest is scanned too').toContain('package.json');
 
-    expect(stale, 'exempt files that no longer call .quantile( — delete them').toEqual([]);
+    const inManifests = manifests.flatMap((file) =>
+      readFileSync(file, 'utf8')
+        .split('\n')
+        .flatMap((line, i) => (line.includes(DDSKETCH_PACKAGE) ? [`${file}:${i + 1}  ${line.trim()}`] : [])),
+    );
+
+    expect(
+      [...ddsketch.map((c) => `${c.file}:${c.line}  ${c.text}`), ...inManifests],
+      'the DDSketch was retired with exact statistics — percentiles are exact ' +
+        'Histogram#percentile now, and a dependency on the estimator is a decision, not a drift',
+    ).toEqual([]);
   });
 });

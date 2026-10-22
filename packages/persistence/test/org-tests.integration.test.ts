@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { Sketch } from '@perfportal/statistics';
 import { createPool, createPrisma, SCHEMA_TABLES, TestRepository } from '../src/index.js';
 import { decodeOrgTestCursor } from '../src/repositories/test-cursor.js';
 
@@ -60,16 +59,6 @@ const testRow = (
     },
   });
 
-/** A sketch of `n` observations, so these rows are legacy-shaped ('estimated'):
- *  the column has been nullable since 2026-10-15, but a row that carries one
- *  must carry a real one — a placeholder byte would fail to deserialise in any
- *  reader that tried. */
-function sketchOf(n: number): Sketch {
-  const s = new Sketch();
-  for (let i = 0; i < n; i += 1) s.accept(i + 1);
-  return s;
-}
-
 interface RunOpts {
   testId: string | null;
   /** When the run ARRIVED. Always explicit: `createMany` stamps every row with
@@ -127,9 +116,8 @@ async function seedRun(opts: RunOpts): Promise<string> {
     await pool.query(
       `INSERT INTO run_stat
          (id, run_id, org_id, project_id, scope, name, family, count, ok_count, ko_count,
-          error_rate, min_ms, max_ms, mean_ms, stddev_ms, throughput_rps, percentiles,
-          sketch, sketch_kind)
-       VALUES ($1,$2,$3,$4,'run','','response_time',10,10,0,0,$5,$6,5,2,1.5,$7,$8,'ddsketch')`,
+          error_rate, min_ms, max_ms, mean_ms, stddev_ms, throughput_rps, percentiles)
+       VALUES ($1,$2,$3,$4,'run','','response_time',10,10,0,0,$5,$6,5,2,1.5,$7)`,
       [
         randomUUID(),
         id,
@@ -138,7 +126,6 @@ async function seedRun(opts: RunOpts): Promise<string> {
         opts.stat.minMs,
         opts.stat.maxMs,
         JSON.stringify(opts.stat.percentiles),
-        Buffer.from(sketchOf(10).serialize()),
       ],
     );
   }

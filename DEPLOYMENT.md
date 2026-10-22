@@ -451,14 +451,23 @@ and setting `0` before upgrading is optional. Set `0` to keep every raw log;
 see [Raw logs and verification](#raw-logs-and-verification).
 
 **Upgrading past exact statistics: migrate, then the API, then the worker.**
-Under Compose one `up` replaces them together and the order takes care of
-itself; it matters when you replace processes one at a time. A run the new
-worker processes stores its histograms in a new format (`sparse-ms-v2`), and
-an API still on the old image cannot read it: that run's Statistics answers a
-500 until the API is replaced. The other way round is safe — an old worker
-under a new API writes rows the new API reads correctly, and only that run's
-"exact" label is wrong (it says exact over estimated figures). So never let a
-new worker get ahead of the API.
+A run the new worker processes stores its histograms in a new format
+(`sparse-ms-v2`), and an API still on the old image cannot read it: that
+run's Statistics answers a 500 until the API is replaced. The other way round
+is safe — an old worker under a new API writes rows the new API reads
+correctly, and only that run's "exact" label is wrong (it says exact over
+estimated figures). So never let a new worker get ahead of the API.
+
+**A plain `up` does not keep that order.** In `infra/docker-compose.yml` the
+worker waits only on `migrate`, while the API waits on `bootstrap`, which
+waits on `migrate` — so the new worker can start, and process a run, before
+the new API is serving. Run the migration, then the API, then the rest:
+
+```bash
+docker compose -f infra/docker-compose.yml --profile onprem run --rm --build migrate
+docker compose -f infra/docker-compose.yml --profile onprem up -d --build --no-deps api
+docker compose -f infra/docker-compose.yml --profile onprem up -d --build
+```
 
 **Runs from before exact statistics are recomputed by themselves.** After the
 upgrade the worker finds every run that still carries estimated figures and
@@ -493,6 +502,106 @@ A run that cannot be recomputed — its stored log is gone, no longer matches
 the checksum recorded at ingest, or cannot be parsed — keeps its estimated
 figures, and its percentiles are marked **≈**. While runs remain,
 Administration says how many, and how many could not be recomputed.
+
+**The release that retires the sketch needs its own upgrade.** It is the one
+whose migrations include `20261022120000_drop_run_stat_sketch`, which drops
+the stored DDSketch every estimated run's percentiles used to be re-read
+from. There is no release tag for it: you are taking it whenever that
+migration is still pending when you upgrade — **including when you pull a
+later commit**. So before every `git pull`, ask the database which migration
+it applied last:
+
+```bash
+docker compose -f infra/docker-compose.yml exec -T postgres \
+  psql -U perfportal -d perfportal -tAc \
+  "SELECT max(migration_name) FROM _prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL"
+```
+
+- **`20261022120000_drop_run_stat_sketch` or later:** you are past it. The
+  one-line upgrade above is right.
+- **`20261021120000_gatling_replays`:** the schema of commit `200c4843`, the
+  last commit before the drop. Finish the backfill, then take the drop on
+  its own — both below.
+- **Anything earlier:** stop at `200c4843` first. **Never use the two-command
+  sequence below from a schema older than `20261015120000_exact_statistics`**:
+  there the new worker inserts `run_stat` rows without `sketch`, which is
+  still `NOT NULL`, and the new API selects `stats_method`, which does not
+  exist yet, so every finished run fails. From any schema before
+  `20261021120000_gatling_replays` the new image is missing tables and columns it needs,
+  so the rule is the same: check out `200c4843` and upgrade there, in the
+  exact-statistics order above —
+
+  ```bash
+  git fetch origin
+  git checkout 200c4843
+  docker compose -f infra/docker-compose.yml --profile onprem run --rm --build migrate
+  docker compose -f infra/docker-compose.yml --profile onprem up -d --build --no-deps api
+  docker compose -f infra/docker-compose.yml --profile onprem up -d --build
+  ```
+
+  — and finish the backfill there.
+
+**Finish the backfill before the drop.** `200c4843` carries the backfill
+(#278), the verifier (#279) and the Gatling method (#280). Its worker
+recomputes every estimated run in the background, and Administration › Data
+integrity shows *Recomputing exact statistics: N of M runs* until it reaches
+0. **That line alone is not proof.** It counts the signed-in admin's own org,
+and it draws nothing at all when its request fails, so on an install with
+more than one org its disappearing says nothing about the others. The
+definitive way is the foreground recompute, which walks every org on the
+install:
+
+```bash
+docker compose -f infra/docker-compose.yml --profile onprem run --rm worker pnpm recompute
+```
+
+Run it until a pass ends `Recomputed 0 runs; 0 could not be (…); 0 were
+locked …` — nothing left. A run that could not be recomputed is retired with
+its estimated figures, marked **≈**, and is not asked for again.
+
+A run still waiting when you take the drop anyway is not lost: until it is
+recomputed it answers only the percentile ranks it stored at ingest (each
+held inside its own min and max — per request, group and run). A percentile
+your project added since is simply absent for it: the run's own statistics
+table builds its columns from the ranks its rows carry, so it has no column
+for that rank, and only where other runs put the rank on screen — a mixed
+trends cohort, Compare — does it show as a gap or a dash. `pnpm recompute`
+still works afterwards. A run that could not be recomputed answers the same
+way for good.
+
+**For the drop: the API and the worker first, then `migrate`.** This
+reverses the usual order on purpose. Its migration drops the `sketch` and
+`sketch_kind` columns from `run_stat`. An API or worker still on the older
+image fails the moment they are gone: the API answers a 500 on a run's
+statistics, and the worker's insert of a finished run's statistics fails with
+*column does not exist*, which it does not retry, so that run is marked
+failed for good. The new image never reads or writes either column, and on
+the `200c4843` schema both are still there and nullable, so it works on
+either side of the migration.
+
+**A plain `up` gets this wrong.** In `infra/docker-compose.yml` the worker
+waits on `migrate`, and the API waits on `bootstrap`, which waits on
+`migrate`, so the one-line upgrade runs the migration while the old API and
+worker are still serving. Check out the commit that brought the drop into
+`main`, replace those two first without their dependencies, then run the
+usual `up`; only then come forward:
+
+```bash
+git fetch origin
+git checkout "$(git log --first-parent -1 --format=%H origin/main -- packages/persistence/prisma/migrations/20261022120000_drop_run_stat_sketch)"
+docker compose -f infra/docker-compose.yml --profile onprem up -d --build --no-deps api worker
+docker compose -f infra/docker-compose.yml --profile onprem up -d --build
+git checkout main && git pull
+docker compose -f infra/docker-compose.yml --profile onprem up -d --build
+```
+
+The first `up` builds and restarts only `api` and `worker`, on the schema
+they already have (`--no-deps` leaves `migrate`, `bootstrap` and the rest
+alone). The second runs the migration and brings up everything else; the
+runner never touches `run_stat`. Stopping at that commit is what makes the
+reversed order safe: a later commit's API or worker may need a later
+migration that has not run yet. From there on, the one-line upgrade is right
+again.
 
 **An upgrade sends nobody to *Choose a new password*.** The release that adds
 that step adds its flag as `NOT NULL DEFAULT false`, so every account that

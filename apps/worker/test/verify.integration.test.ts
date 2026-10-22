@@ -678,7 +678,7 @@ describe('verification requests', () => {
     const { runId } = await ingested();
     await pool.query(`UPDATE run SET stats_method = 'estimated' WHERE id = $1`, [runId]);
     await pool.query(
-      `UPDATE run_stat SET sketch = '\\x01'::bytea, histogram_kind = 'sparse-ms-v1' WHERE run_id = $1`,
+      `UPDATE run_stat SET histogram_kind = 'sparse-ms-v1' WHERE run_id = $1`,
       [runId],
     );
     await enqueueCandidates(recomputeQueue, new RecomputeRepository(pool));
