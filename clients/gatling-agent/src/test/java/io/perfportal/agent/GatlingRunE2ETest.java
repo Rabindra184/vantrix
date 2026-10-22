@@ -62,10 +62,13 @@ class GatlingRunE2ETest {
 
   /**
    * The fewest bytes a TLS client sends on one connection before its first request: the
-   * ClientHello alone. BoringSSL's and the JDK's are both well above this (measured: see the
-   * task report). A meter added too late misses exactly the ClientHello.
+   * ClientHello. Gatling here handshakes with BoringSSL (netty-tcnative), which pads every
+   * ClientHello to at least 512 bytes. Measured on this simulation: about 1,590 bytes sent per
+   * handshake with the meter added at {@code Bootstrap.connect}'s exit, and 126 to 189 with the
+   * meter added only after Gatling's own connect listener had run (the ClientHello missed) -- so
+   * 512 separates the two by a factor of about three either way.
    */
-  private static final long MIN_CLIENT_HELLO_BYTES = 200;
+  private static final long MIN_CLIENT_HELLO_BYTES = 512;
 
   private static final ObjectMapper JSON = new ObjectMapper();
 

@@ -12,9 +12,11 @@ import io.netty.channel.FileRegion;
  * sees what crosses the wire -- ciphertext under TLS -- and its {@code channelInactive} is the
  * channel's close.
  *
- * <p>It is added at {@code Bootstrap.connect}'s EXIT, never in a connect listener: Gatling's own
- * listener on the same future installs the {@code SslHandler}, which writes the ClientHello at
- * once, and a meter added after that would miss it.
+ * <p>It is added at {@code Bootstrap.connect}'s EXIT, synchronously, never later: Gatling's own
+ * listener on the connect future installs the {@code SslHandler}, which writes the ClientHello at
+ * once, and a meter added after that listener has run misses it (measured: about 150 bytes a
+ * handshake instead of about 1,590). Added at the exit, it is on the channel before any listener
+ * can run, whatever order listeners are notified in.
  *
  * <p>It also carries what later events about the channel need: its remote, in {@code
  * host/ip:port} form, and whether it was opened during the warm-up. Every callback passes the
