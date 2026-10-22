@@ -1,7 +1,10 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { Histogram } from '../src/index.js';
+// From its own module, NOT the package index: this guard has to LOAD to report
+// a reintroduced DDSketch import, and a specifier for an uninstalled package
+// anywhere in the index's graph would fail the file at import, naming nothing.
+import { Histogram } from '../src/histogram.js';
 
 /**
  * NO PRODUCTION CODE TAKES A QUANTILE, AND NOTHING IMPORTS A DDSKETCH.
