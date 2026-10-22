@@ -97,8 +97,10 @@ final class Sampler {
     try {
       long tick = nextTick(-1, System.currentTimeMillis());
       while (writer.accepting()) {
-        long wait = tick - System.currentTimeMillis();
-        if (wait > 0) Thread.sleep(wait);
+        // Re-checked: a sleep can wake a millisecond early, and a sample stamped 12:00:00.999
+        // would share its wall-clock second with the one before it.
+        long wait;
+        while ((wait = tick - System.currentTimeMillis()) > 0) Thread.sleep(wait);
         long at = System.currentTimeMillis();
         sockets.prune(at);
         String line = sample(at, sockets, cl, procRoot);

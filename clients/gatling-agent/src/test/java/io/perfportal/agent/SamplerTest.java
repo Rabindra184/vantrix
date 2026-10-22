@@ -63,6 +63,9 @@ class SamplerTest {
       if (previousAt >= 0) {
         long gap = at - previousAt;
         assertTrue(gap >= 500 && gap <= 1_600, "one second apart, got " + gap + "ms");
+        // On the wall-clock second: never two samples in one second, which a reader bucketing
+        // by second would have to merge.
+        assertTrue(at / 1_000 > previousAt / 1_000, previousAt + " then " + at);
       }
       previousAt = at;
       String gc = first(l, "\"gc\":\\{([^}]*)}");
