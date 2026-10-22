@@ -1,6 +1,5 @@
 package io.perfportal.agent;
 
-import java.lang.instrument.Instrumentation;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -21,7 +20,7 @@ public final class AgentMain {
 
   private AgentMain() {}
 
-  public static void premain(String agentArgs, Instrumentation inst) {
+  public static void premain(String agentArgs, java.lang.instrument.Instrumentation inst) {
     try {
       AgentOptions options = AgentOptions.parse(agentArgs);
       if (options.isDisabled()) return;
@@ -38,6 +37,13 @@ public final class AgentMain {
       w.flush();
       // Always on, whatever the version gate decided: JVM and machine figures need no hook.
       Sampler.start(w, sockets, ClassLoader.getSystemClassLoader(), machine);
+      if (gate.http()) {
+        try {
+          Instrumentation.install(inst);
+        } catch (Throwable t) {
+          fail("instrumentation", t);
+        }
+      }
     } catch (Throwable t) {
       fail("premain", t);
     }

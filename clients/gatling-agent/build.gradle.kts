@@ -16,6 +16,11 @@ version = "0.1.0"
 
 repositories { mavenCentral() }
 
+// An OLD Byte Buddy, never on the agent's or the tests' own classpath: GatlingRunE2ETest puts it
+// first on a simulation's classpath to prove the agent's relocated copy cannot clash with it.
+// A configuration of its own because on testRuntimeClasspath Gradle would resolve it UP to 1.17.6.
+val oldByteBuddy: Configuration by configurations.creating { isTransitive = false }
+
 tasks.withType<JavaCompile>().configureEach { options.release.set(11) }
 
 dependencies {
@@ -31,6 +36,8 @@ dependencies {
     testImplementation(platform("org.junit:junit-bom:5.11.4"))
     testImplementation("org.junit.jupiter:junit-jupiter")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+
+    oldByteBuddy("net.bytebuddy:byte-buddy:1.10.22")
 }
 
 // The shadow jar IS the artifact; the plain jar would carry no Byte Buddy.
@@ -58,4 +65,6 @@ tasks.test {
     dependsOn(tasks.shadowJar)
     // Later tasks launch a JVM with -javaagent:<this> to test the real artifact.
     systemProperty("agentJar", tasks.shadowJar.get().archiveFile.get().asFile.path)
+    inputs.files(oldByteBuddy)
+    doFirst { systemProperty("oldByteBuddyJar", oldByteBuddy.singleFile.path) }
 }
