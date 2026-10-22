@@ -167,12 +167,13 @@ describe('end-to-end parity with the Gatling reference report', () => {
     expect(started).toBe(895);
     expect(ended).toBe(895);
 
-    // 8. Percentiles are ESTIMATES and are checked against ground truth, not
-    //    against Gatling — Gatling's own printed percentiles are histogram
-    //    estimates and three of its four never occur in the data (spec §A.9 F-6).
-    //    DDSketch guarantees 1% relative error, and 1.000% is reachable, so
-    //    this bound is <=, never <.
-    expect(Math.abs(global.percentiles.p95 - 654) / 654).toBeLessThanOrEqual(0.01);
+    // 8. Percentiles are checked against ground truth, not against Gatling —
+    //    Gatling's own printed percentiles are t-digest estimates and three of
+    //    its four never occur in the data (spec §A.9 F-6). 654 is the nearest-
+    //    rank p95 of the 895 durations in this simulation.log, and a run
+    //    ingested now is exact ('exact-v1'), so it is asserted EQUAL. This was
+    //    a within-1% bound while percentiles came from the retired DDSketch.
+    expect(global.percentiles.p95).toBe(654);
   });
 
   it('is idempotent end to end — re-posting the same key yields one run', async () => {

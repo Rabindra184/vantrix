@@ -9,9 +9,10 @@
 /**
  * A percentile of a sample cannot lie outside that sample's own range, so an
  * estimate that does is known to be wrong — and min/max are tracked exactly
- * while percentiles carry DDSketch's 1% relative error. Clamping projects the
- * estimate onto the interval it was always constrained to; it is a better
- * estimate, not a prettier one.
+ * while an estimated run's percentiles carry the retired DDSketch's 1% relative
+ * error. Clamping projects the estimate onto the interval it was always
+ * constrained to; it is a better estimate, not a prettier one. An exact run's
+ * nearest-rank percentiles are already inside it, so the clamp is a no-op there.
  *
  * Measured on the reference run: `Catalog/Recommendations` reports p99 2515.4
  * against max 2503, and `Cart` reports p99 179.49 against max 179 — and so does
@@ -25,7 +26,7 @@
  * percentiles are estimates, because that is true clamped or not.
  *
  * The right long-term home is STILL `packages/statistics`, where the exact
- * extremes and the estimated percentiles are produced together and every
+ * extremes and the percentiles are produced together and every
  * consumer — the API, the charts, any future export — would benefit. That is
  * recorded as follow-up in the ruling and is unchanged by this module.
  *

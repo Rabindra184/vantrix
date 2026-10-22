@@ -435,8 +435,9 @@ export function runScopeStatOn(stat: string, run: string): string {
  * ═══ CLAMPED, LIKE EVERY OTHER SURFACE THAT SHOWS A PERCENTILE ═══
  *
  * A percentile cannot lie outside the sample it came from, and `minMs`/
- * `maxMs` are exact while a legacy ('estimated') row's sketch carries 1%
- * relative error — so its stored estimate sometimes does. An 'exact-v1'
+ * `maxMs` are exact while a legacy ('estimated') row's frozen percentiles
+ * were taken from a DDSketch with 1% relative error — so its stored estimate
+ * sometimes does. An 'exact-v1'
  * row's frozen column is a nearest-rank observation, already inside its own
  * range, so the clamp is a no-op there and correct for both kinds. `clampPercentile` projects it back, and
  * the clamp branch installed it at every assembler: the rollup, the bucket

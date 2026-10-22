@@ -1,4 +1,3 @@
-export * from './sketch.js';
 export * from './histogram.js';
 export * from './distribution.js';
 export * from './buckets.js';

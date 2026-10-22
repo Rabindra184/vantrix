@@ -1,13 +1,13 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { Histogram } from '../src/index.js';
 
 /**
- * NO PRODUCTION CODE TAKES A QUANTILE ANY MORE.
+ * NO PRODUCTION CODE TAKES A QUANTILE, AND NOTHING IMPORTS A DDSKETCH.
  *
  * This guard began as "every production sketch quantile is clamped": a
- * DDSketch's estimate can lie up to 1% outside the sample it summarises, so
+ * DDSketch's estimate could lie up to 1% outside the sample it summarised, so
  * every `.quantile(` call had to be wrapped in `clampPercentile` against the
  * min and max reported beside it. The set of callers was DERIVED from the
  * source rather than listed, because the list `clampPercentile`'s docstring
@@ -17,31 +17,30 @@ import { Histogram } from '../src/index.js';
  * Exact statistics (2026-10-15) moved every rollup, bucket, SLA metric and
  * Gatling assertion onto exact `Histogram`s, whose method is `percentile` —
  * nearest-rank over observed values, inside its own range by construction —
- * and PR 5 dropped `run_stat.sketch`, which took the last caller with it:
- * `stored-percentiles.ts` now clamps a legacy row's FROZEN value and quantiles
- * nothing. So the rule is simpler and stricter: no production line calls
- * `.quantile(` at all. A caller that comes back is a sketch (or some other
- * estimate) coming back, and that is a decision to make on purpose, not one
- * to find in review.
+ * and PR 5 dropped `run_stat.sketch`, then deleted the sketch wrapper and its
+ * `@datadog/sketches-js` dependency. So the rule has two halves, and either
+ * coming back is an estimate coming back — a decision to make on purpose, not
+ * one to find in review:
  *
- * `packages/statistics/src/sketch.ts` still DEFINES `quantile(q)` until the
- * next task deletes the file, but it never CALLS `.quantile(` on anything, so
- * it needs no exclusion here — measured, not assumed.
+ *   - no production line calls `.quantile(` at all;
+ *   - no production source and no workspace `package.json` names the DDSketch
+ *     package. A manifest is scanned too, because a dependency re-added
+ *     without an import yet is the first half of the same return.
  *
  * ═══ WHAT THE FLOOR COUNTS ═══
  *
  * A collector that matches nothing passes exactly as quietly as one that
  * works, and with no callers left a floor on CALLERS would have to be zero —
- * so the floor is on FILES SCANNED. A walk that stops finding production
- * sources fails here rather than reporting a clean tree.
+ * so the floor is on FILES SCANNED, for sources and for manifests alike. A
+ * walk that stops finding them fails here rather than reporting a clean tree.
  *
  * ═══ COMMENTS ARE STRIPPED, AND THAT IS LOAD-BEARING ═══
  *
  * Measured on 2026-10-22, with no real caller left: replacing the strip with
- * the identity makes the guard fail on three `.quantile(` mentions, all of
- * them prose in `packages/statistics/src/percentile.ts` — the clamp's own
- * docstring, which explains this very guard. Prose about a quantile is not a
- * caller.
+ * the identity makes the quantile half fail on three `.quantile(` mentions,
+ * all of them prose in `packages/statistics/src/percentile.ts` — the clamp's
+ * own docstring, which explains this very guard. Prose about a quantile, or
+ * about the DDSketch that was retired, is not a caller.
  */
 
 /** `/* *\/` and `//` removed, so prose about a quantile is never a caller. */
@@ -73,19 +72,37 @@ interface QuantileCall {
   readonly text: string;
 }
 
-function scan(): { files: number; calls: QuantileCall[] } {
+/** The retired estimator's package, spelled once so the two halves agree. */
+const DDSKETCH_PACKAGE = '@datadog/sketches-js';
+
+function scan(): { files: number; calls: QuantileCall[]; ddsketch: QuantileCall[] } {
   const files = [...productionSources('packages'), ...productionSources('apps')];
   const calls: QuantileCall[] = [];
+  const ddsketch: QuantileCall[] = [];
   for (const file of files) {
     const lines = stripComments(readFileSync(file, 'utf8')).split('\n');
     lines.forEach((line, i) => {
       if (line.includes('.quantile(')) calls.push({ file, line: i + 1, text: line.trim() });
+      if (line.includes(DDSKETCH_PACKAGE)) ddsketch.push({ file, line: i + 1, text: line.trim() });
     });
   }
-  return { files: files.length, calls };
+  return { files: files.length, calls, ddsketch };
 }
 
-describe('no production code takes a quantile', () => {
+/** Every workspace package's manifest under packages/ and apps/ — one level deep. */
+function workspaceManifests(): string[] {
+  const out: string[] = [];
+  for (const root of ['packages', 'apps']) {
+    for (const entry of readdirSync(root, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const manifest = join(root, entry.name, 'package.json');
+      if (existsSync(manifest)) out.push(manifest);
+    }
+  }
+  return out;
+}
+
+describe('no production code computes a sketch quantile, and nothing imports a DDSketch', () => {
   it('finds no .quantile( call in any production source', () => {
     const { files, calls } = scan();
 
@@ -111,5 +128,26 @@ describe('no production code takes a quantile', () => {
       .calls.filter((c) => /histogram\w*!?\.quantile\(/i.test(c.text))
       .map((c) => `${c.file}:${c.line}  ${c.text}`);
     expect(histogramReceivers, 'a Histogram has percentile(p), never quantile(q)').toEqual([]);
+  });
+
+  it('finds no DDSketch specifier in any production source or workspace manifest', () => {
+    const { files, ddsketch } = scan();
+    const manifests = workspaceManifests();
+
+    // VACUITY: on what was scanned. Twelve workspace packages exist today.
+    expect(files, 'the production-source walk found almost nothing — the collector has rotted').toBeGreaterThan(100);
+    expect(manifests.length, 'the manifest walk found almost nothing — the collector has rotted').toBeGreaterThan(8);
+
+    const inManifests = manifests.flatMap((file) =>
+      readFileSync(file, 'utf8')
+        .split('\n')
+        .flatMap((line, i) => (line.includes(DDSKETCH_PACKAGE) ? [`${file}:${i + 1}  ${line.trim()}`] : [])),
+    );
+
+    expect(
+      [...ddsketch.map((c) => `${c.file}:${c.line}  ${c.text}`), ...inManifests],
+      'the DDSketch was retired with exact statistics — percentiles are exact ' +
+        'Histogram#percentile now, and a dependency on the estimator is a decision, not a drift',
+    ).toEqual([]);
   });
 });

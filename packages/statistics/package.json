@@ -12,9 +12,7 @@
   },
   "files": ["dist"],
   "dependencies": {
-    "@perfportal/core": "workspace:*",
-    "@datadog/sketches-js": "^2.1.1",
-    "protobufjs": "^7.4.0"
+    "@perfportal/core": "workspace:*"
   },
   "devDependencies": {
     "@perfportal/plugin-gatling": "workspace:*"

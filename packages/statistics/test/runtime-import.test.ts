@@ -12,10 +12,10 @@ const repoRoot = fileURLToPath(new URL('../../..', import.meta.url));
 describe('runtime importability', () => {
   it('loads @perfportal/statistics in a plain node process', () => {
     const script = `
-      const { Sketch } = await import('@perfportal/statistics');
-      const s = new Sketch();
-      for (let i = 1; i <= 1000; i++) s.accept(i);
-      if (!(Math.abs(s.quantile(0.95) - 950) / 950 <= 0.01)) throw new Error('p95 out of tolerance');
+      const { Histogram } = await import('@perfportal/statistics');
+      const h = new Histogram();
+      for (let i = 1; i <= 1000; i++) h.accept(i);
+      if (h.percentile(95) !== 950) throw new Error('p95 is ' + h.percentile(95) + ', not the exact 950');
       console.log('ok');
     `;
     const out = execFileSync(process.execPath, ['--input-type=module', '-e', script], {

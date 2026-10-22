@@ -3,8 +3,9 @@
  *
  * A quantile of a sample cannot lie outside that sample's own range, so an
  * estimate that does is known to be wrong — and `minMs`/`maxMs` are tracked
- * EXACTLY while percentiles carry DDSketch's 1% relative error. Clamping
- * projects the estimate onto the interval it was always constrained to.
+ * EXACTLY while a legacy ('estimated') row's frozen percentiles carry the
+ * retired DDSketch's 1% relative error. Clamping projects the estimate onto
+ * the interval it was always constrained to.
  *
  * ═══ IT IS A BETTER ESTIMATE, NOT A PRETTIER ONE ═══
  *
@@ -27,18 +28,19 @@
  *
  * The browser copy STAYS, and not by oversight: `apps/web` does not depend on
  * `@perfportal/statistics` and adding that dependency to reach a `Math.min`
- * would pull the engine, the sketch and the histograms into the bundle. It
+ * would pull the engine and the histograms into the bundle. It
  * also still has raw input to correct — rows written before this existed are
  * not rewritten, and `apps/web/test/fixtures/reference-run.json` is a captured
  * payload carrying 2515.46.
  *
- * ═══ AND WHY IT IS NOT INSIDE `Sketch.quantile`, WHICH IS THE OBVIOUS PLACE ═══
+ * ═══ AND WHY IT WAS NEVER INSIDE `Sketch.quantile`, WHICH WAS THE OBVIOUS PLACE ═══
  *
- * That function already answers rank 0 with `min` and rank n-1 with `max`, so
- * clamping an interior rank there looks like the same decision made once. It
- * was written that way first, and it is wrong after a round trip: a sketch's
- * tracked extremes are exact only until it is serialized, after which they are
- * reconstructed from the bucket store. Measured on the plateau fixture —
+ * That function (deleted with the DDSketch in PR 5 of exact statistics)
+ * answered rank 0 with `min` and rank n-1 with `max`, so clamping an interior
+ * rank there looked like the same decision made once. It was written that way
+ * first, and it was wrong after a round trip: a sketch's tracked extremes were
+ * exact only until it was serialized, after which they were reconstructed from
+ * the bucket store. Measured on the plateau fixture —
  *
  *     live      min 100                 max 2503
  *     reloaded  min 100.494567708565    max 2515.4601126101625

@@ -80,8 +80,8 @@ export default function RunSummary() {
   // before this one — which cannot change once it exists. Left on the default,
   // every switch back to the Summary re-issued the heaviest read in the app
   // (up to 21 runs' stored distributions deserialised and re-quantiled
-  // server-side — exact histograms, or a DDSketch for a run processed before
-  // exact statistics) to relabel four tiles.
+  // server-side — exact histograms, or the frozen, clamped column of a run
+  // processed before exact statistics) to relabel four tiles.
   //
   // `staleTime` is per-OBSERVER in TanStack, so this override buys the Summary
   // its cache without touching the Trends tab's own refetch-on-mount, even
