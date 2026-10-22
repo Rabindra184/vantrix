@@ -7,9 +7,11 @@ import { z } from 'zod';
  * these two settings only. That rule exists so a project changing configuration
  * cannot silently reinterpret its own history, and it still binds anything that
  * changes WHICH events are aggregated - warm-up above all. Indicator bounds and
- * percentile columns are not that: with an exact histogram and a stored sketch,
- * both are display thresholds applied to complete data, and recomputing them per
- * request yields exactly what a re-ingest would.
+ * percentile columns are not that: with an exact histogram, both are display
+ * thresholds applied to complete data, and recomputing them per request yields
+ * exactly what a re-ingest would. (A run whose statistics predate exact
+ * histograms and were never recomputed from its raw log answers only the
+ * percentile ranks it stored.)
  */
 export const ProjectSettingsSchema = z.object({
   indicators: z

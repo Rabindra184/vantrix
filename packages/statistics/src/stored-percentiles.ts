@@ -11,30 +11,34 @@ export interface StoredPercentileSource {
   percentiles: Record<string, number>;
   histogramOk: Histogram | null;
   histogramKo: Histogram | null;
-  /** Legacy rows only (written before 2026-10-15). */
-  sketch: { count: number; quantile(q: number): number } | null;
 }
 
 /**
  * Percentiles for a STORED row at the project's current set (spec §4).
  *
  * An exact row (both histograms present and `sparse-ms-v2`) is recomputed
- * from its histograms — exact at any percentile. A row written before
- * 2026-10-15 keeps the legacy path it has always had: its sketch, clamped
- * against its exact extremes, so its numbers do not move until the backfill
- * (PR 2) rewrites it. With neither, or with no observations, the frozen
- * column is the only answer.
+ * from its histograms — exact at any percentile.
  *
- * This is the ONE production caller of a sketch quantile, and the clamp is
- * what `clamped-quantiles.test.ts` requires of it.
+ * A LEGACY row — written before 2026-10-15 and not (yet) recomputed from its
+ * raw log — has nothing left to recompute from: the DDSketch it once carried
+ * was dropped with the run_stat.sketch column. It answers the ranks its frozen
+ * column stored, each clamped against the row's exact extremes (the retired
+ * sketch overshot its own maximum by up to 1%, and the browser already showed
+ * that value clamped). A requested rank the row never stored is OMITTED — the
+ * statistics table draws a dash — never zero and never interpolated between
+ * the stored neighbours, which would be a number nobody measured.
+ *
+ * A row with no observations answers its frozen column as it always has.
  */
 export function storedPercentiles(row: StoredPercentileSource, set: readonly number[]): Record<string, number> {
   if (row.count === 0) return row.percentiles;
   const { histogramOk: ok, histogramKo: ko } = row;
   if (ok && ko && ok.exact && ko.exact) return percentilesOf(mergedHistogram(ok, ko), set);
-  if (row.sketch && row.sketch.count > 0) {
-    const sketch = row.sketch;
-    return Object.fromEntries(set.map((p) => [`p${p}`, clampPercentile(sketch.quantile(p / 100), row)]));
+  const out: Record<string, number> = {};
+  for (const p of set) {
+    const key = `p${p}`;
+    const stored = row.percentiles[key];
+    if (stored !== undefined) out[key] = clampPercentile(stored, row);
   }
-  return row.percentiles;
+  return out;
 }

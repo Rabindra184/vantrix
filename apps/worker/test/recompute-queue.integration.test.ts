@@ -96,7 +96,7 @@ async function seedLegacyRuns(n: number): Promise<string[]> {
     await pipeline.process(run.id, { queueWillRetry: false });
     await pool.query(`UPDATE run SET stats_method = 'estimated' WHERE id = $1`, [run.id]);
     await pool.query(
-      `UPDATE run_stat SET sketch = '\\x01'::bytea, histogram_kind = 'sparse-ms-v1' WHERE run_id = $1`,
+      `UPDATE run_stat SET histogram_kind = 'sparse-ms-v1' WHERE run_id = $1`,
       [run.id],
     );
     ids.push(run.id);

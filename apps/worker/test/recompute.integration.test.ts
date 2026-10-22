@@ -115,14 +115,14 @@ function service(): RecomputeService {
 
 /**
  * Makes a freshly ingested run look like one written before exact statistics:
- * labelled estimated, every stat row carrying a sketch and the v1 histogram
- * label, and every stored p95 nudged off its exact value — so a recompute that
+ * labelled estimated, every stat row carrying the v1 histogram label, and
+ * every stored p95 nudged off its exact value — so a recompute that
  * changed nothing would be visible in each of those places.
  */
 async function makeLegacy(runId: string): Promise<void> {
   await pool.query(`UPDATE run SET stats_method = 'estimated' WHERE id = $1`, [runId]);
   await pool.query(
-    `UPDATE run_stat SET sketch = '\\x01'::bytea, histogram_kind = 'sparse-ms-v1' WHERE run_id = $1`,
+    `UPDATE run_stat SET histogram_kind = 'sparse-ms-v1' WHERE run_id = $1`,
     [runId],
   );
   await pool.query(
@@ -150,7 +150,6 @@ function allDurations(raw: Buffer): number[] {
 }
 
 interface StatRow {
-  sketch: Buffer | null;
   histogram_kind: string | null;
   percentiles: Record<string, number>;
   count: number;
@@ -158,7 +157,7 @@ interface StatRow {
 
 async function runStatRow(runId: string, scope: string, name: string): Promise<StatRow> {
   const { rows } = await pool.query<StatRow>(
-    `SELECT sketch, histogram_kind, percentiles, count FROM run_stat
+    `SELECT histogram_kind, percentiles, count FROM run_stat
       WHERE run_id = $1 AND scope = $2 AND name = $3 AND family = 'response_time'`,
     [runId, scope, name],
   );
@@ -217,12 +216,11 @@ async function legacyRun() {
 describe('RecomputeService', () => {
   it('rewrites an estimated run exactly and marks it exact-v1', async () => {
     const { runId } = await legacyRun();
-    expect((await runStatRow(runId, 'run', '')).sketch).not.toBeNull();
+    expect((await runStatRow(runId, 'run', '')).histogram_kind).toBe('sparse-ms-v1');
 
     expect(await service().recompute(runId)).toBe('recomputed');
 
     const row = await runStatRow(runId, 'run', '');
-    expect(row.sketch).toBeNull();
     expect(row.histogram_kind).toBe('sparse-ms-v2');
     expect(row.percentiles.p95).toBe(exactPercentile(allDurations(log), 95));
     expect(row.count).toBe(allDurations(log).length);
@@ -343,7 +341,7 @@ describe('RecomputeService', () => {
     expect(run.stats_method).toBe('estimated');
     expect(run.recompute_error).toBe('raw_log_missing');
     expect(run.recomputed_at).toBeNull();
-    expect((await runStatRow(runId, 'run', '')).sketch).not.toBeNull();
+    expect((await runStatRow(runId, 'run', '')).histogram_kind).toBe('sparse-ms-v1');
     expect(await counts(runId)).toEqual(rowsBefore);
     expect(await new RecomputeRepository(pool).candidates({ runId }, 1)).toEqual([]);
   });
@@ -440,7 +438,7 @@ describe('RecomputeService', () => {
       await holder.query('SELECT pg_advisory_lock($1, hashtext($2))', [RUN_INGEST_LOCK_NAMESPACE, runId]);
       expect(await service().recompute(runId)).toBe('locked');
       expect((await runRow(runId)).stats_method).toBe('estimated');
-      expect((await runStatRow(runId, 'run', '')).sketch).not.toBeNull();
+      expect((await runStatRow(runId, 'run', '')).histogram_kind).toBe('sparse-ms-v1');
       expect(await counts(runId)).toEqual(rowsBefore);
     } finally {
       await holder.query('SELECT pg_advisory_unlock($1, hashtext($2))', [RUN_INGEST_LOCK_NAMESPACE, runId]);
@@ -457,7 +455,7 @@ describe('RecomputeService', () => {
 
     await expect(service().recompute(runId)).rejects.toThrow('boom');
 
-    expect((await runStatRow(runId, 'run', '')).sketch).not.toBeNull();
+    expect((await runStatRow(runId, 'run', '')).histogram_kind).toBe('sparse-ms-v1');
     const run = await runRow(runId);
     expect(run.stats_method).toBe('estimated');
     expect(run.recompute_error).toBeNull();
@@ -474,7 +472,7 @@ describe('RecomputeService', () => {
     expect(await service().recompute(runId)).toBe('recomputed');
 
     const row = await runStatRow(runId, 'run', '');
-    expect(row.sketch).toBeNull();
+    expect(row.histogram_kind).toBe('sparse-ms-v2');
     expect(row.percentiles.p95).toBe(exactPercentile(allDurations(log), 95));
     expect((await runRow(runId)).stats_method).toBe('exact-v1');
   });

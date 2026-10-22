@@ -735,11 +735,11 @@ describe('Appendix A — Gatling report parity rows (PT-*)', () => {
       // packages/contracts/src/settings.ts's docstring on ProjectSettingsSchema
       // promises percentiles are "read at REQUEST time, not frozen at ingest" -
       // the same guarantee PT-K-01/02 exercises for indicators, because "with
-      // an exact histogram and a stored sketch, both are display thresholds
-      // applied to complete data, and recomputing them per request yields
-      // exactly what a re-ingest would." Task 21 fixed MetricsController.stats()
-      // to honor that: it now recomputes percentile columns from the sketch
-      // persisted in run_stat.sketch at the project's currently configured
+      // an exact histogram, both are display thresholds applied to complete
+      // data, and recomputing them per request yields exactly what a re-ingest
+      // would." Task 21 fixed MetricsController.stats() to honor that (from the
+      // stored sketch then; from the exact histograms in run_stat since): it
+      // recomputes percentile columns at the project's currently configured
       // percentile set, rather than returning the frozen run_stat.percentiles
       // JSON captured at ingest. Proven below against the already-shared
       // Appendix-A run: changing the setting post-ingest DOES move the

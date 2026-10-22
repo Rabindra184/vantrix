@@ -42,8 +42,8 @@ export interface VerdictChangeRecord {
 /**
  * ═══ A RUN WHOSE STATISTICS ARE NOT ALL EXACT ═══
  *
- * Labelled estimated, or carrying a stat row in an older format (a sketch, or
- * a histogram kind before sparse-ms-v2). By label AND by stored format, for
+ * Labelled estimated, or carrying a stat row in an older format (a histogram
+ * kind before sparse-ms-v2, or none). By label AND by stored format, for
  * the reason the candidate predicate below gives. ONE definition, read by the
  * recompute's selection, by the verifier (which marks such a run
  * unverifiable/not_exact rather than reporting a flood of mismatches that say
@@ -59,7 +59,7 @@ export const NOT_EXACT_RUN_SQL = `
     OR EXISTS (
       SELECT 1 FROM run_stat s
        WHERE s.run_id = r.id
-         AND (s.sketch IS NOT NULL OR s.histogram_kind IS DISTINCT FROM 'sparse-ms-v2')
+         AND s.histogram_kind IS DISTINCT FROM 'sparse-ms-v2'
     )
   )`;
 

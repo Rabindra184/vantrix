@@ -1,0 +1,14 @@
+-- PR 5 of exact statistics: the DDSketch is retired.
+--
+-- Every run_stat row written since 2026-10-15 stores NULL in both columns:
+-- percentiles come from the two exact sparse-ms-v2 histograms. A row written
+-- before then and not yet recomputed from its raw log keeps its frozen
+-- percentiles column, which is what it answers from now (each stored rank
+-- clamped to the row's exact min and max; a rank it never stored is omitted).
+-- Such a run stays a recompute candidate: the candidate predicate selects it
+-- by stats_method or by histogram_kind, never by this column.
+--
+-- Deploy order: the worker and the API that no longer read these columns go
+-- out FIRST, then this migration. An older pod still selects the sketch column
+-- and fails with "column does not exist" once it is gone.
+ALTER TABLE run_stat DROP COLUMN sketch, DROP COLUMN sketch_kind;

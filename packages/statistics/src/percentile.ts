@@ -51,11 +51,12 @@
  *
  * So the rule is per ASSEMBLER instead, and it is the one a reader checks:
  * **a percentile is clamped against the same min and max reported beside it.**
- * `storedPercentiles` (`stored-percentiles.ts`) recomputes a LEGACY row's
- * percentile from its stored sketch against a row already assembled, and it
- * is the only one: the metrics controller's /stats and trends reads used to
- * carry their own copies of that recomputation and now call
- * `storedPercentiles` instead. `RollupBuilder.finish`, `bucketLatency`,
+ * `storedPercentiles` (`stored-percentiles.ts`) clamps a LEGACY row's frozen
+ * percentile against the row it sits beside, and it is the only one: the
+ * metrics controller's /stats and trends reads used to carry their own copies
+ * of that rule and now call `storedPercentiles` instead (it recomputed from the
+ * row's stored sketch until PR 5 of exact statistics dropped the column; it
+ * clamps the frozen value now). `RollupBuilder.finish`, `bucketLatency`,
  * `tool-assertions.ts` and `packages/sla`'s `resolveMetric` were callers too
  * until they moved to exact histograms: a nearest-rank value is an observation
  * the row made, so it is inside that row's range by construction and they call
@@ -70,11 +71,12 @@
  * estimate 12.46 ms above the run's own maximum. The names above are kept
  * because they orient a reader; they are NOT what keeps the rule true.
  *
- * `packages/statistics/test/clamped-quantiles.test.ts` derives the set from the
- * source — every `.quantile(` call in production must be wrapped in
- * `clampPercentile` or named in that file's `EXEMPT` with its reason — so a
- * sixth caller joins the check by EXISTING rather than by somebody remembering
- * this paragraph.
+ * `packages/statistics/test/clamped-quantiles.test.ts` derived the set from the
+ * source — every `.quantile(` call in production had to be wrapped in
+ * `clampPercentile` — so a sixth caller joined the check by EXISTING rather
+ * than by somebody remembering this paragraph. Since the sketch column was
+ * dropped there is no estimate left to quantile, and that guard now requires
+ * that NO production code calls `.quantile(` at all.
  *
  * `window.ts` needs no call, and THE REASON FIRST WRITTEN HERE WAS WRONG. It
  * said that file "reports the merged RELOADED sketch's own extremes", which

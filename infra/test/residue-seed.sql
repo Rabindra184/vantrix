@@ -46,9 +46,9 @@ SELECT ('6'||substr(p.id::text, 2))::uuid, p.org_id, p.id, 'complete', 'gatling'
 -- A plain FK-free table.
 INSERT INTO run_stat (id, run_id, org_id, project_id, scope, name, family, count,
                       ok_count, ko_count, error_rate, min_ms, max_ms, mean_ms,
-                      stddev_ms, throughput_rps, percentiles, sketch, sketch_kind)
+                      stddev_ms, throughput_rps, percentiles)
 SELECT ('7'||substr(r.id::text, 2))::uuid, r.id, r.org_id, r.project_id, 'run', '',
-       'response_time', 1, 1, 0, 0, 1, 1, 1, 0, 1, '{}'::jsonb, '\x00'::bytea, 'ddsketch'
+       'response_time', 1, 1, 0, 0, 1, 1, 1, 0, 1, '{}'::jsonb
   FROM run r WHERE r.bundle_key = 'k';
 
 -- A PARTITIONED FK-free table: proves the DELETE routes into partitions.

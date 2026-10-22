@@ -1,4 +1,4 @@
-import { Histogram, Sketch } from '@perfportal/statistics';
+import { Histogram } from '@perfportal/statistics';
 import type pg from 'pg';
 import type { ProjectScope } from '../repositories/tenant.js';
 import { partitionDay } from './partition-day.js';
@@ -20,17 +20,15 @@ export interface StoredStat {
   percentiles: Record<string, number>;
   /** Null for runs ingested before the parity migration; the API reports those as non-configurable. */
   histogramOk: Histogram | null;
-  histogramKo: Histogram | null;
   /**
-   * The legacy DDSketch. Present only on rows written before 2026-10-15; every
-   * row since carries none, and its percentiles are recomputed at the
-   * project's currently configured set (spec §4, K-03) exactly from the two
-   * `sparse-ms-v2` histograms above. `storedPercentiles` in
-   * `@perfportal/statistics` is the one rule choosing between them: exact
-   * histograms first, this sketch (clamped) for a legacy row, and the frozen
-   * `percentiles` column when a row has neither.
+   * A row written since 2026-10-15 carries two exact `sparse-ms-v2`
+   * histograms, and its percentiles are recomputed from them at the project's
+   * currently configured set (spec §4, K-03). A legacy row — written before,
+   * not yet recomputed — answers from its frozen `percentiles` column, each
+   * stored rank clamped and an unstored one omitted. `storedPercentiles` in
+   * `@perfportal/statistics` is the one rule choosing between the two.
    */
-  sketch: Sketch | null;
+  histogramKo: Histogram | null;
 }
 
 export interface StoredUserBucket {
@@ -246,7 +244,7 @@ export class MetricReader {
     const { rows } = await this.pool.query(
       `SELECT scope, name, family, count, ok_count, ko_count, error_rate,
               min_ms, max_ms, mean_ms, stddev_ms, throughput_rps, percentiles,
-              histogram_ok, histogram_ko, sketch
+              histogram_ok, histogram_ko
          FROM run_stat
         WHERE run_id = $1 AND org_id = $2 AND project_id = $3
         ORDER BY scope, name, family`,
@@ -268,7 +266,6 @@ export class MetricReader {
       percentiles: r.percentiles as Record<string, number>,
       histogramOk: r.histogram_ok ? Histogram.deserialize(new Uint8Array(r.histogram_ok)) : null,
       histogramKo: r.histogram_ko ? Histogram.deserialize(new Uint8Array(r.histogram_ko)) : null,
-      sketch: r.sketch ? Sketch.deserialize(new Uint8Array(r.sketch)) : null,
     }));
   }
 
@@ -333,12 +330,11 @@ export class MetricReader {
         throughputRps: r.throughput_rps,
         percentiles: r.percentiles as Record<string, number>,
         // Deserialised here exactly as `stats` above does it, so the two
-        // endpoints answer percentile questions from the same objects —
-        // exact histograms, or a legacy row's sketch — rather than one from
-        // a stored float and the other from a recomputation.
+        // endpoints answer percentile questions through the same rule —
+        // exact histograms, or a legacy row's frozen column, clamped —
+        // rather than one from a stored float and the other recomputed.
         histogramOk: r.histogram_ok ? Histogram.deserialize(new Uint8Array(r.histogram_ok)) : null,
         histogramKo: r.histogram_ko ? Histogram.deserialize(new Uint8Array(r.histogram_ko)) : null,
-        sketch: r.sketch ? Sketch.deserialize(new Uint8Array(r.sketch)) : null,
       })),
       // Identical on every row; zero only when there are no rows at all, which
       // cannot happen for a terminal run since it matches its own cohort.

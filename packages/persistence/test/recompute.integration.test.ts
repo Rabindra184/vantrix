@@ -27,8 +27,6 @@ interface SeedOptions {
 }
 
 interface StatRowOptions extends SeedOptions {
-  /** A legacy DDSketch blob (true) or none (false). Defaults to true. */
-  sketch?: boolean;
   /** Defaults to the legacy 'sparse-ms-v1'. */
   histogramKind?: string | null;
 }
@@ -67,22 +65,19 @@ async function seedRunWithStatRow(opts: StatRowOptions = {}): Promise<string> {
     [runId],
   );
   const owner = rows[0]!;
-  const sketch = opts.sketch ?? true;
   await pool.query(
     `INSERT INTO run_stat
        (id, run_id, org_id, project_id, scope, name, family,
         count, ok_count, ko_count, error_rate,
         min_ms, max_ms, mean_ms, stddev_ms, throughput_rps,
-        percentiles, sketch, sketch_kind, histogram_ok, histogram_ko, histogram_kind)
+        percentiles, histogram_ok, histogram_ko, histogram_kind)
      VALUES (gen_random_uuid(), $1, $2, $3, 'run', '', 'response_time',
              1, 1, 0, 0, 10, 10, 10, 0, 1,
-             '{}'::jsonb, $4, $5, $6, NULL, $7)`,
+             '{}'::jsonb, $4, NULL, $5)`,
     [
       runId,
       owner.org_id,
       owner.project_id,
-      sketch ? Buffer.from([1]) : null,
-      sketch ? 'ddsketch-v1' : null,
       Buffer.from([1]),
       opts.histogramKind === undefined ? 'sparse-ms-v1' : opts.histogramKind,
     ],
@@ -107,9 +102,9 @@ afterAll(async () => {
 
 describe('RecomputeRepository', () => {
   it('selects a run labelled estimated, and one labelled exact whose rows are still legacy', async () => {
-    const a = await seedRunWithStatRow({ statsMethod: 'estimated', sketch: true, histogramKind: 'sparse-ms-v1' });
-    const b = await seedRunWithStatRow({ statsMethod: 'exact-v1', sketch: true, histogramKind: 'sparse-ms-v1' });
-    const c = await seedRunWithStatRow({ statsMethod: 'exact-v1', sketch: false, histogramKind: 'sparse-ms-v2' });
+    const a = await seedRunWithStatRow({ statsMethod: 'estimated', histogramKind: 'sparse-ms-v1' });
+    const b = await seedRunWithStatRow({ statsMethod: 'exact-v1', histogramKind: 'sparse-ms-v1' });
+    const c = await seedRunWithStatRow({ statsMethod: 'exact-v1', histogramKind: 'sparse-ms-v2' });
     const ids = await new RecomputeRepository(pool).candidates({}, 100);
     expect(ids.sort()).toEqual([a, b].sort());
     expect(ids).not.toContain(c);
@@ -131,7 +126,7 @@ describe('RecomputeRepository', () => {
   });
 
   it('counts progress per org: total runs with statistics, remaining candidates, failed', async () => {
-    await seedRunWithStatRow({ statsMethod: 'exact-v1', sketch: false, histogramKind: 'sparse-ms-v2' });
+    await seedRunWithStatRow({ statsMethod: 'exact-v1', histogramKind: 'sparse-ms-v2' });
     await seedRunWithStatRow({ statsMethod: 'estimated' });
     const lost = await seedRunWithStatRow({ statsMethod: 'estimated' });
     await new RecomputeRepository(pool).markFailed(lost, 'raw_log_missing');
@@ -142,22 +137,29 @@ describe('RecomputeRepository', () => {
     // Never recomputed again, so it keeps its legacy figures whatever its
     // label says. A count that filtered failures by label would lose it from
     // remaining (the error excludes it) AND from failed.
-    const mislabelled = await seedRunWithStatRow({ statsMethod: 'exact-v1', sketch: true, histogramKind: 'sparse-ms-v1' });
+    const mislabelled = await seedRunWithStatRow({ statsMethod: 'exact-v1', histogramKind: 'sparse-ms-v1' });
     await new RecomputeRepository(pool).markFailed(mislabelled, 'parse_failed');
     expect(await new RecomputeRepository(pool).progress(orgId)).toEqual({ total: 1, remaining: 0, failed: 1 });
   });
 
-  it('selects an exact-labelled run on either half of the legacy-format test alone', async () => {
-    // Each half of the format branch, with the other half false, so neither
-    // can be dropped without a case going red.
-    const legacyKindOnly = await seedRunWithStatRow({ statsMethod: 'exact-v1', sketch: false, histogramKind: 'sparse-ms-v1' });
-    const sketchOnly = await seedRunWithStatRow({ statsMethod: 'exact-v1', sketch: true, histogramKind: 'sparse-ms-v2' });
+  /**
+   * ═══ SELECTED BY STORED FORMAT, NOT BY LABEL, WITH THE SKETCH GONE ═══
+   *
+   * PR 1's rule: stats_method is set at INSERT, so a run an older worker
+   * parsed during a rolling deploy carries exact-v1 over legacy rows. Until
+   * PR 5 the format branch had two arms — a stored sketch, or an older
+   * histogram kind. The sketch column is dropped; the histogram-kind arm is
+   * what still finds that run, and keyed on stats_method alone this case
+   * fails.
+   */
+  it('still selects a run labelled exact-v1 whose rows carry histogram_kind sparse-ms-v1', async () => {
+    const legacyKind = await seedRunWithStatRow({ statsMethod: 'exact-v1', histogramKind: 'sparse-ms-v1' });
     // A NULL kind is legacy too: an equality test would read it as unknown
     // and skip the run, which is why the predicate says IS DISTINCT FROM.
-    const nullKind = await seedRunWithStatRow({ statsMethod: 'exact-v1', sketch: false, histogramKind: null });
-    const exact = await seedRunWithStatRow({ statsMethod: 'exact-v1', sketch: false, histogramKind: 'sparse-ms-v2' });
+    const nullKind = await seedRunWithStatRow({ statsMethod: 'exact-v1', histogramKind: null });
+    const exact = await seedRunWithStatRow({ statsMethod: 'exact-v1', histogramKind: 'sparse-ms-v2' });
     const ids = await new RecomputeRepository(pool).candidates({}, 100);
-    expect(ids.sort()).toEqual([legacyKindOnly, sketchOnly, nullKind].sort());
+    expect(ids.sort()).toEqual([legacyKind, nullKind].sort());
     expect(ids).not.toContain(exact);
   });
 
@@ -219,7 +221,7 @@ describe('RecomputeRepository', () => {
    * percentiles carry ≈.
    */
   it('relabels a run it marks failed as estimated', async () => {
-    const mislabelled = await seedRunWithStatRow({ statsMethod: 'exact-v1', sketch: true, histogramKind: 'sparse-ms-v1' });
+    const mislabelled = await seedRunWithStatRow({ statsMethod: 'exact-v1', histogramKind: 'sparse-ms-v1' });
     await new RecomputeRepository(pool).markFailed(mislabelled, 'parse_failed');
     const { rows } = await pool.query<{ stats_method: string }>(`SELECT stats_method FROM run WHERE id = $1`, [mislabelled]);
     expect(rows).toEqual([{ stats_method: 'estimated' }]);
@@ -382,7 +384,7 @@ describe('RecomputeRepository#candidatePage', () => {
     const tieB = await seedRunWithStatRow();
     const older = await seedRunWithStatRow();
     const oldest = await seedRunWithStatRow();
-    const notACandidate = await seedRunWithStatRow({ statsMethod: 'exact-v1', sketch: false, histogramKind: 'sparse-ms-v2' });
+    const notACandidate = await seedRunWithStatRow({ statsMethod: 'exact-v1', histogramKind: 'sparse-ms-v2' });
     await at(newest, '2026-08-07T10:00:03.000Z');
     // Same millisecond: only the id orders them, and limit 2 puts the page
     // boundary between them.

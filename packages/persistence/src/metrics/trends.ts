@@ -1,4 +1,4 @@
-import type { Histogram, Sketch } from '@perfportal/statistics';
+import type { Histogram } from '@perfportal/statistics';
 
 /**
  * The cohort query behind `GET /v1/runs/:id/trends`.
@@ -101,7 +101,7 @@ export const TRENDS_SQL = `
          t.environment, t.branch, t.commit_sha, t.tool, t.simulation, t.run_number,
          t.stats_method,
          t.count, t.ok_count, t.ko_count, t.error_rate,
-         t.min_ms, t.max_ms, t.mean_ms, t.throughput_rps, t.percentiles, t.sketch,
+         t.min_ms, t.max_ms, t.mean_ms, t.throughput_rps, t.percentiles,
          t.histogram_ok, t.histogram_ko,
          t.cohort_size
     FROM (
@@ -116,7 +116,7 @@ export const TRENDS_SQL = `
              -- backfill.
              r.stats_method,
              s.count, s.ok_count, s.ko_count, s.error_rate,
-             s.min_ms, s.max_ms, s.mean_ms, s.throughput_rps, s.percentiles, s.sketch,
+             s.min_ms, s.max_ms, s.mean_ms, s.throughput_rps, s.percentiles,
              s.histogram_ok, s.histogram_ko,
              COALESCE(r.tool_started_at, r.started_at) AS effective,
              ROW_NUMBER() OVER (
@@ -195,9 +195,10 @@ export interface StoredTrendRun {
    * (spec §4, K-03), so reconfiguring the set needs no re-ingest, and it does
    * so through `storedPercentiles` in `@perfportal/statistics` — the one rule
    * for a stored row. A row written since 2026-10-15 carries two exact
-   * `sparse-ms-v2` histograms and no sketch, and is recomputed exactly from
-   * them; a row written before keeps its legacy path, the sketch below,
-   * clamped. The frozen `percentiles` column answers only a row with neither.
+   * `sparse-ms-v2` histograms and is recomputed exactly from them; a legacy
+   * row written before, not yet recomputed, answers from its frozen
+   * `percentiles` column, each stored rank clamped and an unstored one
+   * omitted.
    *
    * A trend reading the frozen column instead would put the statistics table
    * and the trend on DIFFERENT PERCENTILE SETS the moment a project
@@ -209,9 +210,4 @@ export interface StoredTrendRun {
    */
   readonly histogramOk: Histogram | null;
   readonly histogramKo: Histogram | null;
-  /**
-   * The legacy DDSketch: present only on rows written before 2026-10-15,
-   * null on every row since. Read only when the histograms are not exact.
-   */
-  readonly sketch: Sketch | null;
 }
