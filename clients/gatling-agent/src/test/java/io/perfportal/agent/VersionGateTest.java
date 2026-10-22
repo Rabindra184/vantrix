@@ -1,0 +1,136 @@
+package io.perfportal.agent;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.net.URL;
+import java.net.URLClassLoader;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.jar.Attributes;
+import java.util.jar.JarEntry;
+import java.util.jar.JarOutputStream;
+import java.util.jar.Manifest;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+class VersionGateTest {
+  @TempDir Path dir;
+
+  @Test
+  void admits3151() throws Exception {
+    VersionGate.Result r = VersionGate.check(loaderWith("3.15.1", "3.15.1"));
+    assertTrue(r.http());
+    assertNull(r.reason());
+    assertEquals("3.15.1", r.gatlingHttpClient());
+    assertEquals("3.15.1", r.gatlingHttp());
+  }
+
+  @Test
+  void refusesAnotherVersionAndSaysWhich() throws Exception {
+    VersionGate.Result r = VersionGate.check(loaderWith("3.16.0", "3.16.0"));
+    assertFalse(r.http());
+    assertEquals(
+        "gatling-http-client 3.16.0 is not supported by agent 0.1.0 (supported: 3.15.1)",
+        r.reason());
+    assertEquals("3.16.0", r.gatlingHttpClient());
+  }
+
+  @Test
+  void refusesAMismatchedGatlingHttp() throws Exception {
+    VersionGate.Result r = VersionGate.check(loaderWith("3.15.1", "3.16.0"));
+    assertFalse(r.http());
+    assertEquals(
+        "gatling-http 3.16.0 is not supported by agent 0.1.0 (supported: 3.15.1)", r.reason());
+  }
+
+  @Test
+  void missingGatlingOnTheClasspathIsNotSupported() throws Exception {
+    VersionGate.Result r = VersionGate.check(emptyLoader());
+    assertFalse(r.http());
+    assertEquals("gatling-http-client was not found on the classpath", r.reason());
+    assertNull(r.gatlingHttpClient());
+    assertNull(r.gatlingHttp());
+  }
+
+  @Test
+  void theRealGatlingOnTheTestClasspathIsAdmitted() {
+    assertTrue(VersionGate.check(VersionGateTest.class.getClassLoader()).http());
+  }
+
+  // Gatling's own sbt-built jars carry a manifest and NO pom.properties.
+  @Test
+  void readsAnSbtBuiltJarsManifest() throws Exception {
+    VersionGate.Result r =
+        VersionGate.check(
+            jars(
+                jar("gatling-http-client", "3.15.1", "io/gatling/http/client/HttpClient.class"),
+                jar("gatling-http", "3.15.1", "io/gatling/http/engine/HttpEngine.class")));
+    assertTrue(r.http(), r.reason());
+    assertEquals("3.15.1", r.gatlingHttpClient());
+    assertEquals("3.15.1", r.gatlingHttp());
+  }
+
+  @Test
+  void refusesAnSbtBuiltJarOfAnotherVersion() throws Exception {
+    VersionGate.Result r =
+        VersionGate.check(
+            jars(
+                jar("gatling-http-client", "3.16.0", "io/gatling/http/client/HttpClient.class"),
+                jar("gatling-http", "3.16.0", "io/gatling/http/engine/HttpEngine.class")));
+    assertEquals(
+        "gatling-http-client 3.16.0 is not supported by agent 0.1.0 (supported: 3.15.1)",
+        r.reason());
+  }
+
+  // A fat jar that bundled Gatling under its own manifest says nothing about Gatling's version.
+  @Test
+  void ignoresAManifestThatNamesAnotherArtifact() throws Exception {
+    VersionGate.Result r =
+        VersionGate.check(
+            jars(jar("my-simulations", "3.15.1", "io/gatling/http/client/HttpClient.class")));
+    assertFalse(r.http());
+    assertNull(r.gatlingHttpClient());
+  }
+
+  private ClassLoader jars(Path... jars) throws Exception {
+    URL[] urls = new URL[jars.length];
+    for (int i = 0; i < jars.length; i++) urls[i] = jars[i].toUri().toURL();
+    return new URLClassLoader(urls, null);
+  }
+
+  private Path jar(String title, String version, String classEntry) throws Exception {
+    Manifest m = new Manifest();
+    m.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
+    m.getMainAttributes().put(Attributes.Name.IMPLEMENTATION_TITLE, title);
+    m.getMainAttributes().put(Attributes.Name.IMPLEMENTATION_VERSION, version);
+    Path jar = dir.resolve(title + "-" + version + ".jar");
+    try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar), m)) {
+      out.putNextEntry(new JarEntry(classEntry));
+      out.write(new byte[] {(byte) 0xCA, (byte) 0xFE});
+      out.closeEntry();
+    }
+    return jar;
+  }
+
+  private ClassLoader loaderWith(String client, String http) throws Exception {
+    write("gatling-http-client", client);
+    write("gatling-http", http);
+    return new URLClassLoader(new URL[] {dir.toUri().toURL()}, null);
+  }
+
+  private ClassLoader emptyLoader() throws Exception {
+    return new URLClassLoader(new URL[] {dir.toUri().toURL()}, null);
+  }
+
+  private void write(String artifact, String version) throws Exception {
+    Path p = dir.resolve("META-INF/maven/io.gatling/" + artifact + "/pom.properties");
+    Files.createDirectories(p.getParent());
+    Files.writeString(
+        p,
+        "#Generated by Maven\nartifactId=" + artifact + "\ngroupId=io.gatling\nversion=" + version
+            + "\n");
+  }
+}
