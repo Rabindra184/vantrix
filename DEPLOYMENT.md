@@ -498,21 +498,42 @@ Administration says how many, and how many could not be recomputed.
 That release drops the stored DDSketch every estimated run's percentiles used
 to be re-read from. Wait until Administration › Data integrity no longer
 shows *Recomputing exact statistics: N of M runs* — it disappears at 0
-remaining. A run still waiting when you upgrade is not lost: until it is
-recomputed it answers only the percentile ranks it stored at ingest (each
-held inside the run's own min and max), so a percentile your project added
+remaining. An install upgrading from before exact statistics takes a release
+that carries the backfill first, lets it reach 0, and only then takes this one.
+A run still waiting when you upgrade is not lost: until it is recomputed it
+answers only the percentile ranks it stored at ingest (each held inside its
+own min and max — per request, group and run), so a percentile your project added
 since shows as a dash for it, and `pnpm recompute` still works afterwards. A
 run that could not be recomputed answers the same way for good, and was
 already marked **≈**.
 
 **For that release only: the API and the worker first, then `migrate`.** This
 reverses the usual order on purpose. Its migration drops the `sketch` and
-`sketch_kind` columns from `run_stat`; an API or worker still on the older
-image selects them and fails with *column does not exist* the moment they are
-gone, while the new image never reads them, so it runs correctly on either
-side of the migration. Under Compose one `up` replaces everything within
-seconds; it matters when you replace processes one at a time. Every later
-release goes back to migrate first.
+`sketch_kind` columns from `run_stat`. An API or worker still on the older
+image fails the moment they are gone: the API answers a 500 on a run's
+statistics, and the worker's insert of a finished run's statistics fails with
+*column does not exist*, which it does not retry, so that run is marked
+failed for good. The new image never reads or writes either column, and both
+are still there and nullable until the migration runs, so it works on either
+side of it.
+
+**A plain `up` gets this wrong.** In `infra/docker-compose.yml` the worker
+waits on `migrate`, and the API waits on `bootstrap`, which waits on
+`migrate`, so the one-line upgrade above runs the migration while the old API
+and worker are still serving. For this release, replace those two first,
+without their dependencies, and then run the usual `up`:
+
+```bash
+git pull
+docker compose -f infra/docker-compose.yml --profile onprem up -d --build --no-deps api worker
+docker compose -f infra/docker-compose.yml --profile onprem up -d --build
+```
+
+The first command builds and restarts only `api` and `worker`, on the schema
+they already have (`--no-deps` leaves `migrate`, `bootstrap` and the rest
+alone). The second runs the migration and brings up everything else; the
+runner never touches `run_stat`. Every later release goes back to the
+one-line upgrade.
 
 **An upgrade sends nobody to *Choose a new password*.** The release that adds
 that step adds its flag as `NOT NULL DEFAULT false`, so every account that
