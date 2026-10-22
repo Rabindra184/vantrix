@@ -121,11 +121,12 @@
   - **Let the backfill finish first.** Before this upgrade, let the exact-statistics backfill finish: Administration › Data integrity reads 0 remaining. A run still waiting answers only the percentile ranks it stored until it is recomputed, and recompute still works after the upgrade.
   - **Order for this release only.** Roll the API and worker first, then run `migrate`. An old pod still selects the dropped column, and the new code no longer reads it. Say plainly that this reverses the usual migrate-first order for this one release, and why.
 - [ ] **Step 2: A real check on a COPY of the developer database, which is read only.**
-  1. Run `pg_dump perfportal` into `perfportal_pr5_copy` and `prisma migrate deploy` up to the PR 4 head, without this migration.
-  2. Fingerprint the old API's `/stats` and `/trends` responses for every run: run this branch's parent API build against the copy.
-  3. Apply this migration and start this branch's API against the copy.
-  4. Take the same fingerprint. Exact runs must be byte-identical. Any estimated run must answer its stored ranks; record the count and examples.
-  5. Drop the copy. Confirm the developer database is unchanged: run count, `run_stat` count, migration count, and an md5 over run id/status/verdict.
+  1. Run `pg_dump perfportal` into `perfportal_pr5_copy` and `prisma migrate deploy` up to the PR 4 head, without this migration. **The developer database predates PR 1** (37 migrations, no `stats_method`), so every run with statistics is `estimated` on the copy at this point (26 of 29 when PRs 2 and 3 measured it).
+  2. **Estimated, before:** fingerprint the old API's `/stats` (at the project's own set AND at a set that adds p90) and `/trends` for every run, with this branch's parent API build against the copy. This is the sketch path's last answer.
+  3. **Set one run aside** (record its id) by giving it a `recompute_error`, so it stays estimated and stands in for a retired run.
+  4. **Recompute** with the parent build's `pnpm recompute` against the copy, reading the developer bucket through a read-only store (the worker process is never started on the copy). Then fingerprint again: this is the exact baseline.
+  5. Apply this migration and start this branch's API against the copy. Fingerprint again. Every exact run must be byte-identical to step 4. The retired run must answer its stored ranks clamped, omit p90, and differ from step 2 only where step 2 used the sketch; record both answers.
+  6. Drop the copy. Confirm the developer database is unchanged: run count, `run_stat` count, migration count, and an md5 over run id/status/verdict and every `run_stat` row's counts and percentiles.
 - [ ] **Step 3: `CLAUDE.md` entry.** Cover what was removed, the legacy rule, the upgrade-order reversal, the measured fingerprint result, and the floors.
 - [ ] **Step 4: Gates.** Predict the floors first: unit from per-file deltas, since `sketch.test.ts` leaves; integration from `vitest list`; e2e from `--list`. Then run every gate on Node 22 and the scratch stores, each read by its own exit code: build, typecheck after deleting `.tsbuildinfo`, lint, unit, integration, then e2e.
 - [ ] **Step 5: Commit.** The controller pushes and opens the PR after the whole-branch review.
