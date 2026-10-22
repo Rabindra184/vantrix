@@ -79,9 +79,9 @@ describe('GET /v1/runs/:id/stats — windowed', () => {
   });
 
   it('a full-extent window reproduces the unwindowed row', async () => {
-    // Within RELATIVE_ACCURACY, a bound kept from when the unwindowed path
-    // read the 1%-relative sketch. Both paths read exact histograms now, so
-    // the bound holds with room to spare; this pins that it still does.
+    // EQUAL, not within 1%: both paths merge the same exact histograms now
+    // (the 1% bound dated from when the unwindowed path read the retired
+    // DDSketch), so any difference at all is a defect in one of them.
     ctx = await createTestApp();
     const id = await ingested();
 
@@ -94,11 +94,8 @@ describe('GET /v1/runs/:id/stats — windowed', () => {
     expect(windowed.koCount).toBe(whole.koCount);
     expect(windowed.maxMs).toBe(whole.maxMs);
     expect(windowed.minMs).toBe(whole.minMs);
-    for (const key of Object.keys(whole.percentiles)) {
-      const a = whole.percentiles[key]!;
-      const b = windowed.percentiles[key]!;
-      expect(Math.abs(a - b) / a, key).toBeLessThanOrEqual(0.01);
-    }
+    expect(Object.keys(whole.percentiles).length, 'the row carries no percentiles to compare').toBeGreaterThan(0);
+    expect(windowed.percentiles).toEqual(whole.percentiles);
   });
 
   it('a half window reports strictly fewer requests and no larger a max', async () => {

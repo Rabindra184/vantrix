@@ -24,9 +24,14 @@ export interface StoredPercentileSource {
  * was dropped with the run_stat.sketch column. It answers the ranks its frozen
  * column stored, each clamped against the row's exact extremes (the retired
  * sketch overshot its own maximum by up to 1%, and the browser already showed
- * that value clamped). A requested rank the row never stored is OMITTED — the
- * statistics table draws a dash — never zero and never interpolated between
- * the stored neighbours, which would be a number nobody measured.
+ * that value clamped). A requested rank the row never stored is OMITTED —
+ * never zero and never interpolated between the stored neighbours, which
+ * would be a number nobody measured. The run's own statistics table builds
+ * its percentile columns from the ranks its rows carry, so a legacy run that
+ * never stored p90 simply has no p90 column; a dash or a gap appears only
+ * where other runs put the rank on screen (a mixed trends cohort, Compare).
+ * A stored value that is not a finite number (a frozen JSON null) is omitted
+ * too: clamping it would turn "nothing stored" into the row's minimum.
  *
  * A row with no observations answers its frozen column as it always has.
  */
@@ -38,7 +43,7 @@ export function storedPercentiles(row: StoredPercentileSource, set: readonly num
   for (const p of set) {
     const key = `p${p}`;
     const stored = row.percentiles[key];
-    if (stored !== undefined) out[key] = clampPercentile(stored, row);
+    if (typeof stored === 'number' && Number.isFinite(stored)) out[key] = clampPercentile(stored, row);
   }
   return out;
 }

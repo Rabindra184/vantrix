@@ -92,9 +92,13 @@ function scan(): { files: number; calls: QuantileCall[]; ddsketch: QuantileCall[
   return { files: files.length, calls, ddsketch };
 }
 
-/** Every workspace package's manifest under packages/ and apps/ — one level deep. */
+/**
+ * The root manifest, and every workspace package's manifest under packages/
+ * and apps/ — one level deep. The root is where an override or a dev
+ * dependency would bring the estimator back without any package naming it.
+ */
 function workspaceManifests(): string[] {
-  const out: string[] = [];
+  const out: string[] = ['package.json'];
   for (const root of ['packages', 'apps']) {
     for (const entry of readdirSync(root, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
@@ -133,13 +137,14 @@ describe('no production code computes a sketch quantile, and nothing imports a D
     expect(histogramReceivers, 'a Histogram has percentile(p), never quantile(q)').toEqual([]);
   });
 
-  it('finds no DDSketch specifier in any production source or workspace manifest', () => {
+  it('finds no DDSketch specifier in any production source, the root manifest or a workspace manifest', () => {
     const { files, ddsketch } = scan();
     const manifests = workspaceManifests();
 
     // VACUITY: on what was scanned. Twelve workspace packages exist today.
     expect(files, 'the production-source walk found almost nothing — the collector has rotted').toBeGreaterThan(100);
     expect(manifests.length, 'the manifest walk found almost nothing — the collector has rotted').toBeGreaterThan(8);
+    expect(manifests, 'the root manifest is scanned too').toContain('package.json');
 
     const inManifests = manifests.flatMap((file) =>
       readFileSync(file, 'utf8')
