@@ -27,6 +27,17 @@ class AgentJarTest {
     public static void main(String[] args) {}
   }
 
+  /** Lives long enough for the sampler to tick twice. */
+  public static final class Sleeper {
+    public static void main(String[] args) throws InterruptedException {
+      Thread.sleep(2_600);
+    }
+  }
+
+  // The child runs on this JVM's OS, so it collects machine figures exactly when this one could.
+  private static final String MACHINE_REFUSAL = Sampler.machineRefusal();
+  private static final boolean MACHINE = MACHINE_REFUSAL == null;
+
   private static Path agentJar() {
     String p = System.getProperty("agentJar");
     assertTrue(p != null && !p.isEmpty(), "the agentJar system property is not set");
@@ -65,8 +76,12 @@ class AgentJarTest {
     assertTrue(h.contains("\"agentVersion\":\"0.1.0\""), h);
     assertTrue(h.contains("\"gatlingHttpClient\":\"3.15.1\""), h);
     assertTrue(h.contains("\"gatlingHttp\":\"3.15.1\""), h);
-    assertTrue(h.contains("\"collects\":{\"http\":true,\"machine\":true}"), h);
-    assertTrue(h.contains("\"reasons\":{}"), h);
+    assertTrue(h.contains("\"collects\":{\"http\":true,\"machine\":" + MACHINE + "}"), h);
+    assertTrue(
+        h.contains(
+            "\"reasons\":"
+                + (MACHINE ? "{}" : "{\"machine\":" + EventWriter.quote(MACHINE_REFUSAL) + "}")),
+        h);
     assertTrue(h.matches(".*\"startedAt\":\\d+.*"), h);
   }
 
@@ -76,11 +91,29 @@ class AgentJarTest {
     Process p = run("out=" + out, false);
     assertEquals(0, p.exitValue(), output(p));
     String h = Files.readAllLines(out).get(0);
-    assertTrue(h.contains("\"collects\":{\"http\":false,\"machine\":true}"), h);
+    assertTrue(h.contains("\"collects\":{\"http\":false,\"machine\":" + MACHINE + "}"), h);
     assertTrue(
-        h.contains("\"reasons\":{\"http\":\"gatling-http-client was not found on the classpath\"}"),
+        h.contains(
+            "\"reasons\":{\"http\":\"gatling-http-client was not found on the classpath\""
+                + (MACHINE ? "" : ",\"machine\":" + EventWriter.quote(MACHINE_REFUSAL))
+                + "}"),
         h);
     assertTrue(h.contains("\"gatlingHttpClient\":null"), h);
+  }
+
+  @Test
+  void samplesEverySecondEvenWhenHttpCollectionIsOff() throws Exception {
+    Path out = dir.resolve("agent.ndjson");
+    Process p = run("out=" + out, false, Sleeper.class);
+    assertEquals(0, p.exitValue(), output(p));
+    List<String> lines = Files.readAllLines(out);
+    assertTrue(lines.get(0).contains("\"collects\":{\"http\":false,"), lines.get(0));
+    List<String> samples = lines.subList(1, lines.size());
+    assertTrue(samples.size() >= 2, "two ticks in 2.6 s: " + lines);
+    for (String s : samples) {
+      assertTrue(s.startsWith("{\"t\":\"s\",\"at\":"), s);
+      assertEquals(MACHINE, s.contains("\"cpu\":["), s);
+    }
   }
 
   @Test
@@ -101,6 +134,10 @@ class AgentJarTest {
   }
 
   private Process run(String agentArgs, boolean withGatling) throws Exception {
+    return run(agentArgs, withGatling, Noop.class);
+  }
+
+  private Process run(String agentArgs, boolean withGatling, Class<?> main) throws Exception {
     String java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
     String cp = System.getProperty("java.class.path");
     if (!withGatling) {
@@ -114,7 +151,7 @@ class AgentJarTest {
     }
     String agent = "-javaagent:" + agentJar() + (agentArgs.isEmpty() ? "" : "=" + agentArgs);
     Process p =
-        new ProcessBuilder(java, agent, "-cp", cp, Noop.class.getName())
+        new ProcessBuilder(java, agent, "-cp", cp, main.getName())
             .redirectErrorStream(true)
             .redirectOutput(logs.resolve("child.log").toFile())
             .start();

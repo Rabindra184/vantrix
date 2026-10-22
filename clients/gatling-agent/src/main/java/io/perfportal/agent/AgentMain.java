@@ -17,6 +17,7 @@ public final class AgentMain {
 
   private static volatile EventWriter writer;
   private static final AtomicBoolean failed = new AtomicBoolean();
+  private static final SocketRegistry sockets = new SocketRegistry();
 
   private AgentMain() {}
 
@@ -31,8 +32,12 @@ public final class AgentMain {
       Runtime.getRuntime().addShutdownHook(closer);
 
       VersionGate.Result gate = VersionGate.check(ClassLoader.getSystemClassLoader());
-      w.line(header(gate, System.currentTimeMillis(), true, null));
+      String machineRefusal = Sampler.machineRefusal();
+      boolean machine = machineRefusal == null;
+      w.line(header(gate, System.currentTimeMillis(), machine, machineRefusal));
       w.flush();
+      // Always on, whatever the version gate decided: JVM and machine figures need no hook.
+      Sampler.start(w, sockets, ClassLoader.getSystemClassLoader(), machine);
     } catch (Throwable t) {
       fail("premain", t);
     }
@@ -41,6 +46,11 @@ public final class AgentMain {
   /** The writer every collector appends to; null when the agent is off or has failed. */
   static EventWriter writer() {
     return failed.get() ? null : writer;
+  }
+
+  /** The sockets Gatling opened, which the instrumentation fills and the sampler reads. */
+  static SocketRegistry sockets() {
+    return sockets;
   }
 
   /**
@@ -52,19 +62,27 @@ public final class AgentMain {
       if (!failed.compareAndSet(false, true)) return;
       EventWriter w = writer;
       if (w == null) return;
-      String message = t.getClass().getName() + (t.getMessage() == null ? "" : ": " + t.getMessage());
-      w.line(
-          "{\"t\":\"error\",\"at\":"
-              + System.currentTimeMillis()
-              + ",\"where\":"
-              + EventWriter.quote(where)
-              + ",\"message\":"
-              + EventWriter.quote(message)
-              + "}");
-      w.flush();
+      recordFailure(w, where, t);
     } catch (Throwable ignored) {
       // the agent must never throw into the JVM it rides in
     }
+  }
+
+  /**
+   * Writes the one {@code error} line and seals {@code w}, so it is the file's last line: a
+   * collector that cached the writer before the failure appends nothing after it.
+   */
+  static void recordFailure(EventWriter w, String where, Throwable t) {
+    String message = t.getClass().getName() + (t.getMessage() == null ? "" : ": " + t.getMessage());
+    w.line(
+        "{\"t\":\"error\",\"at\":"
+            + System.currentTimeMillis()
+            + ",\"where\":"
+            + EventWriter.quote(where)
+            + ",\"message\":"
+            + EventWriter.quote(message)
+            + "}");
+    w.seal();
   }
 
   /**

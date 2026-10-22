@@ -59,6 +59,39 @@ class EventWriterTest {
   }
 
   @Test
+  void writesNothingAfterSeal() throws Exception {
+    Path out = dir.resolve("s.ndjson");
+    EventWriter w = EventWriter.open(out, 1_000_000);
+    w.line("{\"t\":\"error\"}");
+    assertTrue(w.accepting());
+    w.seal();
+    assertFalse(w.accepting());
+    w.line("{\"t\":\"s\"}"); // a collector holding the writer must not append past the error
+    w.flush();
+    w.close();
+    assertEquals(List.of("{\"t\":\"error\"}"), Files.readAllLines(out));
+  }
+
+  @Test
+  void aFailureIsTheLastLineInTheFile() throws Exception {
+    Path out = dir.resolve("f.ndjson");
+    EventWriter w = EventWriter.open(out, 1_000_000);
+    w.line("{\"t\":\"header\"}");
+    AgentMain.recordFailure(w, "sampler", new IllegalStateException("boom"));
+    w.line("{\"t\":\"s\"}");
+    w.close();
+    List<String> lines = Files.readAllLines(out);
+    assertEquals(2, lines.size(), lines.toString());
+    assertTrue(
+        lines
+            .get(1)
+            .matches(
+                "\\{\"t\":\"error\",\"at\":\\d+,\"where\":\"sampler\","
+                    + "\"message\":\"java.lang.IllegalStateException: boom\"}"),
+        lines.get(1));
+  }
+
+  @Test
   void concurrentWritersNeverInterleaveLines() throws Exception {
     Path out = dir.resolve("m.ndjson");
     EventWriter w = EventWriter.open(out, Long.MAX_VALUE);

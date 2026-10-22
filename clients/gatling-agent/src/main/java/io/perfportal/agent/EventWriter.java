@@ -18,12 +18,16 @@ import java.nio.file.StandardOpenOption;
  * <p>The file is capped at {@code maxBytes}: the first line that would cross it is replaced by
  * one {@code {"t":"capped","at":<epochMs>}} line, and every later line is dropped. The capped
  * line itself may cross the limit, by its own length and no more.
+ *
+ * <p>{@link #seal()} ends the file where it stands: the agent seals the writer right after its one
+ * {@code error} line, so a collector still holding the writer cannot append past the error.
  */
 final class EventWriter {
   private final OutputStream out;
   private final long maxBytes;
   private long written;
   private boolean capped;
+  private boolean sealed;
   private boolean closed;
 
   private EventWriter(OutputStream out, long maxBytes) {
@@ -43,7 +47,7 @@ final class EventWriter {
 
   /** Writes {@code json} and a newline; {@code json} must be one JSON object with no newline. */
   synchronized void line(String json) {
-    if (closed || capped) return;
+    if (closed || capped || sealed) return;
     byte[] bytes = (json + "\n").getBytes(StandardCharsets.UTF_8);
     try {
       if (written + bytes.length > maxBytes) {
@@ -74,6 +78,17 @@ final class EventWriter {
 
   synchronized boolean capped() {
     return capped;
+  }
+
+  /** Every later {@link #line} is dropped; what is already written is kept and flushed. */
+  synchronized void seal() {
+    sealed = true;
+    flush();
+  }
+
+  /** Whether a {@link #line} written now would reach the file. */
+  synchronized boolean accepting() {
+    return !closed && !capped && !sealed;
   }
 
   synchronized void close() {
