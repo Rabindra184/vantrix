@@ -494,6 +494,26 @@ the checksum recorded at ingest, or cannot be parsed — keeps its estimated
 figures, and its percentiles are marked **≈**. While runs remain,
 Administration says how many, and how many could not be recomputed.
 
+**Before the release that retires the sketch, let that backfill finish.**
+That release drops the stored DDSketch every estimated run's percentiles used
+to be re-read from. Wait until Administration › Data integrity no longer
+shows *Recomputing exact statistics: N of M runs* — it disappears at 0
+remaining. A run still waiting when you upgrade is not lost: until it is
+recomputed it answers only the percentile ranks it stored at ingest (each
+held inside the run's own min and max), so a percentile your project added
+since shows as a dash for it, and `pnpm recompute` still works afterwards. A
+run that could not be recomputed answers the same way for good, and was
+already marked **≈**.
+
+**For that release only: the API and the worker first, then `migrate`.** This
+reverses the usual order on purpose. Its migration drops the `sketch` and
+`sketch_kind` columns from `run_stat`; an API or worker still on the older
+image selects them and fails with *column does not exist* the moment they are
+gone, while the new image never reads them, so it runs correctly on either
+side of the migration. Under Compose one `up` replaces everything within
+seconds; it matters when you replace processes one at a time. Every later
+release goes back to migrate first.
+
 **An upgrade sends nobody to *Choose a new password*.** The release that adds
 that step adds its flag as `NOT NULL DEFAULT false`, so every account that
 already exists comes through unflagged — an admin still signing in with the
