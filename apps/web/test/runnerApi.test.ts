@@ -22,6 +22,7 @@ const REQUEST: RunnerStartByPackageRequest = {
   simulationClass: 'example.BasicSimulation',
   name: 'nightly',
   systemProperties: {},
+  agentEnabled: true,
 };
 
 const STARTED: RunnerStartResponse = {
@@ -48,6 +49,7 @@ const STARTED: RunnerStartResponse = {
     testSlug: null,
     javaOptions: null,
     systemProperties: {},
+    agentEnabled: true,
     error: null,
     createdAt: '2026-08-20T00:00:00.000Z',
     updatedAt: '2026-08-20T00:00:00.000Z',

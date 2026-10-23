@@ -145,6 +145,27 @@ async function seedFailed(ageDays: number): Promise<Seeded> {
 }
 
 /**
+ * A live run that ended incomplete with no assembled log: the '' bundle
+ * sentinel, a live/ key no object was ever assembled at, and no statistics,
+ * so no verification row and no recompute. The on-prem runner can still have
+ * stored its agent file before closing it.
+ */
+async function seedNeverFinalized(ageDays: number): Promise<Seeded> {
+  const { orgId, projectId } = await project();
+  const id = randomUUID();
+  const key = `live/${id}/simulation.log`;
+  await prisma.run.create({
+    data: {
+      id, orgId, projectId, status: 'incomplete', tool: 'gatling',
+      bundleKey: key, bundleSha256: '', bundleBytes: BigInt(0),
+      startedAt: new Date('2026-08-07T10:00:00Z'), startedOn: new Date('2026-08-07T00:00:00Z'),
+      engineOptions: {}, ingestedAt: new Date(Date.now() - ageDays * 86_400_000),
+    },
+  });
+  return { id, bundleKey: key };
+}
+
+/**
  * `n` exact, verified runs past retention, written straight to the tables:
  * a stat row in the exact engine's format and a verified row each. No object
  * is stored — a missing one counts as deleted — so a hundred of these cost a
@@ -202,6 +223,22 @@ function limitedSweeper(days: number, limits: RetentionLimits, overrides: Partia
   return s;
 }
 
+/**
+ * Gives a seeded run the agent file the on-prem runner stores beside its log:
+ * the row names `runs/<runId>/agent.ndjson`, and the object is written there
+ * unless `stored` is false (a bucket that already lost it).
+ */
+async function withAgentFile(run: Seeded, { stored = true }: { stored?: boolean } = {}): Promise<string> {
+  const key = `runs/${run.id}/agent.ndjson`;
+  const body = Buffer.from('{"t":"dns","ms":3}\n');
+  if (stored) await blobs.putStream(key, Readable.from([body]), 100_000_000);
+  await pool.query(
+    'UPDATE run SET agent_log_key = $2, agent_log_sha256 = $3, agent_log_bytes = $4 WHERE id = $1',
+    [run.id, key, createHash('sha256').update(body).digest('hex'), body.length],
+  );
+  return key;
+}
+
 async function deletedAt(runId: string): Promise<Date | null> {
   const { rows } = await pool.query<{ raw_log_deleted_at: Date | null }>(
     'SELECT raw_log_deleted_at FROM run WHERE id = $1',
@@ -220,6 +257,97 @@ describe('raw-log retention in the sweeper', () => {
     expect(await deletedAt(old!.id)).not.toBeNull();
     expect(await blobs.exists(young!.bundleKey)).toBe(true);
     expect(await deletedAt(young!.id)).toBeNull();
+  });
+
+  /**
+   * ═══ A LOG AND ITS AGENT FILE GO TOGETHER ═══
+   *
+   * The agent file is the run's second raw record; past retention it goes in
+   * the same step as the log, before the row is stamped, so a run never reads
+   * "raw log deleted" over an agent file still in the bucket.
+   */
+  it('deletes a run\'s agent file with its raw log, then stamps the run', async () => {
+    const [old, young] = await seedRuns(31, 29);
+    await verified(old!, young!);
+    const oldAgent = await withAgentFile(old!);
+    const youngAgent = await withAgentFile(young!);
+    await sweeper(30).sweep();
+
+    expect(await blobs.exists(old!.bundleKey)).toBe(false);
+    expect(await blobs.exists(oldAgent)).toBe(false);
+    expect(await deletedAt(old!.id)).not.toBeNull();
+    expect(await blobs.exists(young!.bundleKey)).toBe(true);
+    expect(await blobs.exists(youngAgent)).toBe(true);
+    expect(await deletedAt(young!.id)).toBeNull();
+  });
+
+  it('counts an agent file already missing from the bucket as deleted', async () => {
+    const [old] = await seedRuns(31);
+    await verified(old!);
+    await withAgentFile(old!, { stored: false });
+    await sweeper(30).sweep();
+    expect(await blobs.exists(old!.bundleKey)).toBe(false);
+    expect(await deletedAt(old!.id)).not.toBeNull();
+  });
+
+  /**
+   * The agent file goes FIRST, so a bucket refusing it leaves the run exactly
+   * as it was — log, agent file and an unstamped row — and the next sweep
+   * takes both. The other order would leave a deleted log behind a row that
+   * still reads present until a later sweep finished the job.
+   */
+  it('keeps the log and leaves the run unstamped when the agent file will not delete, and takes both next sweep', async () => {
+    const [old] = await seedRuns(31);
+    await verified(old!);
+    const agent = await withAgentFile(old!);
+    const real = blobs.delete.bind(blobs);
+    const del = vi.spyOn(blobs, 'delete').mockImplementation(async (key: string) => {
+      if (key === agent) throw new Error('bucket refused');
+      await real(key);
+    });
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const s = sweeper(30);
+    await s.sweep();
+
+    expect(await blobs.exists(agent)).toBe(true);
+    expect(await blobs.exists(old!.bundleKey)).toBe(true);
+    expect(await deletedAt(old!.id)).toBeNull();
+
+    del.mockRestore();
+    await s.sweep();
+    expect(await blobs.exists(agent)).toBe(false);
+    expect(await blobs.exists(old!.bundleKey)).toBe(false);
+    expect(await deletedAt(old!.id)).not.toBeNull();
+  });
+
+  /**
+   * A run that never assembled a log has no raw log to retain, but it can
+   * carry an agent file the runner stored before the close found nothing. It
+   * is no verify or recompute candidate (no statistics), so retention takes
+   * the agent file; without this, nothing ever would — the orphan sweep keeps
+   * it, because agent_log_key names it.
+   */
+  it('deletes the agent file of an incomplete run that never assembled a log, and stamps it', async () => {
+    const run = await seedNeverFinalized(31);
+    const agent = await withAgentFile(run);
+    const del = vi.spyOn(blobs, 'delete');
+    const errors = vi.spyOn(console, 'error');
+    await sweeper(30).sweep();
+
+    expect(await blobs.exists(agent)).toBe(false);
+    expect(del.mock.calls.map((c) => c[0])).toEqual([agent, run.bundleKey]);
+    expect(errors).not.toHaveBeenCalled();
+    expect(await deletedAt(run.id)).not.toBeNull();
+    expect(await verifications.find(run.id)).toBeNull();
+  });
+
+  /** The widening is for the agent file alone: with none, there is nothing to delete. */
+  it('still leaves alone an incomplete run that never assembled a log and has no agent file', async () => {
+    const run = await seedNeverFinalized(31);
+    const due = await verifications.retentionDue(30, VERIFIER_VERSION, null, 100);
+    expect(due.runs.map((r) => r.id)).not.toContain(run.id);
+    await sweeper(30).sweep();
+    expect(await deletedAt(run.id)).toBeNull();
   });
 
   it('keeps every raw log for ever at 0 days', async () => {
@@ -359,7 +487,7 @@ describe('raw-log retention keeps a log something still needs', () => {
     const [run] = await seedRuns(31);
     await verifications.markPending(run!.id);
     vi.spyOn(VerificationRepository.prototype, 'retentionDue').mockResolvedValueOnce({
-      runs: [{ id: run!.id, bundleKey: run!.bundleKey }],
+      runs: [{ id: run!.id, bundleKey: run!.bundleKey, agentLogKey: null }],
       next: null,
     });
     await sweepAt(30);

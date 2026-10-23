@@ -1,4 +1,9 @@
-import { describe, expect, it, vi } from 'vitest';
+import { createHash } from 'node:crypto';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import type { Readable } from 'node:stream';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   ProjectRepository,
   RunnerJobWithArtifact,
@@ -38,7 +43,7 @@ import { RunnerLiveSink } from '../src/live-sink.js';
  * that never sends it.
  */
 
-function makeSink(overrides: Partial<RunnerConfig> = {}) {
+function makeSink(overrides: Partial<RunnerConfig> = {}, extra: { blobs?: unknown; runs?: Record<string, unknown> } = {}) {
   const createLive = vi.fn().mockResolvedValue({
     id: '44444444-4444-4444-4444-444444444444',
     bundleKey: 'runs/44444444-4444-4444-4444-444444444444/simulation.log',
@@ -46,6 +51,7 @@ function makeSink(overrides: Partial<RunnerConfig> = {}) {
   const runs = {
     createLive,
     liveState: vi.fn().mockResolvedValue({ streamOffset: 0 }),
+    ...extra.runs,
   } as unknown as RunRepository;
 
   const sink = new RunnerLiveSink({
@@ -54,7 +60,7 @@ function makeSink(overrides: Partial<RunnerConfig> = {}) {
       settings: vi.fn().mockResolvedValue({}),
     } as unknown as ProjectRepository,
     runs,
-    blobs: {} as unknown as BlobStore,
+    blobs: (extra.blobs ?? {}) as unknown as BlobStore,
     chunks: {} as unknown as LiveChunkStore,
     queue: {} as unknown as RunnerIngestQueue,
     notifier: { opened: vi.fn() } as unknown as RunnerLiveNotifier,
@@ -121,5 +127,141 @@ describe('RunnerLiveSink.open metadata', () => {
     await sink.open(job({ testSlug: '' }));
 
     expect(createLive.mock.calls[0]?.[0].declaredTestSlug).toBeUndefined();
+  });
+});
+
+/**
+ * ═══ THE AGENT FILE IS STORED WITH THE RUN, OR NOT AT ALL — NEVER A THROW ═══
+ *
+ * `storeAgentLog` runs while a finished load test is being closed. Whatever
+ * goes wrong with the agent's file — missing, oversized, a bucket or database
+ * that refuses it — the run is closed regardless, so this reports what it did
+ * and the executor says so in the job log.
+ */
+describe('RunnerLiveSink.storeAgentLog', () => {
+  const RUN_ID = '44444444-4444-4444-4444-444444444444';
+  const KEY = `runs/${RUN_ID}/agent.ndjson`;
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(path.join(os.tmpdir(), 'runner-agent-log-'));
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  /** A sink whose blob store reads the stream it is handed, as the real one does. */
+  async function agentSink(opts: { putFails?: boolean; recordFails?: boolean; cap?: number } = {}) {
+    const order: string[] = [];
+    const stored: Buffer[] = [];
+    const putStream = vi.fn(async (key: string, body: Readable, maxBytes: number) => {
+      order.push(`put:${key}`);
+      const parts: Buffer[] = [];
+      for await (const part of body) parts.push(part as Buffer);
+      const bytes = Buffer.concat(parts);
+      if (opts.putFails) throw new Error('the bucket refused the object');
+      if (bytes.length > maxBytes) throw new Error('over the cap');
+      stored.push(bytes);
+      return { sha256: createHash('sha256').update(bytes).digest('hex'), bytes: bytes.length };
+    });
+    const recordAgentLog = vi.fn(async () => {
+      order.push('recordAgentLog');
+      if (opts.recordFails) throw new Error('database unavailable');
+    });
+    const { sink } = makeSink(
+      { maxAgentLogBytes: opts.cap ?? 1024 },
+      { blobs: { putStream }, runs: { recordAgentLog } },
+    );
+    await sink.open(job());
+    return { sink, putStream, recordAgentLog, order, stored };
+  }
+
+  async function agentFile(bytes: number): Promise<{ file: string; content: Buffer }> {
+    const content = Buffer.alloc(bytes, '{"t":1}\n');
+    const file = path.join(dir, 'perfportal-agent.ndjson');
+    await writeFile(file, content);
+    return { file, content };
+  }
+
+  it('stores the bytes under the run, then records them on the run', async () => {
+    const { sink, recordAgentLog, order, stored } = await agentSink();
+    const { file, content } = await agentFile(300);
+
+    await expect(sink.storeAgentLog(file)).resolves.toBe('stored');
+
+    expect(order).toEqual([`put:${KEY}`, 'recordAgentLog']);
+    expect(stored[0]?.equals(content)).toBe(true);
+    expect(recordAgentLog).toHaveBeenCalledWith(RUN_ID, {
+      key: KEY,
+      sha256: createHash('sha256').update(content).digest('hex'),
+      bytes: 300,
+    });
+  });
+
+  it('stores a file of exactly the cap', async () => {
+    const { sink } = await agentSink({ cap: 512 });
+    const { file } = await agentFile(512);
+    await expect(sink.storeAgentLog(file)).resolves.toBe('stored');
+  });
+
+  /**
+   * A file shaped exactly as the agent leaves one when it hits its `max`: lines
+   * up to `max` (the runner's cap less 1024), then the closing `capped` line
+   * written past it. It must be stored — before the headroom, the agent was told
+   * the full cap, and a capped file landed ~35 bytes over it and was discarded.
+   */
+  it('stores a capped agent file, its closing capped line included', async () => {
+    const cap = 4096;
+    const agentMax = cap - 1024;
+    const { sink, stored } = await agentSink({ cap });
+    const marker = Buffer.from('{"t":"capped","at":1761234567890}\n');
+    const body = Buffer.alloc(agentMax, 'x');
+    body.write('\n', agentMax - 1);
+    const content = Buffer.concat([body, marker]);
+    expect(content.length).toBe(agentMax + marker.length);
+    const file = path.join(dir, 'perfportal-agent.ndjson');
+    await writeFile(file, content);
+
+    await expect(sink.storeAgentLog(file)).resolves.toBe('stored');
+    expect(stored[0]?.subarray(-marker.length).toString()).toContain('"t":"capped"');
+  });
+
+  it('does not store an agent file larger than the cap', async () => {
+    const { sink, putStream, recordAgentLog } = await agentSink({ cap: 512 });
+    const { file } = await agentFile(513);
+
+    await expect(sink.storeAgentLog(file)).resolves.toBe('too_large');
+
+    expect(putStream).not.toHaveBeenCalled();
+    expect(recordAgentLog).not.toHaveBeenCalled();
+  });
+
+  it('reports a missing file as absent, and an empty one too', async () => {
+    const { sink, putStream } = await agentSink();
+    await expect(sink.storeAgentLog(path.join(dir, 'never-written.ndjson'))).resolves.toBe('absent');
+    const { file } = await agentFile(0);
+    await expect(sink.storeAgentLog(file)).resolves.toBe('absent');
+    expect(putStream).not.toHaveBeenCalled();
+  });
+
+  it('reports a refused upload as failed, and records nothing', async () => {
+    const { sink, recordAgentLog } = await agentSink({ putFails: true });
+    const { file } = await agentFile(100);
+
+    await expect(sink.storeAgentLog(file)).resolves.toBe('failed');
+    expect(recordAgentLog).not.toHaveBeenCalled();
+  });
+
+  it('reports a refused database write as failed rather than throwing', async () => {
+    const { sink } = await agentSink({ recordFails: true });
+    const { file } = await agentFile(100);
+
+    await expect(sink.storeAgentLog(file)).resolves.toBe('failed');
+  });
+
+  it('reports failed, not a throw, when no run was ever opened', async () => {
+    const { sink } = makeSink({ maxAgentLogBytes: 1024 });
+    const { file } = await agentFile(100);
+    await expect(sink.storeAgentLog(file)).resolves.toBe('failed');
   });
 });

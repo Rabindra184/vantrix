@@ -332,6 +332,42 @@ describe('POST /v1/projects/:slug/runner/runs from a package', () => {
     expect(await filesOnDisk()).toEqual([]);
   });
 
+  // ═══ THE AGENT OPT-OUT, ON BOTH START ROUTES ═══
+  //
+  // The runner reads the CLAIMED job's agentEnabled to decide whether to load
+  // the Gatling agent, so a route that dropped the field would load it for a
+  // requester who said not to — with nothing failing. Asserted through the
+  // listing too, which reads the row back rather than echoing the request.
+  it('carries agentEnabled: false from a JSON start onto the job, and defaults it to true', async () => {
+    const { packageId } = await packageWithVersion('Checkout', ['example.BasicSimulation']);
+
+    const off = await startFromPackage({
+      packageId, simulationClass: 'example.BasicSimulation', name: 'nightly', agentEnabled: false,
+    });
+    expect(off.status, body(off)).toBe(201);
+    expect(RunnerStartResponseSchema.parse(off.body).job.agentEnabled).toBe(false);
+
+    const on = await startFromPackage({ packageId, simulationClass: 'example.BasicSimulation', name: 'nightly' });
+    expect(on.status, body(on)).toBe(201);
+    expect(RunnerStartResponseSchema.parse(on.body).job.agentEnabled).toBe(true);
+
+    const listed = await request(ctx.app.getHttpServer()).get(RUNS).set('Authorization', `Bearer ${runnerToken}`);
+    const byId = new Map(
+      (listed.body.items as { job: { id: string; agentEnabled: boolean } }[]).map((i) => [i.job.id, i.job.agentEnabled]),
+    );
+    expect(byId.get(off.body.job.id)).toBe(false);
+    expect(byId.get(on.body.job.id)).toBe(true);
+  });
+
+  it('carries agentEnabled: false from an upload-and-start onto the job', async () => {
+    const jar = await thinJar('example.BasicSimulation');
+
+    const res = await upload(jar, { simulationClass: 'example.BasicSimulation', agentEnabled: false });
+
+    expect(res.status, body(res)).toBe(201);
+    expect(RunnerStartResponseSchema.parse(res.body).job.agentEnabled).toBe(false);
+  });
+
   it('refuses a class the current version does not declare, and accepts any class when the list is unknown', async () => {
     const declared = await packageWithVersion('Checkout', ['example.BasicSimulation']);
 

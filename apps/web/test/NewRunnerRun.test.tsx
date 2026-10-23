@@ -83,6 +83,7 @@ vi.mock('../src/api/runner.js', async (importOriginal) => ({
       commitSha: null,
       javaOptions: null,
       systemProperties: {},
+      agentEnabled: true,
       error: null,
       createdAt: new Date('2026-08-20T00:00:00.000Z').toISOString(),
       updatedAt: new Date('2026-08-20T00:00:00.000Z').toISOString(),
@@ -113,6 +114,7 @@ vi.mock('../src/api/runner.js', async (importOriginal) => ({
       testSlug: null,
       javaOptions: null,
       systemProperties: {},
+      agentEnabled: true,
       error: null,
       createdAt: new Date('2026-08-20T00:00:00.000Z').toISOString(),
       updatedAt: new Date('2026-08-20T00:00:00.000Z').toISOString(),
@@ -312,6 +314,7 @@ describe('NewRunnerRun', () => {
         artifactKind: 'gatling_jar',
         simulationClass: 'example.BetaSimulation',
         systemProperties: {},
+        agentEnabled: true,
       },
     });
   });
@@ -1234,6 +1237,7 @@ describe('NewRunnerRun — starting from a package', () => {
       simulationClass: 'example.BasicSimulation',
       name: 'nightly',
       systemProperties: {},
+      agentEnabled: true,
     });
   });
 
@@ -1276,6 +1280,7 @@ describe('NewRunnerRun — starting from a package', () => {
       test: 'checkout-soak',
       javaOptions: '-Xmx2g',
       systemProperties: { users: '5' },
+      agentEnabled: true,
     });
     expect(RunnerStartByPackageRequestSchema.safeParse(wire).success).toBe(true);
   });
@@ -1291,7 +1296,9 @@ describe('NewRunnerRun — starting from a package', () => {
     const wire = JSON.parse(
       JSON.stringify(startRunnerRunFromPackageMock.mock.calls[0]?.[1] ?? {}),
     ) as Record<string, unknown>;
-    expect(Object.keys(wire).sort()).toEqual(['name', 'packageId', 'simulationClass', 'systemProperties']);
+    expect(Object.keys(wire).sort()).toEqual([
+      'agentEnabled', 'name', 'packageId', 'simulationClass', 'systemProperties',
+    ]);
   });
 
   it('sends a typed simulation class when the package lists none', async () => {
@@ -1507,6 +1514,79 @@ describe('NewRunnerRun — starting from a package', () => {
     expect(chosen).toContain(CHECKOUT_FILE);
     expect(chosen).toContain('1.8 MB');
   });
+
+  /* ---------------------------------------------------------------------- *
+   * THE GATLING AGENT OPT-OUT
+   *
+   * Every runner job loads the agent that records connection, DNS and JVM
+   * data unless the request says `agentEnabled: false`. The form's only way
+   * to say so is one checkbox in Advanced, checked by default — so the
+   * default path sends `true` (the submit cases above) and an unchecked box
+   * sends `false` on BOTH submit paths, each its own literal.
+   * ---------------------------------------------------------------------- */
+
+  const agentBox = () =>
+    screen.getByRole('checkbox', { name: 'Collect connection, DNS and JVM data' }) as HTMLInputElement;
+
+  it('offers the agent opt-out inside Advanced, checked by default', async () => {
+    servePackages(CHECKOUT);
+    mount();
+    await packageSelect();
+
+    const box = agentBox();
+    expect(box.checked).toBe(true);
+    expect(screen.getByTestId('advanced').contains(box)).toBe(true);
+  });
+
+  it('sends agentEnabled: false on a package start when the box is unchecked', async () => {
+    servePackages(CHECKOUT);
+    mount();
+    await packageSelect();
+    fireEvent.change(screen.getByLabelText(/run name/i), { target: { value: 'nightly' } });
+    fireEvent.click(agentBox());
+    queue();
+
+    await screen.findByText(/run queued/i);
+    const wire = JSON.parse(
+      JSON.stringify(startRunnerRunFromPackageMock.mock.calls[0]?.[1] ?? {}),
+    ) as Record<string, unknown>;
+    expect(wire.agentEnabled).toBe(false);
+    expect(RunnerStartByPackageRequestSchema.safeParse(wire).success).toBe(true);
+  });
+
+  it('sends agentEnabled: false on an upload start when the box is unchecked', async () => {
+    servePackages();
+    mount();
+    await screen.findByLabelText(/artifact file/i);
+    fireEvent.change(screen.getByLabelText(/run name/i), { target: { value: 'soak' } });
+    fireEvent.change(screen.getByLabelText(/simulation class/i), {
+      target: { value: 'example.AlphaSimulation' },
+    });
+    attach('alpha.jar');
+    fireEvent.click(agentBox());
+    queue();
+
+    await screen.findByText(/run queued/i);
+    const metadata = JSON.parse(
+      JSON.stringify(startRunnerRunMock.mock.calls[0]?.[0]?.metadata ?? {}),
+    ) as Record<string, unknown>;
+    expect(metadata.agentEnabled).toBe(false);
+  });
+
+  /** An unchecked box is a non-default choice made behind a closed summary,
+   *  exactly what the count exists to keep from being forgotten; re-checking
+   *  it is the default again and stops counting. */
+  it('counts an unchecked agent box as set on the Advanced summary', async () => {
+    servePackages(CHECKOUT);
+    mount();
+    await packageSelect();
+
+    expect(advanced()).not.toMatch(/\(\d+ set\)/);
+    fireEvent.click(agentBox());
+    expect(advanced()).toMatch(/\(1 set\)/);
+    fireEvent.click(agentBox());
+    expect(advanced()).not.toMatch(/\(\d+ set\)/);
+  });
 });
 
 /* ======================================================================== *
@@ -1544,6 +1624,7 @@ describe('NewRunnerRun — the jobs table names each job’s package', () => {
         testSlug: null,
         javaOptions: null,
         systemProperties: {},
+        agentEnabled: true,
         error: null,
         createdAt,
         updatedAt: createdAt,
@@ -1762,6 +1843,7 @@ describe('NewRunnerRun — who may start, cancel and retry a run', () => {
         testSlug: null,
         javaOptions: null,
         systemProperties: {},
+        agentEnabled: true,
         error: null,
         createdAt: at,
         updatedAt: at,

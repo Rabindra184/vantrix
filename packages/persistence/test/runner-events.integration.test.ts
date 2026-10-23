@@ -74,6 +74,7 @@ async function queue(
       testSlug: null,
       javaOptions: null,
       systemProperties: {},
+      agentEnabled: true,
       ...job,
     },
   });

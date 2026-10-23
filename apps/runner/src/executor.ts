@@ -1,6 +1,7 @@
-import { rm } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { access, rm } from 'node:fs/promises';
 import os from 'node:os';
-import type { RunnerJobEventInput, RunnerJobWithArtifact } from '@perfportal/persistence';
+import type { RunnerJobEventInput, RunnerJobRecord, RunnerJobWithArtifact } from '@perfportal/persistence';
 import {
   ProjectRepository,
   RunnerRepository,
@@ -141,7 +142,14 @@ export class RunnerExecutor {
         return;
       }
 
-      const prepared = await prepareGatlingRun(this.#config, job.job, job.artifact, () => this.#isCancelled(jobId));
+      const agent = await this.#agentFor(job.job, logger);
+      const prepared = await prepareGatlingRun(
+        this.#config,
+        job.job,
+        job.artifact,
+        () => this.#isCancelled(jobId),
+        agent,
+      );
       workDir = prepared.workDir;
       await record({ message: 'Package prepared' });
       if (await this.#isCancelled(jobId)) {
@@ -207,6 +215,14 @@ export class RunnerExecutor {
             ? 'Check host resource limits and runner logs, then queue a new run.'
             : 'Confirm the simulation class is correct and the uploaded artifact can run on this node.',
         );
+      }
+
+      // The agent's file goes with the run BEFORE it is closed either way, so
+      // the row names it by the time the pipeline reads the run. After the
+      // cancel check above, so a cancelled run — which keeps nothing — stores
+      // nothing; and never a reason the job fails (see `#storeAgentLog`).
+      if (prepared.agentLogPath !== null) {
+        await this.#storeAgentLog(sink, prepared.agentLogPath, logger);
       }
 
       // ═══ A GATLING THAT DIED PART-WAY IS AN ABANDONED STREAM ═══
@@ -307,6 +323,52 @@ export class RunnerExecutor {
     await record({ message: "Run injection ended with reason 'Cancelled'" });
     await record({ phase: 'Ending' });
     await record({ message: 'Run ended without results' });
+  }
+
+  /**
+   * Whether this job's simulation runs with the Gatling agent: a jar is
+   * configured, the job has not opted out, and the jar can be read. The job's
+   * choice is asked before the jar is checked, so an opted-out job is never
+   * warned about a jar it did not want.
+   *
+   * AN UNREADABLE JAR IS A WARNING, NOT A REFUSAL. Handed to `-javaagent`, a
+   * missing jar makes the JVM refuse to start ("Error opening zip file or JAR
+   * manifest missing"), which would turn a monitoring add-on into a failed load
+   * test. So the run goes ahead without it, and the job log says what the run
+   * will be missing.
+   */
+  async #agentFor(job: RunnerJobRecord, logger: JobLogger): Promise<{ jar: string } | null> {
+    const jar = this.#config.agentJar;
+    if (jar === null || !job.agentEnabled) return null;
+    try {
+      await access(jar, constants.R_OK);
+    } catch {
+      logger.warn(`Gatling agent jar not readable at ${jar}; running without connection, DNS and JVM data.`);
+      return null;
+    }
+    return { jar };
+  }
+
+  /**
+   * Stores the agent's file with the run and says in the job log what became
+   * of it. `storeAgentLog` never throws by contract; the `catch` here is the
+   * belt to its braces, because a throw at this point would fail a finished
+   * load test over a monitoring file.
+   */
+  async #storeAgentLog(sink: RunnerLiveSink, file: string, logger: JobLogger): Promise<void> {
+    const outcome = await sink.storeAgentLog(file).catch(() => 'failed' as const);
+    const missing = 'the run is kept without connection, DNS and JVM data.';
+    if (outcome === 'stored') {
+      logger.info(`stored the Gatling agent file with run ${sink.runId}`);
+    } else if (outcome === 'absent') {
+      logger.warn(`The Gatling agent wrote no file; ${missing}`);
+    } else if (outcome === 'too_large') {
+      logger.warn(
+        `The Gatling agent file is larger than RUNNER_MAX_AGENT_LOG_BYTES (${this.#config.maxAgentLogBytes} bytes) and was not stored; ${missing}`,
+      );
+    } else {
+      logger.warn(`Could not store the Gatling agent file; ${missing}`);
+    }
   }
 
   async #isCancelled(jobId: string): Promise<boolean> {

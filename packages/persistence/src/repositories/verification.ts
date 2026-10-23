@@ -141,7 +141,17 @@ export function verifyCandidateSql(version: string): string {
  * Past retention (ingested more than `days` ago — ingested_at is the
  * retention clock: every terminal writer stamps it), still stored, carrying an
  * assembled bundle (a live run that never assembled one has the '' sentinel
- * and no object to delete), and needed by nothing:
+ * and no object to delete) or an agent file, and needed by nothing.
+ *
+ * THE AGENT-FILE ARM. The on-prem runner stores a run's agent file before it
+ * closes the run, so a run that then ends incomplete with no assembled log
+ * ('' sentinel) still carries one. Without this arm nothing would ever delete
+ * it: retention skipped the run and the orphan sweep keeps every key
+ * agent_log_key names. Such a run has no statistics, so the three exclusions
+ * below cannot hold it back for a reason that matters, and deleting its
+ * bundle key is harmless (absent, or a chunk assembly no whole record
+ * survived). A '' run with no agent file is still not selected. Needed by
+ * nothing means:
  *
  *  - not a verify candidate (verifyCandidateSql): a log is deleted only once
  *    the run has been checked against it, or once it never can be;
@@ -160,7 +170,7 @@ function retentionDueSql(days: string, version: string): string {
   r.ingested_at IS NOT NULL
   AND r.ingested_at < now() - make_interval(days => ${days}::int)
   AND r.raw_log_deleted_at IS NULL
-  AND r.bundle_sha256 <> ''
+  AND (r.bundle_sha256 <> '' OR r.agent_log_key IS NOT NULL)
   AND NOT ${verifyCandidateSql(version)}
   AND NOT (${CANDIDATE_PREDICATE_SQL})
   AND v.status IS DISTINCT FROM 'mismatch'`;
@@ -176,7 +186,11 @@ export interface RetentionCursor {
 }
 
 export interface RetentionPage {
-  runs: { id: string; bundleKey: string }[];
+  /**
+   * `agentLogKey` is the run's agent file (`runs/<runId>/agent.ndjson`), or
+   * null for a run without one: retention deletes it with the raw log.
+   */
+  runs: { id: string; bundleKey: string; agentLogKey: string | null }[];
   /** The cursor for the next page; null when this page was the last. */
   next: RetentionCursor | null;
 }
@@ -416,8 +430,13 @@ export class VerificationRepository {
       where.push(`(r.ingested_at, r.id) > ($${params.length - 1}::timestamptz, $${params.length}::uuid)`);
     }
     params.push(limit);
-    const { rows } = await this.pool.query<{ id: string; bundle_key: string; ingested_at: Date }>(
-      `SELECT r.id, r.bundle_key, r.ingested_at
+    const { rows } = await this.pool.query<{
+      id: string;
+      bundle_key: string;
+      agent_log_key: string | null;
+      ingested_at: Date;
+    }>(
+      `SELECT r.id, r.bundle_key, r.agent_log_key, r.ingested_at
          FROM run r LEFT JOIN run_verification v ON v.run_id = r.id
         WHERE ${where.join(' AND ')}
         ORDER BY r.ingested_at, r.id
@@ -426,7 +445,7 @@ export class VerificationRepository {
     );
     const last = rows[rows.length - 1];
     return {
-      runs: rows.map((r) => ({ id: r.id, bundleKey: r.bundle_key })),
+      runs: rows.map((r) => ({ id: r.id, bundleKey: r.bundle_key, agentLogKey: r.agent_log_key })),
       next: rows.length === limit && last ? { ingestedAt: last.ingested_at, id: last.id } : null,
     };
   }

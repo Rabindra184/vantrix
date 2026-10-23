@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -53,7 +53,7 @@ afterEach(async () => {
   await rm(workDir, { recursive: true, force: true });
 });
 
-function job(): RunnerJobWithArtifact {
+function job(over: Partial<RunnerJobWithArtifact['job']> = {}): RunnerJobWithArtifact {
   const now = new Date('2026-09-29T11:41:00.000Z');
   return {
     artifact: {
@@ -70,7 +70,8 @@ function job(): RunnerJobWithArtifact {
       name: 'nightly', simulationClass: 'example.ParitySimulation',
       environment: null, branch: null, commitSha: null, testSlug: null,
       javaOptions: '-Xmx7g -Dleak.secret=PARAM-LEAK-7f3a', systemProperties: { 'leak.key': 'PARAM-LEAK-91c2' },
-      logPath: null, error: null, createdAt: now, updatedAt: now,
+      agentEnabled: true, logPath: null, error: null, createdAt: now, updatedAt: now,
+      ...over,
     },
   };
 }
@@ -86,10 +87,15 @@ interface HarnessOptions {
   readonly opened?: boolean;
   readonly recordFails?: boolean;
   readonly prepare?: typeof prepareGatlingRun;
+  /** What `storeAgentLog` reports; `stored` unless a case says otherwise. */
+  readonly agentStore?: 'stored' | 'absent' | 'too_large' | 'failed' | Error;
 }
 
 function harness(opts: HarnessOptions = {}) {
   const statuses = [...(opts.statuses ?? [])];
+  // One ledger for the calls whose ORDER a case asserts: the agent file must
+  // be stored before the run is closed, whichever way it is closed.
+  const order: string[] = [];
   const runner = {
     setLogPath: vi.fn().mockResolvedValue(undefined),
     markRunOpened: vi.fn().mockResolvedValue(opts.opened ?? true),
@@ -109,10 +115,18 @@ function harness(opts: HarnessOptions = {}) {
     abortIncomplete: vi.fn(async () => {
       sink.closed = true;
     }),
-    close: vi.fn().mockResolvedValue(undefined),
+    close: vi.fn(async () => {
+      order.push('close');
+    }),
     closeAbandoned: vi.fn(async (): Promise<AbandonedOutcome> => {
+      order.push('closeAbandoned');
       sink.closed = true;
       return opts.abandoned ?? 'kept';
+    }),
+    storeAgentLog: vi.fn(async (file: string) => {
+      order.push(`storeAgentLog:${file}`);
+      if (opts.agentStore instanceof Error) throw opts.agentStore;
+      return opts.agentStore ?? 'stored';
     }),
     appendAt: vi.fn().mockResolvedValue(undefined),
     bytesWritten: opts.bytesWritten ?? 2048,
@@ -123,7 +137,7 @@ function harness(opts: HarnessOptions = {}) {
   vi.mocked(SimulationLogTailer).mockImplementation(function fakeTailer() {
     return { start: vi.fn(), stop: vi.fn().mockResolvedValue(undefined) };
   } as never);
-  vi.mocked(prepareGatlingRun).mockImplementation(opts.prepare ?? (async () => ({
+  vi.mocked(prepareGatlingRun).mockImplementation(opts.prepare ?? (async (_c, _j, _a, _s, agent) => ({
     command: {
       command: 'java',
       args: ['-Xmx7g', '-Dleak.secret=PARAM-LEAK-7f3a', '-Dleak.key=PARAM-LEAK-91c2', '-cp', `/srv/${STORAGE}`, 'io.gatling.app.Gatling'],
@@ -131,6 +145,7 @@ function harness(opts: HarnessOptions = {}) {
     },
     resultsDir: path.join(workDir, 'results'),
     workDir,
+    agentLogPath: agent === null ? null : path.join(workDir, 'perfportal-agent.ndjson'),
   })));
   vi.mocked(spawnAndWait).mockImplementation(async (_command, spawnOpts) => {
     spawnOpts?.onSpawn?.();
@@ -138,7 +153,8 @@ function harness(opts: HarnessOptions = {}) {
   });
   const config = {
     logDir, allowSameUidExecution: true, childUid: null, childGid: null,
-    logPollIntervalMs: 50, pollIntervalMs: 50, ...opts.config,
+    logPollIntervalMs: 50, pollIntervalMs: 50, agentJar: null, maxAgentLogBytes: 268_435_456,
+    ...opts.config,
   } as RunnerConfig;
   const executor = new RunnerExecutor({
     config,
@@ -150,7 +166,7 @@ function harness(opts: HarnessOptions = {}) {
     queue: {} as unknown as RunnerIngestQueue,
     notifier: {} as unknown as RunnerLiveNotifier,
   });
-  return { executor, runner, sink };
+  return { executor, runner, sink, order };
 }
 
 /** What the runner recorded, as the Logs tab would print it. */
@@ -481,5 +497,131 @@ describe('no job parameter reaches an event', () => {
     await executor.run(job());
     const text = recorded(runner).join('\n');
     for (const leak of LEAKS) expect(text, `an event carries "${leak}"`).not.toContain(leak);
+  });
+});
+
+/**
+ * ═══ THE GATLING AGENT: OPTIONAL, AND NEVER THE REASON A JOB FAILS ═══
+ *
+ * The agent adds connection, DNS and JVM data to a run. Everything about it is
+ * best-effort: a runner with no jar, a jar it cannot read, a job that opted
+ * out, a file that will not store — each runs the load test exactly as before
+ * and says, in the job log, what the run will be missing.
+ */
+describe('the Gatling agent', () => {
+  const AGENT_FILE = () => path.join(workDir, 'perfportal-agent.ndjson');
+  const jobLog = () => readFile(path.join(logDir, `${JOB_ID}.log`), 'utf8');
+  /** The `agent` argument the executor handed `prepareGatlingRun`. */
+  const agentArg = () => vi.mocked(prepareGatlingRun).mock.calls[0]?.[4];
+
+  async function readableJar(): Promise<string> {
+    const jar = path.join(workDir, 'gatling-agent.jar');
+    await writeFile(jar, 'not really a jar; only its readability is checked');
+    return jar;
+  }
+
+  it('loads the agent when its jar is readable and the job allows it', async () => {
+    const jar = await readableJar();
+    const { executor } = harness({ config: { agentJar: jar } });
+    await executor.run(job());
+    expect(agentArg()).toEqual({ jar });
+  });
+
+  it('runs without the agent when the runner has none, silently', async () => {
+    const { executor, sink } = harness();
+    await executor.run(job());
+    expect(agentArg()).toBeNull();
+    expect(sink.storeAgentLog).not.toHaveBeenCalled();
+    expect(await jobLog()).not.toMatch(/agent/i);
+  });
+
+  it('runs without the agent when its jar cannot be read, and says so', async () => {
+    const { executor, runner, sink } = harness({ config: { agentJar: '/nope.jar' } });
+    await executor.run(job());
+    expect(agentArg()).toBeNull();
+    expect(sink.storeAgentLog).not.toHaveBeenCalled();
+    expect(runner.markComplete).toHaveBeenCalledTimes(1);
+    expect(await jobLog()).toContain(
+      'Gatling agent jar not readable at /nope.jar; running without connection, DNS and JVM data.',
+    );
+  });
+
+  it('treats a jar that exists but cannot be read as unreadable', async () => {
+    // Root reads anything, so the mode alone proves nothing there.
+    if (typeof process.getuid === 'function' && process.getuid() === 0) return;
+    const jar = await readableJar();
+    await chmod(jar, 0o000);
+    const { executor } = harness({ config: { agentJar: jar } });
+    await executor.run(job());
+    expect(agentArg()).toBeNull();
+    expect(await jobLog()).toContain(`Gatling agent jar not readable at ${jar};`);
+  });
+
+  it('runs without the agent when the job opted out', async () => {
+    const jar = await readableJar();
+    const { executor, sink } = harness({ config: { agentJar: jar } });
+    await executor.run(job({ agentEnabled: false }));
+    expect(agentArg()).toBeNull();
+    expect(sink.storeAgentLog).not.toHaveBeenCalled();
+    // An opt-out is the job's choice, not a fault: no warning about the jar.
+    expect(await jobLog()).not.toContain('not readable');
+  });
+
+  it('stores the agent file before closing the run', async () => {
+    const { executor, runner, order } = harness({ config: { agentJar: await readableJar() } });
+    await executor.run(job());
+    expect(order).toEqual([`storeAgentLog:${AGENT_FILE()}`, 'close']);
+    expect(runner.markComplete).toHaveBeenCalledTimes(1);
+  });
+
+  it('stores the agent file of a Gatling that died part-way before closing it as abandoned', async () => {
+    const { executor, order } = harness({
+      config: { agentJar: await readableJar() },
+      result: { code: 143, signal: null, stopped: false },
+    });
+    await executor.run(job());
+    expect(order).toEqual([`storeAgentLog:${AGENT_FILE()}`, 'closeAbandoned']);
+  });
+
+  it('does not store the agent file of a cancelled run', async () => {
+    const { executor, sink } = harness({
+      config: { agentJar: await readableJar() },
+      result: { code: null, signal: 'SIGTERM', stopped: true },
+    });
+    await executor.run(job());
+    expect(sink.storeAgentLog).not.toHaveBeenCalled();
+    expect(sink.abortIncomplete).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['failed', /could not store the Gatling agent file/i],
+    ['too_large', /Gatling agent file is larger than RUNNER_MAX_AGENT_LOG_BYTES \(268435456 bytes\)/],
+    ['absent', /Gatling agent wrote no file/],
+  ] as const)('closes the run normally when the agent file is %s, and says what the run is missing', async (outcome, warning) => {
+    const { executor, runner, sink } = harness({ config: { agentJar: await readableJar() }, agentStore: outcome });
+    await executor.run(job());
+    expect(sink.close).toHaveBeenCalledTimes(1);
+    expect(runner.markComplete).toHaveBeenCalledTimes(1);
+    expect(runner.markFailed).not.toHaveBeenCalled();
+    const log = await jobLog();
+    expect(log).toMatch(warning);
+    expect(log).toContain('connection, DNS and JVM data');
+  });
+
+  it('closes the run normally even if storing the agent file throws, which it must not', async () => {
+    const { executor, runner, sink } = harness({
+      config: { agentJar: await readableJar() },
+      agentStore: new Error('the bucket went away'),
+    });
+    await executor.run(job());
+    expect(sink.close).toHaveBeenCalledTimes(1);
+    expect(runner.markComplete).toHaveBeenCalledTimes(1);
+    expect(await jobLog()).toMatch(/could not store the Gatling agent file/i);
+  });
+
+  it('records nothing about the agent on the run\'s Logs tab', async () => {
+    const { executor, runner } = harness({ config: { agentJar: '/nope.jar' }, agentStore: 'failed' });
+    await executor.run(job());
+    expect(recorded(runner).join('\n')).not.toMatch(/agent/i);
   });
 });

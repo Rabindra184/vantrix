@@ -41,6 +41,8 @@ export interface RunnerJobRecord {
   testSlug: string | null;
   javaOptions: string | null;
   systemProperties: Record<string, string>;
+  /** Whether the runner loads the Gatling agent for this job. */
+  agentEnabled: boolean;
   logPath: string | null;
   error: { code: string; message: string; remediation: string } | null;
   createdAt: Date;
@@ -85,6 +87,7 @@ interface RunnerRow {
   testSlug: string | null;
   javaOptions: string | null;
   systemProperties: Record<string, string>;
+  agentEnabled: boolean;
   logPath: string | null;
   error: { code: string; message: string; remediation: string } | null;
   jobCreatedAt: Date;
@@ -111,6 +114,12 @@ export interface CreateRunnerJobInput {
     testSlug: string | null;
     javaOptions: string | null;
     systemProperties: Record<string, string>;
+    /**
+     * Whether the runner loads the Gatling agent. REQUIRED, with no default,
+     * so every caller states its answer: a default here would be the one
+     * place the opt-out could be dropped with nothing failing.
+     */
+    agentEnabled: boolean;
   };
 }
 
@@ -200,13 +209,15 @@ export class RunnerRepository {
       job AS (
         INSERT INTO runner_job (
           id, org_id, project_id, artifact_id, status, requested_by, name, simulation_class,
-          environment, branch, commit_sha, test_slug, java_options, system_properties
+          environment, branch, commit_sha, test_slug, java_options, system_properties,
+          agent_enabled
         )
         SELECT
           ${input.job.id}::uuid, version.org_id, version.project_id, version.id, 'queued',
           ${input.job.requestedBy}, ${input.job.name}, ${input.job.simulationClass},
           ${input.job.environment}, ${input.job.branch}, ${input.job.commitSha},
-          ${input.job.testSlug}, ${input.job.javaOptions}, ${systemProperties}::jsonb
+          ${input.job.testSlug}, ${input.job.javaOptions}, ${systemProperties}::jsonb,
+          ${input.job.agentEnabled}::boolean
         FROM version
         RETURNING id, org_id, project_id
       ),
@@ -262,6 +273,7 @@ export class RunnerRepository {
         j.test_slug AS "testSlug",
         j.java_options AS "javaOptions",
         j.system_properties AS "systemProperties",
+        j.agent_enabled AS "agentEnabled",
         j.log_path AS "logPath",
         j.error,
         j.created_at AS "jobCreatedAt",
@@ -332,6 +344,7 @@ export class RunnerRepository {
         j.test_slug AS "testSlug",
         j.java_options AS "javaOptions",
         j.system_properties AS "systemProperties",
+        j.agent_enabled AS "agentEnabled",
         j.log_path AS "logPath",
         j.error,
         j.created_at AS "jobCreatedAt",
@@ -704,13 +717,18 @@ export class RunnerRepository {
         -- and artifact_id is the SOURCE's, which is what makes a retry run
         -- the bytes that failed rather than a newer upload.
         --
+        -- agent_enabled too: a requester who opted out of the Gatling agent
+        -- asked for that on THIS job, and a retry that reset it to the
+        -- column default would load the agent they declined.
+        --
         -- NO BACKTICKS IN THIS COMMENT. It sits inside a $queryRaw TEMPLATE
         -- LITERAL, so one would end the string and fail as TS1005 two lines
         -- down -- which is exactly how the first draft of it failed, and which
         -- CLAUDE.md already records happening twice before.
         INSERT INTO runner_job (
           id, org_id, project_id, artifact_id, status, requested_by, name, simulation_class,
-          environment, branch, commit_sha, test_slug, java_options, system_properties
+          environment, branch, commit_sha, test_slug, java_options, system_properties,
+          agent_enabled
         )
         SELECT
           ${input.id}::uuid,
@@ -726,7 +744,8 @@ export class RunnerRepository {
           j.commit_sha,
           j.test_slug,
           j.java_options,
-          j.system_properties
+          j.system_properties,
+          j.agent_enabled
         FROM source j
         RETURNING id, org_id, project_id
       ),
@@ -794,6 +813,7 @@ export class RunnerRepository {
         j.test_slug AS "testSlug",
         j.java_options AS "javaOptions",
         j.system_properties AS "systemProperties",
+        j.agent_enabled AS "agentEnabled",
         j.log_path AS "logPath",
         j.error,
         j.created_at AS "jobCreatedAt",
@@ -840,6 +860,7 @@ function mapRow(row: RunnerRow): RunnerJobWithArtifact {
       testSlug: row.testSlug,
       javaOptions: row.javaOptions,
       systemProperties: row.systemProperties,
+      agentEnabled: row.agentEnabled,
       logPath: row.logPath,
       error: row.error,
       createdAt: row.jobCreatedAt,

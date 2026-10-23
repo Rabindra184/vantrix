@@ -62,6 +62,19 @@ README.md
 # The compose file and this Dockerfile are read by the daemon, not copied.
 infra
 
+# ═══ ...EXCEPT THE GATLING AGENT, WHICH THE IMAGE DOES BUILD ═══
+# The on-prem runner loads `clients/gatling-agent`'s jar into every Gatling
+# JVM it starts, so `infra/Dockerfile`'s `gatling-agent` stage compiles it and
+# runs `infra/test/agent-jar-smoke.sh` over the result — and the final image
+# keeps that script so CI's `compose` job can re-run it on the shipped jar.
+# The exceptions come AFTER the two exclusions above because the last match
+# wins. A host `build/` or `.gradle/` would at best be overwritten and at worst
+# be mistaken for the image's own output, so those stay out.
+!clients/gatling-agent
+clients/gatling-agent/build
+clients/gatling-agent/.gradle
+!infra/test/agent-jar-smoke.sh
+
 # ═══ EDITOR AND OS NOISE ═══
 .DS_Store
 **/.DS_Store

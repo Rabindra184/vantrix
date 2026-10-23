@@ -252,6 +252,8 @@ describe('the adaptive verdict', () => {
       recomputedAt: null,
       // Its raw log is kept: nothing has deleted it.
       rawLogDeletedAt: null,
+      // An upload carries no agent file.
+      agentLogKey: null, agentLogSha256: null, agentLogBytes: null,
     };
 
     expect(runsService.statusFor(run)).toBe(413);

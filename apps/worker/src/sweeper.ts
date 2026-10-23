@@ -187,7 +187,9 @@ export class Sweeper {
    *
    * `rawLogRetentionDays` of 0 keeps every raw log for ever, and this pass
    * does nothing at all. Otherwise each run `retentionDue` answers has its
-   * stored object deleted and then its row stamped (`markRawLogDeleted`).
+   * stored objects deleted — its agent file (`runs/<runId>/agent.ndjson`,
+   * when the run has one) and then its raw log — and then its row stamped
+   * (`markRawLogDeleted`), so a log and its agent file always go together.
    * Object first, row second: a row stamped over an object that a failed
    * delete left behind would claim a log gone that is still billed for, and
    * never be selected again to finish the job; the other order is retried
@@ -259,7 +261,7 @@ export class Sweeper {
 
   async #retainOne(
     verifications: VerificationRepository,
-    run: { id: string; bundleKey: string },
+    run: { id: string; bundleKey: string; agentLogKey: string | null },
     days: number,
   ): Promise<void> {
     const held = holdClient(await this.pool.connect());
@@ -273,6 +275,10 @@ export class Sweeper {
       if (!rows[0]?.got) return;
       try {
         if (!(await verifications.isRetentionDue(run.id, days, VERIFIER_VERSION))) return;
+        // The agent file first: a bucket that refuses it leaves the run
+        // untouched (log present, row unstamped) for the next sweep, where
+        // the other order would leave a deleted log under an unstamped row.
+        if (run.agentLogKey !== null) await this.blobs.delete(run.agentLogKey);
         await this.blobs.delete(run.bundleKey);
         await verifications.markRawLogDeleted(run.id);
       } catch (err) {

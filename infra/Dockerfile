@@ -138,9 +138,49 @@ RUN TDIGEST_JAR=/opt/gatling/lib/t-digest-3.3.jar bash /src/gatling-method/build
          io.perfportal.gatlingmethod.GatlingMethod --seeds 2 --percentiles 50 \
      | grep -qx '{"key":"k0","n":3,"p":{"50":\[2,2\]}}'
 
+# ═══ THE GATLING AGENT, BUILT IN A STAGE OF ITS OWN ═══
+#
+# `clients/gatling-agent` is the `-javaagent` the on-prem runner loads into
+# every Gatling JVM it starts, recording DNS, connect, TLS, byte, status, JVM
+# and machine figures beside `simulation.log`. Building it needs a JDK and
+# Gradle; the runtime needs only the jar. Same shape as `gatling-method`
+# above: a throwaway stage FROM `runtime` adds the JDK, and the final image
+# keeps one file.
+#
+# `shadowJar` ONLY, not `build`. `build` also runs the agent's unit tests and
+# an end-to-end test that launches real Gatling child JVMs, which belongs in
+# CI's `gatling-agent` job (where it runs on every push) rather than inside
+# every image build. What the image build DOES check is the artifact itself:
+# `infra/test/agent-jar-smoke.sh` refuses a jar carrying an unrelocated
+# `net/bytebuddy/` package, or one whose premain never writes its header.
+#
+# UNLIKE THE REST OF THIS FILE'S JAVA, THIS STEP NEEDS THE NETWORK: the Gradle
+# wrapper downloads Gradle itself, the shadow plugin and Byte Buddy (plus the
+# compile-only Gatling API jars) from the Gradle plugin portal and Maven
+# Central. The Gatling runtime above is fetched from Maven Central too, so the
+# build was never offline — but a registry outage now fails this stage.
+FROM runtime AS gatling-agent
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends openjdk-21-jdk-headless \
+  && rm -rf /var/lib/apt/lists/*
+COPY clients/gatling-agent /src/gatling-agent
+COPY infra/test/agent-jar-smoke.sh /src/agent-jar-smoke.sh
+RUN cd /src/gatling-agent \
+  && ./gradlew shadowJar --no-daemon \
+  && bash /src/agent-jar-smoke.sh /src/gatling-agent/build/libs/gatling-agent.jar \
+  # The simulation runs as uid 20001 (`gatling`, below), which owns nothing in
+  # the image and must still READ the agent its JVM loads. `COPY --from`
+  # keeps this mode. (Not `COPY --chmod`: BuildKit applies that mode to every
+  # parent directory the COPY creates too — measured, a `--chmod=0644` copy
+  # into /app/infra/test left /app itself 0644, unsearchable, and the
+  # `pnpm install` below died on `EACCES ... /app/.corepack.env`.)
+  && chmod a+r /src/gatling-agent/build/libs/gatling-agent.jar
+
 FROM runtime
 
 COPY --from=gatling-method /src/gatling-method/build/gatling-method.jar /opt/perfportal/gatling-method.jar
+COPY --from=gatling-agent /src/gatling-agent/build/libs/gatling-agent.jar /opt/perfportal/gatling-agent.jar
+ENV RUNNER_AGENT_JAR=/opt/perfportal/gatling-agent.jar
 
 WORKDIR /app
 
@@ -207,6 +247,9 @@ USER perfportal
 COPY --chown=perfportal:perfportal package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json tsconfig.base.json ./
 COPY --chown=perfportal:perfportal apps ./apps
 COPY --chown=perfportal:perfportal packages ./packages
+# Re-run by CI's `compose` job against /opt/perfportal/gatling-agent.jar, the
+# jar the image ships (the `gatling-agent` stage ran it on the jar it built).
+COPY --chown=perfportal:perfportal infra/test/agent-jar-smoke.sh ./infra/test/agent-jar-smoke.sh
 
 RUN pnpm install --frozen-lockfile --ignore-scripts \
   && pnpm --filter @perfportal/persistence exec prisma generate --schema prisma/schema.prisma \

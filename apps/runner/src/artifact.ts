@@ -5,7 +5,7 @@ import { promisify } from 'node:util';
 import type { GatlingJarFacts } from '@perfportal/core';
 import type { RunnerArtifactRecord, RunnerJobRecord } from '@perfportal/persistence';
 import { readGatlingJar } from '@perfportal/storage';
-import type { RunnerConfig } from './config.js';
+import { AGENT_CAP_HEADROOM_BYTES, type RunnerConfig } from './config.js';
 import { RunnerExecutionError } from './errors.js';
 import type { ProcessCommand } from './process.js';
 import { spawnAndWait } from './process.js';
@@ -19,13 +19,28 @@ export interface PreparedGatlingRun {
   command: ProcessCommand;
   resultsDir: string;
   workDir: string;
+  /** Where the Gatling agent writes its NDJSON, or null when it is not loaded. */
+  agentLogPath: string | null;
 }
 
+/** The agent's file, inside the job's work directory — see `agentArgs`. */
+export const AGENT_LOG_FILENAME = 'perfportal-agent.ndjson';
+
+/**
+ * Builds the `java` command for one job.
+ *
+ * `agent` is REQUIRED, with no default: whether the Gatling agent is loaded is
+ * the executor's decision (a configured jar it can read, on a job that has not
+ * opted out), and a default of "none" would let a caller forget to ask — every
+ * run silently missing its connection, DNS and JVM data with nothing failing.
+ * Null is an answer the caller has to write down.
+ */
 export async function prepareGatlingRun(
   config: RunnerConfig,
   job: RunnerJobRecord,
   artifact: RunnerArtifactRecord,
   shouldStop: () => Promise<boolean>,
+  agent: { jar: string } | null,
 ): Promise<PreparedGatlingRun> {
   const artifactPath = resolveArtifactPath(config, artifact.storagePath);
   await access(artifactPath).catch(() => {
@@ -38,6 +53,10 @@ export async function prepareGatlingRun(
 
   const workDir = path.resolve(config.workDir, job.id);
   const resultsDir = path.join(workDir, 'results');
+  const agentLogPath = agent === null ? null : path.join(workDir, AGENT_LOG_FILENAME);
+  const agentOptions = agent === null || agentLogPath === null
+    ? []
+    : [agentArg(agent.jar, agentLogPath, config.maxAgentLogBytes - AGENT_CAP_HEADROOM_BYTES)];
   await rm(workDir, { recursive: true, force: true });
   await mkdir(resultsDir, { recursive: true });
 
@@ -46,10 +65,12 @@ export async function prepareGatlingRun(
     return {
       resultsDir,
       workDir,
+      agentLogPath,
       command: {
         command: config.javaBin,
         cwd: workDir,
         args: [
+          ...agentOptions,
           ...jvmArgs(job),
           '-cp',
           await jarClasspath(config, artifactPath),
@@ -74,10 +95,12 @@ export async function prepareGatlingRun(
     return {
       resultsDir,
       workDir,
+      agentLogPath,
       command: {
         command: config.javaBin,
         cwd: gatlingHome,
         args: [
+          ...agentOptions,
           ...javaArgs,
           '-cp',
           path.join(gatlingHome, 'lib', '*'),
@@ -164,6 +187,31 @@ const DEFAULT_JVM_OPTIONS = [
   '--add-opens=java.base/java.util.concurrent=ALL-UNNAMED',
   '--add-opens=java.base/sun.nio.ch=ALL-UNNAMED',
 ];
+
+/**
+ * ═══ THE AGENT GOES FIRST ═══
+ *
+ * `-javaagent:<jar>=<args>` is a JVM option, so it has to precede `-cp` and the
+ * main class like every other; FIRST of all, so nothing an operator puts in
+ * `javaOptions` sits between the JVM and it. The agent's own arguments are
+ * `out=<file>,max=<bytes>` (see `clients/gatling-agent`).
+ *
+ * `max` IS THE RUNNER'S CAP LESS `AGENT_CAP_HEADROOM_BYTES`. On reaching `max`
+ * the agent writes one `{"t":"capped","at":<ms>}` line WITHOUT reserving room
+ * for it, so a capped file ends up to ~35 bytes past `max`. Telling it the
+ * runner's own cap would make exactly the longest runs — the ones that hit it —
+ * land over the cap and be thrown away whole.
+ *
+ * THE FILE LIVES IN THE JOB'S WORK DIRECTORY, AS AN ABSOLUTE PATH. The
+ * simulation runs as `RUNNER_CHILD_UID`, and `makeChildWritable` has already
+ * opened that directory to it — so the child creates the file itself, with no
+ * pre-created file to own. Absolute, because a bundle runs with its Gatling
+ * home as the working directory; and inside the work directory, so the
+ * executor's `finally` that removes it removes the agent's file too.
+ */
+function agentArg(jar: string, out: string, maxBytes: number): string {
+  return `-javaagent:${jar}=out=${out},max=${maxBytes}`;
+}
 
 function jvmArgs(job: RunnerJobRecord): string[] {
   return [
