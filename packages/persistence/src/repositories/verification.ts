@@ -141,7 +141,17 @@ export function verifyCandidateSql(version: string): string {
  * Past retention (ingested more than `days` ago — ingested_at is the
  * retention clock: every terminal writer stamps it), still stored, carrying an
  * assembled bundle (a live run that never assembled one has the '' sentinel
- * and no object to delete), and needed by nothing:
+ * and no object to delete) or an agent file, and needed by nothing.
+ *
+ * THE AGENT-FILE ARM. The on-prem runner stores a run's agent file before it
+ * closes the run, so a run that then ends incomplete with no assembled log
+ * ('' sentinel) still carries one. Without this arm nothing would ever delete
+ * it: retention skipped the run and the orphan sweep keeps every key
+ * agent_log_key names. Such a run has no statistics, so the three exclusions
+ * below cannot hold it back for a reason that matters, and deleting its
+ * bundle key is harmless (absent, or a chunk assembly no whole record
+ * survived). A '' run with no agent file is still not selected. Needed by
+ * nothing means:
  *
  *  - not a verify candidate (verifyCandidateSql): a log is deleted only once
  *    the run has been checked against it, or once it never can be;
@@ -160,7 +170,7 @@ function retentionDueSql(days: string, version: string): string {
   r.ingested_at IS NOT NULL
   AND r.ingested_at < now() - make_interval(days => ${days}::int)
   AND r.raw_log_deleted_at IS NULL
-  AND r.bundle_sha256 <> ''
+  AND (r.bundle_sha256 <> '' OR r.agent_log_key IS NOT NULL)
   AND NOT ${verifyCandidateSql(version)}
   AND NOT (${CANDIDATE_PREDICATE_SQL})
   AND v.status IS DISTINCT FROM 'mismatch'`;

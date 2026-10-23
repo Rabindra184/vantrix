@@ -145,6 +145,27 @@ async function seedFailed(ageDays: number): Promise<Seeded> {
 }
 
 /**
+ * A live run that ended incomplete with no assembled log: the '' bundle
+ * sentinel, a live/ key no object was ever assembled at, and no statistics,
+ * so no verification row and no recompute. The on-prem runner can still have
+ * stored its agent file before closing it.
+ */
+async function seedNeverFinalized(ageDays: number): Promise<Seeded> {
+  const { orgId, projectId } = await project();
+  const id = randomUUID();
+  const key = `live/${id}/simulation.log`;
+  await prisma.run.create({
+    data: {
+      id, orgId, projectId, status: 'incomplete', tool: 'gatling',
+      bundleKey: key, bundleSha256: '', bundleBytes: BigInt(0),
+      startedAt: new Date('2026-08-07T10:00:00Z'), startedOn: new Date('2026-08-07T00:00:00Z'),
+      engineOptions: {}, ingestedAt: new Date(Date.now() - ageDays * 86_400_000),
+    },
+  });
+  return { id, bundleKey: key };
+}
+
+/**
  * `n` exact, verified runs past retention, written straight to the tables:
  * a stat row in the exact engine's format and a verified row each. No object
  * is stored — a missing one counts as deleted — so a hundred of these cost a
@@ -297,6 +318,36 @@ describe('raw-log retention in the sweeper', () => {
     expect(await blobs.exists(agent)).toBe(false);
     expect(await blobs.exists(old!.bundleKey)).toBe(false);
     expect(await deletedAt(old!.id)).not.toBeNull();
+  });
+
+  /**
+   * A run that never assembled a log has no raw log to retain, but it can
+   * carry an agent file the runner stored before the close found nothing. It
+   * is no verify or recompute candidate (no statistics), so retention takes
+   * the agent file; without this, nothing ever would — the orphan sweep keeps
+   * it, because agent_log_key names it.
+   */
+  it('deletes the agent file of an incomplete run that never assembled a log, and stamps it', async () => {
+    const run = await seedNeverFinalized(31);
+    const agent = await withAgentFile(run);
+    const del = vi.spyOn(blobs, 'delete');
+    const errors = vi.spyOn(console, 'error');
+    await sweeper(30).sweep();
+
+    expect(await blobs.exists(agent)).toBe(false);
+    expect(del.mock.calls.map((c) => c[0])).toEqual([agent, run.bundleKey]);
+    expect(errors).not.toHaveBeenCalled();
+    expect(await deletedAt(run.id)).not.toBeNull();
+    expect(await verifications.find(run.id)).toBeNull();
+  });
+
+  /** The widening is for the agent file alone: with none, there is nothing to delete. */
+  it('still leaves alone an incomplete run that never assembled a log and has no agent file', async () => {
+    const run = await seedNeverFinalized(31);
+    const due = await verifications.retentionDue(30, VERIFIER_VERSION, null, 100);
+    expect(due.runs.map((r) => r.id)).not.toContain(run.id);
+    await sweeper(30).sweep();
+    expect(await deletedAt(run.id)).toBeNull();
   });
 
   it('keeps every raw log for ever at 0 days', async () => {
