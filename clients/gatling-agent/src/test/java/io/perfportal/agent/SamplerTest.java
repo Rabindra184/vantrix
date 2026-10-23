@@ -112,10 +112,10 @@ class SamplerTest {
   void readsTheMachineAndGatlingsOwnSocketsFromProc() throws Exception {
     Path proc = Path.of(SamplerTest.class.getResource("/proc/stat").toURI()).getParent();
     SocketRegistry r = new SocketRegistry();
-    r.opened("established", 0xB78E, "localhost/127.0.0.1:8080");
-    r.opened("mapped", 0xB79E, "localhost/127.0.0.1:8080");
-    r.opened("closed", 0xB7A0, "localhost/127.0.0.1:8080");
-    r.closed("closed", 1_000);
+    r.opened(1, 0xB78E, "localhost/127.0.0.1:8080");
+    r.opened(2, 0xB79E, "localhost/127.0.0.1:8080");
+    r.opened(3, 0xB7A0, "localhost/127.0.0.1:8080");
+    r.closed(3, 1_000);
     r.addBytes("localhost/127.0.0.1:8080", 120, 4_000);
     String l = Sampler.sample(1_500, r, null, proc);
     assertTrue(l.contains("\"at\":1500,"), l);
@@ -145,14 +145,14 @@ class SamplerTest {
     assertTrue(l.endsWith(",\"states\":{}}"), l);
 
     // A socket closed longer ago than the TIME_WAIT retention is not tracked either.
-    r.opened("gone", 0xB7A0, "localhost/127.0.0.1:8080");
-    r.closed("gone", 1_000);
+    r.opened(1, 0xB7A0, "localhost/127.0.0.1:8080");
+    r.closed(1, 1_000);
     l = Sampler.sample(200_000, r, null, proc, false, counting);
     assertEquals(List.of(), reads);
     assertTrue(l.endsWith(",\"states\":{}}"), l);
 
     // One live socket: both tables are read, and its row is counted.
-    r.opened("live", 0xB78E, "localhost/127.0.0.1:8080");
+    r.opened(2, 0xB78E, "localhost/127.0.0.1:8080");
     l = Sampler.sample(200_000, r, null, proc, false, counting);
     assertEquals(List.of("tcp", "tcp6"), reads);
     assertTrue(l.endsWith(",\"states\":{\"localhost/127.0.0.1:8080\":{\"1\":1}}}"), l);

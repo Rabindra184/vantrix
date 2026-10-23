@@ -22,7 +22,7 @@ import java.net.SocketAddress;
  * <pre>
  * {"t":"dns","at","us","host","ok"[,"warmup":true]}
  * {"t":"connect","at","us","remote","ok","ch"[,"warmup":true]}
- * {"t":"tls","at","us","remote","ok"[,"warmup":true]}
+ * {"t":"tls","at","us","remote","ok"[,"ch"][,"warmup":true]}
  * {"t":"close","at","ch","remote"}
  * {"t":"status","at","req","code"}
  * </pre>
@@ -30,6 +30,12 @@ import java.net.SocketAddress;
  * For an event with a duration, {@code at} is when it STARTED; for a close or a status, when it
  * happened. {@code remote} is {@code host/ip:port} with the RESOLVED ip -- the form {@link
  * SocketRegistry} matches {@code /proc/net/tcp*} rows by.
+ *
+ * <p>{@code ch} is a JSON NUMBER, the agent's own id for the channel ({@link MeterHandler#ch}):
+ * unique within the file, it pairs a {@code connect} with its {@code close} and with the
+ * channel's {@code tls}. A {@code tls} line carries it whenever the channel was opened by
+ * Gatling's client (and so metered). A {@code status} line carries none: the hook it comes from
+ * sees the request's transaction, not its channel.
  *
  * <p>Nothing here throws into the simulation. The first throwable caught goes through {@link
  * AgentMain#fail}, which writes one {@code error} line and seals the writer; from then on {@link
@@ -88,8 +94,7 @@ public final class Collector {
       Channel ch = future.channel();
       // Netty is in use from here on, so the sampler may read its allocator.
       NettyMemory.arm();
-      MeterHandler meter = new MeterHandler(remote(address), ch.id().asShortText(), WarmUp.active());
-      ch.pipeline().addFirst(MeterHandler.NAME, meter);
+      MeterHandler meter = MeterHandler.attach(ch, remote(address), WarmUp.active());
       future.addListener(
           (ChannelFutureListener) done -> connected(meter, ch, startNanos, done.isSuccess()));
     } catch (Throwable t) {
@@ -111,13 +116,13 @@ public final class Collector {
       String remote = meter != null ? meter.remote : remote(host, ch.remoteAddress(), port);
       boolean warmup = WarmUp.active() || (meter != null && meter.warmup);
       if (thrown != null || !(handshake instanceof Future)) {
-        tls(remote, startNanos, false, warmup);
+        tls(remote, startNanos, false, warmup, meter);
         return;
       }
       ((Future<?>) handshake)
           .addListener(
               (GenericFutureListener<Future<Object>>)
-                  done -> tls(remote, startNanos, done.isSuccess(), warmup));
+                  done -> tls(remote, startNanos, done.isSuccess(), warmup, meter));
     } catch (Throwable t) {
       AgentMain.fail("tls", t);
     }
@@ -155,14 +160,20 @@ public final class Collector {
           ",\"remote\":" + EventWriter.quote(meter.remote),
           ok,
           meter.warmup,
-          ",\"ch\":" + EventWriter.quote(meter.ch));
+          ",\"ch\":" + meter.ch);
     } catch (Throwable t) {
       AgentMain.fail("connect", t);
     }
   }
 
-  static void tls(String remote, long startNanos, boolean ok, boolean warmup) {
-    timed("tls", startNanos, ",\"remote\":" + EventWriter.quote(remote), ok, warmup);
+  static void tls(String remote, long startNanos, boolean ok, boolean warmup, MeterHandler meter) {
+    timed(
+        "tls",
+        startNanos,
+        ",\"remote\":" + EventWriter.quote(remote),
+        ok,
+        warmup,
+        meter == null ? "" : ",\"ch\":" + meter.ch);
   }
 
   static void close(MeterHandler meter) {
@@ -175,7 +186,7 @@ public final class Collector {
           "{\"t\":\"close\",\"at\":"
               + now
               + ",\"ch\":"
-              + EventWriter.quote(meter.ch)
+              + meter.ch
               + ",\"remote\":"
               + EventWriter.quote(meter.remote)
               + "}");

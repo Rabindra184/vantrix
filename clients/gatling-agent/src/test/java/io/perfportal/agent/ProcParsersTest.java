@@ -82,18 +82,18 @@ class ProcParsersTest {
   void countsTcp4AndMappedTcp6RowsForTheSocketsTheyAre() {
     SocketRegistry r = new SocketRegistry();
     // 0100007F:B78E -> 0100007F:1F90, ESTABLISHED.
-    r.opened("v4", 0xB78E, "localhost/127.0.0.1:8080");
+    r.opened(1, 0xB78E, "localhost/127.0.0.1:8080");
     // ...FFFF00000100007F:B79E -> ::ffff:127.0.0.1:8080 counts for the IPv4 remote it maps.
-    r.opened("mapped", 0xB79E, "mapped/127.0.0.1:8080");
+    r.opened(2, 0xB79E, "mapped/127.0.0.1:8080");
     // The TIME_WAIT the closed connection left behind.
-    r.opened("closed", 0xB7A0, "closed/127.0.0.1:8080");
-    r.closed("closed", 1_000);
+    r.opened(3, 0xB7A0, "closed/127.0.0.1:8080");
+    r.closed(3, 1_000);
     // A real IPv6 remote.
-    r.opened("v6", 0xC3D6, "six/[0:0:0:0:0:0:0:1]:8080");
+    r.opened(4, 0xC3D6, "six/[0:0:0:0:0:0:0:1]:8080");
     // An outbound connection to a public address.
-    r.opened("public", 0xD684, "one/1.1.1.1:80");
+    r.opened(5, 0xD684, "one/1.1.1.1:80");
     // On the dual-stack LISTENER's port, but to a remote the listener (all-zero remote) is not.
-    r.opened("listener", 8080, "local/127.0.0.1:47000");
+    r.opened(6, 8080, "local/127.0.0.1:47000");
 
     assertEquals(
         Map.of(
@@ -108,7 +108,7 @@ class ProcParsersTest {
   @Test
   void skipsALineItCannotRead() {
     SocketRegistry r = new SocketRegistry();
-    r.opened("ch", 0xB78E, "localhost/127.0.0.1:8080");
+    r.opened(1, 0xB78E, "localhost/127.0.0.1:8080");
     assertEquals(
         Map.of("localhost/127.0.0.1:8080", Map.of(1, 1)),
         ProcTables.states(
@@ -131,7 +131,7 @@ class ProcParsersTest {
   void rejectsARowOnAnUntrackedPortBeforeReadingAnythingElseInIt() {
     SocketRegistry r = new SocketRegistry();
     String remote = "target/10.1.2.3:8080";
-    for (int i = 0; i < 5; i++) r.opened("ch-" + i, 40_000 + i, remote);
+    for (int i = 0; i < 5; i++) r.opened(i, 40_000 + i, remote);
     StringBuilder tcp = new StringBuilder(ProcTables.HEADER);
     int sl = 0;
     for (int i = 0; i < 30_000; i++) {

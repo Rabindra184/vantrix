@@ -64,8 +64,8 @@ The `-javaagent` jar is on the system class path, which Gatling and the simulati
   - **The file format `perfportal-agent/1`** (one JSON object per line; `at` = epoch ms, `us` = duration µs, `remote` = `"<hostString>/<ip>:<port>"`):
     - `{"t":"header","format":"perfportal-agent/1","agentVersion":"0.1.0","gatlingHttpClient":"3.15.1","gatlingHttp":"3.15.1","java":"<java.version>","os":"<os.name>","startedAt":<ms>,"collects":{"http":true,"machine":true},"reasons":{}}` — `reasons.http` / `reasons.machine` present when the matching flag is false.
     - `{"t":"dns","at","us","host","ok"[, "warmup":true]}`
-    - `{"t":"connect","at","us","remote","ok","ch":"<channel id asShortText>"[, "warmup":true]}`
-    - `{"t":"tls","at","us","remote","ok"[, "warmup":true]}`
+    - `{"t":"connect","at","us","remote","ok","ch":<number>[, "warmup":true]}` — `ch` is the agent's own channel id, a JSON number unique within the file (final fix wave: it was `asShortText`, a random 32-bit int that collides within a large run)
+    - `{"t":"tls","at","us","remote","ok"[, "ch":<number>][, "warmup":true]}`
     - `{"t":"close","at","ch","remote"}`
     - `{"t":"status","at","req":"<fullRequestName>","code":<int>}`
     - `{"t":"s","at",...}` one sample per second (Task 2 fills it)

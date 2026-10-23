@@ -30,7 +30,7 @@ class SocketRegistry {
    */
   static final long CLOSED_RETENTION_MS = 120_000;
 
-  private final Map<String, Socket> byChannel = new ConcurrentHashMap<>();
+  private final Map<Long, Socket> byChannel = new ConcurrentHashMap<>();
   private final Map<String, LongAdder[]> bytes = new ConcurrentHashMap<>();
   private final AtomicLong order = new AtomicLong();
 
@@ -81,11 +81,12 @@ class SocketRegistry {
 
   private static final byte[][] NEVER = new byte[0][];
 
-  void opened(String ch, int localPort, String remote) {
+  /** {@code ch} is the agent's own channel id ({@link MeterHandler#ch}): no two sockets share one. */
+  void opened(long ch, int localPort, String remote) {
     byChannel.put(ch, new Socket(order.incrementAndGet(), localPort, remote));
   }
 
-  void closed(String ch, long atMs) {
+  void closed(long ch, long atMs) {
     Socket s = byChannel.get(ch);
     if (s != null && s.closedAt < 0) s.closedAt = atMs;
   }

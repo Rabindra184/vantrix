@@ -23,9 +23,11 @@ import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.security.KeyStore;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -140,10 +142,21 @@ class GatlingRunE2ETest {
     assertEquals(0, count(lines, "error"), all);
 
     // Every connect names its remote with the RESOLVED ip, which is what the sampler matches
-    // /proc rows by, and every connect has a channel id that its close repeats.
+    // /proc rows by, and carries the agent's own channel id: a number, never shared by two
+    // connects, that exactly one close repeats and every tls on the channel carries.
+    List<Object> opened = new ArrayList<>();
     for (Map<String, Object> c : select(lines, "connect", ok())) {
       assertTrue(((String) c.get("remote")).matches("[^/]+/[0-9.]+:\\d+"), c.toString());
-      assertTrue(c.get("ch") instanceof String, c.toString());
+      assertTrue(c.get("ch") instanceof Number, c.toString());
+      opened.add(((Number) c.get("ch")).longValue());
+    }
+    assertEquals(opened.size(), new HashSet<>(opened).size(), "a ch repeated: " + all);
+    List<Object> closed = new ArrayList<>();
+    for (Map<String, Object> c : select(lines, "close")) closed.add(((Number) c.get("ch")).longValue());
+    assertEquals(new TreeSet<>(opened), new TreeSet<>(closed), all);
+    assertEquals(closed.size(), new HashSet<>(closed).size(), "a channel closed twice");
+    for (Map<String, Object> t : select(lines, "tls", ok())) {
+      assertTrue(opened.contains(((Number) t.get("ch")).longValue()), t.toString());
     }
 
     // The shutdown writes one final sample, after everything else, carrying the cumulative

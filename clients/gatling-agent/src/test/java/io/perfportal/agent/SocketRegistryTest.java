@@ -23,7 +23,7 @@ class SocketRegistryTest {
   @Test
   void countsOnlyGatlingsOwnSockets() {
     SocketRegistry r = new SocketRegistry();
-    r.opened("ch-1", 50000, REMOTE);
+    r.opened(1, 50000, REMOTE);
     Map<String, Map<Integer, Integer>> states =
         states(r, 1_000, row(50000, "127.0.0.1:8080", 1), row(50001, "127.0.0.1:8080", 1));
     assertEquals(Map.of(REMOTE, Map.of(1, 1)), states);
@@ -34,14 +34,14 @@ class SocketRegistryTest {
     // Linux lets two sockets share a local port when their remotes differ, so the port alone
     // does not make a row Gatling's.
     SocketRegistry r = new SocketRegistry();
-    r.opened("ch-1", 50000, REMOTE);
+    r.opened(1, 50000, REMOTE);
     assertEquals(Map.of(), states(r, 1_000, row(50000, "10.0.0.9:443", 1)));
   }
 
   @Test
   void matchesAnIpv6RemoteWrittenWithBrackets() {
     SocketRegistry r = new SocketRegistry();
-    r.opened("ch-1", 50000, "localhost/[0:0:0:0:0:0:0:1]:8080");
+    r.opened(1, 50000, "localhost/[0:0:0:0:0:0:0:1]:8080");
     assertEquals(
         Map.of("localhost/[0:0:0:0:0:0:0:1]:8080", Map.of(1, 1)),
         states(r, 1_000, row(50000, "0:0:0:0:0:0:0:1:8080", 1)));
@@ -51,8 +51,8 @@ class SocketRegistryTest {
   void keepsAClosedSocketsTimeWaitFor120Seconds() {
     SocketRegistry r = new SocketRegistry();
     long t = 1_000_000;
-    r.opened("ch-1", 50000, REMOTE);
-    r.closed("ch-1", t);
+    r.opened(1, 50000, REMOTE);
+    r.closed(1, t);
     String row = row(50000, "127.0.0.1:8080", 6);
     assertEquals(Map.of(REMOTE, Map.of(6, 1)), states(r, t + 119_000, row));
     assertEquals(Map.of(), states(r, t + 121_000, row));
@@ -61,9 +61,9 @@ class SocketRegistryTest {
   @Test
   void countsEachRowOnceAndGroupsStatesByRemote() {
     SocketRegistry r = new SocketRegistry();
-    r.opened("a", 50000, REMOTE);
-    r.opened("b", 50002, REMOTE);
-    r.opened("c", 50003, "other/10.0.0.9:443");
+    r.opened(1, 50000, REMOTE);
+    r.opened(2, 50002, REMOTE);
+    r.opened(3, 50003, "other/10.0.0.9:443");
     Map<String, Map<Integer, Integer>> states =
         states(
             r,
@@ -77,9 +77,9 @@ class SocketRegistryTest {
   @Test
   void aPortReusedAfterATimeWaitCountsOnceForTheOpenSocket() {
     SocketRegistry r = new SocketRegistry();
-    r.opened("old", 50000, "old/127.0.0.1:8080");
-    r.closed("old", 1_000);
-    r.opened("new", 50000, "new/127.0.0.1:8080");
+    r.opened(1, 50000, "old/127.0.0.1:8080");
+    r.closed(1, 1_000);
+    r.opened(2, 50000, "new/127.0.0.1:8080");
     assertEquals(
         Map.of("new/127.0.0.1:8080", Map.of(1, 1)),
         states(r, 2_000, row(50000, "127.0.0.1:8080", 1)));
@@ -88,7 +88,7 @@ class SocketRegistryTest {
   @Test
   void aTcp6RowCountsForTheIpv4RemoteItMaps() {
     SocketRegistry r = new SocketRegistry();
-    r.opened("ch-1", 50000, REMOTE);
+    r.opened(1, 50000, REMOTE);
     assertEquals(
         Map.of(REMOTE, Map.of(1, 1)),
         ProcTables.states(
