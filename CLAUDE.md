@@ -155,11 +155,9 @@ The GE report parity agent-and-runner branch (`feat/ge-report-parity`, PR 1
 of `docs/superpowers/specs/2026-10-22-ge-report-parity-design.md`, plan
 `docs/superpowers/plans/2026-10-23-ge-report-parity-pr1-agent-and-runner.md`).
 Unit **259 / 4233 to 260 / 4270**, integration **239 / 3773 to
-241 / 3818**, **e2e stays 207** (621 on three engines). Each was predicted
-from per-file case deltas against the merge base (one new unit file,
-`apps/runner/test/config.test.ts`, and one integration file,
-`packages/persistence/test/run-agent-log.integration.test.ts`; executor-events'
-one `it.each` counted as its three rows) and each collected exactly that.
+241 / 3818**, **e2e stays 207** (621 on three engines), each predicted from
+per-file case deltas (new: `apps/runner/test/config.test.ts`, and
+`packages/persistence/test/run-agent-log.integration.test.ts`) and met exactly.
 
 **A RUN CAN NOW CARRY WHAT `simulation.log` NEVER RECORDS.** A shaded Java
 `-javaagent`, `clients/gatling-agent` (own gate: `./gradlew build --no-daemon`
@@ -187,11 +185,13 @@ real Gatling 3.15.1 run: the two `resolveAll`s, `Bootstrap.connect` scoped by
     `remote` is `host/ip:port`.
   - **One final sample with `"final":true` at shutdown**, so the last partial
     second of counters is not lost.
-  - **The agent is told `max = cap - 1024`**: on reaching `max` it writes one
+  - **The agent is told `max = cap - 1024`**, the cap being
+    `RUNNER_MAX_AGENT_LOG_BYTES` (256 MiB): on reaching `max` it writes one
     closing `capped` line past it, and a file at exactly the cap would
     otherwise be refused whole.
   - **Retention deletes the agent file with the raw log, and its predicate
-    widened** to `bundle_sha256 <> '' OR agent_log_key IS NOT NULL`. After
+    widened** to `bundle_sha256 <> '' OR agent_log_key IS NOT NULL`; the
+    orphan sweep keeps an agent file by its exact `agent_log_key`. After
     retention `agent_log_key` still names the deleted object: a reader gates
     on `raw_log_deleted_at`.
 
@@ -233,9 +233,12 @@ database server" in `parity.e2e.test.ts` (a refused connection in the first
 file after the build), which then passed **22 of 22** alone — the full suite
 was not re-run after that; `pnpm test:e2e --workers=2` read back `Running 207
 tests using 2 workers`, **207 passed, exit 0**; the agent's `./gradlew build`
-exit 0, 56 tests, 1 skipped; and `docker build -f infra/Dockerfile` exit 0
-(its agent stage cached from this branch's first build, when its in-stage
-smoke ran), with the smoke script inside the image exit 0.
+exit 0, 56 tests, 1 skipped; the smoke script on the built jar exit 0; and
+`docker build -f infra/Dockerfile` exit 0 (its agent stage cached from this
+branch's first build, when its in-stage smoke ran), with the smoke script
+inside the image exit 0, its header reading `"os":"Linux"` and
+`"machine":true` — the only evidence here that machine sampling works, since
+the real run was on macOS.
 
 The exact-statistics clean-up branch (`feat/exact-statistics-cleanup`, PR 5
 of `docs/superpowers/specs/2026-10-15-exact-statistics-design.md`, the last).
