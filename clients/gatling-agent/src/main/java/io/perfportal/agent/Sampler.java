@@ -14,17 +14,23 @@ import java.util.function.BiConsumer;
 
 /**
  * Writes one {@code {"t":"s",...}} line a second, on the wall-clock second, from a daemon thread
- * named {@code perfportal-agent-sampler}:
+ * named {@code perfportal-agent-sampler}, and one more at shutdown:
  *
  * <pre>{"t":"s","at":&lt;ms&gt;,"gc":{"&lt;collector&gt;":[count,timeMs],...},"heap":[used,committed,max],
  *  "netty":[direct,heap]|null,"cpu":[8 jiffies],"mem":[totalKb,availableKb],"tcp":{&lt;Tcp fields&gt;},
- *  "bytes":{"&lt;remote&gt;":[out,in]},"states":{"&lt;remote&gt;":{"&lt;st&gt;":n}}}</pre>
+ *  "bytes":{"&lt;remote&gt;":[out,in]},"states":{"&lt;remote&gt;":{"&lt;st&gt;":n}}[,"final":true]}</pre>
  *
  * <p>Every counter is CUMULATIVE -- GC counts and times, CPU jiffies, the TCP counters, bytes --
  * and the reader differences consecutive samples; gauges (heap, Netty, memory, states) are as
  * read. {@code cpu}, {@code mem}, {@code tcp} and {@code states} are machine figures, present
  * only on Linux with a readable {@code /proc} (and each absent for a second it could not be
  * read); {@code netty} is null until the instrumentation has seen a connect.
+ *
+ * <p>The shutdown's sample is stamped with the shutdown's own millisecond and carries {@code
+ * "final":true}; no other sample has the field. It may fall in the same wall-clock second as
+ * the last tick -- the one exception to one sample a second -- and the flag is how a reader
+ * tells it apart: it is a closing reading, whose deltas from the sample before it belong to the
+ * second it is in. It is always the file's last sample.
  *
  * <p>The line is flushed as it is written, so a JVM killed mid-run loses at most one second. The
  * first unexpected error is reported once, through the agent's failure path, and sampling stops:
@@ -80,11 +86,7 @@ final class Sampler {
    * cumulative and only samples carry them, so without this everything since the last tick --
    * up to a second of bytes, GC and CPU -- would never reach the file.
    *
-   * <p>The final sample is stamped with the shutdown's own millisecond and carries {@code
-   * "final":true}. It may fall in the same wall-clock second as the last tick; that is the one
-   * exception to one-sample-per-second, and the flag is how a reader tells it apart: it is a
-   * closing reading, whose deltas from the sample before it belong to the second it is in. It is
-   * always the file's last sample.
+   * <p>The final sample is the class contract's {@code "final":true} one.
    */
   void finish(long joinMillis) {
     try {
