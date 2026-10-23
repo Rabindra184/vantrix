@@ -118,8 +118,10 @@ export const RunnerJobSchema = z.object({
   packageName: z.string().nullable().optional(),
   javaOptions: z.string().nullable(),
   systemProperties: z.record(z.string()),
-  /** Whether the runner loads the Gatling agent for this job. */
-  agentEnabled: z.boolean(),
+  /** Whether the runner loads the Gatling agent for this job. Optional: a pod
+   *  that predates the agent sends none, and the browser drops a body that
+   *  fails this schema — the rolling-deploy rule. Absent reads as true. */
+  agentEnabled: z.boolean().optional(),
   error: z.object({ code: z.string(), message: z.string(), remediation: z.string() }).nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),

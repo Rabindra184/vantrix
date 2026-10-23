@@ -65,7 +65,7 @@ describe('agentEnabled on a runner start', () => {
     expect(RunnerStartByPackageRequestSchema.safeParse({ ...byPackage, agentEnabled: 'false' }).success).toBe(false);
   });
 
-  it('is carried on the job the API answers with', () => {
+  it('is carried on the job the API answers with, and absent still parses', () => {
     const job = {
       id: '00000000-0000-4000-8000-000000000002',
       artifactId: '00000000-0000-4000-8000-000000000003',
@@ -83,6 +83,11 @@ describe('agentEnabled on a runner start', () => {
       updatedAt: '2026-10-23T10:00:00.000Z',
     };
     expect(RunnerJobSchema.parse({ ...job, agentEnabled: false }).agentEnabled).toBe(false);
-    expect(RunnerJobSchema.safeParse(job).success).toBe(false);
+    expect(RunnerJobSchema.parse({ ...job, agentEnabled: true }).agentEnabled).toBe(true);
+    // A body from an API pod that predates the field must still parse: the
+    // browser drops a whole body that fails this schema (the rolling-deploy
+    // rule), so a required field here would blank the jobs list mid-deploy.
+    expect(RunnerJobSchema.parse(job).agentEnabled).toBeUndefined();
+    expect(RunnerJobSchema.safeParse({ ...job, agentEnabled: 'false' }).success).toBe(false);
   });
 });
