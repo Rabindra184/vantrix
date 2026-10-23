@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { createReadStream } from 'node:fs';
+import { stat } from 'node:fs/promises';
 import { Readable } from 'node:stream';
 import { engineOptionsFrom } from '@perfportal/core';
 import {
@@ -27,6 +29,17 @@ import type { RunnerLiveNotifier } from './live-notifier.js';
  *                closed the run and this decided nothing about it
  */
 export type AbandonedOutcome = 'kept' | 'empty' | 'not_claimed';
+
+/**
+ * What `storeAgentLog` did with the Gatling agent's file.
+ *
+ *   stored     the bytes are at `runs/<runId>/agent.ndjson` and the run records
+ *              that key, its sha256 and its size
+ *   absent     there was no file, or an empty one: the agent wrote nothing
+ *   too_large  the file is over `RUNNER_MAX_AGENT_LOG_BYTES`; nothing stored
+ *   failed     the object store or the database refused it; nothing recorded
+ */
+export type AgentLogOutcome = 'stored' | 'absent' | 'too_large' | 'failed';
 
 export class RunnerLiveSink {
   readonly #config: RunnerConfig;
@@ -308,6 +321,50 @@ export class RunnerLiveSink {
     }
     // Stored and finalized is kept, whether or not the queue took it.
     return finalized ? 'kept' : 'empty';
+  }
+
+  /**
+   * ═══ THE AGENT'S FILE, STORED WITH THE RUN — AND NEVER A THROW ═══
+   *
+   * Called after Gatling exits and before the run is closed, so the run's row
+   * names the file by the time the pipeline sees it. Everything here is
+   * best-effort by contract: the agent ADDS connection, DNS and JVM data to a
+   * run, and a missing or unstorable file must not cost anybody the load test
+   * it rode along with. So every failure is an outcome, never an exception;
+   * the executor turns the outcome into a job-log line.
+   *
+   * THE OBJECT BEFORE THE ROW. `recordAgentLog` runs only once the bytes are
+   * durable, so a row never names an object that is not there; a database
+   * failure after the upload leaves an unreferenced object, which is the
+   * cheaper of the two inconsistencies.
+   *
+   * THE CAP IS CHECKED BEFORE A BYTE IS SENT and enforced again while
+   * streaming, by `putStream`'s own meter: the agent is told the same cap and
+   * stops writing at it, so a file above it means something other than the
+   * agent wrote there — and a file still growing would be caught mid-upload.
+   * An empty file is `absent`: there is nothing in it to keep.
+   */
+  async storeAgentLog(file: string): Promise<AgentLogOutcome> {
+    try {
+      const runId = this.#requireRunId();
+      let size: number;
+      try {
+        size = (await stat(file)).size;
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') return 'absent';
+        throw err;
+      }
+      if (size === 0) return 'absent';
+      const cap = this.#config.maxAgentLogBytes;
+      if (size > cap) return 'too_large';
+      const key = `runs/${runId}/agent.ndjson`;
+      const { sha256, bytes } = await this.#blobs.putStream(key, createReadStream(file), cap);
+      await this.#runs.recordAgentLog(runId, { key, sha256, bytes });
+      return 'stored';
+    } catch (err) {
+      console.error(`runner: could not store the Gatling agent file of run ${this.#runId ?? '(not opened)'}:`, err);
+      return 'failed';
+    }
   }
 
   #requireRunId(): string {

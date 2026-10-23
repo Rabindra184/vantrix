@@ -85,6 +85,7 @@ function config(over: Partial<RunnerConfig> = {}): RunnerConfig {
     artifactDir: root,
     workDir: path.join(root, 'work'),
     gatlingHome: null,
+    maxAgentLogBytes: 268_435_456,
     childUid: null,
     childGid: null,
     ...over,
@@ -110,8 +111,14 @@ function artifact(storagePath: string): RunnerArtifactRecord {
   } as unknown as RunnerArtifactRecord;
 }
 
-const prepare = (cfg: RunnerConfig, jarPath: string, over: Partial<RunnerJobRecord> = {}) =>
-  prepareGatlingRun(cfg, job(over), artifact(jarPath), async () => false);
+const AGENT_JAR = '/opt/perfportal/gatling-agent.jar';
+
+const prepare = (
+  cfg: RunnerConfig,
+  jarPath: string,
+  over: Partial<RunnerJobRecord> = {},
+  agent: { jar: string } | null = null,
+) => prepareGatlingRun(cfg, job(over), artifact(jarPath), async () => false, agent);
 
 /** The `-cp` value, which is the argument AFTER the `-cp` flag. */
 function classpathOf(args: readonly string[]): string {
@@ -245,24 +252,90 @@ describe('prepareGatlingRun, jar artifacts', () => {
   });
 });
 
+/**
+ * ═══ THE GATLING AGENT, FIRST ON THE COMMAND LINE ═══
+ *
+ * `-javaagent` is a JVM option, so it must precede `-cp` and the main class;
+ * it goes FIRST of all so no operator option can be mistaken for its argument
+ * string. It writes into the job's own work directory, which
+ * `makeChildWritable` opens to the simulation's uid — so the child can create
+ * the file without the runner pre-creating anything.
+ */
+describe('prepareGatlingRun, the Gatling agent', () => {
+  it("puts the agent first in the JVM arguments, pointing at the job's own file", async () => {
+    const jar = await fatJar();
+
+    const p = await prepare(config(), jar, {}, { jar: AGENT_JAR });
+
+    expect(p.command.args[0]).toBe(
+      `-javaagent:${AGENT_JAR}=out=${p.workDir}/perfportal-agent.ndjson,max=268435456`,
+    );
+    expect(p.agentLogPath).toBe(`${p.workDir}/perfportal-agent.ndjson`);
+    // Still a JVM option: before the classpath and the main class.
+    expect(p.command.args.indexOf('-cp')).toBeGreaterThan(0);
+  });
+
+  it('tells the agent the configured cap, not a fixed one', async () => {
+    const jar = await fatJar();
+
+    const p = await prepare(config({ maxAgentLogBytes: 1_048_576 }), jar, {}, { jar: AGENT_JAR });
+
+    expect(p.command.args[0]).toMatch(/,max=1048576$/);
+  });
+
+  it('adds no agent when given none', async () => {
+    const jar = await fatJar();
+
+    const p = await prepare(config(), jar, {}, null);
+
+    expect(p.command.args.some((arg) => arg.startsWith('-javaagent'))).toBe(false);
+    expect(p.agentLogPath).toBeNull();
+  });
+});
+
+async function bundleArchive(): Promise<string> {
+  // A bundle is a Gatling distribution: all the runner reads out of it is
+  // where `bin/gatling.sh` sits, so an empty script is enough to find home.
+  const dist = path.join(root, 'dist');
+  await mkdir(path.join(dist, 'gatling', 'bin'), { recursive: true });
+  await writeFile(path.join(dist, 'gatling', 'bin', 'gatling.sh'), '#!/bin/sh\n');
+  const archive = path.join(root, 'bundle.tgz');
+  await promisify(execFile)('tar', ['-czf', archive, '-C', dist, 'gatling']);
+  return archive;
+}
+
 describe('prepareGatlingRun, bundle artifacts', () => {
   it('never asks Gatling to generate reports, and puts the flag after the main class', async () => {
-    // A bundle is a Gatling distribution: all the runner reads out of it is
-    // where `bin/gatling.sh` sits, so an empty script is enough to find home.
-    const dist = path.join(root, 'dist');
-    await mkdir(path.join(dist, 'gatling', 'bin'), { recursive: true });
-    await writeFile(path.join(dist, 'gatling', 'bin', 'gatling.sh'), '#!/bin/sh\n');
-    const archive = path.join(root, 'bundle.tgz');
-    await promisify(execFile)('tar', ['-czf', archive, '-C', dist, 'gatling']);
+    const archive = await bundleArchive();
 
     const prepared = await prepareGatlingRun(
       config(),
       job(),
       { kind: 'gatling_bundle', storagePath: archive } as unknown as RunnerArtifactRecord,
       async () => false,
+      null,
     );
 
     expectNoReportsAfterMainClass(prepared.command.args);
     expect(prepared.command.args).toContain('example.ParitySimulation');
+  });
+
+  it('puts the agent first for a bundle too, writing into the work directory, not the bundle', async () => {
+    const archive = await bundleArchive();
+
+    const p = await prepareGatlingRun(
+      config(),
+      job(),
+      { kind: 'gatling_bundle', storagePath: archive } as unknown as RunnerArtifactRecord,
+      async () => false,
+      { jar: AGENT_JAR },
+    );
+
+    // A bundle runs with its Gatling home as the cwd, so the path has to be
+    // absolute and anchored on the work directory the executor cleans up.
+    expect(p.command.args[0]).toBe(
+      `-javaagent:${AGENT_JAR}=out=${p.workDir}/perfportal-agent.ndjson,max=268435456`,
+    );
+    expect(p.agentLogPath).toBe(`${p.workDir}/perfportal-agent.ndjson`);
   });
 });

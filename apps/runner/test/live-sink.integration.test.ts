@@ -1,5 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   createPool,
@@ -72,7 +75,7 @@ async function setup(sinkBlobs: BlobStore = blobs) {
   const queue = { add: vi.fn().mockResolvedValue(undefined) };
   const notifier = { opened: vi.fn(), advanced: vi.fn(), closed: vi.fn() };
   const sink = new RunnerLiveSink({
-    config: { maxLogBytes: 100_000_000 } as RunnerConfig,
+    config: { maxLogBytes: 100_000_000, maxAgentLogBytes: 1_000_000 } as RunnerConfig,
     projects: new ProjectRepository(prisma),
     runs: new RunRepository(prisma),
     blobs: sinkBlobs,
@@ -250,5 +253,41 @@ describe('RunnerLiveSink.closeAbandoned', () => {
     expect(r.status).toBe('parsing');
     expect(r.stream_abandoned_at).toBeNull();
     expect(Number(r.bundle_bytes)).toBe(log.length);
+  });
+});
+
+/**
+ * ═══ THE AGENT'S FILE, AGAINST THE REAL BUCKET AND THE REAL ROW ═══
+ *
+ * The unit cases stub both sides; this is the seam — the object is really at
+ * the key the row names, byte for byte, and the three columns `recordAgentLog`
+ * writes are what the read path will see.
+ */
+describe('RunnerLiveSink.storeAgentLog', () => {
+  it('stores the agent file under the run and records its key, sha256 and size on the run', async () => {
+    const { sink, runId } = await setup();
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'runner-agent-int-'));
+    try {
+      const content = Buffer.from('{"type":"jvm","t":1}\n{"type":"dns","t":2}\n');
+      const file = path.join(dir, 'perfportal-agent.ndjson');
+      await writeFile(file, content);
+
+      await expect(sink.storeAgentLog(file)).resolves.toBe('stored');
+
+      const { rows } = await pool.query<{
+        agent_log_key: string | null;
+        agent_log_sha256: string | null;
+        agent_log_bytes: string | null;
+      }>('SELECT agent_log_key, agent_log_sha256, agent_log_bytes FROM run WHERE id = $1', [runId]);
+      const key = `runs/${runId}/agent.ndjson`;
+      expect(rows[0]).toEqual({
+        agent_log_key: key,
+        agent_log_sha256: createHash('sha256').update(content).digest('hex'),
+        agent_log_bytes: String(content.length),
+      });
+      expect((await blobs.get(key)).equals(content)).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
