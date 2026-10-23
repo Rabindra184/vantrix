@@ -38,19 +38,24 @@ final class VersionGate {
   private VersionGate() {}
 
   static Result check(ClassLoader cl) {
-    String client = version(cl, CLIENT, CLIENT_MARKER);
-    String http = version(cl, HTTP, HTTP_MARKER);
+    Lookup client = version(cl, CLIENT, CLIENT_MARKER);
+    Lookup http = version(cl, HTTP, HTTP_MARKER);
     String reason = refusal(CLIENT, client);
     if (reason == null) reason = refusal(HTTP, http);
-    return new Result(reason, client, http);
+    return new Result(reason, client.version, http.version);
   }
 
-  private static String refusal(String artifact, String version) {
-    if (version == null) return artifact + " was not found on the classpath";
-    if (SUPPORTED.contains(version)) return null;
+  private static String refusal(String artifact, Lookup found) {
+    if (found.version == null) {
+      return found.undetermined == null
+          ? artifact + " was not found on the classpath"
+          : artifact + " is on the classpath but its version could not be determined: "
+              + found.undetermined;
+    }
+    if (SUPPORTED.contains(found.version)) return null;
     return artifact
         + " "
-        + version
+        + found.version
         + " is not supported by agent "
         + AgentMain.VERSION
         + " (supported: "
@@ -58,9 +63,23 @@ final class VersionGate {
         + ")";
   }
 
-  private static String version(ClassLoader cl, String artifact, String marker) {
+  /**
+   * A version, or none: then {@code undetermined} says why when the artifact IS present (its
+   * marker class was found), and is null when it is not on the classpath at all.
+   */
+  private static final class Lookup {
+    final String version;
+    final String undetermined;
+
+    Lookup(String version, String undetermined) {
+      this.version = version;
+      this.undetermined = undetermined;
+    }
+  }
+
+  private static Lookup version(ClassLoader cl, String artifact, String marker) {
     String v = pomVersion(cl, artifact);
-    return v != null ? v : manifestVersion(cl, artifact, marker);
+    return v != null ? new Lookup(v, null) : manifestVersion(cl, artifact, marker);
   }
 
   private static String pomVersion(ClassLoader cl, String artifact) {
@@ -78,20 +97,35 @@ final class VersionGate {
   /**
    * The manifest of the jar (or directory) {@code marker} was found in. Its {@code
    * Implementation-Title} must name {@code artifact}, so a fat jar that bundled Gatling under
-   * its own manifest reads as "not found" rather than as some other artifact's version.
+   * its own manifest reads as present but undetermined rather than as some other artifact's
+   * version.
    */
-  private static String manifestVersion(ClassLoader cl, String artifact, String marker) {
+  private static Lookup manifestVersion(ClassLoader cl, String artifact, String marker) {
     URL classUrl = resource(cl, marker);
-    if (classUrl == null) return null;
+    if (classUrl == null) return new Lookup(null, null);
+    String noPom = "there is no pom.properties for it, and ";
     String s = classUrl.toString();
-    if (!s.endsWith(marker)) return null;
+    if (!s.endsWith(marker)) return new Lookup(null, noPom + "where it was found cannot be read");
     try (InputStream in = open(new URL(s.substring(0, s.length() - marker.length())
         + "META-INF/MANIFEST.MF"))) {
       Attributes main = new Manifest(in).getMainAttributes();
-      if (!artifact.equals(clean(main.getValue(Attributes.Name.IMPLEMENTATION_TITLE)))) return null;
-      return clean(main.getValue(Attributes.Name.IMPLEMENTATION_VERSION));
+      String title = clean(main.getValue(Attributes.Name.IMPLEMENTATION_TITLE));
+      if (!artifact.equals(title)) {
+        return new Lookup(
+            null,
+            noPom
+                + "the jar holding it is not "
+                + artifact
+                + "'s own (its manifest's Implementation-Title is "
+                + (title == null ? "absent" : title)
+                + ")");
+      }
+      String version = clean(main.getValue(Attributes.Name.IMPLEMENTATION_VERSION));
+      return version != null
+          ? new Lookup(version, null)
+          : new Lookup(null, noPom + "its jar's manifest has no Implementation-Version");
     } catch (IOException | RuntimeException e) {
-      return null;
+      return new Lookup(null, noPom + "the jar holding it has no readable manifest");
     }
   }
 

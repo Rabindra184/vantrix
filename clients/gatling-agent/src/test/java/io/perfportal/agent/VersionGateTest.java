@@ -95,6 +95,21 @@ class VersionGateTest {
     assertNull(r.gatlingHttpClient());
   }
 
+  // The reason must be true of what was found: Gatling IS there, in a jar that is not its own.
+  @Test
+  void saysAFatJarsGatlingVersionCouldNotBeDeterminedRatherThanThatItIsMissing() throws Exception {
+    VersionGate.Result r =
+        VersionGate.check(
+            jars(jar("my-simulations", "1.0", "io/gatling/http/client/HttpClient.class")));
+    assertFalse(r.http());
+    assertEquals(
+        "gatling-http-client is on the classpath but its version could not be determined: there"
+            + " is no pom.properties for it, and the jar holding it is not gatling-http-client's"
+            + " own (its manifest's Implementation-Title is my-simulations)",
+        r.reason());
+    assertNull(r.gatlingHttpClient());
+  }
+
   private ClassLoader jars(Path... jars) throws Exception {
     URL[] urls = new URL[jars.length];
     for (int i = 0; i < jars.length; i++) urls[i] = jars[i].toUri().toURL();
