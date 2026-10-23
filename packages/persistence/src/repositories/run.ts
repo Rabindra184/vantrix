@@ -131,7 +131,10 @@ export interface RunRecord {
    * runs/<runId>/agent.ndjson: object key, SHA-256 and size. All three null
    * together for a run with no agent file — an upload, a plugin run, a job
    * that opted out, every run before the agent existed. Set by
-   * `recordAgentLog` and nothing else.
+   * `recordAgentLog` and nothing else. Retention deletes the object with the
+   * raw log and keeps all three — provenance of what was stored — so once
+   * `rawLogDeletedAt` is set the key names a deleted object: a reader gates
+   * on `rawLogDeletedAt`, never on the key alone.
    */
   agentLogKey: string | null;
   agentLogSha256: string | null;

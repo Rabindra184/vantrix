@@ -531,7 +531,9 @@ model Run {
   /// runner at runs/<runId>/agent.ndjson: its object key, SHA-256 and size.
   /// All three null together for a run with no agent file (an upload, a plugin
   /// run, a job that opted out, every run before migration 20261023120000).
-  /// Written by RunRepository.recordAgentLog and by nothing else.
+  /// Written by RunRepository.recordAgentLog and by nothing else. Retention
+  /// deletes the object with the raw log and keeps all three, so after it the
+  /// key names a deleted object: a reader gates on raw_log_deleted_at.
   agentLogKey      String?   @map("agent_log_key")
   agentLogSha256   String?   @map("agent_log_sha256")
   agentLogBytes    BigInt?   @map("agent_log_bytes")
