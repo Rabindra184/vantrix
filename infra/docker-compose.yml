@@ -301,6 +301,16 @@ services:
       RUNNER_ORG_ID: ${PERFPORTAL_RUNNER_ORG_ID:-}
       RUNNER_PROJECT_ID: ${PERFPORTAL_RUNNER_PROJECT_ID:-}
       RUNNER_ARTIFACT_RETENTION_DAYS: ${PERFPORTAL_RUNNER_ARTIFACT_RETENTION_DAYS:-30}
+      # The Gatling agent the runner loads into every simulation JVM. `-` and
+      # NOT `:-`, deliberately: UNSET keeps the image's own jar (the path
+      # infra/Dockerfile's ENV sets), while a value set EMPTY reaches the
+      # runner as "" and turns the agent off install-wide
+      # (apps/runner/src/config.ts reads blank as "no agent"). `:-` would make
+      # an empty .env line and an absent one mean the same thing.
+      RUNNER_AGENT_JAR: ${PERFPORTAL_RUNNER_AGENT_JAR-/opt/perfportal/gatling-agent.jar}
+      # The most the runner stores of one run's agent file. `:-` is safe here:
+      # the runner reads blank as its default (256 MiB), never as a 0-byte cap.
+      RUNNER_MAX_AGENT_LOG_BYTES: ${PERFPORTAL_RUNNER_MAX_AGENT_LOG_BYTES:-}
       RUNNER_CHILD_UID: '20001'
       RUNNER_CHILD_GID: '20001'
     cap_drop: ['ALL']

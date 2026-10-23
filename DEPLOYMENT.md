@@ -286,6 +286,50 @@ first boot. Fill them in, then:
 docker compose -f infra/docker-compose.yml --profile onprem up -d runner
 ```
 
+### The Gatling agent
+
+The on-prem runner loads a Java agent (`clients/gatling-agent`, shipped in the
+image at `/opt/perfportal/gatling-agent.jar`) into **every simulation JVM it
+starts**, as the first `-javaagent` option on the command line. It records
+what Gatling's own `simulation.log` does not: DNS lookups, TCP connects, TLS
+handshakes and connection closes, each response's status code, and once a
+second the JVM's garbage collection, heap, Netty memory and bytes sent and
+received per remote — plus, on Linux, CPU, memory, the kernel's TCP counters
+and the states of Gatling's own sockets. The HTTP events are collected only
+under the Gatling version the agent was written for (3.15.1); under any other
+it records the JVM and machine figures and says in its file why the rest is
+missing. It never stops or fails a simulation. It runs for jobs the on-prem
+runner executes, and for nothing uploaded or sent by the Gradle plugin.
+
+The file is written in the job's work directory during the run and stored in
+the bucket at `runs/<runId>/agent.ndjson` before the run is closed — also for
+a run whose Gatling ended early, never for a cancelled job. A file that cannot
+be stored is a warning in the job's log, not a failed job. It is deleted with
+the run's raw log, by `PERFPORTAL_RAW_LOG_RETENTION_DAYS` above.
+
+| Variable | Notes |
+|---|---|
+| `PERFPORTAL_RUNNER_AGENT_JAR` | The agent jar. **Unset means the image's own.** Set it **empty** to run every job without the agent, install-wide. A path the runner cannot read is a warning in each job's log, and the job runs without it |
+| `PERFPORTAL_RUNNER_MAX_AGENT_LOG_BYTES` | The most stored for one run, in bytes. Empty, or anything that is not a whole number larger than 1024, means 268435456 (256 MiB). The agent stops writing as its file nears it and ends the file with a `capped` line |
+
+Empty and unset differ for `PERFPORTAL_RUNNER_AGENT_JAR` on purpose: the
+compose file reads it as `${PERFPORTAL_RUNNER_AGENT_JAR-…}`, so a line
+`PERFPORTAL_RUNNER_AGENT_JAR=` with nothing after it is how the agent is
+switched off. Apply either change with
+`docker compose -f infra/docker-compose.yml --profile onprem up -d runner`.
+
+**One job at a time:** New on-prem run → Advanced → untick *Collect
+connection, DNS and JVM data* (through the API, `"agentEnabled": false` in
+either start request: the upload's metadata or the start-from-package body).
+A retry keeps the original job's choice.
+
+**What it costs.** Storage: about one line per response plus one a second — a
+66-second run of 895 requests stored 81,361 bytes — and never more than the
+cap above per run. In the measured JVM, on that run: Gatling's CPU time rose
+from 7.97 s to 8.96 s (about 12%) and its peak memory from about 277 MB to
+about 311 MB; wall-clock time, which the injection profile sets, was 63.8 s
+against 64.6 s.
+
 ### Raw logs and verification
 
 | Variable | Notes |
