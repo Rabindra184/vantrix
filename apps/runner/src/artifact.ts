@@ -5,7 +5,7 @@ import { promisify } from 'node:util';
 import type { GatlingJarFacts } from '@perfportal/core';
 import type { RunnerArtifactRecord, RunnerJobRecord } from '@perfportal/persistence';
 import { readGatlingJar } from '@perfportal/storage';
-import type { RunnerConfig } from './config.js';
+import { AGENT_CAP_HEADROOM_BYTES, type RunnerConfig } from './config.js';
 import { RunnerExecutionError } from './errors.js';
 import type { ProcessCommand } from './process.js';
 import { spawnAndWait } from './process.js';
@@ -56,7 +56,7 @@ export async function prepareGatlingRun(
   const agentLogPath = agent === null ? null : path.join(workDir, AGENT_LOG_FILENAME);
   const agentOptions = agent === null || agentLogPath === null
     ? []
-    : [agentArg(agent.jar, agentLogPath, config.maxAgentLogBytes)];
+    : [agentArg(agent.jar, agentLogPath, config.maxAgentLogBytes - AGENT_CAP_HEADROOM_BYTES)];
   await rm(workDir, { recursive: true, force: true });
   await mkdir(resultsDir, { recursive: true });
 
@@ -195,6 +195,12 @@ const DEFAULT_JVM_OPTIONS = [
  * main class like every other; FIRST of all, so nothing an operator puts in
  * `javaOptions` sits between the JVM and it. The agent's own arguments are
  * `out=<file>,max=<bytes>` (see `clients/gatling-agent`).
+ *
+ * `max` IS THE RUNNER'S CAP LESS `AGENT_CAP_HEADROOM_BYTES`. On reaching `max`
+ * the agent writes one `{"t":"capped","at":<ms>}` line WITHOUT reserving room
+ * for it, so a capped file ends up to ~35 bytes past `max`. Telling it the
+ * runner's own cap would make exactly the longest runs — the ones that hit it —
+ * land over the cap and be thrown away whole.
  *
  * THE FILE LIVES IN THE JOB'S WORK DIRECTORY, AS AN ABSOLUTE PATH. The
  * simulation runs as `RUNNER_CHILD_UID`, and `makeChildWritable` has already

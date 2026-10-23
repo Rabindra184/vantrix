@@ -37,4 +37,10 @@ describe('loadRunnerConfig, the Gatling agent', () => {
     expect(loadRunnerConfig({ ...BASE, RUNNER_MAX_AGENT_LOG_BYTES: '' }).maxAgentLogBytes).toBe(268_435_456);
     expect(loadRunnerConfig({ ...BASE, RUNNER_MAX_AGENT_LOG_BYTES: 'lots' }).maxAgentLogBytes).toBe(268_435_456);
   });
+
+  it('refuses a cap no larger than the headroom the agent is given under it', () => {
+    // The agent is told `cap - 1024`; a cap of 1024 would tell it zero.
+    expect(loadRunnerConfig({ ...BASE, RUNNER_MAX_AGENT_LOG_BYTES: '1024' }).maxAgentLogBytes).toBe(268_435_456);
+    expect(loadRunnerConfig({ ...BASE, RUNNER_MAX_AGENT_LOG_BYTES: '1025' }).maxAgentLogBytes).toBe(1025);
+  });
 });

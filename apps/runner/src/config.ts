@@ -37,9 +37,11 @@ export interface RunnerConfig {
    */
   agentJar: string | null;
   /**
-   * The most the agent may write (`max=` in its arguments), and the most the
-   * runner will store; a file above it is not stored. `RUNNER_MAX_AGENT_LOG_BYTES`,
-   * default 256 MiB.
+   * The most the runner will store of the agent's file; a file above it is not
+   * stored. The agent itself is told `max = this - AGENT_CAP_HEADROOM_BYTES`,
+   * because on reaching its `max` it writes one closing `capped` line past it.
+   * `RUNNER_MAX_AGENT_LOG_BYTES`, default 256 MiB; a value not larger than the
+   * headroom falls back to the default.
    */
   maxAgentLogBytes: number;
   scope: {
@@ -72,6 +74,9 @@ function numberOr(value: string | undefined, fallback: number): number {
 
 const DEFAULT_MAX_AGENT_LOG_BYTES = 268_435_456;
 
+/** Reserves room under the runner's cap for the agent's closing `{"t":"capped",…}` line, which it writes past its own `max`. */
+export const AGENT_CAP_HEADROOM_BYTES = 1024;
+
 /**
  * A whole number of bytes above zero, or the fallback. Blank is unset: compose
  * passes an unset variable as `""`, and `Number('')` is 0 — a cap of nothing,
@@ -81,6 +86,16 @@ function positiveIntegerOr(value: string | undefined, fallback: number): number 
   if (value === undefined || value.trim() === '') return fallback;
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+/**
+ * The agent file cap: a positive integer LARGER than the headroom, or the
+ * default. The agent is told `cap - AGENT_CAP_HEADROOM_BYTES`, so a cap at or
+ * under the headroom would hand it a `max` of zero or less.
+ */
+function agentLogCap(value: string | undefined): number {
+  const cap = positiveIntegerOr(value, DEFAULT_MAX_AGENT_LOG_BYTES);
+  return cap > AGENT_CAP_HEADROOM_BYTES ? cap : DEFAULT_MAX_AGENT_LOG_BYTES;
 }
 
 function optionalNonEmpty(env: NodeJS.ProcessEnv, key: string): string | null {
@@ -113,7 +128,7 @@ export function loadRunnerConfig(env: NodeJS.ProcessEnv = process.env): RunnerCo
     javaBin: env.JAVA_BIN ?? 'java',
     gatlingHome: optionalNonEmpty(env, 'RUNNER_GATLING_HOME'),
     agentJar: optionalNonEmpty(env, 'RUNNER_AGENT_JAR'),
-    maxAgentLogBytes: positiveIntegerOr(env.RUNNER_MAX_AGENT_LOG_BYTES, DEFAULT_MAX_AGENT_LOG_BYTES),
+    maxAgentLogBytes: agentLogCap(env.RUNNER_MAX_AGENT_LOG_BYTES),
     scope: {
       orgId: required(env, 'RUNNER_ORG_ID'),
       projectId: optionalNonEmpty(env, 'RUNNER_PROJECT_ID'),

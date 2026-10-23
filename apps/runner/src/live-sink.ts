@@ -339,10 +339,12 @@ export class RunnerLiveSink {
    * cheaper of the two inconsistencies.
    *
    * THE CAP IS CHECKED BEFORE A BYTE IS SENT and enforced again while
-   * streaming, by `putStream`'s own meter: the agent is told the same cap and
-   * stops writing at it, so a file above it means something other than the
-   * agent wrote there — and a file still growing would be caught mid-upload.
-   * An empty file is `absent`: there is nothing in it to keep.
+   * streaming, by `putStream`'s own meter. The agent is told
+   * `cap - AGENT_CAP_HEADROOM_BYTES` and, once it reaches that, writes a single
+   * closing `capped` line past it — so a capped agent file lands under the cap
+   * with room to spare, and a file above the cap is not one the agent wrote
+   * under these arguments. A file still growing is caught mid-upload. An empty
+   * file is `absent`: there is nothing in it to keep.
    */
   async storeAgentLog(file: string): Promise<AgentLogOutcome> {
     try {

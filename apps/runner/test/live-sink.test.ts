@@ -204,6 +204,28 @@ describe('RunnerLiveSink.storeAgentLog', () => {
     await expect(sink.storeAgentLog(file)).resolves.toBe('stored');
   });
 
+  /**
+   * A file shaped exactly as the agent leaves one when it hits its `max`: lines
+   * up to `max` (the runner's cap less 1024), then the closing `capped` line
+   * written past it. It must be stored — before the headroom, the agent was told
+   * the full cap, and a capped file landed ~35 bytes over it and was discarded.
+   */
+  it('stores a capped agent file, its closing capped line included', async () => {
+    const cap = 4096;
+    const agentMax = cap - 1024;
+    const { sink, stored } = await agentSink({ cap });
+    const marker = Buffer.from('{"t":"capped","at":1761234567890}\n');
+    const body = Buffer.alloc(agentMax, 'x');
+    body.write('\n', agentMax - 1);
+    const content = Buffer.concat([body, marker]);
+    expect(content.length).toBe(agentMax + marker.length);
+    const file = path.join(dir, 'perfportal-agent.ndjson');
+    await writeFile(file, content);
+
+    await expect(sink.storeAgentLog(file)).resolves.toBe('stored');
+    expect(stored[0]?.subarray(-marker.length).toString()).toContain('"t":"capped"');
+  });
+
   it('does not store an agent file larger than the cap', async () => {
     const { sink, putStream, recordAgentLog } = await agentSink({ cap: 512 });
     const { file } = await agentFile(513);

@@ -267,20 +267,27 @@ describe('prepareGatlingRun, the Gatling agent', () => {
 
     const p = await prepare(config(), jar, {}, { jar: AGENT_JAR });
 
+    // max is the runner's cap less 1024 bytes of headroom (see below).
     expect(p.command.args[0]).toBe(
-      `-javaagent:${AGENT_JAR}=out=${p.workDir}/perfportal-agent.ndjson,max=268435456`,
+      `-javaagent:${AGENT_JAR}=out=${p.workDir}/perfportal-agent.ndjson,max=268434432`,
     );
     expect(p.agentLogPath).toBe(`${p.workDir}/perfportal-agent.ndjson`);
     // Still a JVM option: before the classpath and the main class.
     expect(p.command.args.indexOf('-cp')).toBeGreaterThan(0);
   });
 
-  it('tells the agent the configured cap, not a fixed one', async () => {
+  /**
+   * On reaching its `max` the agent writes one closing `{"t":"capped",…}` line
+   * past it, without reserving room. Told the runner's own cap, a capped file
+   * — the longest runs, with the most data — would land over that cap and be
+   * thrown away whole. So the agent is told the cap less 1024 bytes.
+   */
+  it('tells the agent the configured cap less room for its closing capped line', async () => {
     const jar = await fatJar();
 
     const p = await prepare(config({ maxAgentLogBytes: 1_048_576 }), jar, {}, { jar: AGENT_JAR });
 
-    expect(p.command.args[0]).toMatch(/,max=1048576$/);
+    expect(p.command.args[0]).toMatch(/,max=1047552$/);
   });
 
   it('adds no agent when given none', async () => {
@@ -334,7 +341,7 @@ describe('prepareGatlingRun, bundle artifacts', () => {
     // A bundle runs with its Gatling home as the cwd, so the path has to be
     // absolute and anchored on the work directory the executor cleans up.
     expect(p.command.args[0]).toBe(
-      `-javaagent:${AGENT_JAR}=out=${p.workDir}/perfportal-agent.ndjson,max=268435456`,
+      `-javaagent:${AGENT_JAR}=out=${p.workDir}/perfportal-agent.ndjson,max=268434432`,
     );
     expect(p.agentLogPath).toBe(`${p.workDir}/perfportal-agent.ndjson`);
   });
