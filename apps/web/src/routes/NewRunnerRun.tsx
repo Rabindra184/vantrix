@@ -102,6 +102,9 @@ type FormState = {
   test: string;
   javaOptions: string;
   systemProperties: string;
+  /** Whether the runner loads the Gatling agent that records connection, DNS
+   *  and JVM data. On by default, as the contract's own default is. */
+  agentEnabled: boolean;
 };
 
 const initialForm: FormState = {
@@ -119,6 +122,7 @@ const initialForm: FormState = {
   test: '',
   javaOptions: '',
   systemProperties: '',
+  agentEnabled: true,
 };
 
 const activeRunnerStatuses = new Set<RunnerJobStatus>(['queued', 'starting', 'running', 'closing']);
@@ -469,9 +473,7 @@ function NewRunnerRunProject({
           test,
           javaOptions: form.javaOptions.trim() ? form.javaOptions.trim() : undefined,
           systemProperties: parsedProps.value,
-          // The contract's own default, stated: the form has no opt-out control
-          // yet, and the required field is what makes it say so.
-          agentEnabled: true,
+          agentEnabled: form.agentEnabled,
         },
       });
       return;
@@ -500,7 +502,7 @@ function NewRunnerRunProject({
         // this form's copy of the rule would make the client the authority on
         // a name the server has to reconcile with the database anyway.
         package: form.packageName.trim() ? form.packageName.trim() : undefined,
-        agentEnabled: true,
+        agentEnabled: form.agentEnabled,
       },
     });
   };
@@ -536,13 +538,17 @@ function NewRunnerRunProject({
 
      A Gatling version describes a FILE, so it neither shows nor counts outside
      upload mode: a value typed for an upload and abandoned for a package must
-     not sit in the count of a disclosure that does not contain it. */
-  const advancedCount = [
-    form.commitSha,
-    mode === 'upload' ? form.gatlingVersion : '',
-    form.javaOptions,
-    form.systemProperties,
-  ].filter((value) => value.trim() !== '').length;
+     not sit in the count of a disclosure that does not contain it.
+
+     The agent box counts when UNCHECKED: off is the non-default choice, and
+     the one that would be forgotten behind a closed summary. */
+  const advancedCount =
+    [
+      form.commitSha,
+      mode === 'upload' ? form.gatlingVersion : '',
+      form.javaOptions,
+      form.systemProperties,
+    ].filter((value) => value.trim() !== '').length + (form.agentEnabled ? 0 : 1);
 
   return (
     <div className="flex flex-col gap-6">
@@ -843,6 +849,21 @@ function NewRunnerRunProject({
                         onBlur={() => leave(PROPERTIES_FIELD)}
                       />
                     </FormField>
+
+                    {/* The label wraps the box, the shape every checkbox here
+                        takes, and is the whole of it: it says what is
+                        collected, and unchecking it is the opt-out. */}
+                    <label className="flex items-center gap-2 text-[0.8125rem] font-medium text-primary">
+                      <input
+                        type="checkbox"
+                        checked={form.agentEnabled}
+                        onChange={(event) => {
+                          const { checked } = event.target;
+                          setForm((current) => ({ ...current, agentEnabled: checked }));
+                        }}
+                      />
+                      Collect connection, DNS and JVM data
+                    </label>
                   </div>
                 </details>
               </fieldset>
