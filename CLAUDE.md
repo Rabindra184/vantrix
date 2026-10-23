@@ -128,9 +128,9 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **259 files / 4233 tests**, it
+`nvm use` first, and if a run reports fewer than **260 files / 4270 tests**, it
 did not run everything — nor did an integration run reporting fewer than
-**239 files / 3773 tests**, an e2e run fewer than **207**, or a
+**241 files / 3818 tests**, an e2e run fewer than **207**, or a
 `pnpm test:e2e:cross` run fewer than **621** (207 on each of three engines).
 (Update those numbers when a sub-project adds suites, or the next reader
 calibrates against a stale floor and a silently-skipped run looks like a
@@ -150,6 +150,110 @@ still Chromium and still 102; `pnpm test:e2e:cross` was 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The GE report parity agent-and-runner branch (`feat/ge-report-parity`, PR 1
+of `docs/superpowers/specs/2026-10-22-ge-report-parity-design.md`, plan
+`docs/superpowers/plans/2026-10-23-ge-report-parity-pr1-agent-and-runner.md`).
+Unit **259 / 4233 to 260 / 4270**, integration **239 / 3773 to
+241 / 3818**, **e2e stays 207** (621 on three engines). Each was predicted
+from per-file case deltas against the merge base (one new unit file,
+`apps/runner/test/config.test.ts`, and one integration file,
+`packages/persistence/test/run-agent-log.integration.test.ts`; executor-events'
+one `it.each` counted as its three rows) and each collected exactly that.
+
+**A RUN CAN NOW CARRY WHAT `simulation.log` NEVER RECORDS.** A shaded Java
+`-javaagent`, `clients/gatling-agent` (its own gate:
+`cd clients/gatling-agent && ./gradlew build --no-daemon`, 8 classes /
+56 tests, one Linux-only case skipped on macOS), writes `perfportal-agent/1`
+NDJSON — a header, `dns`/`connect`/`tls`/`close`/`status` events and one `s`
+sample a second (GC, heap, Netty memory, bytes per remote; CPU, memory and
+TCP states on Linux only, `"machine":false` elsewhere). The on-prem runner
+puts `-javaagent:<RUNNER_AGENT_JAR>=out=<work>/perfportal-agent.ndjson,max=…`
+FIRST in the JVM args and stores the file at `runs/<runId>/agent.ndjson`
+(`run.agent_log_key/_sha256/_bytes`, migration `20261023120000_run_agent_log`)
+BEFORE closing the run; an unreadable jar, a missing file, a refused upload or
+a file over `RUNNER_MAX_AGENT_LOG_BYTES` (256 MiB) is a job-log warning and
+never fails a job. `runner_job.agent_enabled` is the per-job opt-out (the
+form's "Collect connection, DNS and JVM data", default on). The image ships the
+jar at `/opt/perfportal/gatling-agent.jar`, and `infra/test/agent-jar-smoke.sh`
+fails the image build on an unrelocated Byte Buddy or a premain that never
+writes. The hook points were each observed in a real Gatling 3.15.1 run:
+Gatling's two `resolveAll`s, `Bootstrap.connect` scoped by
+`openNewChannelRec`, a meter added at connect's EXIT (a listener there still
+precedes Gatling's own and the ClientHello), `installSslHandler`,
+`GatlingHttpListener.onHttpResponse`, and `HttpEngine.warmUp` as the
+warm-up flag.
+
+**RULINGS WORTH KNOWING, EACH A MEASUREMENT:**
+
+  - **Gatling's real 3.15.1 jars carry no `pom.properties`** — they are
+    sbt-built — so a pom-only version gate refused the real runtime every time
+    while fake-pom fixtures passed. The gate falls back to the manifest of the
+    jar holding a marker class, accepted only when its `Implementation-Title`
+    names that artifact.
+  - **TLS hooks `DefaultHttpClient.installSslHandler`, not
+    `SslHandlers.newSslHandler`**: only the caller has the channel, and a
+    `remote` is `host/ip:port`.
+  - **One final sample with `"final":true` at shutdown**, so the last partial
+    second of counters is not lost.
+  - **The agent is told `max = cap - 1024`**: on reaching `max` it writes one
+    closing `capped` line past it, and a file at exactly the cap would
+    otherwise be refused whole.
+  - **Retention deletes the agent file with the raw log, and its predicate
+    widened** to `bundle_sha256 <> '' OR agent_log_key IS NOT NULL` — a run
+    that never assembled a log can still own an agent file. The orphan sweep
+    keeps it by its exact key. After retention `agent_log_key` still names the
+    deleted object: a reader gates on `raw_log_deleted_at`.
+
+**RED-VERIFIED, AND TWO WERE NOT WHAT THEY SEEMED.** The manifest fallback
+removed fails four cases (both real-jar ones). The brief's "meter added in a
+connect listener" mutation PASSED — Gatling registers its own listener after
+`connect` returns — and the mutation that really runs late (the meter added on
+the event loop) passed a 200-byte ClientHello floor narrowly, so the floor is
+512 (BoringSSL pads every ClientHello to it) and that mutation fails. The final
+sample removed fails only the final-position assertion; the byte floor alone
+would not see it. The runner handing the agent the whole cap fails three
+`artifact.test.ts` cases on `max=268435456`; an ignored opt-out, and the store
+moved after `close`, each fail their own cases.
+
+**THE REAL RUN**, on a scratch database (`perfportal_agent_real`), Redis db 11
+and bucket `perfportal-agent-real`, this tree's API, worker and runner from
+`dist`, Java 21, the runner lending `~/.perfportal/gatling-home` to a thin
+`gatlingEnterprisePackage` jar of `ParitySimulation` (1.8 MB). Job `ffb470c9`
+→ run `afc474b5`: `complete`, Gatling exit 2 (its deliberate Search p95
+assertion), **895 requests / 871 OK / 24 KO**; `agent_log_key`
+`runs/afc474b5…/agent.ndjson`, **81,361 bytes, the stored object's sha256
+equal to `agent_log_sha256`**; header `"http":true,"machine":false`;
+**895 `status` lines** (871 × 200, the run's OK count, and 13 × 500 plus
+11 × 503, its 24 KO);
+22 connects, all ok, **every one with a close**; 66 one-second samples over
+66 seconds with none missing, plus the final. The one `dns`, one `tls` and
+first connect are Gatling's own warm-up request to `gatling.io:443`, tagged
+`"warmup":true` and absent from the 895. Job `11983b45` → run `1704160a`
+with `agentEnabled: false`: also 895 / 871 / 24, `agent_log_key` null, no
+object, and no `-javaagent` in its job log's command line.
+
+**WHAT IT COSTS, MEASURED**: the runner's own command by hand, three
+alternating pairs on an idle machine (load ~2): Gatling user+sys **7.97 s
+without, 8.96 s with** (+1.0 s, +12%, most of it instrumentation at start-up),
+wall **63.8 s against 64.6 s** (one 66.1 s outlier; the injection profile
+fixes the wall clock), peak RSS **~277 MB against ~311 MB**. Every hand run's
+agent file again held exactly 895 `status` lines.
+
+**WHAT WAS RUN**, Node v22.19.0, `perfportal_agent`, Redis db 12 flushed
+before integration and e2e, every `.tsbuildinfo` deleted before typecheck:
+`pnpm build`, `typecheck` and `lint` exit 0 by their own exit codes;
+`test:unit` **260 / 4270**, exit 0, zero `Errors` lines; `test:integration`
+COLLECTED **241 / 3818** and exited 1 on ONE case, a P1001 "Can't reach
+database server" in `parity.e2e.test.ts` (a refused connection in the first
+file after the build, not an assertion about a value), which then passed **22
+of 22** alone; `pnpm test:e2e --workers=2` read back `Running 207 tests using
+2 workers`, **207 passed, exit 0**; the agent's `./gradlew build` exit 0, **8
+classes / 56 tests**, 1 skipped, and the smoke script on its jar exit 0; and
+`docker build -f infra/Dockerfile` exit 0 (the agent stage cached from its
+first build on this branch, when its in-stage smoke ran), with the smoke
+script inside the image exit 0 (`"java":"21.0.12.1","os":"Linux"`,
+`"machine":true`).
 
 The exact-statistics clean-up branch (`feat/exact-statistics-cleanup`, PR 5
 of `docs/superpowers/specs/2026-10-15-exact-statistics-design.md`, the last).
