@@ -296,9 +296,11 @@ handshakes and connection closes, each response's status code, and once a
 second the JVM's garbage collection, heap, Netty memory and bytes sent and
 received per remote — plus, on Linux, CPU, memory, the kernel's TCP counters
 and the states of Gatling's own sockets. The HTTP events are collected only
-under the Gatling version the agent was written for (3.15.1); under any other
-it records the JVM and machine figures and says in its file why the rest is
-missing. It never stops or fails a simulation. It runs for jobs the on-prem
+under the Gatling version the agent was written for (3.15.1), and so are the
+per-remote bytes, the socket states and the Netty memory figures, which come
+from the same instrumentation. Under any other version it records garbage
+collection and heap, plus CPU, memory and the kernel's TCP counters on Linux,
+and says in its file why the rest is missing. It never stops or fails a simulation. It runs for jobs the on-prem
 runner executes, and for nothing uploaded or sent by the Gradle plugin.
 
 The file is written in the job's work directory during the run and stored in
