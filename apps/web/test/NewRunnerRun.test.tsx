@@ -83,6 +83,7 @@ vi.mock('../src/api/runner.js', async (importOriginal) => ({
       commitSha: null,
       javaOptions: null,
       systemProperties: {},
+      agentEnabled: true,
       error: null,
       createdAt: new Date('2026-08-20T00:00:00.000Z').toISOString(),
       updatedAt: new Date('2026-08-20T00:00:00.000Z').toISOString(),
@@ -113,6 +114,7 @@ vi.mock('../src/api/runner.js', async (importOriginal) => ({
       testSlug: null,
       javaOptions: null,
       systemProperties: {},
+      agentEnabled: true,
       error: null,
       createdAt: new Date('2026-08-20T00:00:00.000Z').toISOString(),
       updatedAt: new Date('2026-08-20T00:00:00.000Z').toISOString(),
@@ -312,6 +314,7 @@ describe('NewRunnerRun', () => {
         artifactKind: 'gatling_jar',
         simulationClass: 'example.BetaSimulation',
         systemProperties: {},
+        agentEnabled: true,
       },
     });
   });
@@ -1234,6 +1237,7 @@ describe('NewRunnerRun — starting from a package', () => {
       simulationClass: 'example.BasicSimulation',
       name: 'nightly',
       systemProperties: {},
+      agentEnabled: true,
     });
   });
 
@@ -1276,6 +1280,7 @@ describe('NewRunnerRun — starting from a package', () => {
       test: 'checkout-soak',
       javaOptions: '-Xmx2g',
       systemProperties: { users: '5' },
+      agentEnabled: true,
     });
     expect(RunnerStartByPackageRequestSchema.safeParse(wire).success).toBe(true);
   });
@@ -1291,7 +1296,9 @@ describe('NewRunnerRun — starting from a package', () => {
     const wire = JSON.parse(
       JSON.stringify(startRunnerRunFromPackageMock.mock.calls[0]?.[1] ?? {}),
     ) as Record<string, unknown>;
-    expect(Object.keys(wire).sort()).toEqual(['name', 'packageId', 'simulationClass', 'systemProperties']);
+    expect(Object.keys(wire).sort()).toEqual([
+      'agentEnabled', 'name', 'packageId', 'simulationClass', 'systemProperties',
+    ]);
   });
 
   it('sends a typed simulation class when the package lists none', async () => {
@@ -1544,6 +1551,7 @@ describe('NewRunnerRun — the jobs table names each job’s package', () => {
         testSlug: null,
         javaOptions: null,
         systemProperties: {},
+        agentEnabled: true,
         error: null,
         createdAt,
         updatedAt: createdAt,
@@ -1762,6 +1770,7 @@ describe('NewRunnerRun — who may start, cancel and retry a run', () => {
         testSlug: null,
         javaOptions: null,
         systemProperties: {},
+        agentEnabled: true,
         error: null,
         createdAt: at,
         updatedAt: at,

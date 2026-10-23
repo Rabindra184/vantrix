@@ -411,7 +411,15 @@ function describeIssues(
 function jobFields(
   meta: Pick<
     RunnerStartMetadata,
-    'name' | 'simulationClass' | 'environment' | 'branch' | 'commitSha' | 'test' | 'javaOptions' | 'systemProperties'
+    | 'name'
+    | 'simulationClass'
+    | 'environment'
+    | 'branch'
+    | 'commitSha'
+    | 'test'
+    | 'javaOptions'
+    | 'systemProperties'
+    | 'agentEnabled'
   >,
 ) {
   return {
@@ -423,6 +431,7 @@ function jobFields(
     testSlug: meta.test ?? null,
     javaOptions: meta.javaOptions ?? null,
     systemProperties: meta.systemProperties,
+    agentEnabled: meta.agentEnabled,
   };
 }
 
@@ -503,6 +512,7 @@ function toJob(job: RunnerJobRecord, artifact: RunnerArtifactRecord) {
     packageName: artifact.packageName,
     javaOptions: job.javaOptions,
     systemProperties: job.systemProperties,
+    agentEnabled: job.agentEnabled,
     error: job.error,
     createdAt: job.createdAt.toISOString(),
     updatedAt: job.updatedAt.toISOString(),

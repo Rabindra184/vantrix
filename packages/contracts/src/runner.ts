@@ -46,6 +46,14 @@ const SystemPropertiesSchema = z.record(z.string().trim().max(500)).superRefine(
   }
 });
 
+/**
+ * Whether the on-prem runner loads the Gatling agent for this job. ON unless
+ * the requester says otherwise, so a caller that predates the field gets the
+ * agent. One definition for BOTH start routes below, so the upload and the
+ * start-from-package cannot drift into disagreeing about the default.
+ */
+const AgentEnabledSchema = z.boolean().default(true);
+
 export const RunnerStartMetadataSchema = OptionalRunMetadataSchema.extend({
   name: z.string().trim().min(1).max(160),
   artifactKind: RunnerArtifactKindSchema.default('gatling_jar'),
@@ -56,6 +64,7 @@ export const RunnerStartMetadataSchema = OptionalRunMetadataSchema.extend({
   /** Which package the uploaded file becomes a version of; absent means the
    *  package named by the file's name stem. Created when it does not exist. */
   package: PackageNameSchema.optional(),
+  agentEnabled: AgentEnabledSchema,
 });
 export type RunnerStartMetadata = z.infer<typeof RunnerStartMetadataSchema>;
 
@@ -70,6 +79,7 @@ export const RunnerStartByPackageRequestSchema = OptionalRunMetadataSchema.exten
   simulationClass: z.string().trim().min(1).max(300),
   javaOptions: z.string().trim().max(2_000).optional(),
   systemProperties: SystemPropertiesSchema.default({}),
+  agentEnabled: AgentEnabledSchema,
 }).strict();
 export type RunnerStartByPackageRequest = z.infer<typeof RunnerStartByPackageRequestSchema>;
 
@@ -108,6 +118,8 @@ export const RunnerJobSchema = z.object({
   packageName: z.string().nullable().optional(),
   javaOptions: z.string().nullable(),
   systemProperties: z.record(z.string()),
+  /** Whether the runner loads the Gatling agent for this job. */
+  agentEnabled: z.boolean(),
   error: z.object({ code: z.string(), message: z.string(), remediation: z.string() }).nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),

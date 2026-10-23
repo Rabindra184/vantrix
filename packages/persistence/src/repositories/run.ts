@@ -126,6 +126,16 @@ export interface RunRecord {
    * run with a deleted raw log can no longer be verified or recomputed.
    */
   rawLogDeletedAt: Date | null;
+  /**
+   * The Gatling agent's raw NDJSON file, stored by the on-prem runner at
+   * runs/<runId>/agent.ndjson: object key, SHA-256 and size. All three null
+   * together for a run with no agent file — an upload, a plugin run, a job
+   * that opted out, every run before the agent existed. Set by
+   * `recordAgentLog` and nothing else.
+   */
+  agentLogKey: string | null;
+  agentLogSha256: string | null;
+  agentLogBytes: number | null;
 }
 
 export interface CreateRunInput {
@@ -208,6 +218,9 @@ interface RunRow {
   recomputeError: string | null;
   recomputedAt: Date | null;
   rawLogDeletedAt: Date | null;
+  agentLogKey: string | null;
+  agentLogSha256: string | null;
+  agentLogBytes: bigint | null;
 }
 
 /**
@@ -269,6 +282,11 @@ function toRecord(row: RunRow): RunRecord {
     recomputeError: row.recomputeError as RunRecord['recomputeError'],
     recomputedAt: row.recomputedAt,
     rawLogDeletedAt: row.rawLogDeletedAt,
+    agentLogKey: row.agentLogKey,
+    agentLogSha256: row.agentLogSha256,
+    // Null stays null: Number(null) is 0, and a zero-byte agent file is a
+    // different claim from no agent file at all.
+    agentLogBytes: row.agentLogBytes === null ? null : Number(row.agentLogBytes),
   };
 }
 
@@ -923,6 +941,21 @@ export class RunRepository {
     });
   }
 
+  /**
+   * Records where the run's agent file is stored, its SHA-256 and its size,
+   * once the on-prem runner has written it. Unguarded by status: the runner
+   * stores the file when Gatling exits, which may be before or after the run
+   * leaves 'running', and the three facts describe bytes that exist either
+   * way. Throws when the run does not exist, rather than reporting success
+   * for a reference nothing holds.
+   */
+  async recordAgentLog(runId: string, input: { key: string; sha256: string; bytes: number }): Promise<void> {
+    await this.prisma.run.update({
+      where: { id: runId },
+      data: { agentLogKey: input.key, agentLogSha256: input.sha256, agentLogBytes: BigInt(input.bytes) },
+    });
+  }
+
   async findById(scope: TenantScope, id: string): Promise<RunRecord | null> {
     const row = await this.prisma.run.findFirst({
       where: {
@@ -1226,6 +1259,8 @@ export class RunRepository {
         r.tool_assertions AS "toolAssertions", r.stats_method AS "statsMethod",
         r.recompute_error AS "recomputeError", r.recomputed_at AS "recomputedAt",
         r.raw_log_deleted_at AS "rawLogDeletedAt",
+        r.agent_log_key AS "agentLogKey", r.agent_log_sha256 AS "agentLogSha256",
+        r.agent_log_bytes AS "agentLogBytes",
         r.note, r.note_updated_at AS "noteUpdatedAt", r.note_updated_by AS "noteUpdatedBy",
         nu.name AS "noteAuthorName",
         p.slug AS "projectSlug", p.name AS "projectName",

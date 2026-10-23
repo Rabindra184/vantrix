@@ -77,6 +77,7 @@ function job(status: string, agedMs: number) {
       testSlug: null,
       javaOptions: null,
       systemProperties: {},
+      agentEnabled: true,
       error: null,
       createdAt: at,
       updatedAt: at,

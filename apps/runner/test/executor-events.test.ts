@@ -70,7 +70,7 @@ function job(): RunnerJobWithArtifact {
       name: 'nightly', simulationClass: 'example.ParitySimulation',
       environment: null, branch: null, commitSha: null, testSlug: null,
       javaOptions: '-Xmx7g -Dleak.secret=PARAM-LEAK-7f3a', systemProperties: { 'leak.key': 'PARAM-LEAK-91c2' },
-      logPath: null, error: null, createdAt: now, updatedAt: now,
+      agentEnabled: true, logPath: null, error: null, createdAt: now, updatedAt: now,
     },
   };
 }

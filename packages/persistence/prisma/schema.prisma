@@ -234,6 +234,10 @@ model RunnerJob {
   simulationClass  String   @map("simulation_class")
   javaOptions      String?  @map("java_options")
   systemProperties Json     @default("{}") @map("system_properties")
+  /// Whether the runner loads the Gatling agent for this job. True unless the
+  /// requester opted out; carried onto a retry like every other field the
+  /// operator chose (RunnerRepository.retry).
+  agentEnabled     Boolean  @default(true) @map("agent_enabled")
   logPath          String?  @map("log_path")
   error            Json?
   createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
@@ -523,6 +527,14 @@ model Run {
   recomputedAt     DateTime? @map("recomputed_at") @db.Timestamptz(3)
   // When retention deleted the raw log; null while it is kept.
   rawLogDeletedAt  DateTime? @map("raw_log_deleted_at") @db.Timestamptz(3)
+  /// The Gatling agent's raw NDJSON file for this run, stored by the on-prem
+  /// runner at runs/<runId>/agent.ndjson: its object key, SHA-256 and size.
+  /// All three null together for a run with no agent file (an upload, a plugin
+  /// run, a job that opted out, every run before migration 20261023120000).
+  /// Written by RunRepository.recordAgentLog and by nothing else.
+  agentLogKey      String?   @map("agent_log_key")
+  agentLogSha256   String?   @map("agent_log_sha256")
+  agentLogBytes    BigInt?   @map("agent_log_bytes")
 
   project    Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
   package    Package?       @relation(fields: [packageId], references: [id], onDelete: SetNull, onUpdate: NoAction)

@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { RunnerStartMetadataSchema } from '../src/runner.js';
+import {
+  RunnerJobSchema,
+  RunnerStartByPackageRequestSchema,
+  RunnerStartMetadataSchema,
+} from '../src/runner.js';
 
 const base = {
   name: 'checkout load',
@@ -30,5 +34,55 @@ describe('RunnerStartMetadataSchema', () => {
         },
       }).success,
     ).toBe(false);
+  });
+});
+
+/**
+ * Whether the runner loads the Gatling agent for this job. ON unless the
+ * requester says otherwise, on BOTH start routes — the upload's multipart
+ * metadata and the JSON start-from-package body — so a caller that predates
+ * the field gets the agent rather than a refusal or a silent opt-out.
+ */
+describe('agentEnabled on a runner start', () => {
+  const byPackage = {
+    packageId: '00000000-0000-4000-8000-000000000001',
+    name: 'checkout load',
+    simulationClass: 'com.example.CheckoutSimulation',
+  };
+
+  it('defaults to true when absent, on both start schemas', () => {
+    expect(RunnerStartMetadataSchema.parse(base).agentEnabled).toBe(true);
+    expect(RunnerStartByPackageRequestSchema.parse(byPackage).agentEnabled).toBe(true);
+  });
+
+  it('keeps an explicit false, on both start schemas', () => {
+    expect(RunnerStartMetadataSchema.parse({ ...base, agentEnabled: false }).agentEnabled).toBe(false);
+    expect(RunnerStartByPackageRequestSchema.parse({ ...byPackage, agentEnabled: false }).agentEnabled).toBe(false);
+  });
+
+  it('refuses a value that is not a boolean, rather than reading "false" as truthy', () => {
+    expect(RunnerStartMetadataSchema.safeParse({ ...base, agentEnabled: 'false' }).success).toBe(false);
+    expect(RunnerStartByPackageRequestSchema.safeParse({ ...byPackage, agentEnabled: 'false' }).success).toBe(false);
+  });
+
+  it('is carried on the job the API answers with', () => {
+    const job = {
+      id: '00000000-0000-4000-8000-000000000002',
+      artifactId: '00000000-0000-4000-8000-000000000003',
+      runId: null,
+      status: 'queued',
+      requestedBy: 'tester',
+      environment: null,
+      branch: null,
+      commitSha: null,
+      testSlug: null,
+      javaOptions: null,
+      systemProperties: {},
+      error: null,
+      createdAt: '2026-10-23T10:00:00.000Z',
+      updatedAt: '2026-10-23T10:00:00.000Z',
+    };
+    expect(RunnerJobSchema.parse({ ...job, agentEnabled: false }).agentEnabled).toBe(false);
+    expect(RunnerJobSchema.safeParse(job).success).toBe(false);
   });
 });

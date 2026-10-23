@@ -61,6 +61,7 @@ async function runnerJobFor(runId: string): Promise<{ jobId: string; packageName
     job: {
       id: randomUUID(), requestedBy: 'events-test', name: 'nightly', simulationClass: 'example.ParitySimulation',
       environment: null, branch: null, commitSha: null, testSlug: null, javaOptions: null, systemProperties: {},
+      agentEnabled: true,
     },
   });
   if (!created) throw new Error('createQueued refused the version');

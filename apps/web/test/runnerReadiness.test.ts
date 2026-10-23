@@ -36,6 +36,7 @@ function job(status: RunnerJobStatus, agedMs: number): { job: RunnerJob } {
       testSlug: null,
       javaOptions: null,
       systemProperties: {},
+      agentEnabled: true,
       error: null,
       createdAt: ago(agedMs),
       updatedAt: ago(agedMs),

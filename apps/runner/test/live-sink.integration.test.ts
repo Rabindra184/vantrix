@@ -93,7 +93,7 @@ async function setup(sinkBlobs: BlobStore = blobs) {
       artifactId: '55555555-5555-4555-8555-555555555555', runId: null, status: 'starting',
       requestedBy: 'tester', name: 'checkout load', simulationClass: 'example.ParitySimulation',
       environment: null, branch: null, commitSha: null, testSlug: null,
-      javaOptions: null, systemProperties: {}, logPath: null, error: null,
+      javaOptions: null, systemProperties: {}, agentEnabled: true, logPath: null, error: null,
       createdAt: now, updatedAt: now,
     },
   };

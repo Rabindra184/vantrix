@@ -102,6 +102,7 @@ function jobInput(
       testSlug: null,
       javaOptions: null,
       systemProperties: {},
+      agentEnabled: true,
       ...job,
     },
   };
@@ -268,7 +269,13 @@ describe('RunnerRepository.retry', () => {
   it('carries every field the operator chose onto the retried job', async () => {
     const { orgA, projectA1 } = await seed();
     const repo = new RunnerRepository(prisma);
-    const sourceId = await queueJob(repo, orgA, projectA1, 'checkout-soak');
+    // agentEnabled FALSE, against the column's default of true: a retry that
+    // forgot agent_enabled would read true here and differ from its source.
+    const { artifactId } = await packageWithVersion(orgA, projectA1);
+    const sourceId = await queueOn(repo, orgA, projectA1, artifactId, {
+      testSlug: 'checkout-soak',
+      agentEnabled: false,
+    });
 
     // Only a failed or cancelled job is retryable, so put it there first.
     await pool.query(`UPDATE runner_job SET status = 'failed' WHERE id = $1`, [sourceId]);
@@ -284,7 +291,7 @@ describe('RunnerRepository.retry', () => {
 
     const { rows } = await pool.query<Record<string, unknown>>(
       `SELECT artifact_id, name, simulation_class, environment, branch, commit_sha, test_slug,
-              java_options, system_properties
+              java_options, system_properties, agent_enabled
          FROM runner_job WHERE id = ANY($1::uuid[]) ORDER BY created_at`,
       [[sourceId, retried.row.job.id]],
     );
@@ -293,6 +300,9 @@ describe('RunnerRepository.retry', () => {
     // newly-added column joins this assertion by being selected above,
     // rather than needing anyone to remember a new `expect`.
     expect(rows[1]).toEqual(rows[0]);
+    // Not vacuous: the source really was the opt-out, and the record says so.
+    expect(rows[0]?.agent_enabled).toBe(false);
+    expect(retried.row.job.agentEnabled).toBe(false);
   });
 
   /** The status and the requester are deliberately NOT carried: a retry is
@@ -378,6 +388,31 @@ describe('RunnerRepository.retry', () => {
     expect(result.row.job.artifactId).toBe(v1);
     expect(result.row.job.name).toBe('nightly');
     expect(result.row.job.simulationClass).toBe('a.One');
+  });
+});
+
+/**
+ * The on-prem runner decides whether to load the Gatling agent from the CLAIMED
+ * job, and the jobs table reads the list — three hand-written SELECTs, any of
+ * which can forget a column and hand the runner undefined.
+ */
+describe('a runner job that opts out of the agent', () => {
+  it('reports agentEnabled from claimNext, listRecent and find, false and true alike', async () => {
+    const { orgB, projectB1 } = await seed();
+    const repo = new RunnerRepository(prisma);
+    const { artifactId } = await packageWithVersion(orgB, projectB1);
+    const optedOut = await queueOn(repo, orgB, projectB1, artifactId, { agentEnabled: false });
+
+    const claimed = await repo.claimNext({ orgId: orgB, projectId: projectB1 });
+    expect(claimed?.job.id).toBe(optedOut);
+    expect(claimed?.job.agentEnabled).toBe(false);
+    expect((await repo.find(orgB, projectB1, optedOut))?.job.agentEnabled).toBe(false);
+
+    const optedIn = await queueOn(repo, orgB, projectB1, artifactId, { agentEnabled: true });
+    const listed = await repo.listRecent(orgB, projectB1);
+    expect(listed.map((r) => [r.job.id, r.job.agentEnabled])).toEqual(
+      expect.arrayContaining([[optedOut, false], [optedIn, true]]),
+    );
   });
 });
 

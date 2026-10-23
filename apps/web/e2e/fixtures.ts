@@ -479,6 +479,7 @@ export async function seedRunnerRunWithEvents(orgId: string): Promise<string> {
       // against a writer that copies every field into a message.
       testSlug: null, javaOptions: '-Xmx7g -Dleak.secret=PARAM-LEAK-e2e',
       systemProperties: { 'leak.key': 'PARAM-LEAK-e2e-prop' },
+      agentEnabled: true,
     },
   });
   if (!created) throw new Error('seedRunnerRunWithEvents: createQueued refused the version');
@@ -532,6 +533,7 @@ export async function seedPackage(
       id: randomUUID(), requestedBy: 'e2e', name: 'queued from the fixture',
       simulationClass: 'example.BasicSimulation', environment: null, branch: null,
       commitSha: null, testSlug: null, javaOptions: null, systemProperties: {},
+      agentEnabled: true,
     },
   });
   if (!created) throw new Error('seedPackage: createQueued refused the version');

@@ -469,6 +469,9 @@ function NewRunnerRunProject({
           test,
           javaOptions: form.javaOptions.trim() ? form.javaOptions.trim() : undefined,
           systemProperties: parsedProps.value,
+          // The contract's own default, stated: the form has no opt-out control
+          // yet, and the required field is what makes it say so.
+          agentEnabled: true,
         },
       });
       return;
@@ -497,6 +500,7 @@ function NewRunnerRunProject({
         // this form's copy of the rule would make the client the authority on
         // a name the server has to reconcile with the database anyway.
         package: form.packageName.trim() ? form.packageName.trim() : undefined,
+        agentEnabled: true,
       },
     });
   };

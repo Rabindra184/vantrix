@@ -744,6 +744,7 @@ describe('PATCH and DELETE /v1/projects/:slug/packages/:packageId', () => {
         testSlug: null,
         javaOptions: null,
         systemProperties: {},
+        agentEnabled: true,
       },
     });
     expect(queued).not.toBeNull();
