@@ -197,6 +197,8 @@ real Gatling 3.15.1 run: the two `resolveAll`s, `Bootstrap.connect` scoped by
 **RED-VERIFIED.** A meter added in a connect listener PASSED (Gatling's
 listener runs after `connect` returns); the really-late meter beat a 200-byte
 ClientHello floor, so the floor is 512 (BoringSSL's padding) and it fails.
+The manifest fallback, the final sample and the cap headroom each fail their
+own cases when removed.
 
 **THE REAL RUN**, on a scratch database (`perfportal_agent_real`), Redis db 11
 and bucket `perfportal-agent-real`, this tree's API, worker and runner from
@@ -208,22 +210,24 @@ assertion), **895 requests / 871 OK / 24 KO**; `agent_log_key`
 equal to `agent_log_sha256`**; header `"http":true,"machine":false`;
 **895 `status` lines** (871 × 200, the run's OK count, and 13 × 500 plus
 11 × 503, its 24 KO); 22 connects, all ok, **every one with a close**; 66
-one-second samples over 66 seconds with none missing, plus the final. Gatling's
-warm-up request (`gatling.io:443`) is tagged `"warmup":true`. Job
+one-second samples over 66 seconds with none missing, plus the final. The one
+`dns`, one `tls` and first connect are Gatling's own warm-up request to
+`gatling.io:443`, tagged `"warmup":true` and absent from the 895. Job
 `11983b45` → run `1704160a` with `agentEnabled: false`: also 895 / 871 / 24,
 `agent_log_key` null, no object, and no `-javaagent` in its job log.
 
 **WHAT IT COSTS, MEASURED**: the runner's own command by hand, three
 alternating pairs on a quiet machine (load 1.7–2): whole-process Gatling
 user+sys **7.97 s without, 8.96 s with** (+1.0 s, +12%), wall **63.8 s against
-64.6 s** (the injection profile fixes it), peak RSS **~277 MB against
+64.6 s** (one 66.1 s outlier; the injection profile fixes the wall clock), peak RSS **~277 MB against
 ~311 MB**; every hand run's file held exactly 895 `status` lines.
 
 **THE FINAL REVIEW'S FIX WAVE.** `ch` is the agent's own id now, a JSON
 NUMBER from a static `AtomicLong` assigned where the meter is attached, and
 `SocketRegistry`'s key: Netty 4.2's `asShortText()` is the hex of ONE random
 32-bit int (about 1% odds of a collision at 10,000 channels, 63% at 93,000),
-and a collision closed the wrong socket. `tls` carries `ch`; `status` cannot
+and a collision would mark the wrong socket closed (reasoned from the
+registry's keying, not observed). `tls` carries `ch`; `status` cannot
 (its hook sees the transaction, not the channel). The sampler no longer
 decodes `/proc/net/tcp*` inside the measured JVM: with no tracked socket it
 reads neither table; otherwise it rejects a row on its local port, read from a
