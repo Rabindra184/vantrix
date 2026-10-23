@@ -131,6 +131,34 @@ class SamplerTest {
   }
 
   @Test
+  void readsNoSocketTableWhileNoGatlingSocketIsTracked() throws Exception {
+    Path proc = Path.of(SamplerTest.class.getResource("/proc/stat").toURI()).getParent();
+    List<String> reads = new ArrayList<>();
+    ProcTcp.Source counting =
+        (file, into) -> {
+          reads.add(file.getFileName().toString());
+          return ProcTcp.FILES.read(file, into);
+        };
+    SocketRegistry r = new SocketRegistry();
+    String l = Sampler.sample(200_000, r, null, proc, false, counting);
+    assertEquals(List.of(), reads, "no socket is tracked, so neither table is read");
+    assertTrue(l.endsWith(",\"states\":{}}"), l);
+
+    // A socket closed longer ago than the TIME_WAIT retention is not tracked either.
+    r.opened("gone", 0xB7A0, "localhost/127.0.0.1:8080");
+    r.closed("gone", 1_000);
+    l = Sampler.sample(200_000, r, null, proc, false, counting);
+    assertEquals(List.of(), reads);
+    assertTrue(l.endsWith(",\"states\":{}}"), l);
+
+    // One live socket: both tables are read, and its row is counted.
+    r.opened("live", 0xB78E, "localhost/127.0.0.1:8080");
+    l = Sampler.sample(200_000, r, null, proc, false, counting);
+    assertEquals(List.of("tcp", "tcp6"), reads);
+    assertTrue(l.endsWith(",\"states\":{\"localhost/127.0.0.1:8080\":{\"1\":1}}}"), l);
+  }
+
+  @Test
   void theFirstUnexpectedErrorIsReportedOnceAndStopsSampling() throws Exception {
     Path out = dir.resolve("e.ndjson");
     EventWriter w = EventWriter.open(out, 1_000_000);

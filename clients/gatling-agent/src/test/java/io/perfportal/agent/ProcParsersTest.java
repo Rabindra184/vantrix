@@ -11,7 +11,6 @@ import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -80,48 +79,78 @@ class ProcParsersTest {
   }
 
   @Test
-  void parsesTcp4AndMappedTcp6Rows() {
-    List<ProcTcp.Row> v4 = ProcTcp.parse(fixture("net/tcp"));
-    List<ProcTcp.Row> v6 = ProcTcp.parse(fixture("net/tcp6"));
-    assertEquals(3, v4.size());
-    assertEquals(6, v6.size());
-
+  void countsTcp4AndMappedTcp6RowsForTheSocketsTheyAre() {
+    SocketRegistry r = new SocketRegistry();
     // 0100007F:B78E -> 0100007F:1F90, ESTABLISHED.
-    ProcTcp.Row a = byLocal(v4, 0xB78E);
-    assertEquals("127.0.0.1:8080", a.remoteIpPort);
-    assertEquals(1, a.state);
-    // ...FFFF00000100007F:B79E -> ::ffff:127.0.0.1:8080 reads as the IPv4 address it maps.
-    ProcTcp.Row b = byLocal(v6, 0xB79E);
-    assertEquals("127.0.0.1:8080", b.remoteIpPort);
-    assertEquals(1, b.state);
+    r.opened("v4", 0xB78E, "localhost/127.0.0.1:8080");
+    // ...FFFF00000100007F:B79E -> ::ffff:127.0.0.1:8080 counts for the IPv4 remote it maps.
+    r.opened("mapped", 0xB79E, "mapped/127.0.0.1:8080");
     // The TIME_WAIT the closed connection left behind.
-    ProcTcp.Row tw = byLocal(v4, 0xB7A0);
-    assertEquals(6, tw.state);
-    // A real IPv6 remote, in InetAddress.getHostAddress() form.
-    assertEquals("0:0:0:0:0:0:0:1:8080", byLocal(v6, 0xC3D6).remoteIpPort);
+    r.opened("closed", 0xB7A0, "closed/127.0.0.1:8080");
+    r.closed("closed", 1_000);
+    // A real IPv6 remote.
+    r.opened("v6", 0xC3D6, "six/[0:0:0:0:0:0:0:1]:8080");
     // An outbound connection to a public address.
-    assertEquals("1.1.1.1:80", byLocal(v4, 0xD684).remoteIpPort);
-    // The dual-stack listener: state 0A, an all-zero remote.
-    List<ProcTcp.Row> listeners =
-        v6.stream().filter(r -> r.state == 0x0A).collect(Collectors.toList());
-    assertEquals(1, listeners.size());
-    assertEquals(8080, listeners.get(0).localPort);
+    r.opened("public", 0xD684, "one/1.1.1.1:80");
+    // On the dual-stack LISTENER's port, but to a remote the listener (all-zero remote) is not.
+    r.opened("listener", 8080, "local/127.0.0.1:47000");
+
+    assertEquals(
+        Map.of(
+            "localhost/127.0.0.1:8080", Map.of(1, 1),
+            "mapped/127.0.0.1:8080", Map.of(1, 1),
+            "closed/127.0.0.1:8080", Map.of(6, 1),
+            "six/[0:0:0:0:0:0:0:1]:8080", Map.of(1, 1),
+            "one/1.1.1.1:80", Map.of(1, 1)),
+        ProcTables.states(r, 2_000, fixture("net/tcp"), fixture("net/tcp6")));
   }
 
   @Test
   void skipsALineItCannotRead() {
-    List<ProcTcp.Row> rows =
-        ProcTcp.parse(
+    SocketRegistry r = new SocketRegistry();
+    r.opened("ch", 0xB78E, "localhost/127.0.0.1:8080");
+    assertEquals(
+        Map.of("localhost/127.0.0.1:8080", Map.of(1, 1)),
+        ProcTables.states(
+            r,
+            1_000,
             "  sl  local_address rem_address   st\n"
                 + "   0: garbage\n"
-                + "   1: 0100007F:B78E 0100007F:1F90 01 00000000:00000000\n");
-    assertEquals(1, rows.size());
+                + "   1: 0100007F:B78E 0100007F:1F9 01 00000000:00000000\n"
+                + "   2: 0100007F:B78E 0100007F:1F90 zz 00000000:00000000\n"
+                + "   3: 0100007F:B78E 0100007F:1F90 01 00000000:00000000\n"));
   }
 
-  private static ProcTcp.Row byLocal(List<ProcTcp.Row> rows, int port) {
-    List<ProcTcp.Row> found =
-        rows.stream().filter(r -> r.localPort == port).collect(Collectors.toList());
-    assertEquals(1, found.size(), "rows on local port " + port);
-    return found.get(0);
+  /**
+   * A load generator's table is mostly sockets that are not this JVM's Gatling sockets. A row on
+   * an untracked local port is rejected on that port alone: its remote and state are never read
+   * (here they are not even well formed), and only the rows on tracked ports reach the remote
+   * comparison.
+   */
+  @Test
+  void rejectsARowOnAnUntrackedPortBeforeReadingAnythingElseInIt() {
+    SocketRegistry r = new SocketRegistry();
+    String remote = "target/10.1.2.3:8080";
+    for (int i = 0; i < 5; i++) r.opened("ch-" + i, 40_000 + i, remote);
+    StringBuilder tcp = new StringBuilder(ProcTables.HEADER);
+    int sl = 0;
+    for (int i = 0; i < 30_000; i++) {
+      int port = 10_000 + i; // never 40000-40004
+      tcp.append(
+          i % 2 == 0
+              ? ProcTables.row(sl++, port, "10.9.8.7", 443, 1)
+              : String.format("%4d: 0100007F:%04X not-an-address !! 0:0\n", sl++, port));
+    }
+    // The tracked sockets: four ESTABLISHED, one in TIME_WAIT...
+    for (int i = 0; i < 4; i++) tcp.append(ProcTables.row(sl++, 40_000 + i, "10.1.2.3", 8080, 1));
+    tcp.append(ProcTables.row(sl++, 40_004, "10.1.2.3", 8080, 6));
+    // ...and a socket that shares a tracked local port but not its remote: examined, not counted.
+    tcp.append(ProcTables.row(sl++, 40_000, "10.1.2.4", 8080, 1));
+
+    SocketRegistry.StateCounts counts = r.stateCounts(1_000);
+    ProcTcp.count(ProcTcp.Table.of(tcp.toString()), counts);
+    assertEquals(Map.of(remote, Map.of(1, 4, 6, 1)), counts.asMap());
+    assertEquals(6, counts.examined, "rows that reached the remote comparison");
   }
+
 }
