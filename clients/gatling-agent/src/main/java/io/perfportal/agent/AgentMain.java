@@ -17,6 +17,7 @@ public final class AgentMain {
   private static volatile EventWriter writer;
   private static final AtomicBoolean failed = new AtomicBoolean();
   private static final SocketRegistry sockets = new SocketRegistry();
+  private static volatile Sampler sampler;
 
   private AgentMain() {}
 
@@ -26,8 +27,8 @@ public final class AgentMain {
       if (options.isDisabled()) return;
       EventWriter w = EventWriter.open(options.out(), options.maxBytes());
       writer = w;
-      Thread closer = new Thread(w::close, "perfportal-agent-close");
-      closer.setDaemon(true);
+      // At exit: stop the sampler, write its one final sample, flush, close -- in that order.
+      Thread closer = new Thread(() -> shutdown(w), "perfportal-agent-close");
       Runtime.getRuntime().addShutdownHook(closer);
 
       VersionGate.Result gate = VersionGate.check(ClassLoader.getSystemClassLoader());
@@ -36,7 +37,7 @@ public final class AgentMain {
       w.line(header(gate, System.currentTimeMillis(), machine, machineRefusal));
       w.flush();
       // Always on, whatever the version gate decided: JVM and machine figures need no hook.
-      Sampler.start(w, sockets, ClassLoader.getSystemClassLoader(), machine);
+      sampler = Sampler.start(w, sockets, ClassLoader.getSystemClassLoader(), machine);
       if (gate.http()) {
         try {
           Instrumentation.install(inst);
@@ -48,6 +49,23 @@ public final class AgentMain {
       fail("premain", t);
     }
   }
+
+  /**
+   * The shutdown hook. The sampler is stopped FIRST so it cannot race the final sample, which
+   * carries the cumulative counters since the last tick; then the file is flushed and closed.
+   */
+  static void shutdown(EventWriter w) {
+    try {
+      Sampler s = sampler;
+      if (s != null) s.finish(FINAL_SAMPLE_JOIN_MS);
+    } catch (Throwable ignored) {
+      // closing anyway
+    }
+    w.close();
+  }
+
+  /** How long the shutdown waits for a sample in flight before writing the final one. */
+  static final long FINAL_SAMPLE_JOIN_MS = 1_000;
 
   /** The writer every collector appends to; null when the agent is off or has failed. */
   static EventWriter writer() {

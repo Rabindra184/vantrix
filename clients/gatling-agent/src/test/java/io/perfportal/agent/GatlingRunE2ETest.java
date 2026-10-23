@@ -146,29 +146,45 @@ class GatlingRunE2ETest {
       assertTrue(c.get("ch") instanceof String, c.toString());
     }
 
-    // The meter is on the channel before Gatling's own listener can write the ClientHello, so
-    // the bytes sent to the TLS remote cover at least one ClientHello per handshake that had
-    // finished by the last sample.
-    String tlsRemote = "localhost/127.0.0.1:" + https.getAddress().getPort();
+    // The shutdown writes one final sample, after everything else, carrying the cumulative
+    // counters since the last tick: it is the file's last line and its only final sample.
     List<Map<String, Object>> samples = select(lines, "s");
     Map<String, Object> lastSample = samples.get(samples.size() - 1);
-    long lastAt = ((Number) lastSample.get("at")).longValue();
-    long handshakesBefore =
-        select(lines, "tls", ok()).stream()
-            .filter(e -> endMs(e) < lastAt)
-            .count();
-    List<?> tlsBytes = (List<?>) ((Map<?, ?>) lastSample.get("bytes")).get(tlsRemote);
+    assertEquals(lastSample, lines.get(lines.size() - 1), "the file does not end on a sample");
+    assertEquals(Boolean.TRUE, lastSample.get("final"), "the last sample is not the final one");
+    assertEquals(1, samples.stream().filter(x -> x.containsKey("final")).count(), all);
+
+    // Bytes are cumulative, so the final sample holds at least every earlier sample's figure.
+    Map<?, ?> finalBytes = (Map<?, ?>) lastSample.get("bytes");
+    for (Map<String, Object> earlier : samples) {
+      for (Map.Entry<?, ?> e : ((Map<?, ?>) earlier.get("bytes")).entrySet()) {
+        List<?> was = (List<?>) e.getValue();
+        List<?> now = (List<?>) finalBytes.get(e.getKey());
+        assertNotNull(now, e.getKey() + " is missing from the final sample " + lastSample);
+        for (int i = 0; i < 2; i++) {
+          assertTrue(
+              ((Number) now.get(i)).longValue() >= ((Number) was.get(i)).longValue(),
+              e.getKey() + ": final " + now + " below an earlier " + was);
+        }
+      }
+    }
+
+    // The meter is on the channel before Gatling's own listener can write the ClientHello, so
+    // the bytes sent to the TLS remote cover at least one ClientHello for EVERY handshake.
+    String tlsRemote = "localhost/127.0.0.1:" + https.getAddress().getPort();
+    long handshakes = count(lines, "tls", ok());
+    List<?> tlsBytes = (List<?>) finalBytes.get(tlsRemote);
     assertNotNull(tlsBytes, "no bytes for " + tlsRemote + " in " + lastSample);
     long sent = ((Number) tlsBytes.get(0)).longValue();
     // Kept in the test report, so a reader can see what a real run produced.
     System.out.println(
         "agent events " + all + "; warm-up connects " + count(lines, "connect", warmup())
-            + "; tls ok " + count(lines, "tls", ok()) + "; bytes to " + tlsRemote + " " + tlsBytes
-            + " over " + handshakesBefore + " handshakes by the last sample");
-    assertTrue(handshakesBefore > 0, all);
+            + "; tls ok " + handshakes + "; bytes to " + tlsRemote + " " + tlsBytes
+            + " in the final sample");
+    assertEquals(30, handshakes, all);
     assertTrue(
-        sent >= handshakesBefore * MIN_CLIENT_HELLO_BYTES,
-        "sent " + sent + " bytes to " + tlsRemote + " over " + handshakesBefore + " handshakes");
+        sent >= handshakes * MIN_CLIENT_HELLO_BYTES,
+        "sent " + sent + " bytes to " + tlsRemote + " over " + handshakes + " handshakes");
     assertTrue(((Number) tlsBytes.get(1)).longValue() > 0, lastSample.toString());
   }
 
@@ -307,10 +323,6 @@ class GatlingRunE2ETest {
 
   private static Predicate<Map<String, Object>> remoteStartsWith(String prefix) {
     return l -> l.get("remote") instanceof String && ((String) l.get("remote")).startsWith(prefix);
-  }
-
-  private static long endMs(Map<String, Object> e) {
-    return ((Number) e.get("at")).longValue() + ((Number) e.get("us")).longValue() / 1000;
   }
 
   private static Map<Integer, Long> statusCodes(List<Map<String, Object>> lines) {

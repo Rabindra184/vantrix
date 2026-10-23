@@ -35,9 +35,18 @@ final class Sampler {
   private static final long PERIOD_MS = 1_000;
 
   private final Thread thread;
+  private final EventWriter writer;
+  private final SocketRegistry sockets;
+  private final ClassLoader cl;
+  private final Path procRoot;
 
-  private Sampler(Thread thread) {
+  private Sampler(
+      Thread thread, EventWriter writer, SocketRegistry sockets, ClassLoader cl, Path procRoot) {
     this.thread = thread;
+    this.writer = writer;
+    this.sockets = sockets;
+    this.cl = cl;
+    this.procRoot = procRoot;
   }
 
   /**
@@ -58,11 +67,43 @@ final class Sampler {
     Thread t = new Thread(() -> loop(writer, sockets, cl, procRoot, onFailure), THREAD_NAME);
     t.setDaemon(true);
     t.start();
-    return new Sampler(t);
+    return new Sampler(t, writer, sockets, cl, procRoot);
   }
 
   void stop() {
     thread.interrupt();
+  }
+
+  /**
+   * At shutdown: stops the sampling thread (waiting up to {@code joinMillis} for a sample in
+   * flight to land), then writes ONE last sample and flushes it. Every counter in a sample is
+   * cumulative and only samples carry them, so without this everything since the last tick --
+   * up to a second of bytes, GC and CPU -- would never reach the file.
+   *
+   * <p>The final sample is stamped with the shutdown's own millisecond and carries {@code
+   * "final":true}. It may fall in the same wall-clock second as the last tick; that is the one
+   * exception to one-sample-per-second, and the flag is how a reader tells it apart: it is a
+   * closing reading, whose deltas from the sample before it belong to the second it is in. It is
+   * always the file's last sample.
+   */
+  void finish(long joinMillis) {
+    try {
+      thread.interrupt();
+      thread.join(joinMillis);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+    } catch (Throwable ignored) {
+      // the final sample is still worth writing
+    }
+    try {
+      if (!writer.accepting()) return;
+      long at = System.currentTimeMillis();
+      sockets.prune(at);
+      writer.line(sample(at, sockets, cl, procRoot, true));
+      writer.flush();
+    } catch (Throwable t) {
+      AgentMain.fail("final sample", t);
+    }
   }
 
   void join(long millis) throws InterruptedException {
@@ -128,6 +169,12 @@ final class Sampler {
 
   /** One sample line, read now. Machine figures come from under {@code procRoot}, if any. */
   static String sample(long at, SocketRegistry sockets, ClassLoader cl, Path procRoot) {
+    return sample(at, sockets, cl, procRoot, false);
+  }
+
+  /** As above; a {@code last} sample is the shutdown's, marked {@code "final":true}. */
+  static String sample(
+      long at, SocketRegistry sockets, ClassLoader cl, Path procRoot, boolean last) {
     StringBuilder b = new StringBuilder(512);
     b.append("{\"t\":\"s\",\"at\":").append(at);
 
@@ -216,6 +263,7 @@ final class Sampler {
       }
     }
 
+    if (last) b.append(",\"final\":true");
     return b.append('}').toString();
   }
 

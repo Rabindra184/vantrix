@@ -38,6 +38,30 @@ class SamplerTest {
   }
 
   @Test
+  void finishStopsTheSamplerThenWritesOneFinalSampleLast() throws Exception {
+    Path out = dir.resolve("s.ndjson");
+    EventWriter w = EventWriter.open(out, 1_000_000);
+    SocketRegistry sockets = new SocketRegistry();
+    Sampler s = Sampler.start(w, sockets, ClassLoader.getSystemClassLoader(), LINUX);
+    try {
+      waitForLines(out, 1, 4_000);
+      // Bytes moved after the last tick: only the final sample can carry them.
+      sockets.addBytes("h/1.2.3.4:443", 7, 9);
+      s.finish(2_000);
+      assertFalse(s.alive(), "the sampler thread outlived finish()");
+      Thread.sleep(1_200); // a stopped sampler writes nothing more
+    } finally {
+      w.close();
+    }
+    List<String> lines = Files.readAllLines(out);
+    String last = lines.get(lines.size() - 1);
+    assertTrue(last.startsWith("{\"t\":\"s\",\"at\":") && last.endsWith(",\"final\":true}"), last);
+    assertTrue(last.contains("\"h/1.2.3.4:443\":[7,9]"), last);
+    assertEquals(
+        1, lines.stream().filter(l -> l.contains("\"final\":true")).count(), lines.toString());
+  }
+
+  @Test
   void emitsOneSampleLinePerSecondWithCumulativeGc() throws Exception {
     Path out = dir.resolve("s.ndjson");
     EventWriter w = EventWriter.open(out, 1_000_000);
