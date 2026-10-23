@@ -18,12 +18,14 @@
 // below is computed against the wrong answer. Pass --delete once the dry-run
 // summary looks right.
 //
-// TWO KEY SHAPES, AND THEY ARE NOT KEYED THE SAME WAY. Getting this wrong is
-// how a cleanup destroys live bundles:
+// THREE KEY SHAPES, AND THEY ARE NOT KEYED THE SAME WAY. Getting this wrong
+// is how a cleanup destroys live bundles:
 //
 //   live/{runId}/{offset}.bin        packages/storage/src/live-chunks.ts
 //   runs/{projectId}/{uuid}.tgz      apps/api/src/ingest/ingest.service.ts
 //                    ^^^^^^^^^ PROJECT id, not run id
+//   runs/{runId}/agent.ndjson        apps/runner/src/live-sink.ts
+//                    ^^^^^ RUN id this time, under the same prefix
 //
 // So the second path segment means different things in the two prefixes, and
 // a rule that read "the uuid after the prefix is the run" would delete every
@@ -34,6 +36,11 @@
 // stores the FULL object key, so that column is an exact keep-list. That also
 // disposes of `runs/test/...` and `runs/collide/...`, which storage's own
 // integration tests write under literal non-uuid prefixes.
+//
+// `run.agent_log_key` is the second exact keep-list under `runs/`: the on-prem
+// runner's agent file is stored beside the run's log and NO bundle_key names
+// it, so a keep-list of bundle keys alone would delete every live run's agent
+// file. Every non-null agent_log_key is kept, by the same exact match.
 //
 // THE AGE GUARD IS WHAT MAKES THE RACE SAFE. The database is snapshotted
 // before the bucket is listed, so a run opened during the sweep has no row in
@@ -117,14 +124,17 @@ client.middlewareStack.add(
 // ── 1. Snapshot the database FIRST. Anything created after this point is
 //       protected by the age guard rather than by this set.
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-let runIds, bundleKeys;
+let runIds, bundleKeys, agentKeys;
 try {
   const rows = await pool.query(
-    `SELECT id::text AS id, bundle_key FROM run`,
+    `SELECT id::text AS id, bundle_key, agent_log_key FROM run`,
   );
   runIds = new Set(rows.rows.map((r) => r.id));
   bundleKeys = new Set(
     rows.rows.map((r) => r.bundle_key).filter((k) => k != null),
+  );
+  agentKeys = new Set(
+    rows.rows.map((r) => r.agent_log_key).filter((k) => k != null),
   );
 } finally {
   await pool.end();
@@ -181,7 +191,8 @@ if (DELETE && FORCE) {
 }
 
 console.log(
-  `${runIds.size} run(s) known, ${bundleKeys.size} bundle key(s); ` +
+  `${runIds.size} run(s) known, ${bundleKeys.size} bundle key(s), ` +
+    `${agentKeys.size} agent file key(s); ` +
     `objects newer than ${cutoff.toISOString()} are exempt` +
     (DELETE ? '' : '  [DRY RUN — pass --delete to apply]'),
 );
@@ -192,7 +203,7 @@ let kept = 0;
 let tooNew = 0;
 let scanned = 0;
 let orphanBytes = 0;
-const keptBy = { bundle: 0, liveRun: 0 };
+const keptBy = { bundle: 0, agent: 0, liveRun: 0 };
 
 let ContinuationToken;
 do {
@@ -206,6 +217,13 @@ do {
     if (bundleKeys.has(o.Key)) {
       kept++;
       keptBy.bundle++;
+      continue;
+    }
+
+    // `runs/{runId}/agent.ndjson`: exact match against run.agent_log_key.
+    if (agentKeys.has(o.Key)) {
+      kept++;
+      keptBy.agent++;
       continue;
     }
 
@@ -236,7 +254,10 @@ const byPrefix = {};
 for (const o of orphans) byPrefix[prefixOf(o.Key)] = (byPrefix[prefixOf(o.Key)] ?? 0) + 1;
 
 console.log(`scanned ${scanned} object(s) in ${BUCKET}`);
-console.log(`  kept    ${kept} (${keptBy.bundle} bundle, ${keptBy.liveRun} live chunks of a known run)`);
+console.log(
+  `  kept    ${kept} (${keptBy.bundle} bundle, ${keptBy.agent} agent file, ` +
+    `${keptBy.liveRun} live chunks of a known run)`,
+);
 console.log(`  too new ${tooNew} (inside the ${MIN_AGE_HOURS}h guard)`);
 console.log(`  orphan  ${orphans.length} = ${(orphanBytes / 1048576).toFixed(1)} MB`);
 for (const [p, n] of Object.entries(byPrefix).sort((a, b) => b[1] - a[1])) {

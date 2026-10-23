@@ -446,6 +446,8 @@ describe('VerificationRepository: raw-log retention', () => {
     const neverIngested = await seedRun({ status: 'running', ingestedAt: null });
     // Checked against their logs, so nothing but the clock keeps them.
     for (const id of [due, justDue, notYet, justNotYet, noBundle]) await verified(id);
+    // The agent file travels with the page, so the sweeper deletes it with the log.
+    await pool.query(`UPDATE run SET agent_log_key = $2 WHERE id = $1`, [justDue, `runs/${justDue}/agent.ndjson`]);
 
     const rows = (await repo.retentionDue(30, 1, null, 100)).runs;
     expect(rows.map((r) => r.id).sort()).toEqual([due, justDue].sort());
@@ -455,6 +457,8 @@ describe('VerificationRepository: raw-log retention', () => {
     const dueRow = rows.find((r) => r.id === due);
     const { rows: keyRows } = await pool.query<{ bundle_key: string }>(`SELECT bundle_key FROM run WHERE id = $1`, [due]);
     expect(dueRow?.bundleKey).toBe(keyRows[0]!.bundle_key);
+    expect(dueRow?.agentLogKey).toBeNull();
+    expect(rows.find((r) => r.id === justDue)?.agentLogKey).toBe(`runs/${justDue}/agent.ndjson`);
   });
 
   it('keeps raw logs for ever when the retention is 0', async () => {

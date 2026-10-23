@@ -822,7 +822,10 @@ jobs:
       # second path segment as the run would keep an unreferenced bundle; one
       # that keyed `live/` off bundle_key would delete a live run's chunks.
       # Only a fixture carrying both can tell those two mistakes apart, and
-      # both were red-verified by hand.
+      # both were red-verified by hand. The fixture also holds an agent file
+      # (runs/{runId}/agent.ndjson): run.agent_log_key is the second exact
+      # keep-list under runs/, and a sweep keyed on bundle_key alone would
+      # delete every live run's agent file.
       - name: It removes orphaned objects and keeps live ones
         run: |
           node infra/test/orphans-fixture.mjs seed

@@ -176,7 +176,11 @@ export interface RetentionCursor {
 }
 
 export interface RetentionPage {
-  runs: { id: string; bundleKey: string }[];
+  /**
+   * `agentLogKey` is the run's agent file (`runs/<runId>/agent.ndjson`), or
+   * null for a run without one: retention deletes it with the raw log.
+   */
+  runs: { id: string; bundleKey: string; agentLogKey: string | null }[];
   /** The cursor for the next page; null when this page was the last. */
   next: RetentionCursor | null;
 }
@@ -416,8 +420,13 @@ export class VerificationRepository {
       where.push(`(r.ingested_at, r.id) > ($${params.length - 1}::timestamptz, $${params.length}::uuid)`);
     }
     params.push(limit);
-    const { rows } = await this.pool.query<{ id: string; bundle_key: string; ingested_at: Date }>(
-      `SELECT r.id, r.bundle_key, r.ingested_at
+    const { rows } = await this.pool.query<{
+      id: string;
+      bundle_key: string;
+      agent_log_key: string | null;
+      ingested_at: Date;
+    }>(
+      `SELECT r.id, r.bundle_key, r.agent_log_key, r.ingested_at
          FROM run r LEFT JOIN run_verification v ON v.run_id = r.id
         WHERE ${where.join(' AND ')}
         ORDER BY r.ingested_at, r.id
@@ -426,7 +435,7 @@ export class VerificationRepository {
     );
     const last = rows[rows.length - 1];
     return {
-      runs: rows.map((r) => ({ id: r.id, bundleKey: r.bundle_key })),
+      runs: rows.map((r) => ({ id: r.id, bundleKey: r.bundle_key, agentLogKey: r.agent_log_key })),
       next: rows.length === limit && last ? { ingestedAt: last.ingested_at, id: last.id } : null,
     };
   }
