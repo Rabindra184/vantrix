@@ -348,6 +348,22 @@ jobs:
           docker run --rm perfportal:ci sh -c \
             'java --add-opens=java.base/java.lang=ALL-UNNAMED -cp "$RUNNER_GATLING_HOME/lib/*" io.gatling.app.Gatling 2>&1 | grep -q "Missing simulation class"'
 
+      # ═══ THE GATLING AGENT THE IMAGE SHIPS ═══
+      #
+      # The image build already ran this script on the jar its own stage
+      # produced; this runs it on the jar the FINAL image carries, at the path
+      # RUNNER_AGENT_JAR names — which is what the runner will load. No
+      # unrelocated `net/bytebuddy/` entry, and a premain that writes its
+      # `perfportal-agent/1` header. The second run is as uid 20001: the
+      # simulation's JVM runs as `gatling`, which owns nothing in the image,
+      # so a jar it cannot READ would fail every agent-carrying run.
+      - name: The image ships a working Gatling agent, readable by the simulation's uid
+        run: |
+          docker run --rm perfportal:ci sh -c \
+            'test "$RUNNER_AGENT_JAR" = /opt/perfportal/gatling-agent.jar && bash /app/infra/test/agent-jar-smoke.sh "$RUNNER_AGENT_JAR"'
+          docker run --rm --user 20001:20001 perfportal:ci \
+            bash /app/infra/test/agent-jar-smoke.sh /opt/perfportal/gatling-agent.jar
+
       # ═══ THE GATLING-METHOD TOOL REPRODUCES GATLING'S OWN REPORTS ═══
       #
       # The verifier's "Differences from Gatling's report" are only true if
@@ -979,6 +995,31 @@ jobs:
             playwright-report/
           retention-days: 7
           if-no-files-found: ignore
+
+  # The Gatling agent (clients/gatling-agent) is the `-javaagent` the on-prem
+  # runner loads into every Gatling JVM. Like the plugin below it is a Gradle
+  # module outside the pnpm workspace, so no `pnpm` command builds or tests
+  # it. `build` runs its unit tests AND an end-to-end test that launches real
+  # Gatling 3.15.1 child JVMs with the shaded jar loaded — the half the image
+  # build deliberately skips (infra/Dockerfile's `gatling-agent` stage runs
+  # `shadowJar` and the jar smoke check only). Then the same smoke check the
+  # image runs, on the jar this job built, so a relocation that broke shows up
+  # here as well as in `compose`.
+  gatling-agent:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: clients/gatling-agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: gradle/actions/wrapper-validation@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - run: ./gradlew build --no-daemon
+      - name: The built jar passes the image's smoke check
+        run: bash ../../infra/test/agent-jar-smoke.sh build/libs/gatling-agent.jar
 
   # The Gatling Gradle plugin (clients/gatling-gradle) is a Kotlin/Gradle
   # module outside the pnpm workspace (pnpm-workspace.yaml globs only
