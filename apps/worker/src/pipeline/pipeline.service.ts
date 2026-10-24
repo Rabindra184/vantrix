@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { IngestError } from '@perfportal/core';
 import {
+  AgentMetricWriter,
   MetricWriter,
   ProjectRepository,
   RunRepository,
@@ -15,6 +16,7 @@ import type { PrismaClient } from '@prisma/client';
 import type pg from 'pg';
 import type { WorkerConfig } from '../config.js';
 import { holdClient } from '../held-client.js';
+import { agentOutcome, openAgentSource } from './agent-source.js';
 import { selectPlugin } from './plugins.js';
 import { isTransient } from './retry.js';
 import { numberRunForTest } from './run-number.js';
@@ -309,6 +311,18 @@ export class PipelineService {
     const { plugin, toolVersion } = await selectPlugin(source.index);
 
     const result = await runEngineAsync(plugin.parse(source), run.engineOptions as EngineOptions);
+
+    // ═══ THE AGENT'S FILE, WHICH NEVER FAILS THE RUN ═══
+    //
+    // Read and built BEFORE the transaction, like everything else this method
+    // computes, so the transaction only writes. Every outcome but a transient
+    // transport error reading the stored object is an answer (see
+    // agent-source.ts) — that one is rethrown so the run retries, exactly as
+    // the same error on its own log would.
+    const agent = agentOutcome(await openAgentSource(run, { blobs: this.blobs }, source), result);
+    if (agent.kind === 'unreadable') {
+      console.warn(`run ${run.id}: its agent file is unreadable (${agent.reason}); finalizing without agent figures`);
+    }
     // The tool's own run header, not the upload/ingest time already frozen
     // onto run.startedAt at accept time (see schema.prisma). Null only when
     // the parsed bundle carried no meta event at all — not expected for a
@@ -370,16 +384,22 @@ export class PipelineService {
     try {
       await client.query('BEGIN');
 
-      await new MetricWriter().persist(
-        client,
-        {
-          runId: run.id,
-          orgId: run.orgId,
-          projectId: run.projectId,
-          runStartedOn: run.startedOn,
-        },
-        result,
-      );
+      const metricContext = {
+        runId: run.id,
+        orgId: run.orgId,
+        projectId: run.projectId,
+        runStartedOn: run.startedOn,
+      };
+      await new MetricWriter().persist(client, metricContext, result);
+
+      // In the same transaction as the run's own statistics, so agent figures
+      // are never observable for a run that is not finalized. `none` writes
+      // nothing: no row is the honest record of "no agent file".
+      if (agent.kind === 'collected') {
+        await new AgentMetricWriter().persist(client, metricContext, agent.figures, agent.file);
+      } else if (agent.kind === 'unreadable') {
+        await new AgentMetricWriter().persistUnreadable(client, metricContext, agent.reason);
+      }
 
       for (const a of assertions) {
         await client.query(
