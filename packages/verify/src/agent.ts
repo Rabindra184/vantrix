@@ -67,6 +67,8 @@ export interface ExpectedAgentMetric {
 }
 
 export interface ExpectedAgent {
+  /** The width every bucket below was laid on: the one it was handed. */
+  bucketWidthMs: number;
   durations: ExpectedAgentDuration[];
   metrics: ExpectedAgentMetric[];
 }
@@ -342,6 +344,7 @@ export function expectedAgent(
   }
 
   return {
+    bucketWidthMs,
     durations: [...timings.values()].map((t) => ({
       family: t.family,
       dim: t.dim,

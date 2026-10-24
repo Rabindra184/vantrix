@@ -23,6 +23,7 @@ import {
   gatlingMethodInput,
   gatlingMethodLines,
   optionsFrom,
+  runSeriesWidth,
   VERIFIER_VERSION,
   type Stored,
   type StoredAgent,
@@ -211,7 +212,12 @@ export class VerifyService {
         // The span the builder placed late records at; the verifier's own
         // recomputation stands in only for a row somehow missing it.
         durationMs: run.durationMs ?? expected.run.durationMs,
-        bucketWidthMs: storedAgent.bucketWidthMs ?? BASE_WIDTH_MS,
+        // DERIVED here, never read from run_agent: the run series' width as
+        // the verifier computes it from simulation.log (1000 for a run with no
+        // request, as the builder's). The stored width is then one checked
+        // figure of its own (compareAgentSummary), and a wrong one also shows
+        // on every row it misplaced.
+        bucketWidthMs: runSeriesWidth(events, options) ?? BASE_WIDTH_MS,
       });
       stored.agent = toStoredAgent(storedAgent);
     }
@@ -318,6 +324,7 @@ function sourceFailure(err: unknown): UnverifiableReason | null {
 /** Persistence's agent read, in the verifier's vocabulary: field for field. */
 function toStoredAgent(a: StoredAgentFigures): StoredAgent {
   return {
+    bucketWidthMs: a.bucketWidthMs,
     durations: a.durations.map((d) => ({
       family: d.family,
       dim: d.dim,

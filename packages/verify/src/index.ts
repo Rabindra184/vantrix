@@ -1,7 +1,7 @@
 export * from './figures.js';
 export { nearestRankIndex } from './rank.js';
 export { expectedFrom, optionsFrom } from './stats.js';
-export { expectedSeries, seriesWidth, SERIES_PERCENTILES, GROUP_SERIES_CAP } from './series.js';
+export { expectedSeries, seriesWidth, runSeriesWidth, SERIES_PERCENTILES, GROUP_SERIES_CAP } from './series.js';
 export {
   expectedErrors,
   expectedErrorBuckets,

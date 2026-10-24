@@ -1,6 +1,6 @@
 import type { CanonicalEvent } from '@perfportal/core';
 import type { ExpectedError, ExpectedErrorBucket, VerifyOptions } from './figures.js';
-import { seriesWidth } from './series.js';
+import { runSeriesWidth } from './series.js';
 
 /**
  * ═══ `run_error` AND `run_error_bucket`, RECOMPUTED FROM THE EVENTS ═══
@@ -93,12 +93,8 @@ export function expectedErrors(events: readonly CanonicalEvent[], opts: VerifyOp
 export function expectedErrorBuckets(events: readonly CanonicalEvent[], opts: VerifyOptions): ExpectedErrorBucket[] {
   // The run series' width: every request's start and end edge, warm-up and
   // OK requests included, at the run cap.
-  const edges: number[] = [];
-  for (const e of events) {
-    if (e.type === 'request') edges.push(e.startMs - opts.runStartMs, e.endMs - opts.runStartMs);
-  }
-  if (edges.length === 0) return [];
-  const width = seriesWidth(edges, opts.maxBucketsRun);
+  const width = runSeriesWidth(events, opts);
+  if (width === null) return [];
 
   const totals = new Map<string, number>(); // admitted labels, in first-seen order
   const buckets = new Map<number, { counts: Map<string, number>; overflow: number }>();

@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { decodeAgentFile, parseSimulationLog } from '@perfportal/plugin-gatling';
 import { buildAgentFigures, runEngine, runSeriesWidthMs } from '@perfportal/statistics';
-import { AGENT_PERCENTILE_RANKS, expectedAgent } from '@perfportal/verify';
+import { AGENT_PERCENTILE_RANKS, expectedAgent, optionsFrom, runSeriesWidth } from '@perfportal/verify';
 import { describe, expect, it } from 'vitest';
 
 /**
@@ -38,6 +38,11 @@ const pairs = (rows: readonly { metric: string; label: string }[]): string[] =>
   [...new Set(rows.map((r) => `${r.metric}/${r.label}`))].sort();
 
 describe('the agent builder and the verifier, on the paired fixture', () => {
+  it('derive the same bucket width from simulation.log, each its own way', () => {
+    const verifierWidth = runSeriesWidth(parseSimulationLog(LOG), optionsFrom({}, result.runStartedAtMs!));
+    expect(verifierWidth).toBe(runSeriesWidthMs(result));
+  });
+
   it('produce the same set of metric/label pairs', () => {
     expect(result.runStartedAtMs).not.toBeNull();
     // VACUITY: the fixture carries HTTP and machine figures, so both sides

@@ -23,6 +23,7 @@ export interface FigureMismatch {
     | 'run_error_bucket'
     | 'run_user_bucket'
     | 'run'
+    | 'run_agent'
     | 'run_agent_duration_bucket'
     | 'run_agent_metric_bucket';
   /** e.g. 'count', 'p95', 'ok_count'; 'row' when a whole row is missing or extra. */

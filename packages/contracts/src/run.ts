@@ -125,6 +125,7 @@ export const FigureMismatchSchema = z.object({
     'run_error_bucket',
     'run_user_bucket',
     'run',
+    'run_agent',
     'run_agent_duration_bucket',
     'run_agent_metric_bucket',
   ]),

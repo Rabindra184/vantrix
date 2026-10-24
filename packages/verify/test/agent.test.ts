@@ -2,6 +2,7 @@ import { decodeAgentFile, type AgentFile } from '@perfportal/plugin-gatling';
 import { describe, expect, it } from 'vitest';
 import { expectedAgent, type ExpectedAgent } from '../src/agent.js';
 import { compare } from '../src/compare.js';
+import { runSeriesWidth } from '../src/series.js';
 import type { Expected, Stored } from '../src/figures.js';
 
 /**
@@ -248,6 +249,20 @@ describe('compare, on the agent tables', () => {
     expect(compare({ ...base, agent }, { ...base, agent: stored }).mismatches).toEqual([
       { scope: 'tcp_connect', name: A, family: '', population: 'ok', bucket: 0, table: 'run_agent_duration_bucket', figure: 'p50', stored: 99, recomputed: 2 },
     ]);
+  });
+
+  it('names the stored bucket width when it is not the width the verifier derived', () => {
+    const stored = { ...structuredClone(agent), bucketWidthMs: 2000 };
+    expect(compare({ ...base, agent }, { ...base, agent: stored }).mismatches).toEqual([
+      { scope: 'run', name: '', family: '', population: null, bucket: null, table: 'run_agent', figure: 'bucket_width_ms', stored: 2000, recomputed: 1000 },
+    ]);
+    // A null stored width is compared, never skipped.
+    const unset = { ...structuredClone(agent), bucketWidthMs: null };
+    expect(compare({ ...base, agent }, { ...base, agent: unset }).mismatches.map((m) => [m.figure, m.stored])).toEqual([['bucket_width_ms', null]]);
+  });
+
+  it('derives no run series width for a run with no request', () => {
+    expect(runSeriesWidth([], { runStartMs: R, maxBucketsRun: 1200 })).toBeNull();
   });
 
   it('reports a row the store lacks, and one it has extra, as one row mismatch each', () => {

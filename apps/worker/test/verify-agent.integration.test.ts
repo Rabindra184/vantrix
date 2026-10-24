@@ -144,6 +144,25 @@ describe('VerifyService and the agent file', () => {
     ]);
   }, 120_000);
 
+  it('names the stored bucket width when it is not the run series width the verifier derives', async () => {
+    const { runId } = await ingested('stored');
+    const { rows } = await pool.query<{ width: number }>(
+      'UPDATE run_agent SET bucket_width_ms = bucket_width_ms * 2 WHERE run_id = $1 RETURNING bucket_width_ms AS width',
+      [runId],
+    );
+    const width = rows[0]!.width;
+
+    expect(await verify(runId)).toBe('mismatch');
+    // Only the figure: every stored row was laid on the real width, which the
+    // verifier derived for itself rather than reading back the corrupted one.
+    expect((await verifications.find(runId))!.mismatches).toEqual([
+      {
+        scope: 'run', name: '', family: '', population: null, bucket: null,
+        table: 'run_agent', figure: 'bucket_width_ms', stored: width, recomputed: width / 2,
+      },
+    ]);
+  }, 120_000);
+
   it('reports a mismatch on the bucket whose stored histogram was replaced', async () => {
     const { runId } = await ingested('stored');
     const forged = new Histogram();

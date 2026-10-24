@@ -368,10 +368,23 @@ export const compareUsers: Comparator = (expected, stored, ledger) => {
  * and `bucket` is the row's start offset. Every agent figure is an integer both
  * sides compute from the same records, so every comparison is EXACT.
  *
- * Both comparators run only when the expected side carries agent figures (the
+ * `run_agent` holds one checked figure, `bucket_width_ms` (scope `run`, no
+ * name, family or bucket): the width the stored rows were laid on, against the
+ * width the verifier derived from simulation.log itself (`runSeriesWidth`).
+ * The expected rows are built on the DERIVED width, so a wrong stored width
+ * reads twice — on this figure, and on every row it misplaced.
+ *
+ * All three comparators run only when the expected side carries agent figures (the
  * worker sets both sides together, for a collected run alone); a stored side
  * left absent then is compared as empty, so every expected row reads missing.
  */
+
+/** `run_agent`: the one figure, `bucket_width_ms`. */
+export const compareAgentSummary: Comparator = (expected, stored, ledger) => {
+  if (expected.agent === undefined) return;
+  const at: RowPlace = { table: 'run_agent', scope: 'run', name: '', family: '', bucket: null };
+  ledger.exact(at, 'bucket_width_ms', null, stored.agent?.bucketWidthMs ?? null, expected.agent.bucketWidthMs);
+};
 
 type AgentDurationKeyed = Pick<ExpectedAgentDuration, 'family' | 'dim' | 'startOffsetMs'>;
 
@@ -474,6 +487,7 @@ export const COMPARATORS: readonly Comparator[] = [
   compareErrorBuckets,
   compareUsers,
   compareRun,
+  compareAgentSummary,
   compareAgentDurations,
   compareAgentMetrics,
 ];

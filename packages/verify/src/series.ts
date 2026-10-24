@@ -91,6 +91,22 @@ export function seriesWidth(edges: readonly number[], rawCap: number): number {
   }
 }
 
+/**
+ * The run-scope `response_time` series' width, as `expectedSeries` derives it
+ * for that series: every request's start and end edge, warm-up and OK
+ * requests included, at the run cap. Null for a run with no request, which has
+ * no run series at all. The error buckets (errors.ts) and the agent buckets
+ * (agent.ts, through the worker) are laid on this width, so it is ONE
+ * derivation, not three that could disagree.
+ */
+export function runSeriesWidth(events: Iterable<CanonicalEvent>, opts: Pick<VerifyOptions, 'runStartMs' | 'maxBucketsRun'>): number | null {
+  const edges: number[] = [];
+  for (const e of events) {
+    if (e.type === 'request') edges.push(e.startMs - opts.runStartMs, e.endMs - opts.runStartMs);
+  }
+  return edges.length === 0 ? null : seriesWidth(edges, opts.maxBucketsRun);
+}
+
 function ranked(values: number[]): Record<string, number> {
   if (values.length === 0) return {};
   const sorted = [...values].sort((a, b) => a - b);

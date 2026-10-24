@@ -44,6 +44,7 @@ export interface FigureMismatch {
     | 'run_error_bucket'
     | 'run_user_bucket'
     | 'run'
+    | 'run_agent'
     | 'run_agent_duration_bucket'
     | 'run_agent_metric_bucket';
   /** e.g. 'count', 'p95', 'ok_count'; 'row' when a whole row is missing or extra. */
@@ -206,9 +207,10 @@ export interface Stored {
 /**
  * A stored agent row is the expected shape, read back: an empty population is
  * null on either side, and a null against a population is compared figure by
- * figure, never skipped.
+ * figure, never skipped. `bucketWidthMs` is `run_agent.bucket_width_ms`, which
+ * is nullable in the table and compared as null rather than skipped.
  */
-export type StoredAgent = ExpectedAgent;
+export type StoredAgent = Omit<ExpectedAgent, 'bucketWidthMs'> & { bucketWidthMs: number | null };
 
 export interface Comparison {
   figuresChecked: number;
