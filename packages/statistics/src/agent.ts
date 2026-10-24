@@ -24,7 +24,10 @@ import { Histogram } from './histogram.js';
  *     run-scope response-time width ({@link runSeriesWidthMs}). Nothing here coalesces.
  *   - Warm-up is excluded from every figure: a `connect` flagged warm-up makes its `ch` a
  *     warm-up channel, whose `tls` and `close` are dropped with it; a remote with no
- *     non-warm-up channel is dropped from `bytes` and `states`; a warm-up `dns` is dropped.
+ *     non-warm-up channel is dropped from `bytes` and `states`; a warm-up `dns` is dropped. A
+ *     remote every `connect` to which is a warm-up connect is WARM-UP-ONLY: its `tls` and
+ *     `close` are dropped whatever their `ch` (null, or naming no connect), so it never
+ *     re-enters `remotes`.
  *   - A duration is `us / 1000` handed to {@link Histogram.accept} (which rounds and floors at
  *     0); `ok: false` goes to the KO histogram.
  *   - Dimension {@link AGENT_ALL} (`*`) is a stored total over every remote or hostname.
@@ -182,6 +185,13 @@ export function buildAgentFigures(
     if (c.warmup) warmChannels.add(c.ch);
     else channelRemotes.add(c.remote);
   }
+  /** Remotes connected to only by warm-up connects. */
+  const warmOnlyRemotes = new Set<string>();
+  for (const c of file.connects) {
+    if (c.warmup && !channelRemotes.has(c.remote)) warmOnlyRemotes.add(c.remote);
+  }
+  const isWarmUp = (remote: string, ch: number | null): boolean =>
+    warmOnlyRemotes.has(remote) || (ch !== null && warmChannels.has(ch));
 
   // ── durations ──────────────────────────────────────────────────────────────────────────────
   const durations = new Map<string, AgentDurationBucket>();
@@ -244,11 +254,11 @@ export function buildAgentFigures(
     if (offset !== null && c.ok) countBoth(AGENT_METRICS.connOpened, c.remote, '', bucketOf(offset), 1);
   }
   for (const t of file.tls) {
-    if (t.warmup || (t.ch !== null && warmChannels.has(t.ch))) continue;
+    if (t.warmup || isWarmUp(t.remote, t.ch)) continue;
     addDuration('tls_handshake', t.remote, t.at, t.us, t.ok);
   }
   for (const c of file.closes) {
-    if (warmChannels.has(c.ch)) continue;
+    if (isWarmUp(c.remote, c.ch)) continue;
     const offset = placed(c.at);
     if (offset !== null) countBoth(AGENT_METRICS.connClosed, c.remote, '', bucketOf(offset), 1);
   }

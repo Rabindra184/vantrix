@@ -145,6 +145,37 @@ describe('buildAgentFigures', () => {
     expect(series(f, M.tcpState, '*', 'established')).toEqual({ 0: 1 });
   });
 
+  it("drops a warm-up-only remote's tls and close whatever their channel", () => {
+    const W = 'gatling.io/1.2.3.4:443';
+    const f = buildAgentFigures(
+      file({
+        connects: [connect(100, W, 1, 5000, true, true), connect(200, A, 2)],
+        // Not flagged warm-up, and its channel is unmetered: only the remote marks it.
+        tls: [{ at: R + 150, us: 9000, remote: W, ok: true, ch: null, warmup: false }],
+        // A channel no connect names.
+        closes: [{ at: R + 300, ch: 99, remote: W }],
+      }),
+      OPTS,
+    );
+    expect([...f.durations.map((d) => d.dim), ...f.metrics.map((m) => m.dim)]).not.toContain(W);
+    expect(f.durations.some((d) => d.family === 'tls_handshake')).toBe(false);
+    expect(series(f, M.connClosed, '*', '')).toEqual({});
+    expect(f.remotes).toEqual([A]);
+  });
+
+  it('files bw.bits * for every counted sample, zero when nothing countable moved', () => {
+    const W = 'gatling.io/1.2.3.4:443';
+    const f = buildAgentFigures(
+      file({
+        connects: [connect(100, W, 1, 5000, true, true), connect(200, A, 2)],
+        samples: [s(300, { bytes: {} }), s(1300, { bytes: { [W]: [500, 600] } })],
+      }),
+      OPTS,
+    );
+    expect(series(f, M.bwBits, '*', 'out')).toEqual({ 0: 0, 1000: 0 });
+    expect(series(f, M.bwBits, '*', 'in')).toEqual({ 0: 0, 1000: 0 });
+  });
+
   it('drops records before the run and places those after its duration in the last bucket', () => {
     const d = OPTS.durationMs;
     const f = buildAgentFigures(
@@ -473,7 +504,7 @@ describe('buildAgentFigures', () => {
 describe('runSeriesWidthMs', () => {
   it("is the run-scope response_time series' own width, 1000 when there is none", () => {
     expect(runSeriesWidthMs(runEngine([]))).toBe(1000);
-    const events = [...parseSimulationLog(readFileSync('fixtures/gatling-3.15.1.2/reference-report/simulation.log'))];
+    const events = [...parseSimulationLog(readFileSync(join(import.meta.dirname, '../../../fixtures/gatling-3.15.1.2/reference-report/simulation.log')))];
     const result = runEngine(events, { maxBucketsRun: 4 });
     const run = [...result.series.values()].find((x) => x.scope === 'run' && x.family === 'response_time')!;
     expect(run.bucketWidthMs).toBeGreaterThan(1000);
