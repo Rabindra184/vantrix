@@ -246,8 +246,11 @@ export interface StoredAgentPopulation {
   min: number;
   max: number;
   sum: number;
-  /** The 10 GE percentiles between Min and Max (25 … 99.99), in GE's row order. */
-  percentiles: number[];
+  /**
+   * The 10 GE percentiles between Min and Max (25 … 99.99), in GE's row order;
+   * null for a rank the stored histogram refuses to answer, never a stand-in.
+   */
+  percentiles: (number | null)[];
 }
 
 export interface StoredAgentDurationFigures {
@@ -293,9 +296,11 @@ function agentPopulation(bytes: Uint8Array): StoredAgentPopulation | null {
     min: h.min,
     max: h.max,
     sum: h.sum,
-    // An agent histogram is never a legacy overflow one, so no rank is refused;
-    // the fallback only keeps the type honest.
-    percentiles: h.percentiles(AGENT_STORED_RANKS).map((v) => v ?? h.max),
+    // An agent histogram is never a legacy overflow one, so no rank is refused
+    // today. If one were, the stored side reports what the store can answer —
+    // nothing — and the verifier sees a null against its value, rather than a
+    // fabricated max that might happen to agree.
+    percentiles: h.percentiles(AGENT_STORED_RANKS).map((v) => v ?? null),
   };
 }
 

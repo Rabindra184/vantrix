@@ -43,8 +43,13 @@ export interface AgentPopulationFigures {
   min: number;
   max: number;
   sum: number;
-  /** The 10 GE percentiles between Min and Max, in GE's row order (`AGENT_PERCENTILE_RANKS`). */
-  percentiles: number[];
+  /**
+   * The 10 GE percentiles between Min and Max, in GE's row order
+   * (`AGENT_PERCENTILE_RANKS`). The recomputed side always holds a number; the
+   * stored side holds null for a rank its histogram refuses, which compares as
+   * a mismatch against the recomputed value.
+   */
+  percentiles: (number | null)[];
 }
 
 export interface ExpectedAgentDuration {

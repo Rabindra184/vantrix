@@ -251,6 +251,14 @@ describe('compare, on the agent tables', () => {
     ]);
   });
 
+  it('reports a rank the stored histogram refused (null) against the recomputed value, never skips it', () => {
+    const stored = structuredClone(agent);
+    stored.durations.find((d) => d.dim === A)!.ok!.percentiles[1] = null;
+    expect(compare({ ...base, agent }, { ...base, agent: stored }).mismatches).toEqual([
+      { scope: 'tcp_connect', name: A, family: '', population: 'ok', bucket: 0, table: 'run_agent_duration_bucket', figure: 'p50', stored: null, recomputed: 2 },
+    ]);
+  });
+
   it('names the stored bucket width when it is not the width the verifier derived', () => {
     const stored = { ...structuredClone(agent), bucketWidthMs: 2000 };
     expect(compare({ ...base, agent }, { ...base, agent: stored }).mismatches).toEqual([
