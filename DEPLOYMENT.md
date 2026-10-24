@@ -325,6 +325,25 @@ connection, DNS and JVM data* (through the API, `"agentEnabled": false` in
 either start request: the upload's metadata or the start-from-package body).
 A retry keeps the original job's choice.
 
+**Where the figures appear.** At ingest the worker builds the run's agent
+figures from the stored file, on the run's own time buckets and with Gatling's
+HTTP warm-up left out, and keeps them with the run — so they outlive the raw
+log's retention. The API serves them with the read scope:
+`GET /v1/runs/{id}/agent` (the agent's header, its remotes and hostnames),
+`…/agent/connections`, `…/agent/dns`, `…/agent/injectors` and
+`…/agent/status`. A run with nothing to show answers `available: false` and a
+reason — `not_collected` for a job run without the agent, `unreadable` with
+why, `http_not_collected` when the HTTP events were not recorded — never a row
+of zeros. The Report's charts for these figures arrive in a later release. A
+missing or unreadable agent file never fails the run or changes its other
+figures.
+
+Verification checks the agent figures too, each against the stored agent file
+(verifier version 3). Upgrading re-checks every run verified by the previous
+version whose raw log is still stored, and each keeps its previous answer until
+its re-check lands. A run whose agent file was recorded but can no longer be
+read from the bucket reads *unverifiable*.
+
 **What it costs.** Storage: about one line per response plus one a second — a
 66-second run of 895 requests stored 81,361 bytes — and never more than the
 cap above per run. In the measured JVM, on that run: Gatling's CPU time rose
