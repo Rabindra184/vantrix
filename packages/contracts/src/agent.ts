@@ -46,16 +46,16 @@ export type TcpStateName = (typeof TCP_STATE_NAMES)[number];
 /**
  * Why a section has nothing to show.
  *
- *   not_collected          the run carries no agent file (no row was ever written)
- *   unreadable             there was a file and it could not be read; `detail` says why
- *   http_not_collected     the agent ran but its HTTP collector was off (Connections,
- *                          DNS and status); `detail` is the agent's own reason
- *   machine_not_collected  the machine collector was off — reported on the injectors
- *                          response's `machine` object, since the JVM figures still exist
+ *   not_collected       the run carries no agent file (no row was ever written)
+ *   unreadable          there was a file and it could not be read; `detail` says why
+ *   http_not_collected  the agent ran but its HTTP collector was off (Connections,
+ *                       DNS and status); `detail` is the agent's own reason
+ *
+ * A machine collector that was off is not a reason here: the injectors
+ * response is still available (the JVM figures exist), and says so on its own
+ * `machine` object, `{ available: false, reason: <the agent's own string> }`.
  */
-export const AgentUnavailableReasonSchema = z.enum([
-  'not_collected', 'unreadable', 'http_not_collected', 'machine_not_collected',
-]);
+export const AgentUnavailableReasonSchema = z.enum(['not_collected', 'unreadable', 'http_not_collected']);
 export type AgentUnavailableReason = z.infer<typeof AgentUnavailableReasonSchema>;
 
 /** A record with exactly these keys, each a number. */
