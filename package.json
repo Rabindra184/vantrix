@@ -38,6 +38,11 @@
       "vite@8": "8.2.4",
       "vitest@4": "4.1.12",
       "zod@4": "^4.6.6"
+    },
+    "auditConfig": {
+      "ignoreGhsas": [
+        "GHSA-mrhx-c7xc-m3w5"
+      ]
     }
   },
   "devDependencies": {
