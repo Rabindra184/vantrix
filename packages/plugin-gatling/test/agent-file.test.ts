@@ -43,7 +43,7 @@ describe('decodeAgentFile', () => {
     // machine figures present on Linux, keyed as the agent writes them
     const last = file.samples.at(-1)!;
     expect(last.cpu).toHaveLength(8);
-    expect(last.states['localhost/127.0.0.1:33357']).toEqual({ '6': 30 });
+    expect(last.states?.['localhost/127.0.0.1:33357']).toEqual({ '6': 30 });
     expect(last.netty).toEqual([83886080, 0]);
     expect(file.error).toBeNull();
     expect(file.capped).toBe(false);
@@ -143,7 +143,7 @@ describe('decodeAgentFile', () => {
     ]);
   });
 
-  it('reads a sample without machine figures as null and empty', () => {
+  it('reads a sample without machine figures as null', () => {
     const file = decodeAgentFile(
       enc([
         HEADER,
@@ -162,9 +162,21 @@ describe('decodeAgentFile', () => {
         mem: null,
         tcp: null,
         bytes: { 'a/1.2.3.4:80': [10, 20] },
-        states: {},
+        states: null,
       },
     ]);
+  });
+
+  it('keeps an absent states key (no reading) apart from an empty one (a measured zero)', () => {
+    const file = decodeAgentFile(
+      enc([
+        HEADER,
+        '{"t":"s","at":7,"gc":{},"heap":[1,2,3],"netty":null,"bytes":{}}',
+        '{"t":"s","at":8,"gc":{},"heap":[1,2,3],"netty":null,"bytes":{},"states":{}}',
+      ]),
+    );
+    expect(file.malformedLines).toBe(0);
+    expect(file.samples.map((s) => s.states)).toEqual([null, {}]);
   });
 
   it('keeps a key spelled __proto__ as a key, not a prototype', () => {

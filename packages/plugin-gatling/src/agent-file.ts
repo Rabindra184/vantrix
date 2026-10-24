@@ -83,8 +83,12 @@ export interface AgentStatus {
 
 /**
  * One `s` line. Counters (gc, cpu, the tcp counters, bytes) are CUMULATIVE as written; gauges
- * (heap, netty, mem, states, `CurrEstab`) are as read. `cpu`, `mem` and `tcp` are null when the
- * line carries none (not Linux, or unreadable that second); `states` is `{}` likewise.
+ * (heap, netty, mem, states, `CurrEstab`) are as read. `cpu`, `mem`, `tcp` and `states` are null
+ * when the line carries none (not Linux, or unreadable that second).
+ *
+ * `states` keeps absent and empty apart on purpose: null is NO READING (the agent could not read
+ * `/proc/net/tcp*` that second), while `{}` is a measured zero (no Gatling socket was tracked).
+ * A figure must not turn the first into the second.
  */
 export interface AgentSample {
   at: number;
@@ -100,8 +104,11 @@ export interface AgentSample {
   tcp: Record<string, number> | null;
   /** `remote → [out, in]`. */
   bytes: Record<string, [number, number]>;
-  /** `remote → { kernel state code (a string, e.g. "6") → count }`. */
-  states: Record<string, Record<string, number>>;
+  /**
+   * `remote → { kernel state code (a string, e.g. "6") → count }`; null when the line has no
+   * `states` key (no reading), `{}` when it has an empty one (a measured zero).
+   */
+  states: Record<string, Record<string, number>> | null;
 }
 
 export interface AgentFile {
@@ -230,7 +237,7 @@ function decodeSample(o: Obj): AgentSample {
     bytes: record(o.bytes, 'bytes', (v) => pair(v, 'bytes')),
     states:
       o.states === undefined
-        ? {}
+        ? null
         : record(o.states, 'states', (v) => record(v, 'states', numberValue('states'))),
   };
 }
