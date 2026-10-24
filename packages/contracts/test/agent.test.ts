@@ -141,6 +141,18 @@ describe('the agent response schemas', () => {
     expect(AgentSummaryResponseSchema.safeParse({ ...body, reason: 'gone' }).success).toBe(false);
   });
 
+  it('carries a gauge-only TCP bucket: established read, the four counters null', () => {
+    // The `tcp.established` gauge is filed on every sample carrying kernel TCP; the
+    // `tcp.evt` counters only once an earlier sample gives them a delta. A bucket holding
+    // only the gauge has measured no events — null, never 0.
+    const body = BODIES.injectors!.body as { buckets: Record<string, unknown>[] };
+    const bucket = {
+      ...body.buckets[0],
+      tcpEvents: { activeOpenings: null, failedAttempts: null, established: 3, receivedResets: null, sentResets: null },
+    };
+    expect(AgentInjectorsResponseSchema.safeParse({ ...body, buckets: [bucket] }).success).toBe(true);
+  });
+
   it('refuses a percentile row that is not 13 long', () => {
     const bad = { ...SECTION, overTime: [{ startOffsetMs: 0, ok: [1, 2], ko: null, all: null }] };
     expect(DurationSectionSchema.safeParse(bad).success).toBe(false);

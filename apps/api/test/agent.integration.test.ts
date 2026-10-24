@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AGENT_PERCENTILE_ROWS, TCP_STATE_NAMES } from '@perfportal/contracts';
 import { AGENT_BUNDLE_FILE } from '@perfportal/core';
+import { AgentMetricWriter } from '@perfportal/persistence';
 import { AGENT_DURATION_ROW_KEYS, AGENT_TCP_STATES } from '@perfportal/statistics';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -85,16 +86,87 @@ describe('the agent vocabularies the wire and the store share', () => {
   });
 });
 
+type AgentFile = Parameters<AgentMetricWriter['persist']>[3];
+type AgentFigures = Parameters<AgentMetricWriter['persist']>[2];
+
+const HTTP_OFF_REASON = 'no gatling-http jar on the classpath';
+
+function header(collects: { http: boolean; machine: boolean }, reasons: { http?: string; machine?: string }) {
+  return {
+    format: 'perfportal-agent/1', agentVersion: '0.1.0', gatlingHttpClient: null, gatlingHttp: null,
+    java: '21', os: 'Linux', host: 'loadgen-9', startedAt: 0, collects, reasons,
+  };
+}
+
+/**
+ * Gives an already-ingested run (one with no agent file) a `run_agent` row of
+ * our choosing, through the real writer: an unreadable file, or collected
+ * figures built by hand. The states these cases need — an HTTP collector that
+ * was off, a bucket holding only the TCP gauge — are ones the paired fixture,
+ * a real Linux run with every collector on, cannot produce.
+ */
+async function writeAgent(
+  ctx: TestContext,
+  runId: string,
+  agent: { unreadable: string } | { header: AgentFile['header']; metrics: AgentFigures['metrics'] },
+): Promise<void> {
+  const run = await ctx.prisma.run.findUniqueOrThrow({ where: { id: runId } });
+  const mctx = { runId, orgId: run.orgId, projectId: run.projectId, runStartedOn: run.startedOn };
+  const client = await ctx.pool.connect();
+  try {
+    const writer = new AgentMetricWriter();
+    if ('unreadable' in agent) {
+      await writer.persistUnreadable(client, mctx, agent.unreadable);
+    } else {
+      const file: AgentFile = {
+        header: agent.header, dns: [], connects: [], tls: [], closes: [], statuses: [], samples: [],
+        error: null, capped: false, malformedLines: 0,
+      };
+      await writer.persist(client, mctx, { bucketWidthMs: 1000, durations: [], metrics: agent.metrics, remotes: [], hostnames: [] }, file);
+    }
+  } finally {
+    client.release();
+  }
+}
+
 describe('GET /v1/runs/:id/agent*', () => {
   let ctx: TestContext;
   let runId: string;
   let plainRunId: string;
+  let unreadableRunId: string;
+  let httpOffRunId: string;
+  let gaugeOnlyRunId: string;
 
   beforeAll(async () => {
     ctx = await createTestApp();
     runId = await ingest(ctx, tarball(true));
     plainRunId = await ingest(ctx, tarball(false));
-  }, 120_000);
+
+    unreadableRunId = await ingest(ctx, tarball(false));
+    await writeAgent(ctx, unreadableRunId, { unreadable: 'checksum_mismatch' });
+
+    httpOffRunId = await ingest(ctx, tarball(false));
+    await writeAgent(ctx, httpOffRunId, {
+      header: header({ http: false, machine: true }, { http: HTTP_OFF_REASON }),
+      metrics: [{ metric: 'heap', dim: '*', label: 'used', startOffsetMs: 0, value: 1024 }],
+    });
+
+    // Bucket 0 holds the first kernel-TCP sample: its `tcp.established` gauge is
+    // filed, and no `tcp.evt` counter is (nothing earlier to take a delta from).
+    // Bucket 1000 holds both.
+    gaugeOnlyRunId = await ingest(ctx, tarball(false));
+    await writeAgent(ctx, gaugeOnlyRunId, {
+      header: header({ http: true, machine: true }, {}),
+      metrics: [
+        { metric: 'tcp.established', dim: '*', label: '', startOffsetMs: 0, value: 3 },
+        { metric: 'tcp.established', dim: '*', label: '', startOffsetMs: 1000, value: 5 },
+        { metric: 'tcp.evt', dim: '*', label: 'activeOpenings', startOffsetMs: 1000, value: 2 },
+        { metric: 'tcp.evt', dim: '*', label: 'failedAttempts', startOffsetMs: 1000, value: 0 },
+        { metric: 'tcp.evt', dim: '*', label: 'receivedResets', startOffsetMs: 1000, value: 0 },
+        { metric: 'tcp.evt', dim: '*', label: 'sentResets', startOffsetMs: 1000, value: 1 },
+      ],
+    });
+  }, 180_000);
 
   afterAll(async () => {
     await ctx.close();
@@ -180,6 +252,55 @@ describe('GET /v1/runs/:id/agent*', () => {
       expect(res.body.buckets, path).toEqual([]);
       expect(res.body.window, path).not.toBeNull();
     }
+  });
+
+  it('answers a window INSIDE the run that holds no bucket as available with no buckets', async () => {
+    // The run spans 0–3625 ms on 1000 ms buckets, so a slice from 1200 to 1800 is inside
+    // it and starts no bucket: a quiet slice of a recorded run, not "never recorded".
+    for (const path of ['agent/connections', 'agent/dns', 'agent/injectors', 'agent/status']) {
+      const res = await get(ctx, `/v1/runs/${runId}/${path}?from=1200&to=1800`).expect(200);
+      expect(res.body.available, path).toBe(true);
+      expect(res.body.reason, path).toBeNull();
+      expect(res.body.buckets, path).toEqual([]);
+      expect(res.body.window, path).toMatchObject({ fromMs: 1000, bucketWidthMs: 1000 });
+    }
+  });
+
+  it('answers every endpoint "unreadable" with the stored reason for an unreadable agent file', async () => {
+    for (const path of ENDPOINTS) {
+      const res = await get(ctx, `/v1/runs/${unreadableRunId}/${path}`).expect(200);
+      expect(res.body.available, path).toBe(false);
+      expect(res.body.reason, path).toBe('unreadable');
+      expect(res.body.detail, path).toBe('checksum_mismatch');
+    }
+  });
+
+  it('answers the HTTP-fed reads "http_not_collected" when the HTTP collector was off, and still serves the load generator', async () => {
+    for (const path of ['agent/connections', 'agent/dns', 'agent/status']) {
+      const res = await get(ctx, `/v1/runs/${httpOffRunId}/${path}`).expect(200);
+      expect(res.body.available, path).toBe(false);
+      expect(res.body.reason, path).toBe('http_not_collected');
+      expect(res.body.detail, path).toBe(HTTP_OFF_REASON);
+    }
+    const injectors = await get(ctx, `/v1/runs/${httpOffRunId}/agent/injectors`).expect(200);
+    expect(injectors.body).toMatchObject({ available: true, reason: null, machine: { available: true, reason: null } });
+    expect(injectors.body.buckets[0]).toMatchObject({ startOffsetMs: 0, heapUsedBytes: 1024 });
+    // The summary itself is available: the agent ran, one collector did not.
+    const summary = await get(ctx, `/v1/runs/${httpOffRunId}/agent`).expect(200);
+    expect(summary.body).toMatchObject({ available: true, header: { collects: { http: false }, reasons: { http: HTTP_OFF_REASON } } });
+  });
+
+  it('reports a gauge-only TCP bucket as established with the four counters null, never zero', async () => {
+    const res = await get(ctx, `/v1/runs/${gaugeOnlyRunId}/agent/injectors`).expect(200);
+    const [first, second] = res.body.buckets;
+    expect(first.tcpEvents).toEqual({
+      activeOpenings: null, failedAttempts: null, established: 3, receivedResets: null, sentResets: null,
+    });
+    expect(second.tcpEvents).toEqual({
+      activeOpenings: 2, failedAttempts: 0, established: 5, receivedResets: 0, sentResets: 1,
+    });
+    // No `tcp.seg` row in either bucket: no segment reading, so null rather than zeros.
+    expect(first.tcpSegments).toBeNull();
   });
 
   it('counts one status per request, adding up to the run\'s own request count', async () => {

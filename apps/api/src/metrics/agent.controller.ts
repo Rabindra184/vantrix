@@ -297,19 +297,25 @@ export class AgentController {
           heapUsedBytes: gauge(m, AGENT_METRICS.heap, 'used'),
           nettyDirectBytes: gauge(m, AGENT_METRICS.netty, 'direct'),
           nettyHeapBytes: gauge(m, AGENT_METRICS.netty, 'heap'),
-          // Null when the bucket holds no kernel TCP reading at all: an unkeyed
-          // machine counter files nothing without an earlier sample to take a
-          // delta from, and off Linux nothing is read — zeros would claim a
-          // measurement of an idle network stack.
+          // Null per field, because the two halves are filed differently: the
+          // `tcp.established` gauge on every sample carrying kernel TCP, the
+          // `tcp.evt` counters (unkeyed, cumulative since boot) only once an
+          // earlier sample gives them a delta. So a bucket holding the run's
+          // first kernel-TCP sample has the gauge and no counters — four zeros
+          // there would claim an idle network stack nobody measured. Within a
+          // present group a missing label is 0: the group is filed from one
+          // sample pair, so its rows arrive together.
           tcpEvents: evt === undefined && established === undefined
             ? null
             : {
-                activeOpenings: evt?.get('activeOpenings') ?? 0,
-                failedAttempts: evt?.get('failedAttempts') ?? 0,
-                established: established ?? 0,
-                receivedResets: evt?.get('receivedResets') ?? 0,
-                sentResets: evt?.get('sentResets') ?? 0,
+                activeOpenings: evt === undefined ? null : (evt.get('activeOpenings') ?? 0),
+                failedAttempts: evt === undefined ? null : (evt.get('failedAttempts') ?? 0),
+                established: established ?? null,
+                receivedResets: evt === undefined ? null : (evt.get('receivedResets') ?? 0),
+                sentResets: evt === undefined ? null : (evt.get('sentResets') ?? 0),
               },
+          // One counter group, so whole or null — it cannot mix the way
+          // `tcpEvents` can.
           tcpSegments: seg === undefined
             ? null
             : {

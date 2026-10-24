@@ -63,6 +63,13 @@ function counts<const K extends string>(keys: readonly K[]) {
   return z.object(Object.fromEntries(keys.map((k) => [k, z.number()])) as Record<K, z.ZodNumber>).strict();
 }
 
+/** A record with exactly these keys, each a number or null (no reading for that one). */
+function nullableCounts<const K extends string>(keys: readonly K[]) {
+  return z
+    .object(Object.fromEntries(keys.map((k) => [k, z.number().nullable()])) as Record<K, z.ZodNullable<z.ZodNumber>>)
+    .strict();
+}
+
 const PercentileRowSchema = z.array(z.number()).length(AGENT_PERCENTILE_ROWS.length);
 const CurvePointSchema = z.tuple([z.number(), z.number()]);
 
@@ -219,8 +226,21 @@ export const AgentInjectorsResponseSchema = z.object({
     heapUsedBytes: z.number().nullable(),
     nettyDirectBytes: z.number().nullable(),
     nettyHeapBytes: z.number().nullable(),
-    /** Kernel TCP events (counters) and `established` (a gauge); null when the bucket has no reading. */
-    tcpEvents: counts(TCP_EVENT_NAMES).nullable(),
+    /**
+     * Kernel TCP events: four counters (`tcp.evt`) and `established`, a GAUGE
+     * (`tcp.established`). The two are filed differently — the gauge on every
+     * sample carrying kernel TCP, the counters only once an earlier sample gives
+     * them a delta — so a bucket can hold one without the other. Each field is
+     * therefore null on its own: the four counters when the bucket has no
+     * `tcp.evt` reading, `established` when it has no gauge reading. The whole
+     * object is null only when it has neither.
+     */
+    tcpEvents: nullableCounts(TCP_EVENT_NAMES).nullable(),
+    /**
+     * Kernel TCP segments. All four are one counter group (`tcp.seg`), filed
+     * together from one sample pair, so they cannot be split: the object is
+     * null when the bucket has no `tcp.seg` reading, and whole otherwise.
+     */
     tcpSegments: counts(TCP_SEGMENT_NAMES).nullable(),
   })),
 });
