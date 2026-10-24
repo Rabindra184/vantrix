@@ -534,6 +534,17 @@ docker compose -f infra/docker-compose.yml --profile onprem up -d --build --no-d
 docker compose -f infra/docker-compose.yml --profile onprem up -d --build
 ```
 
+**Upgrading to agent figures (verifier version 3): the same order — migrate,
+then the API, then the worker — and the same three commands.** The new worker
+verifies agent figures, and when one disagrees it records a mismatch naming one
+of the new agent tables (`run_agent`, `run_agent_duration_bucket`,
+`run_agent_metric_bucket`). An API still on the old image does not know those
+table names and refuses the stored list, so that run's verification panel
+(`GET /v1/runs/{id}/verification`) answers a 500 until the API is replaced. The
+other way round is safe: an old worker under the new API writes no agent
+figures, so its runs read `not_collected` and are verified on their
+`simulation.log` alone.
+
 **Runs from before exact statistics are recomputed by themselves.** After the
 upgrade the worker finds every run that still carries estimated figures and
 recomputes it, exactly, from the log it stored at ingest — one run at a time,
