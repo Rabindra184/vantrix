@@ -209,9 +209,11 @@ export class VerifyService {
       }
       expected.agent = expectedAgent(file, {
         runStartMs: options.runStartMs,
-        // The span the builder placed late records at; the verifier's own
-        // recomputation stands in only for a row somehow missing it.
-        durationMs: run.durationMs ?? expected.run.durationMs,
+        // The span late records are placed at, RECOMPUTED here from
+        // simulation.log, never read from the run row — the width's rule
+        // below, for the same reason: a wrong stored duration_ms is one run
+        // figure (compareRun), not every agent row it would have misplaced.
+        durationMs: expected.run.durationMs,
         // DERIVED here, never read from run_agent: the run series' width as
         // the verifier computes it from simulation.log (1000 for a run with no
         // request, as the builder's). The stored width is then one checked

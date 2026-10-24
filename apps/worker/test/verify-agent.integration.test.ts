@@ -163,6 +163,29 @@ describe('VerifyService and the agent file', () => {
     ]);
   }, 120_000);
 
+  it('names only the run duration when the stored duration_ms is wrong, not the agent rows laid on it', async () => {
+    const { runId } = await ingested('stored');
+    // Short of where most of the agent's records fall, so a verifier that took
+    // its agent span from this column would clamp them into its last bucket and
+    // report every row they left; the verifier spans the file by its own
+    // recomputed duration, and the corruption reads as the one run figure.
+    const { rows } = await pool.query<{ was: number }>(
+      `UPDATE run SET duration_ms = 1000 FROM (SELECT duration_ms AS was FROM run WHERE id = $1) old
+        WHERE id = $1 RETURNING old.was`,
+      [runId],
+    );
+    const was = rows[0]!.was;
+    expect(was).toBeGreaterThan(2000);
+
+    expect(await verify(runId)).toBe('mismatch');
+    expect((await verifications.find(runId))!.mismatches).toEqual([
+      {
+        scope: 'run', name: '', family: '', population: null, bucket: null,
+        table: 'run', figure: 'duration_ms', stored: 1000, recomputed: was,
+      },
+    ]);
+  }, 120_000);
+
   it('reports a mismatch on the bucket whose stored histogram was replaced', async () => {
     const { runId } = await ingested('stored');
     const forged = new Histogram();
