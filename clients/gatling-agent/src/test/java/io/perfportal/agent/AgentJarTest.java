@@ -4,7 +4,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.File;
+import java.net.InetAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -83,6 +86,28 @@ class AgentJarTest {
                 + (MACHINE ? "{}" : "{\"machine\":" + EventWriter.quote(MACHINE_REFUSAL) + "}")),
         h);
     assertTrue(h.matches(".*\"startedAt\":\\d+.*"), h);
+  }
+
+  @Test
+  void namesItsHostInTheHeader() throws Exception {
+    Path out = dir.resolve("agent.ndjson");
+    Process p = run("out=" + out, true);
+    assertEquals(0, p.exitValue(), output(p));
+    String h = Files.readAllLines(out).get(0);
+    assertTrue(h.contains("\"host\":"), h);
+    // Still one JSON object, the host a string (or null when the JVM cannot name it).
+    JsonNode header = new ObjectMapper().readTree(h);
+    assertTrue(header.isObject(), h);
+    JsonNode host = header.get("host");
+    assertTrue(host.isTextual() || host.isNull(), h);
+    // The child runs on this machine, so it names the host this JVM does.
+    String expected;
+    try {
+      expected = InetAddress.getLocalHost().getHostName();
+    } catch (Exception e) {
+      expected = null;
+    }
+    assertEquals(expected, host.isNull() ? null : host.asText(), h);
   }
 
   @Test

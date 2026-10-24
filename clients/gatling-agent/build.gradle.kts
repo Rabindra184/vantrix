@@ -65,6 +65,9 @@ tasks.test {
     dependsOn(tasks.shadowJar)
     // Later tasks launch a JVM with -javaagent:<this> to test the real artifact.
     systemProperty("agentJar", tasks.shadowJar.get().archiveFile.get().asFile.path)
+    // `./gradlew test -DkeepDir=<dir>` keeps GatlingRunE2ETest's real run (simulation.log plus
+    // the agent file of the same JVM) -- how fixtures/gatling-3.15.1.2/agent-run/ was recorded.
+    System.getProperty("keepDir")?.let { systemProperty("keepDir", it) }
     inputs.files(oldByteBuddy)
     doFirst { systemProperty("oldByteBuddyJar", oldByteBuddy.singleFile.path) }
 }

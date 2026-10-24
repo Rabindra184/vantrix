@@ -110,8 +110,16 @@ public final class AgentMain {
   }
 
   /**
-   * The first line of every file. {@code reasons} names each collector that is off and why;
-   * a collector that is on has no entry.
+   * The first line of every file:
+   *
+   * <pre>
+   * {"t":"header","format","agentVersion","gatlingHttpClient","gatlingHttp","java","os","host",
+   *  "startedAt","collects":{"http","machine"},"reasons":{["http"][,"machine"]}}
+   * </pre>
+   *
+   * {@code gatlingHttpClient} and {@code gatlingHttp} are null when not found; {@code host} is
+   * the load generator's own name ({@link #hostName}), null when the JVM cannot tell. {@code
+   * reasons} names each collector that is off and why; a collector that is on has no entry.
    */
   static String header(
       VersionGate.Result gate, long startedAt, boolean machine, String machineReason) {
@@ -134,6 +142,8 @@ public final class AgentMain {
         + EventWriter.quote(System.getProperty("java.version"))
         + ",\"os\":"
         + EventWriter.quote(System.getProperty("os.name"))
+        + ",\"host\":"
+        + EventWriter.quote(hostName())
         + ",\"startedAt\":"
         + startedAt
         + ",\"collects\":{\"http\":"
@@ -143,5 +153,17 @@ public final class AgentMain {
         + "},\"reasons\":"
         + reasons
         + "}";
+  }
+
+  /**
+   * {@code InetAddress.getLocalHost().getHostName()}, or null on any failure: an unresolvable
+   * hostname must cost the header one field, never the file.
+   */
+  static String hostName() {
+    try {
+      return java.net.InetAddress.getLocalHost().getHostName();
+    } catch (Throwable t) {
+      return null;
+    }
   }
 }

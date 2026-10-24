@@ -199,6 +199,26 @@ class GatlingRunE2ETest {
         sent >= handshakes * MIN_CLIENT_HELLO_BYTES,
         "sent " + sent + " bytes to " + tlsRemote + " over " + handshakes + " handshakes");
     assertTrue(((Number) tlsBytes.get(1)).longValue() > 0, lastSample.toString());
+
+    keepRun(out);
+  }
+
+  /**
+   * With {@code -DkeepDir=<dir>} (forwarded by the Gradle test task), copies this run's
+   * {@code simulation.log} and agent file there -- AFTER every assertion above has passed, so a
+   * kept pair is one this test accepted. It is how {@code fixtures/gatling-3.15.1.2/agent-run/}
+   * was recorded: both files come from the one JVM, so their clocks agree.
+   */
+  private void keepRun(Path agentFile) throws IOException {
+    String keep = System.getProperty("keepDir");
+    if (keep == null || keep.isEmpty()) return;
+    Path dest = Files.createDirectories(Path.of(keep));
+    Files.copy(
+        simulationLog(tmp.resolve("results")),
+        dest.resolve("simulation.log"),
+        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+    Files.copy(
+        agentFile, dest.resolve("agent.ndjson"), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
   }
 
   @Test
