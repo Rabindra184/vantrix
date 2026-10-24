@@ -1,3 +1,4 @@
+import { AGENT_PERCENTILE_RANKS, agentPercentileFigure, type AgentPopulationFigures, type ExpectedAgentDuration, type ExpectedAgentMetric } from './agent.js';
 import type {
   Comparison,
   Expected,
@@ -19,7 +20,7 @@ import type {
  * (`matchRows`) and checks each figure through the ledger, which counts it and
  * records a mismatch. Each metric table — stats, series buckets, errors,
  * error buckets, users — and the run's two spans has one comparator in that
- * list.
+ * list, and so do the two agent tables (below).
  *
  * TOLERANCE. Counts, extremes and percentiles are integers both sides compute
  * from the same observations, so they must be EQUAL. A mean, a standard
@@ -353,7 +354,129 @@ export const compareUsers: Comparator = (expected, stored, ledger) => {
   });
 };
 
-export const COMPARATORS: readonly Comparator[] = [compareStats, compareSeries, compareErrors, compareErrorBuckets, compareUsers, compareRun];
+/*
+ * ═══ THE AGENT TABLES: WHERE EACH COORDINATE GOES ═══
+ *
+ * `FigureMismatch` was shaped for statistics rows, so an agent row lays its key
+ * into the same three slots, most general first, as `rowLabel` reads them:
+ *
+ *   run_agent_duration_bucket   scope = family (`tcp_connect` …), name = dim
+ *                               (a remote, a hostname or `*`), family = ''
+ *   run_agent_metric_bucket     scope = metric (`bw.bits` …), name = dim,
+ *                               family = label (`out`, `200`, a collector …)
+ *
+ * and `bucket` is the row's start offset. Every agent figure is an integer both
+ * sides compute from the same records, so every comparison is EXACT.
+ *
+ * Both comparators run only when the expected side carries agent figures (the
+ * worker sets both sides together, for a collected run alone); a stored side
+ * left absent then is compared as empty, so every expected row reads missing.
+ */
+
+type AgentDurationKeyed = Pick<ExpectedAgentDuration, 'family' | 'dim' | 'startOffsetMs'>;
+
+const agentDurationKey = (b: AgentDurationKeyed): string => `${b.family}\u0000${b.dim}\u0000${String(b.startOffsetMs)}`;
+
+const agentDurationPlace = (b: AgentDurationKeyed): RowPlace => ({
+  table: 'run_agent_duration_bucket',
+  scope: b.family,
+  name: b.dim,
+  family: '',
+  bucket: b.startOffsetMs,
+});
+
+/** count, min, max, sum and the 10 GE percentiles of one population; every value null for an empty one. */
+function populationFigures(p: AgentPopulationFigures | null): [string, number | null][] {
+  return [
+    ['count', p?.count ?? null],
+    ['min', p?.min ?? null],
+    ['max', p?.max ?? null],
+    ['sum', p?.sum ?? null],
+    ...AGENT_PERCENTILE_RANKS.map((rank, i): [string, number | null] => [agentPercentileFigure(rank), p?.percentiles[i] ?? null]),
+  ];
+}
+
+function comparePopulation(
+  ledger: Ledger,
+  at: RowPlace,
+  population: 'ok' | 'ko',
+  stored: AgentPopulationFigures | null,
+  recomputed: AgentPopulationFigures | null,
+): void {
+  // Both empty: nothing was measured and nothing is stored, so there is no figure to check.
+  if (stored === null && recomputed === null) return;
+  const want = populationFigures(recomputed);
+  const have = populationFigures(stored);
+  for (let i = 0; i < want.length; i += 1) ledger.exact(at, want[i]![0], population, have[i]![1], want[i]![1]);
+}
+
+/**
+ * `run_agent_duration_bucket`, keyed `(family, dim, start_offset_ms)`: the two
+ * count columns, then each population's figures as the stored histogram
+ * answers them. A row on one side only is one `row` mismatch carrying its
+ * total count.
+ */
+export const compareAgentDurations: Comparator = (expected, stored, ledger) => {
+  if (expected.agent === undefined) return;
+  matchRows<ExpectedAgentDuration, ExpectedAgentDuration>(expected.agent.durations, stored.agent?.durations ?? [], agentDurationKey, {
+    both(e, s) {
+      const at = agentDurationPlace(e);
+      ledger.exact(at, 'ok_count', null, s.okCount, e.okCount);
+      ledger.exact(at, 'ko_count', null, s.koCount, e.koCount);
+      comparePopulation(ledger, at, 'ok', s.ok, e.ok);
+      comparePopulation(ledger, at, 'ko', s.ko, e.ko);
+    },
+    missing(e) {
+      ledger.row(agentDurationPlace(e), null, e.okCount + e.koCount);
+    },
+    extra(s) {
+      ledger.row(agentDurationPlace(s), s.okCount + s.koCount, null);
+    },
+  });
+};
+
+type AgentMetricKeyed = Pick<ExpectedAgentMetric, 'metric' | 'dim' | 'label' | 'startOffsetMs'>;
+
+const agentMetricKey = (m: AgentMetricKeyed): string =>
+  `${m.metric}\u0000${m.dim}\u0000${m.label}\u0000${String(m.startOffsetMs)}`;
+
+const agentMetricPlace = (m: AgentMetricKeyed): RowPlace => ({
+  table: 'run_agent_metric_bucket',
+  scope: m.metric,
+  name: m.dim,
+  family: m.label,
+  bucket: m.startOffsetMs,
+});
+
+/**
+ * `run_agent_metric_bucket`, keyed `(metric, dim, label, start_offset_ms)`:
+ * `value`. A row on one side only is one `row` mismatch carrying its value.
+ */
+export const compareAgentMetrics: Comparator = (expected, stored, ledger) => {
+  if (expected.agent === undefined) return;
+  matchRows<ExpectedAgentMetric, ExpectedAgentMetric>(expected.agent.metrics, stored.agent?.metrics ?? [], agentMetricKey, {
+    both(e, s) {
+      ledger.exact(agentMetricPlace(e), 'value', null, s.value, e.value);
+    },
+    missing(e) {
+      ledger.row(agentMetricPlace(e), null, e.value);
+    },
+    extra(s) {
+      ledger.row(agentMetricPlace(s), s.value, null);
+    },
+  });
+};
+
+export const COMPARATORS: readonly Comparator[] = [
+  compareStats,
+  compareSeries,
+  compareErrors,
+  compareErrorBuckets,
+  compareUsers,
+  compareRun,
+  compareAgentDurations,
+  compareAgentMetrics,
+];
 
 export function compare(expected: Expected, stored: Stored): Comparison {
   const ledger = new Ledger();

@@ -1,3 +1,5 @@
+import type { ExpectedAgent } from './agent.js';
+
 /**
  * The verifier's own vocabulary. It mirrors persistence's `FigureMismatch`
  * field for field (packages/persistence/src/repositories/verification.ts) so
@@ -9,8 +11,14 @@
  * 2: Gatling's own method runs beside the check (gatling-method.ts), so the
  * scan re-checks every run verified by 1 whose raw log still exists and fills
  * in where Gatling's report differs.
+ *
+ * 3: a run whose agent file was collected has every stored agent figure
+ * re-derived from that file (agent.ts) into the same ledger, so the scan
+ * re-checks every run verified by 2. A run with no `run_agent` row, or one
+ * whose agent file was unreadable at ingest, verifies on `simulation.log`
+ * alone, exactly as under 2.
  */
-export const VERIFIER_VERSION = 2;
+export const VERIFIER_VERSION = 3;
 
 /**
  * The finest bucket width the engine writes, before any coalescing: one
@@ -29,7 +37,15 @@ export interface FigureMismatch {
   population: 'all' | 'ok' | 'ko' | null;
   /** start_offset_ms; null for a run_stat or run_error figure. */
   bucket: number | null;
-  table: 'run_stat' | 'run_series_bucket' | 'run_error' | 'run_error_bucket' | 'run_user_bucket' | 'run';
+  table:
+    | 'run_stat'
+    | 'run_series_bucket'
+    | 'run_error'
+    | 'run_error_bucket'
+    | 'run_user_bucket'
+    | 'run'
+    | 'run_agent_duration_bucket'
+    | 'run_agent_metric_bucket';
   /** e.g. 'count', 'p95', 'ok_count'; 'row' when a whole row is missing or extra. */
   figure: string;
   stored: number | string | null;
@@ -143,6 +159,12 @@ export interface Expected {
   errorBuckets: ExpectedErrorBucket[];
   users: ExpectedUserBucket[];
   run: RunSpans;
+  /**
+   * What the run's agent file says its two agent tables should hold; absent
+   * when the run has no collected agent file, and then neither agent table is
+   * compared at all.
+   */
+  agent?: ExpectedAgent;
 }
 
 /** The stored row has the expected row's shape: same columns, read back. */
@@ -177,7 +199,16 @@ export interface Stored {
   errorBuckets: StoredErrorBucket[];
   users: StoredUserBucket[];
   run: RunSpans;
+  /** The two agent tables, histograms decoded into figures; absent when not compared. */
+  agent?: StoredAgent;
 }
+
+/**
+ * A stored agent row is the expected shape, read back: an empty population is
+ * null on either side, and a null against a population is compared figure by
+ * figure, never skipped.
+ */
+export type StoredAgent = ExpectedAgent;
 
 export interface Comparison {
   figuresChecked: number;

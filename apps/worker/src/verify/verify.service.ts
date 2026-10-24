@@ -3,16 +3,21 @@ import { retainedUntil, type BundleSource, type CanonicalEvent } from '@perfport
 import {
   NOT_EXACT_RUN_SQL,
   ProjectRepository,
+  readStoredAgentFigures,
   readStoredFigures,
   RunRepository,
   VerificationRepository,
   type RunRecord,
+  type StoredAgentFigures,
   type StoredFigures,
   type UnverifiableReason,
 } from '@perfportal/persistence';
+import { decodeAgentFile, type AgentFile } from '@perfportal/plugin-gatling';
 import type { BlobStore } from '@perfportal/storage';
 import {
+  BASE_WIDTH_MS,
   compare,
+  expectedAgent,
   expectedFrom,
   gatlingDifferences,
   gatlingMethodInput,
@@ -20,11 +25,13 @@ import {
   optionsFrom,
   VERIFIER_VERSION,
   type Stored,
+  type StoredAgent,
 } from '@perfportal/verify';
 import type { PrismaClient } from '@prisma/client';
 import type pg from 'pg';
 import type { WorkerConfig } from '../config.js';
 import { holdClient } from '../held-client.js';
+import { openAgentSource } from '../pipeline/agent-source.js';
 import { RUN_INGEST_LOCK_NAMESPACE } from '../pipeline/pipeline.service.js';
 import { selectPlugin } from '../pipeline/plugins.js';
 import { isTransient } from '../pipeline/retry.js';
@@ -172,8 +179,43 @@ export class VerifyService {
     const meta = events.find((e) => e.type === 'meta');
     if (meta === undefined || meta.type !== 'meta') return unverifiable('raw_log_unreadable');
 
-    const expected = expectedFrom(events, optionsFrom(run.engineOptions, meta.startedAtMs));
+    const options = optionsFrom(run.engineOptions, meta.startedAtMs);
+    const expected = expectedFrom(events, options);
     const stored = toStored(await readStoredFigures(this.pool, runId, run.startedOn));
+
+    // ═══ THE AGENT FILE, CHECKED INTO THE SAME LEDGER ═══
+    //
+    // Only a run whose agent file was COLLECTED has agent figures to hold to
+    // it. A run with no `run_agent` row, or one recorded unreadable at ingest
+    // (any reason, a builder failure included), stored no agent figures and is
+    // verified on simulation.log alone. A collected run whose file can no
+    // longer be read is unverifiable: its stored figures cannot be checked,
+    // and verifying the rest would read as though they had been.
+    const storedAgent = await readStoredAgentFigures(this.pool, runId, run.startedOn);
+    if (storedAgent?.status === 'collected') {
+      // A transport failure is rethrown, never recorded: it says nothing about
+      // the file (the rule simulation.log's read follows above).
+      const agentSource = await openAgentSource(run, { blobs: this.blobs }, source, { rethrowTransient: true });
+      if (agentSource.kind === 'none') return unverifiable('raw_log_missing');
+      if (agentSource.kind === 'unreadable') {
+        return unverifiable(agentSource.reason === 'missing' ? 'raw_log_missing' : 'raw_log_unreadable');
+      }
+      let file: AgentFile;
+      try {
+        file = decodeAgentFile(agentSource.bytes);
+      } catch {
+        return unverifiable('raw_log_unreadable');
+      }
+      expected.agent = expectedAgent(file, {
+        runStartMs: options.runStartMs,
+        // The span the builder placed late records at; the verifier's own
+        // recomputation stands in only for a row somehow missing it.
+        durationMs: run.durationMs ?? expected.run.durationMs,
+        bucketWidthMs: storedAgent.bucketWidthMs ?? BASE_WIDTH_MS,
+      });
+      stored.agent = toStoredAgent(storedAgent);
+    }
+
     const { figuresChecked, mismatches } = compare(expected, stored);
 
     const status = mismatches.length === 0 ? 'verified' : 'mismatch';
@@ -271,6 +313,28 @@ function sourceFailure(err: unknown): UnverifiableReason | null {
     return 'raw_log_unreadable';
   }
   return null;
+}
+
+/** Persistence's agent read, in the verifier's vocabulary: field for field. */
+function toStoredAgent(a: StoredAgentFigures): StoredAgent {
+  return {
+    durations: a.durations.map((d) => ({
+      family: d.family,
+      dim: d.dim,
+      startOffsetMs: d.startOffsetMs,
+      okCount: d.okCount,
+      koCount: d.koCount,
+      ok: d.ok,
+      ko: d.ko,
+    })),
+    metrics: a.metrics.map((m) => ({
+      metric: m.metric,
+      dim: m.dim,
+      label: m.label,
+      startOffsetMs: m.startOffsetMs,
+      value: m.value,
+    })),
+  };
 }
 
 /**
