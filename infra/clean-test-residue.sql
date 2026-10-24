@@ -29,8 +29,9 @@
 --
 -- THE TEMP TABLE IS THE SAFETY MECHANISM, NOT THE STATEMENT ORDER.
 -- `run_stat`, `run_error`, `run_error_bucket`, `run_series_bucket`,
--- `run_user_bucket` and `telemetry_sample` carry `org_id` but have NO foreign
--- key -- they are partitioned and deliberately FK-free for write throughput.
+-- `run_user_bucket`, `run_agent_duration_bucket`, `run_agent_metric_bucket`
+-- and `telemetry_sample` carry `org_id` but have NO foreign key -- they are
+-- partitioned and deliberately FK-free for write throughput.
 -- So `DELETE FROM org` does NOT reach them, and a script that resolves the
 -- org set INLINE (`WHERE org_id IN (SELECT id FROM org WHERE slug ~ ...)`)
 -- orphans every one of those rows the moment the orgs go first: the subquery
@@ -50,7 +51,7 @@
 --
 -- What org DOES cascade to, and so is absent below: `org_member`, `project`,
 -- and via `project` to `api_token`, `run`, `sla_rule`, `test`, `runner_job`,
--- `runner_artifact`; and via `run` to `run_assertion`.
+-- `runner_artifact`; and via `run` to `run_assertion` and `run_agent`.
 --
 -- OUT OF SCOPE, deliberately: the `test-<uuid>` MinIO buckets that
 -- `packages/storage`'s integration tests create. Those are S3 objects, not
@@ -133,6 +134,8 @@ SELECT count(*) AS residue_orgs FROM residue_org;
 DELETE FROM telemetry_sample  WHERE org_id IN (SELECT id FROM residue_org);
 DELETE FROM run_series_bucket WHERE org_id IN (SELECT id FROM residue_org);
 DELETE FROM run_user_bucket   WHERE org_id IN (SELECT id FROM residue_org);
+DELETE FROM run_agent_duration_bucket WHERE org_id IN (SELECT id FROM residue_org);
+DELETE FROM run_agent_metric_bucket   WHERE org_id IN (SELECT id FROM residue_org);
 DELETE FROM run_error_bucket  WHERE org_id IN (SELECT id FROM residue_org);
 DELETE FROM run_error         WHERE org_id IN (SELECT id FROM residue_org);
 DELETE FROM run_stat          WHERE org_id IN (SELECT id FROM residue_org);

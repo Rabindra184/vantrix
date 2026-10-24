@@ -544,6 +544,7 @@ model Run {
   assertions RunAssertion[]
   verdictChanges RunVerdictChange[]
   verification   RunVerification?
+  agent          RunAgent?
   runnerJobs RunnerJob[]
   /// SET NULL, not CASCADE: a deleted account keeps its words on the run and
   /// loses only the attribution.
@@ -783,6 +784,53 @@ model RunErrorBucket {
   @@map("run_error_bucket")
 }
 
+/// One agent duration bucket: the DNS resolution, TCP connect or TLS handshake
+/// times of one dimension in one bucket of the run's own series width.
+/// Partitioned by range on run_started_on — see migration
+/// 20261024120000_run_agent_figures, hand-written. Prisma cannot express
+/// partitioning. FK-free like run_series_bucket: a run or org delete does not
+/// reach it, so infra/clean-test-residue.sql deletes it by org.
+model RunAgentDurationBucket {
+  runStartedOn  DateTime @map("run_started_on") @db.Date
+  runId         String   @map("run_id") @db.Uuid
+  orgId         String   @map("org_id") @db.Uuid
+  projectId     String   @map("project_id") @db.Uuid
+  /// dns_resolution, tcp_connect or tls_handshake.
+  family        String
+  /// A hostname (dns_resolution), a remote host/ip:port (the other two), or
+  /// '*', the all-dimensions total stored as its own rows.
+  dim           String
+  startOffsetMs Int      @map("start_offset_ms")
+  okCount       Int      @map("ok_count")
+  koCount       Int      @map("ko_count")
+  /// Exact sparse-ms-v2 histograms, as run_series_bucket stores them.
+  histogramOk   Bytes    @map("histogram_ok")
+  histogramKo   Bytes    @map("histogram_ko")
+
+  @@id([runStartedOn, runId, family, dim, startOffsetMs])
+  @@map("run_agent_duration_bucket")
+}
+
+/// One agent metric value: a counter summed, or a gauge maxed, over one bucket
+/// of the run's own series width. Partitioned and FK-free exactly like
+/// RunAgentDurationBucket, from the same migration.
+model RunAgentMetricBucket {
+  runStartedOn  DateTime @map("run_started_on") @db.Date
+  runId         String   @map("run_id") @db.Uuid
+  orgId         String   @map("org_id") @db.Uuid
+  projectId     String   @map("project_id") @db.Uuid
+  /// A name from AGENT_METRICS in @perfportal/statistics.
+  metric        String
+  dim           String
+  /// '' for a metric with one value per bucket.
+  label         String
+  startOffsetMs Int      @map("start_offset_ms")
+  value         Float
+
+  @@id([runStartedOn, runId, metric, dim, label, startOffsetMs])
+  @@map("run_agent_metric_bucket")
+}
+
 /// Partitioned by range on sampled_on — see migration
 /// 20260816140000_telemetry_sample, hand-edited. Prisma cannot express
 /// partitioning.
@@ -882,6 +930,34 @@ model RunVerification {
 
   @@index([status])
   @@map("run_verification")
+}
+
+/// One row per run that had an agent file: whether it could be read, why not,
+/// and what its figures were built on. Cascades from run, so unlike the two
+/// agent bucket tables it is not FK-free.
+model RunAgent {
+  runId          String   @id @map("run_id") @db.Uuid
+  orgId          String   @map("org_id") @db.Uuid
+  projectId      String   @map("project_id") @db.Uuid
+  /// 'collected' or 'unreadable' (a CHECK constraint).
+  status         String
+  /// Why an unreadable file was not read; null when collected.
+  reason         String?
+  /// The decoded AgentHeader; null when the file could not be read.
+  header         Json?
+  capped         Boolean  @default(false)
+  /// The agent's own error line ({ at, where, message }): it stopped collecting there.
+  agentError     Json?    @map("agent_error")
+  malformedLines Int      @default(0) @map("malformed_lines")
+  /// The run's own series width the figures were bucketed on; null when unreadable.
+  bucketWidthMs  Int?     @map("bucket_width_ms")
+  remotes        String[] @default([])
+  hostnames      String[] @default([])
+  processedAt    DateTime @default(now()) @map("processed_at") @db.Timestamptz(6)
+
+  run Run @relation(fields: [runId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@map("run_agent")
 }
 
 model User {

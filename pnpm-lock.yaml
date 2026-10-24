@@ -343,6 +343,9 @@ importers:
       '@perfportal/core':
         specifier: workspace:*
         version: link:../core
+      '@perfportal/plugin-gatling':
+        specifier: workspace:*
+        version: link:../plugin-gatling
       '@perfportal/statistics':
         specifier: workspace:*
         version: link:../statistics
