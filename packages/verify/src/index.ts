@@ -1,7 +1,7 @@
 export * from './figures.js';
 export { nearestRankIndex } from './rank.js';
 export { expectedFrom, optionsFrom } from './stats.js';
-export { expectedSeries, seriesWidth, SERIES_PERCENTILES, GROUP_SERIES_CAP } from './series.js';
+export { expectedSeries, seriesWidth, runSeriesWidth, SERIES_PERCENTILES, GROUP_SERIES_CAP } from './series.js';
 export {
   expectedErrors,
   expectedErrorBuckets,
@@ -12,6 +12,15 @@ export {
   ERROR_BUCKET_TOP,
 } from './errors.js';
 export { expectedUsers, USER_BUCKET_CAP } from './users.js';
+export {
+  expectedAgent,
+  AGENT_PERCENTILE_RANKS,
+  agentPercentileFigure,
+  type AgentPopulationFigures,
+  type ExpectedAgent,
+  type ExpectedAgentDuration,
+  type ExpectedAgentMetric,
+} from './agent.js';
 export { compare, Ledger, matchRows, type Comparator, type RowPlace } from './compare.js';
 export {
   GATLING_PERCENTILES,

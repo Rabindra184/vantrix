@@ -1,3 +1,4 @@
+import { Histogram } from '@perfportal/statistics';
 import type pg from 'pg';
 import { partitionDay } from './partition-day.js';
 
@@ -232,5 +233,139 @@ export async function readStoredFigures(
       maxConcurrent: r.max_concurrent,
     })),
     run: { durationMs: run.rows[0]?.duration_ms ?? null, activityMs: run.rows[0]?.activity_ms ?? null },
+  };
+}
+
+/**
+ * One population of a stored agent duration bucket, read off its histogram:
+ * the shape `@perfportal/verify`'s `AgentPopulationFigures` names, field for
+ * field (this package cannot import the verifier, nor it this one).
+ */
+export interface StoredAgentPopulation {
+  count: number;
+  min: number;
+  max: number;
+  sum: number;
+  /**
+   * The 10 GE percentiles between Min and Max (25 … 99.99), in GE's row order;
+   * null for a rank the stored histogram refuses to answer, never a stand-in.
+   */
+  percentiles: (number | null)[];
+}
+
+export interface StoredAgentDurationFigures {
+  family: string;
+  dim: string;
+  startOffsetMs: number;
+  okCount: number;
+  koCount: number;
+  /** Null when the stored histogram holds nothing. */
+  ok: StoredAgentPopulation | null;
+  ko: StoredAgentPopulation | null;
+}
+
+export interface StoredAgentMetricFigures {
+  metric: string;
+  dim: string;
+  label: string;
+  startOffsetMs: number;
+  value: number;
+}
+
+/**
+ * A run's `run_agent` summary (what the verifier needs to decide whether to
+ * check the agent figures at all) and its two agent bucket tables, decoded.
+ */
+export interface StoredAgentFigures {
+  status: 'collected' | 'unreadable';
+  reason: string | null;
+  /** The run's own series width the figures were bucketed on; null when unreadable. */
+  bucketWidthMs: number | null;
+  durations: StoredAgentDurationFigures[];
+  metrics: StoredAgentMetricFigures[];
+}
+
+/** GE's ranks between Min and Max, in row order: the stored histogram is asked exactly these. */
+const AGENT_STORED_RANKS = [25, 50, 75, 80, 85, 90, 95, 99, 99.9, 99.99] as const;
+
+function agentPopulation(bytes: Uint8Array): StoredAgentPopulation | null {
+  const h = Histogram.deserialize(bytes);
+  if (h.total === 0) return null;
+  return {
+    count: h.total,
+    min: h.min,
+    max: h.max,
+    sum: h.sum,
+    // An agent histogram is never a legacy overflow one, so no rank is refused
+    // today. If one were, the stored side reports what the store can answer —
+    // nothing — and the verifier sees a null against its value, rather than a
+    // fabricated max that might happen to agree.
+    percentiles: h.percentiles(AGENT_STORED_RANKS).map((v) => v ?? null),
+  };
+}
+
+/**
+ * Reads one run's stored agent figures, or null when the run has no `run_agent`
+ * row (no agent file was ever seen). Unscoped by org, as `readStoredFigures`
+ * is: the verifier is handed a run id it already resolved. Both bucket tables
+ * are addressed by their partition key through `partitionDay`, and every read
+ * is ordered.
+ */
+export async function readStoredAgentFigures(
+  pool: pg.Pool,
+  runId: string,
+  runStartedOn: Date,
+): Promise<StoredAgentFigures | null> {
+  const summary = await pool.query<{ status: 'collected' | 'unreadable'; reason: string | null; bucket_width_ms: number | null }>(
+    `SELECT status, reason, bucket_width_ms FROM run_agent WHERE run_id = $1::uuid`,
+    [runId],
+  );
+  const row = summary.rows[0];
+  if (row === undefined) return null;
+
+  const day = partitionDay(runStartedOn);
+  const durations = await pool.query<{
+    family: string;
+    dim: string;
+    start_offset_ms: number;
+    ok_count: number;
+    ko_count: number;
+    histogram_ok: Buffer;
+    histogram_ko: Buffer;
+  }>(
+    `SELECT family, dim, start_offset_ms, ok_count, ko_count, histogram_ok, histogram_ko
+       FROM run_agent_duration_bucket
+      WHERE run_started_on = $1::date AND run_id = $2::uuid
+      ORDER BY family, dim, start_offset_ms`,
+    [day, runId],
+  );
+  const metrics = await pool.query<{ metric: string; dim: string; label: string; start_offset_ms: number; value: number }>(
+    `SELECT metric, dim, label, start_offset_ms, value
+       FROM run_agent_metric_bucket
+      WHERE run_started_on = $1::date AND run_id = $2::uuid
+      ORDER BY metric, dim, label, start_offset_ms`,
+    [day, runId],
+  );
+
+  return {
+    status: row.status,
+    reason: row.reason,
+    bucketWidthMs: row.bucket_width_ms,
+    durations: durations.rows.map((r) => ({
+      family: r.family,
+      dim: r.dim,
+      startOffsetMs: r.start_offset_ms,
+      okCount: r.ok_count,
+      koCount: r.ko_count,
+      ok: agentPopulation(r.histogram_ok),
+      ko: agentPopulation(r.histogram_ko),
+    })),
+    metrics: metrics.rows.map((r) => ({
+      metric: r.metric,
+      dim: r.dim,
+      label: r.label,
+      startOffsetMs: r.start_offset_ms,
+      value: r.value,
+    })),
   };
 }

@@ -1,6 +1,7 @@
 import type { EngineResult } from '@perfportal/statistics';
 import { HISTOGRAM_KIND, bucketLatency } from '@perfportal/statistics';
 import type pg from 'pg';
+import { insertBatched } from './insert-batched.js';
 import { partitionDay } from './partition-day.js';
 
 export interface MetricContext {
@@ -9,31 +10,6 @@ export interface MetricContext {
   projectId: string;
   /** The partition key, as UTC midnight of run.started_on (bound as `partitionDay`). */
   runStartedOn: Date;
-}
-
-/** Rows per INSERT statement. Postgres caps a statement at 65535 parameters. */
-const BATCH = 500;
-
-async function insertBatched(
-  client: pg.PoolClient,
-  table: string,
-  columns: string[],
-  rows: unknown[][],
-): Promise<void> {
-  if (rows.length === 0) return;
-  const cols = columns.map((c) => `"${c}"`).join(', ');
-  for (let i = 0; i < rows.length; i += BATCH) {
-    const chunk = rows.slice(i, i + BATCH);
-    const params: unknown[] = [];
-    const tuples = chunk.map((row) => {
-      const placeholders = row.map((v) => {
-        params.push(v);
-        return `$${params.length}`;
-      });
-      return `(${placeholders.join(', ')})`;
-    });
-    await client.query(`INSERT INTO "${table}" (${cols}) VALUES ${tuples.join(', ')}`, params);
-  }
 }
 
 export class MetricWriter {

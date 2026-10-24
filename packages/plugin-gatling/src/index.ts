@@ -6,3 +6,4 @@ export * from './records.js';
 export * from './stream.js';
 export * from './truncate.js';
 export * from './plugin.js';
+export * from './agent-file.js';

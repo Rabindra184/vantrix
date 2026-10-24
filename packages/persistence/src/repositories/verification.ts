@@ -16,7 +16,16 @@ export interface FigureMismatch {
   population: 'all' | 'ok' | 'ko' | null;
   /** start_offset_ms; null for a run_stat or run_error figure. */
   bucket: number | null;
-  table: 'run_stat' | 'run_series_bucket' | 'run_error' | 'run_error_bucket' | 'run_user_bucket' | 'run';
+  table:
+    | 'run_stat'
+    | 'run_series_bucket'
+    | 'run_error'
+    | 'run_error_bucket'
+    | 'run_user_bucket'
+    | 'run'
+    | 'run_agent'
+    | 'run_agent_duration_bucket'
+    | 'run_agent_metric_bucket';
   /** e.g. 'count', 'p95', 'ok_count'; 'row' when a whole row is missing or extra. */
   figure: string;
   stored: number | string | null;

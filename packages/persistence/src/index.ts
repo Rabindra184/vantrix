@@ -19,6 +19,8 @@ export * from './repositories/verification.js';
 export * from './runner-events.js';
 export * from './metrics/write.js';
 export * from './metrics/read.js';
+export * from './metrics/agent-write.js';
+export * from './metrics/agent-read.js';
 export * from './metrics/stored-figures.js';
 /** The cohort SQL, public for the same reason `SERIES_SQL` is: a test asserts
  *  the plan of the exact string the reader runs, not a copy of it. */

@@ -112,6 +112,25 @@ const parameters: Record<string, ParameterObject> = {
     description: 'A run id.',
     schema: { type: 'string', format: 'uuid' },
   },
+  AgentRemote: {
+    name: 'remote',
+    in: 'query',
+    description:
+      'One remote, exactly as GET /v1/runs/{id}/agent lists it in "remotes" (for example ' +
+      '"localhost/127.0.0.1:8080"; URL-encode it). Omitted, empty or "*" means every remote ' +
+      'together. A remote the run never connected to is rejected with 400 UNKNOWN_REMOTE, and ' +
+      'a repeated parameter with 400 INVALID_QUERY.',
+    schema: { type: 'string' },
+  },
+  AgentHostname: {
+    name: 'hostname',
+    in: 'query',
+    description:
+      'One hostname, exactly as GET /v1/runs/{id}/agent lists it in "hostnames". Omitted, empty ' +
+      'or "*" means every hostname together. A hostname the run never resolved is rejected with ' +
+      '400 UNKNOWN_HOSTNAME, and a repeated parameter with 400 INVALID_QUERY.',
+    schema: { type: 'string' },
+  },
   ProjectSlug: {
     name: 'slug',
     in: 'path',
@@ -685,8 +704,9 @@ const responses: Record<string, ResponseObject> = {
       'A path or query parameter was malformed (e.g. "id" or "cursor" is not a UUID), or ' +
       '(code RUN_FILTER_INVALID, on the run list routes) "status" or "verdict" named a value ' +
       'outside its enum, or (code INVALID_QUERY, on the run list routes) a parameter was given ' +
-      'more than once. application/problem+json with a required "remediation" that says ' +
-      'what a valid value looks like.',
+      'more than once, or (codes UNKNOWN_REMOTE / UNKNOWN_HOSTNAME, on the agent routes) ' +
+      '"remote" or "hostname" named one the run does not have. application/problem+json with ' +
+      'a required "remediation" that says what a valid value looks like.',
     content: problem(),
   },
   TestListBadRequest: {
@@ -1487,6 +1507,125 @@ const paths: Record<string, PathItemObject> = {
           description: 'Per-host telemetry series, or "available: false" with an empty "hosts".',
           content: json(schemaRef('TelemetryResponse')),
         },
+        '400': ref('BadRequest'),
+        '404': ref('NotFound'),
+        ...authFailureResponses,
+      },
+    },
+  },
+
+  '/v1/runs/{id}/agent': {
+    get: {
+      operationId: 'getRunAgent',
+      summary: "The run's load-generator agent: whether it was collected, its header, remotes and hostnames",
+      tags: ['metrics'],
+      description:
+        sessionAccessSentence('project:read') + ' ' +
+        'Requires the "read" scope. "available" is false with reason "not_collected" when the ' +
+        'run carries no agent file, and "unreadable" (the stored reason in "detail") when it ' +
+        'carried one that could not be read. "remotes" and "hostnames" are the values the four ' +
+        'figure reads accept for "remote" and "hostname". "injector.sharedWithPerfPortal" is ' +
+        'true when PerfPortal\'s own on-prem runner executed the run.',
+      parameters: [parameters['RunId']!],
+      responses: {
+        '200': { description: 'The agent summary.', content: json(schemaRef('AgentSummaryResponse')) },
+        '400': ref('BadRequest'),
+        '404': ref('NotFound'),
+        ...authFailureResponses,
+      },
+    },
+  },
+
+  '/v1/runs/{id}/agent/connections': {
+    get: {
+      operationId: 'getRunAgentConnections',
+      summary: 'Connections, bandwidth, TCP states, and TCP-connect and TLS-handshake durations',
+      tags: ['metrics'],
+      description:
+        sessionAccessSentence('project:read') + ' ' +
+        'Requires the "read" scope. Buckets are on this run\'s own elapsed axis at its own ' +
+        '"bucketWidthMs", and counters (opened, closed, bits) are each bucket\'s SUM — divide by ' +
+        'the width for a rate. A bucket\'s "states" is null when the agent took no TCP-state ' +
+        'reading in it. Each duration section carries GE\'s 13 percentile rows per bucket, a ' +
+        'distribution and a percentile curve over the buckets in the window. "available" is ' +
+        'false for "not_collected", "unreadable" or "http_not_collected" (the agent\'s HTTP ' +
+        'collector was off; its reason in "detail"), decided BEFORE "from"/"to" narrows the ' +
+        'response.',
+      parameters: [
+        parameters['RunId']!,
+        parameters['AgentRemote']!,
+        parameters['WindowFrom']!,
+        parameters['WindowTo']!,
+      ],
+      responses: {
+        '200': { description: 'The connection figures.', content: json(schemaRef('AgentConnectionsResponse')) },
+        '400': ref('BadRequest'),
+        '404': ref('NotFound'),
+        ...authFailureResponses,
+      },
+    },
+  },
+
+  '/v1/runs/{id}/agent/dns': {
+    get: {
+      operationId: 'getRunAgentDns',
+      summary: 'DNS lookups and resolution durations',
+      tags: ['metrics'],
+      description:
+        sessionAccessSentence('project:read') + ' ' +
+        'Requires the "read" scope. Per bucket, the lookups the agent saw (requests, OK, KO, ' +
+        'each the bucket\'s SUM), and the resolution duration section over the window. ' +
+        '"available" follows the same rules as GET /v1/runs/{id}/agent/connections.',
+      parameters: [
+        parameters['RunId']!,
+        parameters['AgentHostname']!,
+        parameters['WindowFrom']!,
+        parameters['WindowTo']!,
+      ],
+      responses: {
+        '200': { description: 'The DNS figures.', content: json(schemaRef('AgentDnsResponse')) },
+        '400': ref('BadRequest'),
+        '404': ref('NotFound'),
+        ...authFailureResponses,
+      },
+    },
+  },
+
+  '/v1/runs/{id}/agent/injectors': {
+    get: {
+      operationId: 'getRunAgentInjectors',
+      summary: "The load generator's JVM and machine: GC, heap, Netty, CPU, RAM and kernel TCP",
+      tags: ['metrics'],
+      description:
+        sessionAccessSentence('project:read') + ' ' +
+        'Requires the "read" scope. GC, heap and Netty come from any JVM; CPU, RAM and kernel ' +
+        'TCP from the machine collector, which runs on Linux only ("machine.available", with ' +
+        'the agent\'s reason when it did not). A gauge with no reading in a bucket is null, ' +
+        'never 0. CPU % is 100 × Δuser (or Δsys) / Δtotal jiffies, rounded to 2 dp. Needs no ' +
+        'HTTP collector, so "available" is false only for "not_collected" or "unreadable".',
+      parameters: [parameters['RunId']!, parameters['WindowFrom']!, parameters['WindowTo']!],
+      responses: {
+        '200': { description: 'The load-generator figures.', content: json(schemaRef('AgentInjectorsResponse')) },
+        '400': ref('BadRequest'),
+        '404': ref('NotFound'),
+        ...authFailureResponses,
+      },
+    },
+  },
+
+  '/v1/runs/{id}/agent/status': {
+    get: {
+      operationId: 'getRunAgentStatus',
+      summary: 'HTTP status codes over time, one per response',
+      tags: ['metrics'],
+      description:
+        sessionAccessSentence('project:read') + ' ' +
+        'Requires the "read" scope. "codes" is every code the run\'s responses carried — the ' +
+        'same list in any window — and each bucket counts the responses per code. "available" ' +
+        'follows the same rules as GET /v1/runs/{id}/agent/connections.',
+      parameters: [parameters['RunId']!, parameters['WindowFrom']!, parameters['WindowTo']!],
+      responses: {
+        '200': { description: 'The status-code figures.', content: json(schemaRef('AgentStatusResponse')) },
         '400': ref('BadRequest'),
         '404': ref('NotFound'),
         ...authFailureResponses,
