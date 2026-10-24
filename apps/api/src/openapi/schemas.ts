@@ -2,6 +2,12 @@ import { zodToJsonSchema } from 'zod-to-json-schema';
 import type { ZodTypeAny } from 'zod';
 import {
   ActivityResponseSchema,
+  AgentConnectionsResponseSchema,
+  AgentDnsResponseSchema,
+  AgentInjectorsResponseSchema,
+  AgentStatusResponseSchema,
+  AgentSummaryResponseSchema,
+  DurationSectionSchema,
   AddMemberRequestSchema,
   AdminProjectListResponseSchema,
   AdminProjectSchema,
@@ -185,6 +191,14 @@ const SOURCE: Record<string, ZodTypeAny> = {
   AddMemberRequest: AddMemberRequestSchema,
   UpdateMemberRequest: UpdateMemberRequestSchema,
   ChangePasswordRequest: ChangePasswordRequestSchema,
+  // GE REPORT PARITY, PR 2: the agent figures' five reads, and the duration
+  // section three of them embed (TCP connect, TLS handshake, DNS resolution).
+  AgentSummaryResponse: AgentSummaryResponseSchema,
+  AgentConnectionsResponse: AgentConnectionsResponseSchema,
+  AgentDnsResponse: AgentDnsResponseSchema,
+  AgentInjectorsResponse: AgentInjectorsResponseSchema,
+  AgentStatusResponse: AgentStatusResponseSchema,
+  DurationSection: DurationSectionSchema,
 };
 
 /**

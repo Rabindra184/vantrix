@@ -20,3 +20,4 @@ export * from './test.js';
 export * from './attention.js';
 export * from './activity.js';
 export * from './package.js';
+export * from './agent.js';

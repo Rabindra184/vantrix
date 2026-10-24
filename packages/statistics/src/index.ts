@@ -16,3 +16,4 @@ export * from './telemetry.js';
 export * from './tool-assertions.js';
 export * from './stored-percentiles.js';
 export * from './agent.js';
+export * from './agent-read.js';
