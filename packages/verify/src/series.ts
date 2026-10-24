@@ -92,12 +92,12 @@ export function seriesWidth(edges: readonly number[], rawCap: number): number {
 }
 
 /**
- * The run-scope `response_time` series' width, as `expectedSeries` derives it
- * for that series: every request's start and end edge, warm-up and OK
- * requests included, at the run cap. Null for a run with no request, which has
- * no run series at all. The error buckets (errors.ts) and the agent buckets
- * (agent.ts, through the worker) are laid on this width, so it is ONE
- * derivation, not three that could disagree.
+ * The run-scope `response_time` series' width: every request's start and end
+ * edge, warm-up and OK requests included, at the run cap. Null for a run with
+ * no request, which has no run series at all. `expectedSeries` lays the run
+ * series on it, and the error buckets (errors.ts) and the agent buckets
+ * (agent.ts, through the worker) are laid on it too, so it is ONE derivation,
+ * not three that could disagree.
  */
 export function runSeriesWidth(events: Iterable<CanonicalEvent>, opts: Pick<VerifyOptions, 'runStartMs' | 'maxBucketsRun'>): number | null {
   const edges: number[] = [];
@@ -121,7 +121,7 @@ function byName(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
-export function expectedSeries(events: Iterable<CanonicalEvent>, opts: VerifyOptions): ExpectedSeriesBucket[] {
+export function expectedSeries(events: readonly CanonicalEvent[], opts: VerifyOptions): ExpectedSeriesBucket[] {
   const all = new Map<string, SeriesAcc>();
   const add = (scope: string, name: string, family: string, cap: number, o: Observation): void => {
     const key = `${scope}\u0000${name}\u0000${family}`;
@@ -147,8 +147,12 @@ export function expectedSeries(events: Iterable<CanonicalEvent>, opts: VerifyOpt
     }
   }
 
+  // The run series takes its width from `runSeriesWidth` rather than from its
+  // own edges below — the same edges, so the same width, but asked of the one
+  // function the error and agent buckets ask, so the three cannot drift apart.
+  const runWidth = runSeriesWidth(events, opts);
   const out: ExpectedSeriesBucket[] = [];
-  for (const acc of all.values()) out.push(...bucketsOf(acc));
+  for (const acc of all.values()) out.push(...bucketsOf(acc, acc.scope === 'run' ? runWidth : null));
   out.sort(
     (a, b) =>
       (SCOPE_ORDER[a.scope] ?? 9) - (SCOPE_ORDER[b.scope] ?? 9) ||
@@ -159,10 +163,9 @@ export function expectedSeries(events: Iterable<CanonicalEvent>, opts: VerifyOpt
   return out;
 }
 
-function bucketsOf(acc: SeriesAcc): ExpectedSeriesBucket[] {
-  const edges: number[] = [];
-  for (const o of acc.observations) edges.push(o.start, o.end);
-  const width = seriesWidth(edges, acc.cap);
+/** The series' own width from its edges, unless one is given: the run series passes `runSeriesWidth`'s. */
+function bucketsOf(acc: SeriesAcc, given: number | null): ExpectedSeriesBucket[] {
+  const width = given ?? seriesWidth(acc.observations.flatMap((o) => [o.start, o.end]), acc.cap);
 
   const buckets = new Map<number, BucketAcc>();
   const at = (t: number): BucketAcc => {
