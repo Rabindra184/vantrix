@@ -160,7 +160,11 @@ export const AgentSummaryResponseSchema = z.object({
   hostnames: z.array(z.string()),
   injector: z.object({
     host: z.string().nullable(),
-    /** True when the run came from PerfPortal's own on-prem runner, so the machine ran nothing else. */
+    /**
+     * True when the run came from PerfPortal's own on-prem runner, whose machine
+     * IS the PerfPortal VM (spec §6): the load generator shared it with the
+     * database, API and worker, so its CPU, RAM and TCP figures include theirs.
+     */
     sharedWithPerfPortal: z.boolean(),
   }),
 });
