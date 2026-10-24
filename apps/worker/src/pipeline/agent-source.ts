@@ -20,9 +20,12 @@ import { isTransient } from './retry.js';
  * an answer here (`none`, or `unreadable` with a reason `run_agent` records),
  * and the run's own statistics, verdict and status go on exactly as before.
  *
- * The ONE exception is a transient transport error reading the stored object:
- * that is rethrown, so the run retries the way it does for the same error on
- * its own log, rather than losing figures to a network blip for good.
+ * The ONE exception is a transient transport error reading the stored object
+ * while a retry is still to come (`rethrowTransient`): that is rethrown, so
+ * the run retries the way it does for the same error on its own log, rather
+ * than losing figures to a network blip for good. With no retry to come it is
+ * recorded like any other read failure — rethrowing then would fail the run
+ * over its agent file, which is the one thing this module exists to prevent.
  */
 export type AgentSource =
   | { kind: 'none' }
@@ -60,6 +63,12 @@ export async function openAgentSource(
   run: AgentRun,
   deps: { blobs: BlobStore },
   bundle: BundleSource,
+  /**
+   * Whether a transient read error is rethrown (a retry will come back for the
+   * run) or recorded as `read_failed`. Required, never defaulted: the wrong
+   * answer either fails a run over its agent file or throws away a retry.
+   */
+  opts: { rethrowTransient: boolean },
 ): Promise<AgentSource> {
   if (run.agentLogKey !== null && run.rawLogDeletedAt === null) {
     let bytes: Buffer;
@@ -69,7 +78,7 @@ export async function openAgentSource(
       if (!(await deps.blobs.exists(run.agentLogKey))) return { kind: 'unreadable', reason: 'missing' };
       bytes = await deps.blobs.get(run.agentLogKey);
     } catch (err) {
-      if (isTransient(err)) throw err;
+      if (opts.rethrowTransient && isTransient(err)) throw err;
       // Deleted between the HEAD and the GET.
       if (isObjectMissing(err)) return { kind: 'unreadable', reason: 'missing' };
       return { kind: 'unreadable', reason: `read_failed: ${messageOf(err)}` };
@@ -87,7 +96,7 @@ export async function openAgentSource(
   try {
     return { kind: 'bytes', bytes: await bundle.read(entry) };
   } catch (err) {
-    if (isTransient(err)) throw err;
+    if (opts.rethrowTransient && isTransient(err)) throw err;
     return { kind: 'unreadable', reason: `read_failed: ${messageOf(err)}` };
   }
 }

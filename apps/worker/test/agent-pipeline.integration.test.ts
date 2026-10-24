@@ -105,6 +105,20 @@ async function ingest(runId: string): Promise<void> {
   await new PipelineService(config, prisma, pool, blobs).process(runId, { queueWillRetry: false });
 }
 
+/**
+ * The real store, except that reading the agent object fails with a socket
+ * reset — a transient error — while every other key (the run's own bundle)
+ * reads normally.
+ */
+class AgentReadResets extends BlobStore {
+  override async get(key: string): Promise<Buffer> {
+    if (key.endsWith('/agent.ndjson')) {
+      throw Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' });
+    }
+    return super.get(key);
+  }
+}
+
 async function runStatus(runId: string): Promise<string> {
   const { rows } = await pool.query<{ status: string }>('SELECT status FROM run WHERE id = $1', [runId]);
   return rows[0]!.status;
@@ -153,6 +167,30 @@ describe('PipelineService and the agent file', () => {
     expect(await runStatus(runId)).toBe('complete');
     const summary = await new AgentReader(pool).summary(scope, runId);
     expect(summary).toMatchObject({ status: 'unreadable', reason: 'checksum_mismatch' });
+    expect(await bucketRows(runId)).toBe(0);
+    expect(await requestCount(runId)).toBe(90);
+  }, 60_000);
+
+  it('rethrows a transient read of the agent object while the queue will retry', async () => {
+    const { scope, runId } = await seed({ bundle: plainBundle, agentObject: { sha256: sha256(AGENT) } });
+    const flaky = new PipelineService(config, prisma, pool, new AgentReadResets(config.blob));
+    await expect(flaky.process(runId, { queueWillRetry: true })).rejects.toMatchObject({ code: 'ECONNRESET' });
+
+    // Left for the retry, not failed and not recorded.
+    expect(await runStatus(runId)).toBe('parsing');
+    expect(await new AgentReader(pool).summary(scope, runId)).toBeNull();
+  }, 60_000);
+
+  it('records the same error on the last attempt and completes the run', async () => {
+    const { scope, runId } = await seed({ bundle: plainBundle, agentObject: { sha256: sha256(AGENT) } });
+    const flaky = new PipelineService(config, prisma, pool, new AgentReadResets(config.blob));
+    await flaky.process(runId, { queueWillRetry: false });
+
+    expect(await runStatus(runId)).toBe('complete');
+    expect(await new AgentReader(pool).summary(scope, runId)).toMatchObject({
+      status: 'unreadable',
+      reason: 'read_failed: socket hang up',
+    });
     expect(await bucketRows(runId)).toBe(0);
     expect(await requestCount(runId)).toBe(90);
   }, 60_000);

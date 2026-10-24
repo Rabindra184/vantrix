@@ -47,11 +47,15 @@ function bundle(files: string[], entries: Record<string, Uint8Array> = {}): Bund
 const NO_BUNDLE = bundle(['simulation.log']);
 const stored = { agentLogKey: KEY, agentLogSha256: sha256(AGENT), rawLogDeletedAt: null };
 const none = { agentLogKey: null, agentLogSha256: null, rawLogDeletedAt: null };
+/** A retry will come back for the run: a transient read error is rethrown. */
+const RETRY = { rethrowTransient: true };
+/** The last attempt: nothing comes back, so the same error is recorded. */
+const LAST = { rethrowTransient: false };
 
 describe('openAgentSource', () => {
   it('reads the stored object when its checksum matches', async () => {
     const blobs = fakeBlobs({ [KEY]: AGENT });
-    const source = await openAgentSource(stored, { blobs }, NO_BUNDLE);
+    const source = await openAgentSource(stored, { blobs }, NO_BUNDLE, RETRY);
     expect(source.kind).toBe('bytes');
     expect(source.kind === 'bytes' && Buffer.from(source.bytes).equals(AGENT)).toBe(true);
   });
@@ -62,25 +66,32 @@ describe('openAgentSource', () => {
       { ...stored, agentLogSha256: 'a'.repeat(64) },
       { blobs },
       NO_BUNDLE,
+      RETRY,
     );
     expect(source).toEqual({ kind: 'unreadable', reason: 'checksum_mismatch' });
   });
 
   it('reports a stored object that is gone as missing', async () => {
-    const source = await openAgentSource(stored, { blobs: fakeBlobs({}) }, NO_BUNDLE);
+    const source = await openAgentSource(stored, { blobs: fakeBlobs({}) }, NO_BUNDLE, RETRY);
     expect(source).toEqual({ kind: 'unreadable', reason: 'missing' });
   });
 
   it('rethrows a transport error, so the run retries rather than losing its figures', async () => {
     const reset = Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' });
-    await expect(openAgentSource(stored, { blobs: fakeBlobs({ [KEY]: AGENT }, reset) }, NO_BUNDLE)).rejects.toBe(
+    await expect(openAgentSource(stored, { blobs: fakeBlobs({ [KEY]: AGENT }, reset) }, NO_BUNDLE, RETRY)).rejects.toBe(
       reset,
     );
   });
 
+  it('records a transport error on the last attempt instead of failing the run over its agent file', async () => {
+    const reset = Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' });
+    const source = await openAgentSource(stored, { blobs: fakeBlobs({ [KEY]: AGENT }, reset) }, NO_BUNDLE, LAST);
+    expect(source).toEqual({ kind: 'unreadable', reason: 'read_failed: socket hang up' });
+  });
+
   it('records a non-transport read failure instead of failing the run', async () => {
     const denied = Object.assign(new Error('Access Denied'), { name: 'AccessDenied' });
-    const source = await openAgentSource(stored, { blobs: fakeBlobs({ [KEY]: AGENT }, denied) }, NO_BUNDLE);
+    const source = await openAgentSource(stored, { blobs: fakeBlobs({ [KEY]: AGENT }, denied) }, NO_BUNDLE, RETRY);
     expect(source).toEqual({ kind: 'unreadable', reason: 'read_failed: Access Denied' });
   });
 
@@ -90,6 +101,7 @@ describe('openAgentSource', () => {
       { ...stored, rawLogDeletedAt: new Date('2026-10-01T00:00:00Z') },
       { blobs },
       bundle(['run-1/simulation.log', `run-1/${AGENT_BUNDLE_FILE}`], { [`run-1/${AGENT_BUNDLE_FILE}`]: AGENT }),
+      RETRY,
     );
     expect(blobs.gets).toEqual([]);
     expect(source.kind === 'bytes' && Buffer.from(source.bytes).equals(AGENT)).toBe(true);
@@ -100,6 +112,7 @@ describe('openAgentSource', () => {
       none,
       { blobs: fakeBlobs({}) },
       bundle(['run-1/simulation.log', `run-1/${AGENT_BUNDLE_FILE}`], { [`run-1/${AGENT_BUNDLE_FILE}`]: AGENT }),
+      RETRY,
     );
     expect(source.kind === 'bytes' && Buffer.from(source.bytes).equals(AGENT)).toBe(true);
   });
@@ -109,6 +122,7 @@ describe('openAgentSource', () => {
       none,
       { blobs: fakeBlobs({}) },
       bundle(['simulation.log', AGENT_BUNDLE_FILE], { [AGENT_BUNDLE_FILE]: AGENT }),
+      RETRY,
     );
     expect(source.kind).toBe('bytes');
   });
@@ -118,12 +132,13 @@ describe('openAgentSource', () => {
       none,
       { blobs: fakeBlobs({}) },
       bundle(['run-1/simulation.log', `other/${AGENT_BUNDLE_FILE}`, AGENT_BUNDLE_FILE]),
+      RETRY,
     );
     expect(source).toEqual({ kind: 'none' });
   });
 
   it('answers none when there is neither an object nor an entry', async () => {
-    expect(await openAgentSource(none, { blobs: fakeBlobs({}) }, NO_BUNDLE)).toEqual({ kind: 'none' });
+    expect(await openAgentSource(none, { blobs: fakeBlobs({}) }, NO_BUNDLE, RETRY)).toEqual({ kind: 'none' });
   });
 });
 

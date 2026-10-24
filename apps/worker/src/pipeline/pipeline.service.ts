@@ -219,7 +219,7 @@ export class PipelineService {
     await runs.markParsing(runId);
 
     try {
-      await this.#ingest(run);
+      await this.#ingest(run, attempt);
     } catch (err) {
       // ═══ A TRANSIENT FAILURE THE QUEUE WILL RETRY IS NOT RECORDED ═══
       //
@@ -288,7 +288,7 @@ export class PipelineService {
     }
   }
 
-  async #ingest(run: RunRecord): Promise<void> {
+  async #ingest(run: RunRecord, attempt: PipelineAttempt): Promise<void> {
     const project = await new ProjectRepository(this.prisma).byId(run.projectId);
     const maxTotalBytes =
       (project?.settings.maxDecompressedBundleBytes as number | undefined) ??
@@ -315,11 +315,16 @@ export class PipelineService {
     // ═══ THE AGENT'S FILE, WHICH NEVER FAILS THE RUN ═══
     //
     // Read and built BEFORE the transaction, like everything else this method
-    // computes, so the transaction only writes. Every outcome but a transient
-    // transport error reading the stored object is an answer (see
-    // agent-source.ts) — that one is rethrown so the run retries, exactly as
-    // the same error on its own log would.
-    const agent = agentOutcome(await openAgentSource(run, { blobs: this.blobs }, source), result);
+    // computes, so the transaction only writes. Every outcome is an answer
+    // (see agent-source.ts) except a transient transport error reading the
+    // stored object WHILE THE QUEUE WILL RETRY: that one is rethrown so the
+    // run retries, exactly as the same error on its own log would. On the
+    // last attempt it is recorded instead — nothing would come back for the
+    // run, and an agent figure must never be why a run fails.
+    const agent = agentOutcome(
+      await openAgentSource(run, { blobs: this.blobs }, source, { rethrowTransient: attempt.queueWillRetry }),
+      result,
+    );
     if (agent.kind === 'unreadable') {
       console.warn(`run ${run.id}: its agent file is unreadable (${agent.reason}); finalizing without agent figures`);
     }
