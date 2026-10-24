@@ -128,9 +128,9 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **267 files / 4366 tests**, it
+`nvm use` first, and if a run reports fewer than **267 files / 4367 tests**, it
 did not run everything — nor did an integration run reporting fewer than
-**252 files / 3950 tests**, an e2e run fewer than **207**, or a
+**252 files / 3955 tests**, an e2e run fewer than **207**, or a
 `pnpm test:e2e:cross` run fewer than **621** (207 on each of three engines).
 (Update those numbers when a sub-project adds suites, or the next reader
 calibrates against a stale floor and a silently-skipped run looks like a
@@ -155,10 +155,16 @@ The GE report parity agent-figures branch (`feat/ge-report-figures`, PR 2
 of `docs/superpowers/specs/2026-10-22-ge-report-parity-design.md`, plan
 `docs/superpowers/plans/2026-10-23-ge-report-parity-pr2-agent-figures.md`).
 Unit **260 / 4270 to 267 / 4366**, integration **241 / 3818 to
-252 / 3950**, **e2e stays 207** (621 on three engines), each predicted first
-(seven new `.ts` files, four new integration files; the two edited route
-lists collect 100 and 35 on both trees) and met exactly. The agent's own
-build is **9 classes / 63 tests**.
+252 / 3950**, **e2e stays 207** (`--list` collects 621 on three engines;
+`test:e2e:cross` was not run), each predicted first (seven new `.ts` files,
+four new integration files; the two edited route lists collect 100 and 35 on
+both trees) and met exactly. The agent's own build is **9 classes / 63
+tests**: this branch added one (`namesItsHostInTheHeader`, for the header's
+new `host` field, beside the `-DkeepDir` property the paired fixture was
+recorded with); the base tree already carries 62 `@Test` methods, PR 1's "56"
+being a count taken before its own later cases. **The final fix wave** added
+no file, 1 unit case and 4 integration cases: unit **267 / 4367**, measured;
+integration **252 / 3955**, by arithmetic (the full suite was not re-run).
 
 **THE AGENT FILE BECOMES FIGURES A READER CAN ASK FOR.** PR 1 stored
 `runs/<runId>/agent.ndjson`; nothing read it. Now `decodeAgentFile`
@@ -207,8 +213,9 @@ bucket width itself and checking the stored one as a figure.
     `verify`: their public types name it.
 
 **RED-VERIFIED, AND ONE RULE HAS A SINGLE GUARD.** Sixteen builder mutations
-each fail their own case — one only after it SURVIVED and earned one (a
-dropped past-run sample used as a delta predecessor). Through the verifier,
+each fail the case written for them, several more than one — one only after
+it SURVIVED and earned one (a dropped past-run sample used as a delta
+predecessor). Through the verifier,
 dropping the warm-up close exclusion reported `conn.closed/*` 7 against 6
 plus a warm-up remote's row; `Math.floor` for the µs rounding, 163
 duration-bucket mismatches; trusting the stored width, 83 + 221 row
@@ -257,11 +264,38 @@ database and bucket, exit 0 (schema and migrations agree, the drift guard
 exits 2, `fk-free-tables.sql` names both bucket tables, the broken residue
 script is rejected). The worker took a SIGKILL 35 s after SIGTERM, as recorded.
 
+**THE FINAL FIX WAVE MADE "NEVER FAILS THE RUN" HOLD AT THE WRITE.** The
+agent INSERTs ran inside the run's finalize transaction with nothing around
+them, and the decoder accepts what Postgres refuses: a JSON `\u0000` in a
+remote (22021 in a `text` column) and a lone `\ud800` in a header field
+(refused by `jsonb`). Either failed the run on every attempt. Each agent write
+now sits behind `SAVEPOINT agent_figures`: a failed one is rolled back and
+recorded `unreadable`, `write_failed: <message>`, and a reason row that cannot
+be written either is rolled back to nothing; only a failed ROLLBACK TO
+SAVEPOINT (a dead session) is rethrown. Red-verified: without the savepoint
+both `agent-pipeline.integration` cases fail with the database's own error.
+The same wave spans the verifier's agent file by its OWN recomputed duration
+(the stored `duration_ms` set to 1000 had reported 225 agent-row mismatches
+beside the one run figure; now only the run figure), reports a refused stored
+rank as `null` rather than the histogram's max, lays the verifier's run series
+on `runSeriesWidth` so the width really is one derivation, drops the
+never-emitted `machine_not_collected` from the contract, corrects
+`sharedWithPerfPortal`'s docstring (true means the runner's machine IS the
+PerfPortal VM, shared with the database, API and worker), round-trips one
+synthetic non-empty KO histogram through persistence, and gives this release's
+upgrade order in `DEPLOYMENT.md`. What it ran, Node v22.19.0, every
+`.tsbuildinfo` deleted first: `typecheck` and `lint` exit 0; `test:unit`
+**267 / 4367**, exit 0; and on `perfportal_figures` with Redis db 10 flushed,
+the five files it touched or that read its changes (`agent-pipeline`,
+`verify-agent`, `agent-figures`, the API's `agent` and `openapi`
+integration files) **74 of 74**, exit 0. Integration and e2e were not re-run
+in full.
+
 **KNOWN AND LEFT:** the Report draws none of this (PR 3); agent reads inherit
-`/telemetry`'s inward-select, outward-snapped window; the verifier's agent
-span uses the stored `durationMs`, and its stored read maps a refused rank to
-`max`; no real KO connect or lookup, and no machine figure (macOS), was read
-end to end.
+`/telemetry`'s inward-select, outward-snapped window; a transient error inside
+the agent write whose savepoint still rolls back (a deadlock, a lock timeout)
+is recorded `write_failed` rather than retried; no real KO connect or lookup,
+and no machine figure (macOS), was read end to end.
 
 The GE report parity agent-and-runner branch (`feat/ge-report-parity`, PR 1
 of `docs/superpowers/specs/2026-10-22-ge-report-parity-design.md`, plan
