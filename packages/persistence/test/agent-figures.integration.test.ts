@@ -4,6 +4,7 @@ import type { CanonicalEvent } from '@perfportal/core';
 import { decodeAgentFile, parseSimulationLog, type AgentFile } from '@perfportal/plugin-gatling';
 import {
   buildAgentFigures,
+  Histogram,
   runEngineAsync,
   runSeriesWidthMs,
   type AgentDurationFamily,
@@ -169,6 +170,33 @@ describe('AgentMetricWriter + AgentReader', () => {
     const statusOnly = await reader.metrics(scope, ctx.runId, STARTED_ON, { metrics: ['status'], dim: '*' });
     expect(statusOnly.length).toBeGreaterThan(0);
     expect(statusOnly.every((m) => m.metric === 'status' && m.dim === '*')).toBe(true);
+  });
+
+  // No real run has yet carried a failed connect, lookup or handshake end to
+  // end (the fixture's are all OK), so the KO histogram's round trip is held
+  // here on one synthetic bucket: written, read back, and equal byte for byte.
+  it('reads back a duration bucket with a non-empty KO histogram exactly as written', async () => {
+    const ok = new Histogram();
+    ok.accept(3);
+    const ko = new Histogram();
+    for (const v of [12, 340, 340, 9_999]) ko.accept(v);
+    const remote = 'checkout.internal/10.0.0.7:443';
+    const bucket = {
+      family: 'tcp_connect' as const, dim: remote, startOffsetMs: 2000,
+      okCount: ok.total, koCount: ko.total, histogramOk: ok, histogramKo: ko,
+    };
+    await inTransaction((client) =>
+      new AgentMetricWriter().persist(client, ctx, { ...figures, durations: [bucket], metrics: [] }, file),
+    );
+
+    const read = await new AgentReader(pool).durations(scope, ctx.runId, STARTED_ON, { families: ['tcp_connect'], dim: remote });
+    expect(read).toHaveLength(1);
+    const r = read[0]!;
+    expect([r.family, r.dim, r.startOffsetMs, r.okCount, r.koCount]).toEqual(['tcp_connect', remote, 2000, 1, 4]);
+    expect(Buffer.from(r.histogramKo.serialize())).toEqual(Buffer.from(ko.serialize()));
+    expect(Buffer.from(r.histogramOk.serialize())).toEqual(Buffer.from(ok.serialize()));
+    expect([r.histogramKo.total, r.histogramKo.min, r.histogramKo.max, r.histogramKo.sum]).toEqual([4, 12, 9_999, 10_691]);
+    expect(r.histogramKo.percentiles([50, 99])).toEqual([340, 9_999]);
   });
 
   it('answers null for a run with no agent row', async () => {
