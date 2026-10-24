@@ -15,10 +15,11 @@ import { Histogram } from './histogram.js';
  * that shares nothing with this module. A rule changed here without changing it there reads as
  * a mismatch on every run, which is the point.
  *
- *   - An offset is `at − runStartMs`. A record is used when `0 ≤ offset ≤ durationMs`. A sample
- *     before 0 is used ONLY as the predecessor a delta is taken from; a sample after
- *     `durationMs` is dropped (and is nobody's predecessor) unless it carries `final: true`, in
- *     which case it is placed AT `durationMs` — its deltas close the run's last second.
+ *   - An offset is `at − runStartMs`. A record (event or sample) with an offset below 0 is not
+ *     counted; a sample there serves ONLY as the predecessor a delta is taken from. A record
+ *     whose offset exceeds `durationMs` is placed AT `durationMs` (the last bucket), never
+ *     dropped: the file covers only this run's JVM, so everything after the last request is the
+ *     run's own teardown — a shutdown-time close, the `final: true` sample.
  *   - Bucket start is `floor(offset / width) * width`, `width` being the run's own
  *     run-scope response-time width ({@link runSeriesWidthMs}). Nothing here coalesces.
  *   - Warm-up is excluded from every figure: a `connect` flagged warm-up makes its `ch` a
@@ -35,7 +36,12 @@ import { Histogram } from './histogram.js';
  *     snmp TCP field) with no earlier reading files nothing: it is cumulative since boot, so
  *     counting it from 0 would put the machine's whole uptime into one bucket.
  *   - `states` null (no reading) contributes nothing; `{}` (a measured zero) contributes 0 to
- *     each `*` state. A row exists only for a bucket some sample or event contributed to.
+ *     each `*` state. A row exists only for a (metric, dim, label, bucket) some record
+ *     contributed to; a `dns` event contributes to all three `dns.count` labels (`req` 1, and
+ *     1/0 to `ok`/`ko`), so a hostname's bucket with any lookup has all three rows.
+ *   - `remotes` / `hostnames` are the distinct non-`*` dims of the stored remote-dimensioned
+ *     (`conn.*`, `bw.bits`, `tcp.state`, `tcp_connect`, `tls_handshake`) / hostname-dimensioned
+ *     (`dns.count`, `dns_resolution`) rows, sorted.
  */
 
 export type AgentDurationFamily = 'dns_resolution' | 'tcp_connect' | 'tls_handshake';
@@ -163,10 +169,10 @@ export function buildAgentFigures(
     throw new RangeError(`buildAgentFigures: bucketWidthMs must be a positive number, not ${width}`);
   }
 
-  /** The event's offset when it is inside the run, else null. */
-  const inRun = (at: number): number | null => {
+  /** The record's offset, clamped to `durationMs`; null before the run start (not counted). */
+  const placed = (at: number): number | null => {
     const offset = at - runStartMs;
-    return offset >= 0 && offset <= durationMs ? offset : null;
+    return offset < 0 ? null : Math.min(offset, durationMs);
   };
   const bucketOf = (offset: number): number => Math.floor(offset / width) * width;
 
@@ -180,7 +186,7 @@ export function buildAgentFigures(
   // ── durations ──────────────────────────────────────────────────────────────────────────────
   const durations = new Map<string, AgentDurationBucket>();
   const addDuration = (family: AgentDurationFamily, dim: string, at: number, us: number, ok: boolean): void => {
-    const offset = inRun(at);
+    const offset = placed(at);
     if (offset === null) return;
     const startOffsetMs = bucketOf(offset);
     for (const d of [dim, AGENT_ALL]) {
@@ -234,7 +240,7 @@ export function buildAgentFigures(
   for (const c of file.connects) {
     if (c.warmup) continue;
     addDuration('tcp_connect', c.remote, c.at, c.us, c.ok);
-    const offset = inRun(c.at);
+    const offset = placed(c.at);
     if (offset !== null && c.ok) countBoth(AGENT_METRICS.connOpened, c.remote, '', bucketOf(offset), 1);
   }
   for (const t of file.tls) {
@@ -243,13 +249,13 @@ export function buildAgentFigures(
   }
   for (const c of file.closes) {
     if (warmChannels.has(c.ch)) continue;
-    const offset = inRun(c.at);
+    const offset = placed(c.at);
     if (offset !== null) countBoth(AGENT_METRICS.connClosed, c.remote, '', bucketOf(offset), 1);
   }
   for (const d of file.dns) {
     if (d.warmup) continue;
     addDuration('dns_resolution', d.host, d.at, d.us, d.ok);
-    const offset = inRun(d.at);
+    const offset = placed(d.at);
     if (offset === null) continue;
     const start = bucketOf(offset);
     countBoth(AGENT_METRICS.dnsCount, d.host, 'req', start, 1);
@@ -257,12 +263,12 @@ export function buildAgentFigures(
     countBoth(AGENT_METRICS.dnsCount, d.host, 'ko', start, d.ok ? 0 : 1);
   }
   for (const st of file.statuses) {
-    const offset = inRun(st.at);
+    const offset = placed(st.at);
     if (offset !== null) count(AGENT_METRICS.status, AGENT_ALL, String(st.code), bucketOf(offset), 1);
   }
 
   // ── samples ────────────────────────────────────────────────────────────────────────────────
-  // Predecessor state: the most recent earlier USED sample carrying each field.
+  // Predecessor state: the most recent earlier sample carrying each field.
   const lastGc = new Map<string, readonly [number, number]>();
   const lastBytes = new Map<string, readonly [number, number]>();
   const lastTcp = new Map<string, number>();
@@ -271,13 +277,8 @@ export function buildAgentFigures(
   // Stable, so samples sharing an instant keep file order.
   const samples = [...file.samples].sort((a, b) => a.at - b.at);
   for (const sample of samples) {
-    const raw = sample.at - runStartMs;
-    let start: number | null;
-    if (raw < 0) start = null; // predecessor only
-    else if (raw <= durationMs) start = bucketOf(raw);
-    else if (sample.final) start = bucketOf(durationMs);
-    else continue; // past the run: dropped, and nobody's predecessor
-    if (start !== null) fileSample(sample, start);
+    const offset = placed(sample.at);
+    if (offset !== null) fileSample(sample, bucketOf(offset)); // else: predecessor only
     remember(sample);
   }
 

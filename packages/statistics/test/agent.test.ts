@@ -145,7 +145,7 @@ describe('buildAgentFigures', () => {
     expect(series(f, M.tcpState, '*', 'established')).toEqual({ 0: 1 });
   });
 
-  it('drops records before the run and after its duration', () => {
+  it('drops records before the run and places those after its duration in the last bucket', () => {
     const d = OPTS.durationMs;
     const f = buildAgentFigures(
       file({
@@ -163,11 +163,13 @@ describe('buildAgentFigures', () => {
       }),
       OPTS,
     );
-    expect(series(f, M.connOpened, '*', '')).toEqual({ 0: 1, [d]: 1 });
-    expect(f.durations.every((x) => x.family === 'tcp_connect')).toBe(true);
-    expect(series(f, M.status, '*', '200')).toEqual({});
-    expect(series(f, M.connClosed, '*', '')).toEqual({});
-    expect(series(f, M.heap, '*', 'used')).toEqual({});
+    // Offset -1 is not counted; d and d + 1 both land in the bucket that starts at d.
+    expect(series(f, M.connOpened, '*', '')).toEqual({ 0: 1, [d]: 2 });
+    expect(series(f, M.dnsCount, 'h', 'req')).toEqual({ [d]: 1 });
+    expect(f.durations.find((x) => x.family === 'dns_resolution' && x.dim === 'h')!.startOffsetMs).toBe(d);
+    expect(series(f, M.status, '*', '200')).toEqual({ [d]: 1 });
+    expect(series(f, M.connClosed, '*', '')).toEqual({ [d]: 1 });
+    expect(series(f, M.heap, '*', 'used')).toEqual({ [d]: 5 });
   });
 
   it('places a final sample past the duration in the last bucket', () => {
@@ -186,9 +188,11 @@ describe('buildAgentFigures', () => {
     expect(series(f, M.heap, '*', 'used')).toEqual({ 2000: 7, 3000: 3 });
   });
 
-  it("is nobody's predecessor when dropped past the run, so the final sample's delta keeps that interval", () => {
+  it('places an event and a non-final sample past the duration in the last bucket, not only the final sample', () => {
     const f = buildAgentFigures(
       file({
+        connects: [connect(100, A, 7)],
+        closes: [{ at: R + 3500, ch: 7, remote: A }],
         samples: [
           s(-100, { gc: { G1: [0, 0] } }),
           s(3500, { gc: { G1: [4, 4] }, heap: [9, 9, 9] }),
@@ -197,8 +201,10 @@ describe('buildAgentFigures', () => {
       }),
       { ...OPTS, durationMs: 3000 },
     );
+    // Both late samples file into the 3000 bucket: 4 then 1 more collection, heap maxed.
     expect(series(f, M.gcCount, '*', 'G1')).toEqual({ 3000: 5 });
-    expect(series(f, M.heap, '*', 'used')).toEqual({ 3000: 1 });
+    expect(series(f, M.heap, '*', 'used')).toEqual({ 3000: 9 });
+    expect(series(f, M.connClosed, A, '')).toEqual({ 3000: 1 });
   });
 
   it('differences cumulative counters against the previous sample, the first in-run sample against a pre-run one', () => {
@@ -379,6 +385,22 @@ describe('buildAgentFigures', () => {
     expect([a.okCount, a.koCount, a.histogramOk.max, a.histogramKo.max]).toEqual([1, 1, 3, 2]);
   });
 
+  it('lists the remotes and hostnames its stored rows name, and only those', () => {
+    const C = 'c.test/10.0.0.3:443';
+    const f = buildAgentFigures(
+      file({
+        // B's only connect is before the run, so no stored row names B.
+        connects: [connect(100, A, 1), connect(-10, B, 2)],
+        // C has no connect at all, but an unmetered TLS handshake files a row under it.
+        tls: [{ at: R + 200, us: 5000, remote: C, ok: true, ch: null, warmup: false }],
+        dns: [{ at: R - 5, us: 1, host: 'early.test', ok: true, warmup: false }, { at: R + 5, us: 1, host: 'z.test', ok: true, warmup: false }],
+      }),
+      OPTS,
+    );
+    expect(f.remotes).toEqual([A, C]);
+    expect(f.hostnames).toEqual(['z.test']);
+  });
+
   it('names its metrics from one table and marks the gauges', () => {
     const f = buildAgentFigures(
       file({
@@ -427,13 +449,14 @@ describe('buildAgentFigures', () => {
 
     const opened = agent.connects.filter((c) => !c.warmup && c.ok).length;
     const warm = new Set(agent.connects.filter((c) => c.warmup).map((c) => c.ch));
-    const closes = agent.closes.filter((c) => !warm.has(c.ch));
     // Two closes land 1 ms past the run's last request end (offset 3626 against durationMs
-    // 3625): past the run, so dropped by rule like any record but the final sample.
-    const closed = closes.filter((c) => c.at - result.runStartedAtMs! <= result.durationMs).length;
-    expect([opened, closes.length, closed]).toEqual([60, 60, 58]);
+    // 3625): the run's own teardown, placed in the last bucket rather than dropped.
+    const closed = agent.closes.filter((c) => !warm.has(c.ch)).length;
+    expect(agent.closes.some((c) => c.at - result.runStartedAtMs! > result.durationMs)).toBe(true);
+    expect([opened, closed]).toEqual([60, 60]);
     expect(total(M.connOpened, '*', '')).toBe(opened);
     expect(total(M.connClosed, '*', '')).toBe(closed);
+    expect(total(M.connClosed, '*', '')).toBe(total(M.connOpened, '*', ''));
     const connectOk = f.durations
       .filter((d) => d.family === 'tcp_connect' && d.dim === '*')
       .reduce((a, d) => a + d.histogramOk.total, 0);

@@ -383,7 +383,6 @@ importers:
       '@perfportal/core':
         specifier: workspace:*
         version: link:../core
-    devDependencies:
       '@perfportal/plugin-gatling':
         specifier: workspace:*
         version: link:../plugin-gatling
