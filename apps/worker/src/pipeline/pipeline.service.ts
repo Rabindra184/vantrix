@@ -16,7 +16,7 @@ import type { PrismaClient } from '@prisma/client';
 import type pg from 'pg';
 import type { WorkerConfig } from '../config.js';
 import { holdClient } from '../held-client.js';
-import { agentOutcome, openAgentSource } from './agent-source.js';
+import { agentOutcome, openAgentSource, type AgentOutcome } from './agent-source.js';
 import { selectPlugin } from './plugins.js';
 import { isTransient } from './retry.js';
 import { numberRunForTest } from './run-number.js';
@@ -399,12 +399,10 @@ export class PipelineService {
 
       // In the same transaction as the run's own statistics, so agent figures
       // are never observable for a run that is not finalized. `none` writes
-      // nothing: no row is the honest record of "no agent file".
-      if (agent.kind === 'collected') {
-        await new AgentMetricWriter().persist(client, metricContext, agent.figures, agent.file);
-      } else if (agent.kind === 'unreadable') {
-        await new AgentMetricWriter().persistUnreadable(client, metricContext, agent.reason);
-      }
+      // nothing: no row is the honest record of "no agent file". Behind a
+      // savepoint, because a write error here would otherwise abort the run's
+      // own transaction (see `writeAgentFigures`).
+      await writeAgentFigures(client, metricContext, agent, run.id);
 
       for (const a of assertions) {
         await client.query(
@@ -502,3 +500,64 @@ export class PipelineService {
   }
 }
 
+type AgentWriteContext = Parameters<AgentMetricWriter['persistUnreadable']>[1];
+
+/**
+ * ═══ THE AGENT WRITE, WHICH CANNOT TAKE THE RUN DOWN WITH IT ═══
+ *
+ * Everything before the finalize transaction already turns a bad agent file
+ * into a reason, but the INSERTs themselves run inside the run's own
+ * transaction, and an error there aborts it. That is reachable: the decoder
+ * accepts a JSON "\u0000" in a remote or hostname, which a `text` column
+ * refuses (22021), and a lone "\ud800" in a header field, which `jsonb`
+ * refuses — deterministic, so the run would fail on every attempt over figures
+ * it does not need. The file comes from a JVM running the user's own code, or
+ * from a bundle the user built, so it is not ours to trust.
+ *
+ * So each write sits behind a savepoint. A collected file that cannot be
+ * written is rolled back to it and recorded unreadable, `write_failed: <the
+ * database's message>`; if even that row cannot be written, it is rolled back
+ * too and nothing is written — the run's own figures still commit. Only a
+ * failed ROLLBACK TO SAVEPOINT is rethrown, because it means the session itself
+ * is gone (57P01 and the like) and the transaction's own catch is what answers
+ * that, retrying it when the queue will.
+ */
+async function writeAgentFigures(
+  client: pg.PoolClient,
+  ctx: AgentWriteContext,
+  agent: AgentOutcome,
+  runId: string,
+): Promise<void> {
+  if (agent.kind === 'none') return;
+  const writer = new AgentMetricWriter();
+  let reason: string;
+  if (agent.kind === 'collected') {
+    const failure = await inAgentSavepoint(client, () => writer.persist(client, ctx, agent.figures, agent.file));
+    if (failure === null) return;
+    console.warn(`run ${runId}: its agent figures could not be written (${failure}); finalizing without them`);
+    reason = `write_failed: ${failure}`;
+  } else {
+    reason = agent.reason;
+  }
+  const failure = await inAgentSavepoint(client, () => writer.persistUnreadable(client, ctx, reason));
+  if (failure !== null) {
+    console.warn(`run ${runId}: not even its agent file's reason could be written (${failure}); finalizing without it`);
+  }
+}
+
+/** Runs one write behind `SAVEPOINT agent_figures`: null when it landed, else the error's message. */
+async function inAgentSavepoint(client: pg.PoolClient, write: () => Promise<void>): Promise<string | null> {
+  await client.query('SAVEPOINT agent_figures');
+  try {
+    await write();
+  } catch (err) {
+    try {
+      await client.query('ROLLBACK TO SAVEPOINT agent_figures');
+    } catch {
+      throw err;
+    }
+    return err instanceof Error ? err.message : String(err);
+  }
+  await client.query('RELEASE SAVEPOINT agent_figures');
+  return null;
+}

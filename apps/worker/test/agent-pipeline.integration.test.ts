@@ -20,9 +20,10 @@ import { PipelineService } from '../src/pipeline/pipeline.service.js';
  * request: 90 of each. That is what lets "the figures were built from THIS
  * run's log" be asserted as a number rather than as "some rows exist".
  *
- * The other three cases are the "never fails the run" half: a checksum that
- * does not match, a bundle carrying the file, and a run with no file at all
- * each finish `complete`, and say so on `run_agent` (or by its absence).
+ * The other cases are the "never fails the run" half: a checksum that does
+ * not match, a transient read on the last attempt, a file Postgres refuses to
+ * store, a bundle carrying the file, and a run with no file at all each finish
+ * `complete`, and say so on `run_agent` (or by its absence).
  */
 
 const FIXTURE_DIR = fileURLToPath(new URL('../../../fixtures/gatling-3.15.1.2/agent-run/', import.meta.url));
@@ -73,7 +74,7 @@ const TABLES = [
 
 const STARTED_ON = new Date('2026-10-24T00:00:00Z');
 
-async function seed(opts: { bundle: Buffer; agentObject?: { sha256: string } }) {
+async function seed(opts: { bundle: Buffer; agentObject?: { sha256: string; bytes?: Buffer } }) {
   await pool.query(`TRUNCATE TABLE ${TABLES.map((t) => `"${t}"`).join(', ')} CASCADE`);
   const org = await prisma.org.create({ data: { slug: 'acme', name: 'Acme' } });
   const project = await prisma.project.create({
@@ -86,7 +87,7 @@ async function seed(opts: { bundle: Buffer; agentObject?: { sha256: string } }) 
   if (opts.agentObject) {
     // Where the on-prem runner stores it (PR 1).
     agentLogKey = `runs/${runId}/agent.ndjson`;
-    await blobs.putStream(agentLogKey, Readable.from([AGENT]), 100_000_000);
+    await blobs.putStream(agentLogKey, Readable.from([opts.agentObject.bytes ?? AGENT]), 100_000_000);
   }
   await prisma.run.create({
     data: {
@@ -95,7 +96,7 @@ async function seed(opts: { bundle: Buffer; agentObject?: { sha256: string } }) 
       startedAt: new Date('2026-10-24T00:05:00Z'), startedOn: STARTED_ON, engineOptions: {},
       agentLogKey,
       agentLogSha256: opts.agentObject?.sha256 ?? null,
-      agentLogBytes: opts.agentObject ? BigInt(AGENT.length) : null,
+      agentLogBytes: opts.agentObject ? BigInt((opts.agentObject.bytes ?? AGENT).length) : null,
     },
   });
   return { scope: { orgId: org.id, projectId: project.id }, runId };
@@ -202,6 +203,30 @@ describe('PipelineService and the agent file', () => {
     expect(await runStatus(runId)).toBe('complete');
     expect((await new AgentReader(pool).summary(scope, runId))?.status).toBe('collected');
     expect(await statusSum(scope, runId)).toBe(90);
+  }, 60_000);
+
+  // ═══ A FILE THE DECODER ACCEPTS AND POSTGRES REFUSES ═══
+  //
+  // JSON.parse turns a "\u0000" escape into a NUL, which a `text` column
+  // refuses (22021), and keeps a lone "\ud800", which `jsonb` refuses. Neither
+  // is a decode or build failure, so it reaches the write — inside the run's own
+  // transaction, where an unguarded error would fail the run on every attempt.
+  // The savepoint around the agent write is what keeps the run's figures.
+  it.each([
+    ['a remote carrying a NUL', (text: string) => text.replaceAll('localhost/127.0.0.1:33357', 'localhost/127.0.0.1:33357\\u0000')],
+    ['a header carrying a lone surrogate', (text: string) => text.replace('"host":"loadgen-1"', '"host":"loadgen-\\ud800"')],
+  ])('completes the run and records write_failed for %s', async (_label, corrupt) => {
+    const bytes = Buffer.from(corrupt(AGENT.toString('utf8')), 'utf8');
+    expect(bytes.equals(AGENT)).toBe(false);
+    const { scope, runId } = await seed({ bundle: plainBundle, agentObject: { sha256: sha256(bytes), bytes } });
+    await ingest(runId);
+
+    expect(await runStatus(runId)).toBe('complete');
+    expect(await requestCount(runId)).toBe(90);
+    const summary = await new AgentReader(pool).summary(scope, runId);
+    expect(summary?.status).toBe('unreadable');
+    expect(summary?.reason).toMatch(/^write_failed: /);
+    expect(await bucketRows(runId)).toBe(0);
   }, 60_000);
 
   it('writes nothing for a run with neither an object nor a bundle entry', async () => {
