@@ -516,6 +516,23 @@ class RunTailerTest {
         }
     }
 
+    @Test fun `a run whose JVM left no agent file is never sent the previous run's`(@TempDir tmp: Path) {
+        val outDir = Files.createDirectory(tmp.resolve("agent-out"))
+        val root = Files.createDirectory(tmp.resolve("results"))
+        val fileA = agentFile(outDir, "agent-11-1000.ndjson", 1000)
+        val api = FakeApi()
+        val tailer = RunTailer(api, configFor(), root, AgentRun(outDir, notBeforeMs = 0))
+
+        resultsDir(root, realDirName("20260820134041213"), 3500)
+        tailer.tick() // opens A
+        resultsDir(root, realDirName("20260820134199987"), 9000) // its JVM wrote no agent file
+        tailer.tick() // closes A, opens B
+        tailer.finish() // closes B
+
+        assertEquals(listOf("run-1" to fileA), api.agentUploads().map { it.runId to it.file })
+        assertTrue(closeIndex(api, "run-2") >= 0)
+    }
+
     @Test fun `a directory that first appears during finish uploads its agent file too`(@TempDir tmp: Path) {
         val outDir = Files.createDirectory(tmp.resolve("agent-out"))
         val root = Files.createDirectory(tmp.resolve("results"))

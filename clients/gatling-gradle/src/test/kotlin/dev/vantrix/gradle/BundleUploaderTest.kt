@@ -258,4 +258,24 @@ class BundleUploaderTest {
         val untarred = untarGzip(parseMultipart(requests[0].body, boundary).getValue("bundle").body)
         assertEquals(setOf("run-1/simulation.log"), untarred.keys)
     }
+
+    @Test
+    fun `a file the tailer already paired with another run is left out of the bundle`(@TempDir tmp: File) {
+        val outDir = Files.createDirectory(tmp.toPath().resolve("agent-out"))
+        Files.writeString(outDir.resolve("agent-11-1000.ndjson"), "{\"t\":\"header\",\"startedAt\":1000}\n")
+        val agent = AgentRun(outDir, notBeforeMs = 0)
+        val streamedDir = Files.createDirectory(tmp.toPath().resolve("sim-20260820134041213"))
+        Files.setLastModifiedTime(streamedDir, FileTime.fromMillis(2000))
+        assertNotNull(AgentFiles.pairFor(agent, streamedDir)) // the tailer's run took it
+        val resultsDir = Files.createDirectory(tmp.toPath().resolve("sim-20260820134199987"))
+        Files.write(resultsDir.resolve("simulation.log"), "x".toByteArray())
+        Files.setLastModifiedTime(resultsDir, FileTime.fromMillis(3500))
+        val (srv, requests) = startServer(status = 202)
+
+        assertTrue(BundleUploader(logger = {}).upload(configFor(srv), resultsDir, agent))
+
+        val boundary = extractBoundary(requests[0].headers.getFirst("Content-Type")!!)
+        val untarred = untarGzip(parseMultipart(requests[0].body, boundary).getValue("bundle").body)
+        assertEquals(setOf("run-1/simulation.log"), untarred.keys)
+    }
 }

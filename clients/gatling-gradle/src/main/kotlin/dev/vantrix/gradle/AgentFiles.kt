@@ -14,11 +14,19 @@ import java.nio.file.Path
  * [AgentRun.outDir]. The NAME is never parsed: what identifies a file is its header, the first
  * line, whose `startedAt` is the instant that JVM's agent started.
  *
- * A JVM writes its header in premain, then Gatling creates the results directory and writes
- * into it until the JVM exits; the next JVM starts after that. So the file a directory belongs
- * to is the one with the LARGEST `startedAt` not after the directory's last write -- allowing
- * [ALLOWANCE_MS] for a coarse file-system clock -- and not before [AgentRun.notBeforeMs], the
- * instant this `gatlingRun` began, before which no file can be this run's.
+ * The rule: the file a directory belongs to is the one with the LARGEST `startedAt` such that
+ * `agent.notBeforeMs <= startedAt <= the directory's last-modified time`, both bounds inclusive,
+ * among files not already paired with another run of this `gatlingRun` ([AgentRun.paired]).
+ * A JVM writes its header in premain, then Gatling creates the results directory and writes into
+ * it until the JVM exits; the next JVM starts after that. [AgentRun.notBeforeMs] is the instant
+ * this `gatlingRun` began, before which no file can be this run's.
+ *
+ * THERE IS NO SLACK on the upper bound, deliberately. Gatling writes its report files into the
+ * directory right before its JVM exits, and the next simulation's JVM writes its header well
+ * under a second later -- so any allowance past the directory's last write (an earlier version
+ * had 1000 ms) lets run k take run k+1's file. Both instants come from the same machine's clock,
+ * so none is needed. And a file is paired at most once: even a file that slipped inside a window
+ * could not then be sent to two runs.
  *
  * An empty file, one whose first line is not a header with a numeric `startedAt`, or one that
  * cannot be read is skipped. Only the first line is read, and at most [MAX_HEADER_BYTES] of it:
@@ -28,18 +36,20 @@ import java.nio.file.Path
  * pairs with nothing.
  */
 object AgentFiles {
-    private const val ALLOWANCE_MS = 1000L
     private const val MAX_HEADER_BYTES = 64 * 1024
     private val NAME = Regex("^agent-.*\\.ndjson$")
 
+    /** Pairs [resultsDir] with its file and records the pairing in [AgentRun.paired]; null when none. */
     fun pairFor(agent: AgentRun, resultsDir: Path): Path? =
         try {
-            val latest = Files.getLastModifiedTime(resultsDir).toMillis() + ALLOWANCE_MS
-            candidates(agent.outDir)
+            val latest = Files.getLastModifiedTime(resultsDir).toMillis()
+            val eligible = candidates(agent.outDir)
                 .mapNotNull { file -> startedAt(file)?.let { file to it } }
                 .filter { (_, startedAt) -> startedAt >= agent.notBeforeMs && startedAt <= latest }
-                .maxByOrNull { (_, startedAt) -> startedAt }
-                ?.first
+                .sortedByDescending { (_, startedAt) -> startedAt }
+                .map { (file, _) -> file }
+            // Claimed under the set's own monitor: the first eligible file nobody has paired yet.
+            synchronized(agent.paired) { eligible.firstOrNull { agent.paired.add(it) } }
         } catch (e: Exception) {
             null
         }

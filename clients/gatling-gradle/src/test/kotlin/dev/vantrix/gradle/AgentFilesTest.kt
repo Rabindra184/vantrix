@@ -39,18 +39,45 @@ class AgentFilesTest {
         val second = agentFile(outDir, "agent-22-5000.ndjson", header(5000))
         val agent = AgentRun(outDir, notBeforeMs = 0)
 
-        // 5000 is past 3500 + 1000, so the second JVM had not started when this directory was last written.
-        assertEquals(first, AgentFiles.pairFor(agent, resultsDir(results, 3500)))
+        assertEquals(first, AgentFiles.pairFor(agent, resultsDir(results, 4000)))
         assertEquals(second, AgentFiles.pairFor(agent, resultsDir(results, 9000)))
     }
 
-    @Test fun `the 1000 ms allowance past the directory's last write is inclusive`(@TempDir tmp: Path) {
+    @Test fun `a header at exactly the directory's last write is that directory's`(@TempDir tmp: Path) {
         val (outDir, results) = setUp(tmp)
         agentFile(outDir, "agent-11-1000.ndjson", header(1000))
-        val second = agentFile(outDir, "agent-22-5000.ndjson", header(5000))
+        val atLastWrite = agentFile(outDir, "agent-22-5000.ndjson", header(5000))
+
+        assertEquals(atLastWrite, AgentFiles.pairFor(AgentRun(outDir, notBeforeMs = 0), resultsDir(results, 5000)))
+    }
+
+    @Test fun `a header at exactly notBeforeMs belongs to this gatlingRun`(@TempDir tmp: Path) {
+        val (outDir, results) = setUp(tmp)
+        val atNotBefore = agentFile(outDir, "agent-33-7000.ndjson", header(7000))
+
+        assertEquals(atNotBefore, AgentFiles.pairFor(AgentRun(outDir, notBeforeMs = 7000), resultsDir(results, 7500)))
+    }
+
+    @Test fun `the next simulation's file, started 1 ms after this directory's last write, is not this run's`(@TempDir tmp: Path) {
+        val (outDir, results) = setUp(tmp)
+        // Run k's JVM started at 1000 and last wrote its directory at 5000; run k+1's JVM wrote its
+        // header 1 ms later. Any slack past the last write would hand run k the next run's file.
+        val own = agentFile(outDir, "agent-11-1000.ndjson", header(1000))
+        agentFile(outDir, "agent-22-5001.ndjson", header(5001))
+
+        assertEquals(own, AgentFiles.pairFor(AgentRun(outDir, notBeforeMs = 0), resultsDir(results, 5000)))
+    }
+
+    @Test fun `a file already paired with one run is never paired with a second`(@TempDir tmp: Path) {
+        val (outDir, results) = setUp(tmp)
+        val only = agentFile(outDir, "agent-11-1000.ndjson", header(1000))
         val agent = AgentRun(outDir, notBeforeMs = 0)
 
-        assertEquals(second, AgentFiles.pairFor(agent, resultsDir(results, 4000)))
+        assertEquals(only, AgentFiles.pairFor(agent, resultsDir(results, 3000)))
+        // A later directory whose own JVM left no file: the earlier run's file stays that run's.
+        assertNull(AgentFiles.pairFor(agent, resultsDir(results, 6000)))
+        // The memory belongs to ONE gatlingRun: a fresh AgentRun has paired nothing yet.
+        assertEquals(only, AgentFiles.pairFor(AgentRun(outDir, notBeforeMs = 0), resultsDir(results, 7000)))
     }
 
     @Test fun `a file started before notBeforeMs is never chosen`(@TempDir tmp: Path) {

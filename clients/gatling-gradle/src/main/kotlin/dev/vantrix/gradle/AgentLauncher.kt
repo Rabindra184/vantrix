@@ -10,7 +10,14 @@ import java.nio.file.StandardCopyOption
  * Where this `gatlingRun`'s agent files land, and an instant taken before any of them could have
  * been written -- what the tailer pairs each results directory with.
  */
-data class AgentRun(val outDir: Path, val notBeforeMs: Long)
+data class AgentRun(val outDir: Path, val notBeforeMs: Long) {
+    /**
+     * The agent files already paired with a run of this `gatlingRun` -- [AgentFiles.pairFor] never
+     * pairs one file with two runs. Shared by the tailer and the fallback uploader, guarded by its
+     * own monitor; outside the constructor, so it takes no part in equality.
+     */
+    internal val paired: MutableSet<Path> = mutableSetOf()
+}
 
 /**
  * Starts `gatlingRun` with the PerfPortal Gatling agent, by adding one `-javaagent:` to the JVM
