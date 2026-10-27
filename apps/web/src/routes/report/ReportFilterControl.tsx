@@ -27,6 +27,11 @@ export function ReadOnlyField({ label, children }: { readonly label: string; rea
  *
  * The control's name is its `label` ("Remote", "Hostname"): one filter per
  * section, scoping every chart in it, so the section's own name is the context.
+ *
+ * `named` is a value the URL asked for that the run never had
+ * (`useReportFilter`). The hook reads it as every remote, so the charts are
+ * right — but a reader who followed a link for one remote and sees all of
+ * them deserves to be told why, in one line beside the control.
  */
 export default function ReportFilterControl({
   label,
@@ -34,6 +39,8 @@ export default function ReportFilterControl({
   values,
   value,
   onChange,
+  named,
+  verb,
 }: {
   readonly label: string;
   /** The `*` option's words ("All remotes"). */
@@ -41,6 +48,37 @@ export default function ReportFilterControl({
   /** The summary's own list, in its order. */
   readonly values: readonly string[];
   /** `useReportFilter`'s answer: one of `values`, or `*`. */
+  readonly value: string;
+  readonly onChange: (value: string) => void;
+  /** A value the link named that the run does not have, or null. */
+  readonly named: string | null;
+  /** What the run would have had to do with it: "contacted", "resolved". */
+  readonly verb: string;
+}) {
+  const note =
+    named === null ? null : (
+      <p data-testid="filter-unknown" className="text-[0.75rem] text-muted">
+        This link named {named}, which this run never {verb}; showing {allLabel.toLowerCase()}.
+      </p>
+    );
+  return (
+    <div className="flex flex-col gap-1">
+      <FilterField label={label} allLabel={allLabel} values={values} value={value} onChange={onChange} />
+      {note}
+    </div>
+  );
+}
+
+function FilterField({
+  label,
+  allLabel,
+  values,
+  value,
+  onChange,
+}: {
+  readonly label: string;
+  readonly allLabel: string;
+  readonly values: readonly string[];
   readonly value: string;
   readonly onChange: (value: string) => void;
 }) {

@@ -34,8 +34,8 @@ const tcp = connections.tcpConnect;
 const tls = connections.tlsHandshake;
 const resolution = dns.resolution;
 
-const RUN = { windowSelected: false, noun: 'TCP connects' } as const;
-const WINDOW = { windowSelected: true, noun: 'TCP connects' } as const;
+const RUN = { windowSelected: false, filter: null, noun: 'TCP connects' } as const;
+const WINDOW = { windowSelected: true, filter: null, noun: 'TCP connects' } as const;
 /** The payload's own width, which the over-time chart fills a sparse payload's gaps by. */
 const WIDTH = connections.bucketWidthMs;
 const HIDDEN = ['p25', 'p80', 'p85', 'p99_9', 'p99_99'] as const;
@@ -117,7 +117,7 @@ describe('toDurationOverTime', () => {
   it('says so when no row is selected, keeping the table', () => {
     const chart = toDurationOverTime(tcp, { ...RUN, widthMs: WIDTH, outcome: 'ok', rows: [] });
     expect(chart.series).toEqual([]);
-    expect(chart.empty).toMatch(/no percentile rows are selected/i);
+    expect(chart.empty).toMatch(/no percentile bands are selected/i);
     expect(chart.rows).toHaveLength(tcp.overTime.length);
   });
 
@@ -165,7 +165,7 @@ describe('toDurationDistribution', () => {
   });
 
   it('names the count columns after what was counted, keeping the series OK and KO', () => {
-    const chart = toDurationDistribution(tls, { windowSelected: false, noun: 'TLS handshakes' });
+    const chart = toDurationDistribution(tls, { windowSelected: false, filter: null, noun: 'TLS handshakes' });
     expect(chart.columns.slice(1)).toEqual(['OK TLS handshakes', 'KO TLS handshakes']);
     expect(chart.series.map((s) => s.name)).toEqual(['OK', 'KO']);
   });
@@ -232,5 +232,22 @@ describe('toDurationPercentiles', () => {
   it('gives the window and run sentences for an empty section', () => {
     expectAboutTheRun(toDurationPercentiles(EMPTY, 'ok', RUN).empty, /TCP connects/);
     expectAboutTheWindow(toDurationPercentiles(EMPTY, 'ok', WINDOW).empty, /TCP connects/);
+  });
+});
+
+describe('a filtered duration chart with nothing to draw (Task 9a F1)', () => {
+  it('says the remote recorded nothing, on all three charts', () => {
+    const opts = { windowSelected: false, filter: 'remote', noun: 'TLS handshakes' } as const;
+    const sentences = [
+      toDurationOverTime(EMPTY, { ...opts, outcome: 'ok', rows: DEFAULT_AGENT_ROWS, widthMs: WIDTH }).empty,
+      toDurationDistribution(EMPTY, opts).empty,
+      toDurationPercentiles(EMPTY, 'ok', opts).empty,
+    ];
+    for (const said of sentences) {
+      expect(said).toBe('No TLS handshakes were recorded for this remote.');
+    }
+    expect(toDurationPercentiles(EMPTY, 'ok', { ...opts, windowSelected: true }).empty).toBe(
+      'No TLS handshakes for this remote fall in the selected window.',
+    );
   });
 });

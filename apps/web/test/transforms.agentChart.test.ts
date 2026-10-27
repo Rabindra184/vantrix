@@ -24,7 +24,7 @@ const connections = AgentConnectionsResponseSchema.parse(fixture.connections);
 const dns = AgentDnsResponseSchema.parse(fixture.dns);
 const injectors = AgentInjectorsResponseSchema.parse(fixture.injectors);
 
-const RUN = { windowSelected: false } as const;
+const RUN = { windowSelected: false, filter: null } as const;
 const GAP = 10;
 
 /** Pairs of one drawn series, by name. */

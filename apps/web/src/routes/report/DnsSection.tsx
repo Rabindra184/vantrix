@@ -54,7 +54,7 @@ export default function DnsSection({ runId }: { readonly runId: string }) {
   // EVERY HOOK RUNS ON EVERY RENDER, above the gate's early returns.
   const section = useAgentSection(runId, { needsHttp: true });
   const { summary, window, domainMs } = section;
-  const [hostname, setHostname] = useReportFilter('hostname', summary?.hostnames, 'dns');
+  const [hostname, setHostname, namedHostname] = useReportFilter('hostname', summary?.hostnames, 'dns');
   const dns = useQuery(section.figureQuery(agentDnsQuery(runId, hostname, window)));
 
   return (
@@ -68,16 +68,30 @@ export default function DnsSection({ runId }: { readonly runId: string }) {
     >
       {(collected) => (
         <div className="flex flex-col gap-4">
+          {collected.hostnames.length === 0 && (
+            // Not four silent charts: Gatling's warm-up lookup is left out
+            // everywhere, and a run with nothing else is said so once.
+            <p className="text-sm text-muted">No DNS lookup outside Gatling&apos;s warm-up was recorded.</p>
+          )}
           <ReportFilterControl
             label="Hostname"
             allLabel="All hostnames"
             values={collected.hostnames}
             value={hostname}
             onChange={setHostname}
+            named={namedHostname}
+            verb="resolved"
           />
           <div className={REPORT_GRID}>
             <Payload query={dns} slots={SLOTS}>
-              {(data) => <DnsCharts data={data} domainMs={domainMs} windowSelected={window !== null} />}
+              {(data) => (
+                <DnsCharts
+                  data={data}
+                  domainMs={domainMs}
+                  windowSelected={window !== null}
+                  filter={hostname === '*' ? null : 'hostname'}
+                />
+              )}
             </Payload>
           </div>
         </div>
@@ -90,13 +104,16 @@ function DnsCharts({
   data,
   domainMs,
   windowSelected,
+  filter,
 }: {
   readonly data: AgentDnsResponse;
   readonly domainMs: TimeDomainMs | undefined;
   readonly windowSelected: boolean;
+  /** `'hostname'` when one hostname is chosen: an empty chart is then about it, not the run. */
+  readonly filter: 'hostname' | null;
 }) {
   // Memoised: `Chart`'s option effect depends on `data` by identity.
-  const rate = useMemo(() => toDnsRate(data, { windowSelected }), [data, windowSelected]);
+  const rate = useMemo(() => toDnsRate(data, { windowSelected, filter }), [data, windowSelected, filter]);
   return (
     <>
       <Chart
@@ -121,6 +138,7 @@ function DnsCharts({
         widthMs={data.bucketWidthMs}
         domainMs={domainMs}
         windowSelected={windowSelected}
+        filter={filter}
         order={DNS_ORDER}
       />
     </>

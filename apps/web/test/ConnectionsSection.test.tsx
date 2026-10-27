@@ -161,6 +161,8 @@ describe('ConnectionsSection', () => {
     });
     expect(await screen.findByText("This run's agent file could not be read")).toBeInTheDocument();
     expect(screen.getByText(new RegExp(detail))).toBeInTheDocument();
+    // Its own subject, so DNS and Load generators beside it do not say the identical sentence.
+    expect(screen.getByText(new RegExp(detail))).toHaveTextContent("This run's connection figures cannot be drawn.");
     expect(screen.queryByText(/no generator telemetry recorded/i)).toBeNull();
     expect(requested.some((u) => u.includes('/telemetry'))).toBe(false);
     expect(screen.queryAllByRole('figure')).toHaveLength(0);
@@ -305,8 +307,44 @@ describe('ConnectionsSection', () => {
     // Queried inside the wait: the drawn chart REPLACES the loading figure, so a
     // node taken before the read answers is a detached one.
     await waitFor(() =>
-      expect(within(screen.getByTestId('chart-agent-tcp-states')).getByRole('status')).toHaveTextContent(reason),
+      expect(within(screen.getByTestId('chart-agent-tcp-states')).getByRole('status')).toHaveTextContent(
+        // Framed as a sentence: the agent's reason alone is a lower-case fragment.
+        `The agent did not collect machine figures: ${reason}.`,
+      ),
     );
+  });
+
+  it('says an empty chart is about the chosen remote, never the run', async () => {
+    // The fixture's plain-HTTP remote: no TLS handshake to it, thirty to the other.
+    const quiet = REMOTES.find((r) => BY_REMOTE[r]!.tlsHandshake.totals.ok + BY_REMOTE[r]!.tlsHandshake.totals.ko === 0)!;
+    expect(ALL.tlsHandshake.totals.ok).toBeGreaterThan(0);
+    renderSection({ search: `?remote=${encodeURIComponent(quiet)}` });
+    const tls = ['chart-agent-tls-percentiles', 'chart-agent-tls-distribution', 'chart-agent-tls-percentiles-distribution'];
+    await waitForDrawn(TITLES.length, tls);
+    for (const id of tls) {
+      const said = within(screen.getByTestId(id)).getByRole('status');
+      expect(said, id).toHaveTextContent(/this remote/);
+      expect(said, id).not.toHaveTextContent(/this run/);
+    }
+  });
+
+  it("says once that no connection outside Gatling's warm-up was recorded", async () => {
+    renderSection({ summary: { ...SUMMARY, remotes: [] }, connections: { ...ALL, buckets: [] } });
+    expect(await screen.findByText("No connection outside Gatling's warm-up was recorded.")).toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: 'Remote' })).toBeNull();
+  });
+
+  it('says when the link named a remote this run never contacted', async () => {
+    renderSection({ search: '?remote=elsewhere%2F10.0.0.1%3A443' });
+    await waitForCharts();
+    expect(screen.getByTestId('filter-unknown')).toHaveTextContent(
+      'This link named elsewhere/10.0.0.1:443, which this run never contacted; showing all remotes.',
+    );
+    cleanup();
+    vi.unstubAllGlobals();
+    renderSection({ search: `?remote=${encodeURIComponent(REMOTES[1]!)}` });
+    await waitForCharts();
+    expect(screen.queryByTestId('filter-unknown')).toBeNull();
   });
 
   it('says once that the summary could not be read, and asks for no figures', async () => {

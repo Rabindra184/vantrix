@@ -80,6 +80,7 @@ export default function AgentDurationCharts({
   widthMs,
   domainMs,
   windowSelected,
+  filter,
   order = DEFAULT_ORDER,
 }: {
   readonly idPrefix: string;
@@ -93,6 +94,8 @@ export default function AgentDurationCharts({
   readonly domainMs: TimeDomainMs | undefined;
   /** REQUIRED, as on every Report chart: a quiet window must not read as a quiet run. */
   readonly windowSelected: boolean;
+  /** The section's filter when one is applied — REQUIRED for the same reason: one quiet remote is not a quiet run. */
+  readonly filter: 'remote' | 'hostname' | null;
   /** The three charts' order, each named once; GE's TCP and TLS order by default. */
   readonly order?: readonly DurationChart[];
 }) {
@@ -101,16 +104,16 @@ export default function AgentDurationCharts({
   const [curveOutcome, setCurveOutcome] = useState<Outcome>('ok');
 
   const overTime = useMemo(
-    () => toDurationOverTime(section, { windowSelected, noun, outcome: overTimeOutcome, rows, widthMs }),
-    [section, windowSelected, noun, overTimeOutcome, rows, widthMs],
+    () => toDurationOverTime(section, { windowSelected, filter, noun, outcome: overTimeOutcome, rows, widthMs }),
+    [section, windowSelected, filter, noun, overTimeOutcome, rows, widthMs],
   );
   const distribution = useMemo(
-    () => toDurationDistribution(section, { windowSelected, noun }),
-    [section, windowSelected, noun],
+    () => toDurationDistribution(section, { windowSelected, filter, noun }),
+    [section, windowSelected, filter, noun],
   );
   const curve = useMemo(
-    () => toDurationPercentiles(section, curveOutcome, { windowSelected, noun }),
-    [section, curveOutcome, windowSelected, noun],
+    () => toDurationPercentiles(section, curveOutcome, { windowSelected, filter, noun }),
+    [section, curveOutcome, windowSelected, filter, noun],
   );
   // The transform emits rows in `AGENT_PERCENTILE_ROWS` order, never toggle
   // order, so the roles follow the same filter. Memoised: `roles` is in

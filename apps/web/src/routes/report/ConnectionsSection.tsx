@@ -64,7 +64,7 @@ export default function ConnectionsSection({ runId }: { readonly runId: string }
   // EVERY HOOK RUNS ON EVERY RENDER, above the gate's early returns.
   const section = useAgentSection(runId, { needsHttp: true });
   const { summary, window, domainMs } = section;
-  const [remote, setRemote] = useReportFilter('remote', summary?.remotes, 'connections');
+  const [remote, setRemote, namedRemote] = useReportFilter('remote', summary?.remotes, 'connections');
   const connections = useQuery(section.figureQuery(agentConnectionsQuery(runId, remote, window)));
 
   return (
@@ -83,12 +83,19 @@ export default function ConnectionsSection({ runId }: { readonly runId: string }
           collected.header?.collects.machine === false ? collected.header.reasons.machine : undefined;
         return (
           <div className="flex flex-col gap-4">
+            {collected.remotes.length === 0 && (
+              // Not nine silent charts: Gatling's warm-up connects are left out
+              // everywhere, and a run with nothing else is said so once.
+              <p className="text-sm text-muted">No connection outside Gatling&apos;s warm-up was recorded.</p>
+            )}
             <ReportFilterControl
               label="Remote"
               allLabel="All remotes"
               values={collected.remotes}
               value={remote}
               onChange={setRemote}
+              named={namedRemote}
+              verb="contacted"
             />
             <div className={REPORT_GRID}>
               <Payload query={connections} slots={SLOTS}>
@@ -97,6 +104,7 @@ export default function ConnectionsSection({ runId }: { readonly runId: string }
                     data={data}
                     domainMs={domainMs}
                     windowSelected={window !== null}
+                    filter={remote === '*' ? null : 'remote'}
                     notMeasuredReason={notMeasuredReason}
                   />
                 )}
@@ -113,20 +121,23 @@ function ConnectionCharts({
   data,
   domainMs,
   windowSelected,
+  filter,
   notMeasuredReason,
 }: {
   readonly data: AgentConnectionsResponse;
   readonly domainMs: TimeDomainMs | undefined;
   readonly windowSelected: boolean;
+  /** `'remote'` when one remote is chosen: an empty chart is then about it, not the run. */
+  readonly filter: 'remote' | null;
   readonly notMeasuredReason: string | undefined;
 }) {
   // Memoised: `Chart`'s option effect depends on `data` by identity.
-  const rate = useMemo(() => toConnectionRate(data, { windowSelected }), [data, windowSelected]);
+  const rate = useMemo(() => toConnectionRate(data, { windowSelected, filter }), [data, windowSelected, filter]);
   const states = useMemo(
-    () => toTcpStates(data, { windowSelected, notMeasuredReason }),
-    [data, windowSelected, notMeasuredReason],
+    () => toTcpStates(data, { windowSelected, filter, notMeasuredReason }),
+    [data, windowSelected, filter, notMeasuredReason],
   );
-  const bandwidth = useMemo(() => toBandwidth(data, { windowSelected }), [data, windowSelected]);
+  const bandwidth = useMemo(() => toBandwidth(data, { windowSelected, filter }), [data, windowSelected, filter]);
   // Every time chart: a value axis in ms, labelled as clock time, on the shell's domain.
   const xAxis = { type: 'value', tickUnit: 'ms-as-s', min: domainMs?.[0], max: domainMs?.[1] } as const;
 
@@ -163,6 +174,7 @@ function ConnectionCharts({
         widthMs={data.bucketWidthMs}
         domainMs={domainMs}
         windowSelected={windowSelected}
+        filter={filter}
       />
       <AgentDurationCharts
         idPrefix="agent-tls"
@@ -172,6 +184,7 @@ function ConnectionCharts({
         widthMs={data.bucketWidthMs}
         domainMs={domainMs}
         windowSelected={windowSelected}
+        filter={filter}
       />
       <Chart
         id="agent-bandwidth"

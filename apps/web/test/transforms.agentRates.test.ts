@@ -38,8 +38,8 @@ const connections = AgentConnectionsResponseSchema.parse(fixture.connections);
 const dns = AgentDnsResponseSchema.parse(fixture.dns);
 const status = AgentStatusResponseSchema.parse(fixture.status);
 
-const RUN = { windowSelected: false } as const;
-const WINDOW = { windowSelected: true } as const;
+const RUN = { windowSelected: false, filter: null } as const;
+const WINDOW = { windowSelected: true, filter: null } as const;
 
 /** One drawn series' y values, by name. */
 function ys(chart: ChartData, name: string): readonly (number | null)[] {
@@ -250,8 +250,11 @@ describe('toTcpStates', () => {
     expect(chart.columns).toEqual(['Elapsed (s)', ...TCP_STATE_NAMES]);
   });
 
-  it("says GE's bound and idle are not measured", () => {
-    expect(toTcpStates(connections, RUN).limitation).toMatch(/\bbound\b.*\bidle\b/);
+  it('says Gatling Enterprise\'s bound and idle are not drawn, naming it in full', () => {
+    const note = toTcpStates(connections, RUN).limitation;
+    expect(note).toMatch(/Gatling Enterprise.*\bbound\b.*\bidle\b/);
+    // Never the abbreviation: a reader of this product's page does not know "GE".
+    expect(note).not.toMatch(/\bGE\b/);
   });
 
   it('says whether the window or the run recorded nothing', () => {
@@ -344,5 +347,43 @@ describe('toStatusRate', () => {
     const none: AgentStatusResponse = { ...status, buckets: [] };
     expectAboutTheWindow(toStatusRate(none, WINDOW).empty, /responses/);
     expectAboutTheRun(toStatusRate(none, RUN).empty, /responses/);
+  });
+});
+
+/**
+ * ═══ A FILTERED EMPTY CHART IS ABOUT THE FILTER (Task 9a F1) ═══
+ *
+ * With `?remote=` set, a chart with nothing to draw said "… for this run" — of
+ * a run that recorded plenty, to another remote. The sentence names the remote
+ * or hostname instead, for the run and the window alike, and the window
+ * sentence still says "selected window".
+ */
+describe('a filtered chart with nothing to draw', () => {
+  const REMOTE = { windowSelected: false, filter: 'remote' } as const;
+  const REMOTE_WINDOW = { windowSelected: true, filter: 'remote' } as const;
+
+  it('says the remote recorded nothing, not the run', () => {
+    const run = toConnectionRate(withBuckets([]), REMOTE).empty;
+    expect(run).toMatch(/this remote/);
+    expect(run).not.toMatch(/this run/);
+    const win = toConnectionRate(withBuckets([]), REMOTE_WINDOW).empty;
+    expect(win).toMatch(/this remote/);
+    expect(win).toMatch(/selected window/);
+    expect(win).not.toMatch(/this run/);
+  });
+
+  it('says so of an unread state and of a fully dropped chart too', () => {
+    const unread = toTcpStates(withBuckets(connections.buckets.map((b) => ({ ...b, states: null }))), REMOTE).empty;
+    expect(unread).toMatch(/this remote/);
+    expect(unread).not.toMatch(/this run/);
+    const quiet = toTcpStates(withBuckets(connections.buckets.map((b) => ({ ...b, states: ZERO_STATES }))), REMOTE_WINDOW).empty;
+    expect(quiet).toMatch(/this remote in the selected window/);
+  });
+
+  it('says the hostname recorded nothing, with the DNS noun', () => {
+    const none = { ...dns, buckets: [] };
+    const run = toDnsRate(none, { windowSelected: false, filter: 'hostname' }).empty;
+    expect(run).toBe('No DNS lookups were recorded for this hostname.');
+    expectAboutTheRun(toDnsRate(none, RUN).empty, /DNS lookups/);
   });
 });

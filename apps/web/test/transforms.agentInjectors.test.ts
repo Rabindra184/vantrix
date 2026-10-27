@@ -85,6 +85,9 @@ const machineOff: AgentInjectorsResponse = {
   })),
 };
 
+/** What every machine-off chart says: the agent's own reason, framed as a sentence. */
+const MACHINE_OFF = `The agent did not collect machine figures: ${machineOff.machine.reason}.`;
+
 /**
  * The ruling every agent chart follows: a chart left with nothing to plot says
  * why in `empty`, and draws no series — never a markless grid. Checked for the
@@ -194,7 +197,7 @@ describe('toCpu', () => {
 
   it("is empty with the machine's own reason when the machine collector was off", () => {
     const chart = toCpu(machineOff, RUN);
-    expect(chart.empty).toBe('macOS');
+    expect(chart.empty).toBe(MACHINE_OFF);
     expect(chart.series).toEqual([]);
   });
 
@@ -250,7 +253,7 @@ describe('toMemory', () => {
   });
 
   it("carries the machine's reason beside the unread RAM, or a plain one", () => {
-    expect(toMemory(machineOff, RUN).limitation).toContain('macOS');
+    expect(toMemory(machineOff, RUN).limitation).toContain(MACHINE_OFF);
     const noReason = { ...machineOff, machine: { available: false, reason: null } };
     expect(toMemory(noReason, RUN).limitation).toContain('The agent did not collect machine figures.');
     // On a machine-on run the RAM note has no machine reason to give.
@@ -387,9 +390,9 @@ describe('toTcpEvents', () => {
   });
 
   it("is empty with the machine's reason when the machine collector was off, buckets or not", () => {
-    expect(toTcpEvents(machineOff, RUN).empty).toBe('macOS');
+    expect(toTcpEvents(machineOff, RUN).empty).toBe(MACHINE_OFF);
     expect(toTcpEvents(machineOff, RUN).series).toEqual([]);
-    expect(toTcpEvents({ ...machineOff, buckets: [], bucketWidthMs: null }, RUN).empty).toBe('macOS');
+    expect(toTcpEvents({ ...machineOff, buckets: [], bucketWidthMs: null }, RUN).empty).toBe(MACHINE_OFF);
   });
 
   it('is empty rather than assuming 1000 ms when the payload carries no width', () => {
@@ -460,7 +463,7 @@ describe('toTcpSegments', () => {
   });
 
   it("is empty with the machine's reason when the machine collector was off", () => {
-    expect(toTcpSegments(machineOff, RUN).empty).toBe('macOS');
+    expect(toTcpSegments(machineOff, RUN).empty).toBe(MACHINE_OFF);
     expect(toTcpSegments(machineOff, RUN).series).toEqual([]);
   });
 

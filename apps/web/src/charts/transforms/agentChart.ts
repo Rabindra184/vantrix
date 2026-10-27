@@ -34,7 +34,40 @@ import type { ChartData, ChartSeries, ChartTableRow } from '../types';
  */
 export const TIME_COLUMN = 'Elapsed (s)';
 
-export type Opts = { readonly windowSelected: boolean };
+/**
+ * Which part of the run a chart was asked about. `filter` is the section's
+ * `?remote=` / `?hostname=` when one is applied: an empty chart for ONE remote
+ * is not a run that recorded nothing — the scoped-empty rule `ErrorsTable`'s
+ * `scopeLabel` follows — so the sentence names the remote or hostname instead.
+ * Optional here, because Load generators and the status chart have no filter;
+ * the filtered transforms take `FilteredOpts`, where it is required.
+ */
+export type Opts = { readonly windowSelected: boolean; readonly filter?: 'remote' | 'hostname' | null };
+
+/** The options of a chart a section filters: a caller must say whether its filter is applied. */
+export type FilteredOpts = Opts & { readonly filter: 'remote' | 'hostname' | null };
+
+/** "this run", or "this remote" / "this hostname" when a filter narrowed it. */
+function subjectOf(opts: Opts): string {
+  return opts.filter == null ? 'this run' : `this ${opts.filter}`;
+}
+
+/** Where a chart's nothing-to-draw sentence says it looked: "for this run", "in the selected window", … */
+export function scopeOf(opts: Opts): string {
+  if (!opts.windowSelected) return `for ${subjectOf(opts)}`;
+  return opts.filter == null ? 'in the selected window' : `for ${subjectOf(opts)} in the selected window`;
+}
+
+/**
+ * The agent's machine collector was off: its own reason, framed as a sentence
+ * — the reason arrives as a lower-case fragment ("machine figures are
+ * collected on Linux only (os.name=Mac OS X)"), which read alone is not one.
+ */
+export function machineOffSentence(reason: string | null | undefined): string {
+  if (reason == null || reason.trim() === '') return 'The agent did not collect machine figures.';
+  const trimmed = reason.trim();
+  return `The agent did not collect machine figures: ${trimmed}${/[.!?]$/.test(trimmed) ? '' : '.'}`;
+}
 type Pair = readonly [number, number | null];
 
 /**
@@ -155,12 +188,14 @@ export function bucketChart<B extends { readonly startOffsetMs: number }>(
 
 /**
  * "No <things> fall in the selected window." or "… were recorded for this run."
- * One wording for every agent chart.
+ * — or for this remote / this hostname, when a filter narrowed the chart. One
+ * wording for every agent chart.
  */
 export function emptySentence(things: string, opts: Opts): string {
-  return opts.windowSelected
+  if (!opts.windowSelected) return `No ${things} were recorded for ${subjectOf(opts)}.`;
+  return opts.filter == null
     ? `No ${things} fall in the selected window.`
-    : `No ${things} were recorded for this run.`;
+    : `No ${things} for ${subjectOf(opts)} fall in the selected window.`;
 }
 
 /**
@@ -187,7 +222,7 @@ function dropAndExplain(
       zero.length > 0 ? `every reading is zero — ${zero.join(', ')}` : undefined,
       split.unread.length > 0 ? `no reading was taken — ${split.unread.join(', ')}` : undefined,
     ].filter((r): r is string => r !== undefined);
-    const scope = opts.windowSelected ? 'in the selected window' : 'for this run';
+    const scope = scopeOf(opts);
     const empty = reasons.length > 0 ? `Nothing to draw ${scope}: ${reasons.join('; ')}.` : `Nothing to draw ${scope}.`;
     return { ...chart, series: [], empty, limitation: others.length > 0 ? others.join(' ') : undefined };
   }

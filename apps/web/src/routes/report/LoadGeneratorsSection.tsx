@@ -58,8 +58,9 @@ const SLOTS = [
  * one-option select is a control that does nothing. It is a read-only field
  * (`ReadOnlyField`, the same shape a single remote or hostname takes). When the
  * run came from PerfPortal's own on-prem runner, that machine IS the PerfPortal
- * VM, so one sentence beside it says its CPU, RAM and TCP figures include the
- * database's, the API's and the worker's.
+ * VM, so one sentence beside it says its CPU, RAM and kernel TCP figures
+ * include the database's, the API's and the worker's — not its heap or GC,
+ * which are the load generator's own JVM.
  *
  * A machine collector that was off costs CPU and both kernel TCP charts their
  * lines, each saying the agent's own reason; GC and memory still draw, memory
@@ -88,8 +89,8 @@ export default function LoadGeneratorsSection({ runId }: { readonly runId: strin
             <ReadOnlyField label="Load generator">{collected.injector.host ?? 'Unknown host'}</ReadOnlyField>
             {collected.injector.sharedWithPerfPortal && (
               <p className="text-[0.75rem] text-muted">
-                This machine was shared with PerfPortal&apos;s database, API and worker, so its CPU, memory and
-                TCP figures include theirs.
+                This machine was shared with PerfPortal&apos;s database, API and worker, so its CPU, RAM and
+                kernel TCP figures include theirs.
               </p>
             )}
           </div>

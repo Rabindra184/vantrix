@@ -5,6 +5,7 @@ import {
   bucketChart,
   dropAllZero,
   emptySentence,
+  machineOffSentence,
   noWidth,
   perSecond,
   TIME_COLUMN,
@@ -92,9 +93,9 @@ export const TCP_SEGMENT_LABELS: Readonly<Record<TcpSegmentName, string>> = {
 const ESTABLISHED_IS_A_GAUGE =
   'The established series is the number of connections the kernel held open, so it is drawn as stored, not per second.';
 
-/** The agent's own reason the machine collector was off, or a plain one. */
+/** The agent's own reason the machine collector was off, as a sentence (`machineOffSentence`). */
 function machineReason(inj: AgentInjectorsResponse): string {
-  return inj.machine.reason ?? 'The agent did not collect machine figures.';
+  return machineOffSentence(inj.machine.reason);
 }
 
 /** The machine-off chart: no series, the agent's reason, every column kept. */

@@ -236,4 +236,32 @@ describe('DnsSection', () => {
       screen.getByRole('button', { name: `${OVER_TIME}: Percentile bands, ${DEFAULT_AGENT_ROWS.length} selected` }),
     ).toBeInTheDocument();
   });
+
+  it("says once that no DNS lookup outside Gatling's warm-up was recorded — the real run's state", async () => {
+    const nothing = {
+      ...DNS,
+      buckets: [],
+      resolution: {
+        overTime: [],
+        distribution: { offsetMs: 0, stepMs: 1, ok: [], ko: [], meanMs: null },
+        percentiles: { ok: [], ko: [], all: [], meanMs: { ok: null, ko: null, all: null } },
+        totals: { ok: 0, ko: 0 },
+      },
+    };
+    renderSection({ summary: { ...SUMMARY, hostnames: [] }, dns: nothing });
+    expect(await screen.findByText("No DNS lookup outside Gatling's warm-up was recorded.")).toBeInTheDocument();
+    // Every chart says the same noun, "DNS lookups", the rate chart included.
+    await waitFor(() => expect(screen.getAllByRole('status').length).toBeGreaterThanOrEqual(TITLES.length));
+    for (const said of screen.getAllByRole('status').filter((n) => n.closest('figure') !== null)) {
+      expect(said).toHaveTextContent(/DNS lookups/);
+    }
+  });
+
+  it('says when the link named a hostname this run never resolved', async () => {
+    renderSection({ search: '?hostname=api.example.test' });
+    await waitForCharts();
+    expect(screen.getByTestId('filter-unknown')).toHaveTextContent(
+      'This link named api.example.test, which this run never resolved; showing all hostnames.',
+    );
+  });
 });

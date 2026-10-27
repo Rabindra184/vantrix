@@ -2,7 +2,17 @@ import { TCP_STATE_NAMES } from '@perfportal/contracts';
 import type { AgentConnectionsResponse, AgentDnsResponse, AgentStatusResponse } from '@perfportal/contracts';
 import type { StatusRole } from '../theme';
 import type { ChartData } from '../types';
-import { bucketChart, emptySentence, noWidth, perSecond, withoutAllZero, type Opts } from './agentChart';
+import {
+  bucketChart,
+  emptySentence,
+  machineOffSentence,
+  noWidth,
+  perSecond,
+  scopeOf,
+  withoutAllZero,
+  type FilteredOpts,
+  type Opts,
+} from './agentChart';
 
 /**
  * The Report's agent rate and gauge charts — Connections, DNS and the HTTP
@@ -54,7 +64,7 @@ type ConnectionBucket = AgentConnectionsResponse['buckets'][number];
  * No status roles: closing a connection is not a failure, so green and red
  * would misread it. The categorical palette draws them.
  */
-export function toConnectionRate(c: AgentConnectionsResponse, opts: Opts): ChartData {
+export function toConnectionRate(c: AgentConnectionsResponse, opts: FilteredOpts): ChartData {
   const w = c.bucketWidthMs;
   if (w === null) return noWidth(['Opened', 'Closed']);
   return bucketChart<ConnectionBucket>(
@@ -69,7 +79,7 @@ export function toConnectionRate(c: AgentConnectionsResponse, opts: Opts): Chart
 }
 
 const STATES_NOT_MEASURED =
-  "GE's bound and idle states have no kernel state behind them, so they are not measured.";
+  'Gatling Enterprise also shows bound and idle; they have no kernel state behind them, so they are not drawn.';
 
 /**
  * GE's "TCP Connection By State": one gauge series per kernel state, as GE
@@ -78,11 +88,12 @@ const STATES_NOT_MEASURED =
  * WHEN NO BUCKET CARRIES A READING the chart is `empty`, not nine invisible
  * lines: that is every macOS run, whose kernel TCP states the agent cannot
  * read. `notMeasuredReason` is the agent's own reason the machine collector
- * was off (`summary.header.reasons.machine`), appended when the caller has it.
+ * was off (`summary.header.reasons.machine`), framed as a sentence and
+ * appended when the caller has it.
  */
 export function toTcpStates(
   c: AgentConnectionsResponse,
-  opts: Opts & { readonly notMeasuredReason?: string },
+  opts: FilteredOpts & { readonly notMeasuredReason?: string },
 ): ChartData {
   const chart = bucketChart<ConnectionBucket>(
     c.buckets,
@@ -96,20 +107,18 @@ export function toTcpStates(
   );
   if (chart.empty !== undefined) return chart;
   if (c.buckets.every((b) => b.states === null)) {
-    const unread = opts.windowSelected
-      ? 'No TCP connection state was read in the selected window.'
-      : 'No TCP connection state was read for this run.';
+    const unread = `No TCP connection state was read ${scopeOf(opts)}.`;
     return {
       ...chart,
       series: [],
-      empty: opts.notMeasuredReason === undefined ? unread : `${unread} ${opts.notMeasuredReason}`,
+      empty: opts.notMeasuredReason === undefined ? unread : `${unread} ${machineOffSentence(opts.notMeasuredReason)}`,
     };
   }
   return withoutAllZero(chart, opts, STATES_NOT_MEASURED);
 }
 
 /** GE's "Bandwidth Usage per second": Sent and Received in Mbps, `bits / (width/1000) / 1e6`. */
-export function toBandwidth(c: AgentConnectionsResponse, opts: Opts): ChartData {
+export function toBandwidth(c: AgentConnectionsResponse, opts: FilteredOpts): ChartData {
   const w = c.bucketWidthMs;
   if (w === null) return noWidth(['Sent', 'Received']);
   const mbps = (bits: number) => bits / (w / 1000) / 1e6;
@@ -132,7 +141,7 @@ export function toBandwidth(c: AgentConnectionsResponse, opts: Opts): ChartData 
 export const DNS_RATE_ROLES: readonly StatusRole[] = ['neutral', 'passed', 'failed'];
 
 /** GE's "DNS Resolution per Second": Requests, OK and KO per second. */
-export function toDnsRate(d: AgentDnsResponse, opts: Opts): ChartData {
+export function toDnsRate(d: AgentDnsResponse, opts: FilteredOpts): ChartData {
   const w = d.bucketWidthMs;
   if (w === null) return noWidth(['Requests', 'OK', 'KO']);
   return bucketChart<AgentDnsResponse['buckets'][number]>(
@@ -142,7 +151,7 @@ export function toDnsRate(d: AgentDnsResponse, opts: Opts): ChartData {
       { name: 'OK', read: (b) => perSecond(b.ok, w), gap: 'counter' },
       { name: 'KO', read: (b) => perSecond(b.ko, w), gap: 'counter' },
     ],
-    emptySentence('lookups', opts),
+    emptySentence('DNS lookups', opts),
     w,
   );
 }

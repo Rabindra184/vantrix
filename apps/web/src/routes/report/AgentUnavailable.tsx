@@ -15,6 +15,8 @@ import { EmptyState } from '../../components/States';
  *   unreadable          there WAS an agent file and it could not be read. The
  *                       stored reason is shown, and no section falls back to
  *                       telemetry here: hiding the file would misstate the run.
+ *                       Its body names `subject` too, so three sections open
+ *                       on one unreadable run never print one sentence thrice.
  *   http_not_collected  the agent ran with its HTTP collector off; `detail` is
  *                       the agent's own reason.
  *
@@ -34,7 +36,11 @@ export default function AgentUnavailable({
     return (
       <EmptyState
         title="This run's agent file could not be read"
-        body={detail === null ? 'No reason was stored with it.' : `The stored reason: ${detail}`}
+        body={
+          detail === null
+            ? `No reason was stored with it, so this run's ${subject} cannot be drawn.`
+            : `This run's ${subject} cannot be drawn. The stored reason: ${detail}`
+        }
       />
     );
   }

@@ -120,6 +120,8 @@ describe('LoadGeneratorsSection', () => {
     renderSection({ summary: { ...SUMMARY, injector: { ...SUMMARY.injector, sharedWithPerfPortal: true } } });
     await waitForCharts();
     expect(screen.getByText(/shared/)).toHaveTextContent("PerfPortal's database, API and worker");
+    // What it shares is the MACHINE's figures; heap and GC are the load generator's own JVM.
+    expect(screen.getByText(/shared/)).toHaveTextContent('CPU, RAM and kernel TCP figures');
   });
 
   it('says nothing about sharing when the machine was not shared', async () => {

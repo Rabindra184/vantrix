@@ -1,7 +1,7 @@
 import { AGENT_PERCENTILE_ROWS, roundForReading } from '@perfportal/contracts';
 import type { AgentPercentileRow, DurationSection } from '@perfportal/contracts';
 import type { ChartData, ChartSeries, ChartTableRow } from '../types';
-import { TIME_COLUMN, bucketGrid, emptySentence } from './agentChart';
+import { TIME_COLUMN, bucketGrid, emptySentence, type FilteredOpts } from './agentChart';
 import { binLabelColumn } from './distribution';
 import { SERIES_NAME } from './percentileDistribution';
 import type { Outcome } from './percentiles';
@@ -53,7 +53,7 @@ export const DEFAULT_AGENT_ROWS: readonly AgentPercentileRow[] = AGENT_PERCENTIL
   (row) => !HIDDEN_BY_DEFAULT.includes(row),
 );
 
-type Opts = { readonly windowSelected: boolean; readonly noun: string };
+type Opts = FilteredOpts & { readonly noun: string };
 
 /** "failed TCP connects" — the noun narrowed to one outcome; `all` narrows nothing. */
 const OUTCOME_ADJECTIVE: Record<Outcome, string> = { ok: 'successful ', ko: 'failed ', all: '' };
@@ -136,7 +136,7 @@ export function toDurationOverTime(
     rows,
     empty:
       selected.length === 0
-        ? 'No percentile rows are selected, so there is nothing to draw. Choose at least one row above.'
+        ? 'No percentile bands are selected, so there is nothing to draw. Choose at least one band above.'
         : undefined,
     limitation:
       unmeasured > 0
