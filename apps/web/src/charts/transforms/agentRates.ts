@@ -106,7 +106,7 @@ export function unreadSeriesNote(unread: readonly string[]): string | undefined 
 }
 
 /** One series' name and how to read its y off a bucket. */
-interface Measure<B> {
+export interface Measure<B> {
   readonly name: string;
   readonly read: (bucket: B) => number | null;
 }
@@ -114,8 +114,9 @@ interface Measure<B> {
 /**
  * Every chart here has this shape: buckets with an offset, a fixed list of
  * measures, pairs for the drawing and the same numbers for the table.
+ * Exported for the Load generators charts (`agentInjectors.ts`), which share it.
  */
-function bucketChart<B extends { readonly startOffsetMs: number }>(
+export function bucketChart<B extends { readonly startOffsetMs: number }>(
   buckets: readonly B[],
   measures: readonly Measure<B>[],
   empty: string,
@@ -148,8 +149,11 @@ export function emptySentence(things: string, opts: Opts): string {
     : `No ${things} were recorded for this run.`;
 }
 
-/** Applies the zero-series ruling to a built chart, joining its note to any other. */
-function withoutAllZero(chart: ChartData, ...otherNotes: string[]): ChartData {
+/**
+ * Applies the zero-series ruling to a built chart, joining its note to any other.
+ * Exported for the Load generators' GC, TCP-event and segment charts.
+ */
+export function withoutAllZero(chart: ChartData, ...otherNotes: string[]): ChartData {
   const { kept, zero, unread } = dropAllZero(chart.series);
   const notes = [zeroSeriesNote(zero), unreadSeriesNote(unread), ...otherNotes].filter(
     (n): n is string => n !== undefined,
@@ -161,8 +165,9 @@ function withoutAllZero(chart: ChartData, ...otherNotes: string[]): ChartData {
  * A rate chart for a payload with no bucket width. The contract makes it null
  * only when nothing was collected, but a rate cannot be drawn without one, and
  * assuming 1000 is the mis-scaled chart this module exists to avoid.
+ * Exported for the Load generators' rate charts.
  */
-function noWidth(names: readonly string[]): ChartData {
+export function noWidth(names: readonly string[]): ChartData {
   return {
     series: [],
     axisLabels: [],
