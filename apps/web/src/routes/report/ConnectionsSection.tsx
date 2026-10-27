@@ -11,7 +11,8 @@ import type { TimeDomainMs } from '../../charts/types';
 import useIsCompact from '../../useIsCompact';
 import DesktopOnly from '../DesktopOnly';
 import LiveNotice from '../LiveNotice';
-import { Payload, type Slot } from '../payload';
+import { ErrorState, LoadingState } from '../../components/States';
+import { Payload, explain, type Slot } from '../payload';
 import RunTelemetry from '../RunTelemetry';
 import { useRunTerminal, useTimeDomainFromShell, useWindowFromShell } from '../useRunWindow';
 import AgentUnavailable from './AgentUnavailable';
@@ -63,7 +64,7 @@ const GRID = 'grid grid-cols-1 gap-6 2xl:grid-cols-2';
  *    read answers 200 or an error, never a run body at 202, and a live run's
  *    figures do not exist yet — `RunTelemetry`'s `enabled: … && terminal` rule.
  *    Ahead of the phone gate, as there: nine sentences are not nine charts.
- * 2. THE SUMMARY decides the rest, so it is read first and the figure read is
+ * 2. THE SUMMARY decides the rest (one loading state until it answers), so it is read first and the figure read is
  *    held until it answers — which is what lets `useReportFilter` check
  *    `?remote=` against `summary.remotes` before any request carries it.
  *    It is read on a phone too: one small body, and without it a phone could
@@ -109,13 +110,14 @@ export default function ConnectionsSection({ runId }: { readonly runId: string }
     );
   }
 
+  // ONE neutral state, not nine titled figures: for a run with no agent file —
+  // every upload and plugin run — those nine titles would be replaced by the
+  // telemetry's two a moment later, promising charts that never come.
   if (summary === undefined) {
-    return (
-      <div className={GRID}>
-        <Payload query={summaryQuery} slots={SLOTS}>
-          {() => null}
-        </Payload>
-      </div>
+    return summaryQuery.isError ? (
+      <ErrorState title="This run's agent figures could not be loaded" detail={explain(summaryQuery.error, 'section')} />
+    ) : (
+      <LoadingState label="Loading this run's agent figures…" />
     );
   }
 
@@ -141,28 +143,7 @@ export default function ConnectionsSection({ runId }: { readonly runId: string }
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Hidden with no remote at all: "All remotes" alone is a control that
-          does nothing — the rule `RunTelemetry`'s host picker follows. */}
-      {summary.remotes.length > 0 && (
-        <div className="flex items-center gap-2">
-          <label htmlFor={remoteSelectId} className="shrink-0 text-[0.75rem] text-muted">
-            Remote
-          </label>
-          <select
-            id={remoteSelectId}
-            value={remote}
-            onChange={(event) => setRemote(event.target.value)}
-            className="min-w-0 rounded border border-default bg-surface px-2 py-1 text-sm text-primary"
-          >
-            <option value="*">All remotes</option>
-            {summary.remotes.map((r) => (
-              <option key={r} value={r}>
-                {r}
-              </option>
-            ))}
-          </select>
-        </div>
-      )}
+      <RemoteControl id={remoteSelectId} remotes={summary.remotes} value={remote} onChange={setRemote} />
       <div className={GRID}>
         <Payload query={connections} slots={SLOTS}>
           {(data) => (
@@ -175,6 +156,57 @@ export default function ConnectionsSection({ runId }: { readonly runId: string }
           )}
         </Payload>
       </div>
+    </div>
+  );
+}
+
+/**
+ * The remote filter, sized to what the run has.
+ *
+ *   none        no control: there is nothing to choose and nothing to name
+ *   one         a read-only field naming it — a select whose options all draw
+ *               the same data is a control that does nothing (the rule the
+ *               Load generators picker and `RunTelemetry`'s host picker follow)
+ *   two or more the select, "All remotes" first
+ */
+function RemoteControl({
+  id,
+  remotes,
+  value,
+  onChange,
+}: {
+  readonly id: string;
+  readonly remotes: readonly string[];
+  readonly value: string;
+  readonly onChange: (remote: string) => void;
+}) {
+  if (remotes.length === 0) return null;
+  if (remotes.length === 1) {
+    return (
+      <dl className="flex items-center gap-2">
+        <dt className="shrink-0 text-[0.75rem] text-muted">Remote</dt>
+        <dd className="min-w-0 break-all text-sm text-primary">{remotes[0]}</dd>
+      </dl>
+    );
+  }
+  return (
+    <div className="flex items-center gap-2">
+      <label htmlFor={id} className="shrink-0 text-[0.75rem] text-muted">
+        Remote
+      </label>
+      <select
+        id={id}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="min-w-0 rounded border border-default bg-surface px-2 py-1 text-sm text-primary"
+      >
+        <option value="*">All remotes</option>
+        {remotes.map((r) => (
+          <option key={r} value={r}>
+            {r}
+          </option>
+        ))}
+      </select>
     </div>
   );
 }

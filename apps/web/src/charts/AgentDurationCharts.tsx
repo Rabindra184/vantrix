@@ -48,6 +48,13 @@ const CURVE_ROLE: Record<Outcome, readonly MarkRole[]> = { ok: ['passed'], ko: [
  * `PercentileDistributionChart`'s reason: a pointer driven there by a hover
  * elsewhere would mean nothing.
  *
+ * EVERY CONTROL IS NAMED AFTER ITS CHART ("TCP Connect Duration Percentiles:
+ * Outcome"). Connections draws this component twice, so six groups and two
+ * menus share one section, and a bare "Outcome" four times over tells a
+ * screen-reader user nothing about which chart it changes. The legend shows
+ * the short name (the heading above says the rest) and the trigger reads the
+ * same words its legend speaks.
+ *
  * Linear y, not `PercentilesChart`'s log: a sub-millisecond TCP connect has a
  * Min of 0, which a log axis cannot place, and a dropped point there would read
  * as an unmeasured second.
@@ -110,16 +117,17 @@ export default function AgentDurationCharts({
         kind="line"
         controls={
           <ControlBar>
-            <ControlGroup label="Percentile rows">
+            <ControlGroup label="Percentile rows" context={titles.overTime}>
               <BandsMenu
                 id={overTimeId}
+                label={`${titles.overTime}: Percentile rows`}
                 bands={AGENT_PERCENTILE_ROWS}
                 labels={AGENT_ROW_LABEL}
                 selected={rows}
                 onToggle={toggle}
               />
             </ControlGroup>
-            <ControlGroup label="Outcome">
+            <ControlGroup label="Outcome" context={titles.overTime}>
               <Segmented
                 options={OUTCOMES}
                 value={overTimeOutcome}
@@ -156,7 +164,7 @@ export default function AgentDurationCharts({
         kind="line"
         controls={
           <ControlBar>
-            <ControlGroup label="Outcome">
+            <ControlGroup label="Outcome" context={titles.percentiles}>
               <Segmented
                 options={OUTCOMES}
                 value={curveOutcome}

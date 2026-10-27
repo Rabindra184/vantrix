@@ -40,6 +40,12 @@ import {
  *
  * The accessible name carries the count in words ("Percentile bands, 6
  * selected") because "Bands · 6" read aloud is a middle dot and a bare number.
+ *
+ * `label` names WHICH menu that is, for a page holding several: the Report's
+ * Connections section draws two of these, and two triggers both read
+ * "Percentile bands, 8 selected" are indistinguishable to a reader moving
+ * through the section's controls. Optional, so the response-time chart keeps
+ * its name; a caller passing one should pass the same words its legend shows.
  */
 export default function BandsMenu<B extends string>({
   id,
@@ -47,6 +53,7 @@ export default function BandsMenu<B extends string>({
   labels,
   selected,
   onToggle,
+  label = 'Percentile bands',
 }: {
   /** The owning chart's id: every testid derives from it, so a page with two
    *  percentile charts has two menus a test can tell apart. */
@@ -57,6 +64,8 @@ export default function BandsMenu<B extends string>({
   readonly labels: Readonly<Record<B, string>>;
   readonly selected: readonly B[];
   readonly onToggle: (band: B) => void;
+  /** What the count is read under — "Percentile bands" unless stated. */
+  readonly label?: string;
 }) {
   const n = selected.length;
   return (
@@ -64,7 +73,7 @@ export default function BandsMenu<B extends string>({
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          aria-label={`Percentile bands, ${n} selected`}
+          aria-label={`${label}, ${n} selected`}
           data-testid={`bands-${id}`}
           className="inline-flex items-center gap-1.5 rounded-md border border-default bg-surface px-2 py-1 text-[0.8125rem] leading-none text-primary transition-colors hover:border-accent data-[state=open]:border-accent"
         >

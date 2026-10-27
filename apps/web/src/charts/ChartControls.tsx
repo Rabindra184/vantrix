@@ -64,14 +64,29 @@ export function ControlBar({ children }: { readonly children: ReactNode }) {
  */
 export function ControlGroup({
   label,
+  context,
   children,
 }: {
   readonly label: string;
+  /**
+   * The chart this group belongs to, spoken before `label` and not shown. A
+   * section drawing several charts with the same controls (the Report's agent
+   * duration charts: two "Outcome" groups per section, twice) would otherwise
+   * hand a screen-reader user the same group name over and over; the heading
+   * just above already says it to a sighted one.
+   */
+  readonly context?: string;
   readonly children: ReactNode;
 }) {
   return (
     <fieldset className="min-w-0">
-      <legend className="mb-1.5 text-[0.6875rem] font-medium tracking-wide text-muted">{label}</legend>
+      <legend className="mb-1.5 text-[0.6875rem] font-medium tracking-wide text-muted">
+        {/* The separating space sits OUTSIDE the hidden span: a trailing space
+            inside an element is dropped from its accessible name, which then
+            ran the two words together ("…Percentiles:Outcome"). */}
+        {context !== undefined && <><span className="sr-only">{context}:</span>{' '}</>}
+        {label}
+      </legend>
       <div className="flex flex-wrap items-center gap-1">{children}</div>
     </fieldset>
   );

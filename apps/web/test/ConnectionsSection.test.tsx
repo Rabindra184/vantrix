@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Outlet, Route, Routes, useLocation } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -10,6 +10,7 @@ import type {
   AgentSummaryResponse,
   RunResponse,
   TelemetryResponse,
+  Window,
 } from '@perfportal/contracts';
 import { useProjectAccess } from '../src/access/useAccess';
 import { agentConnectionsPath } from '../src/api/metricPaths';
@@ -74,13 +75,14 @@ const COMPLETE_RUN: RunResponse = {
 
 const NO_TELEMETRY: TelemetryResponse = { runId: RUN, available: false, bucketWidthMs: 1000, window: null, hosts: [] };
 
-function ShellStandIn() {
+/** `RunShell`'s outlet as the section meets it; `window` is the brush's selection. */
+function ShellStandIn({ window }: { readonly window: Window | null }) {
   const projectAccess = useProjectAccess(COMPLETE_RUN.project.slug);
   return (
     <Outlet
       context={
         {
-          window: null, durationMs: null, liveDurationMs: null, warmupMs: null, live: null, projectAccess,
+          window, durationMs: null, liveDurationMs: null, warmupMs: null, live: null, projectAccess,
         } satisfies RunWindowContext
       }
     />
@@ -91,23 +93,37 @@ function LocationProbe() {
   return <output data-testid="location">{useLocation().search}</output>;
 }
 
+const RUNNING = { state: 'processing' as const, run: { id: RUN, status: 'running' as const, statusUrl: `/v1/runs/${RUN}` } };
+const READY = { state: 'ready' as const, run: COMPLETE_RUN };
+
 function renderSection(
   options: {
     readonly summary?: AgentSummaryResponse;
+    /** The summary read never answers: the section's state before it does. */
+    readonly holdSummary?: boolean;
     readonly connections?: AgentConnectionsResponse;
     readonly search?: string;
     readonly terminal?: boolean;
+    readonly window?: Window | null;
   } = {},
 ) {
   const summary = options.summary ?? SUMMARY;
-  const terminal = options.terminal ?? true;
   const requested: string[] = [];
-  vi.stubGlobal('fetch', (input: RequestInfo) => {
+  // What `/v1/runs/:id` answers, MUTABLE: the run query has no staleTime, so
+  // mounting refetches it, and the transition case changes the answer.
+  let current: typeof RUNNING | typeof READY = options.terminal === false ? RUNNING : READY;
+  vi.stubGlobal('fetch', async (input: RequestInfo) => {
     const url = String(input);
     requested.push(url);
     const path = url.split('?')[0]!;
-    const json = (body: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(body), { status }));
-    if (path === `/v1/runs/${RUN}/agent`) return json(summary);
+    const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
+    if (path === `/v1/runs/${RUN}`) {
+      await Promise.resolve();
+      return json(current.run, current.state === 'ready' ? 200 : 202);
+    }
+    if (path === `/v1/runs/${RUN}/agent`) {
+      return options.holdSummary === true ? new Promise<Response>(() => {}) : json(summary);
+    }
     if (path === `/v1/runs/${RUN}/agent/connections`) {
       if (options.connections !== undefined) return json(options.connections);
       const remote = new URL(url, 'http://x').searchParams.get('remote');
@@ -120,17 +136,12 @@ function renderSection(
 
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   seedAccess(client, { isAdmin: true });
-  client.setQueryData(
-    runQueryKey(RUN),
-    terminal
-      ? { state: 'ready' as const, run: COMPLETE_RUN }
-      : { state: 'processing' as const, run: { id: RUN, status: 'running', statusUrl: `/v1/runs/${RUN}` } },
-  );
+  client.setQueryData(runQueryKey(RUN), current);
   render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[`/runs/${RUN}/report${options.search ?? ''}`]}>
         <Routes>
-          <Route path="/runs/:runId" element={<ShellStandIn />}>
+          <Route path="/runs/:runId" element={<ShellStandIn window={options.window ?? null} />}>
             <Route
               path="report"
               element={
@@ -145,13 +156,29 @@ function renderSection(
       </MemoryRouter>
     </QueryClientProvider>,
   );
-  return { requested };
+  /** The run finishes, on the same client and the same mounted section. */
+  const finish = async () => {
+    current = READY;
+    await act(async () => {
+      client.setQueryData(runQueryKey(RUN), READY);
+    });
+  };
+  return { requested, finish };
 }
 
-/** The nine charts exist from the first paint as "Loading…" figures; this waits for the drawn ones. */
+/**
+ * Waits for the nine charts to have DRAWN. Counting figures is not enough: a
+ * pending or failed read renders nine `Undrawn` figures under the same ids and
+ * titles. Only a drawn chart holds a plotting surface (`data-chart-canvas`) —
+ * and every one of the nine does on the fixture's every-remote read, which
+ * carries connects and handshakes of the default outcome.
+ */
 async function waitForCharts() {
-  await waitFor(() => expect(screen.getAllByRole('figure')).toHaveLength(TITLES.length));
-  await waitFor(() => expect(screen.queryByText('Loading…')).toBeNull());
+  await waitFor(() => {
+    const figures = screen.getAllByRole('figure');
+    expect(figures).toHaveLength(TITLES.length);
+    for (const f of figures) expect(f.querySelector('[data-chart-canvas]'), f.getAttribute('data-testid') ?? '').not.toBeNull();
+  });
 }
 
 const connectionsRequests = (requested: readonly string[]) =>
@@ -188,7 +215,9 @@ describe('ConnectionsSection', () => {
     renderSection();
     await waitForCharts();
     const trigger = screen.getByTestId('bands-agent-tcp-connect-percentiles');
-    expect(trigger).toHaveAccessibleName(`Percentile bands, ${DEFAULT_AGENT_ROWS.length} selected`);
+    expect(trigger).toHaveAccessibleName(
+      `TCP Connect Duration Percentiles: Percentile rows, ${DEFAULT_AGENT_ROWS.length} selected`,
+    );
     await user.click(trigger);
     const checked = (await screen.findAllByRole('menuitemcheckbox'))
       .filter((item) => item.getAttribute('aria-checked') === 'true')
@@ -275,5 +304,109 @@ describe('ConnectionsSection', () => {
     expect(await screen.findByRole('button', { name: 'Open the connection charts' })).toBeInTheDocument();
     expect(screen.queryAllByRole('figure')).toHaveLength(0);
     expect(connectionsRequests(requested)).toEqual([]);
+  });
+  /**
+   * THE TRANSITION, ON ONE MOUNTED INSTANCE. Every case above mounts one fixed
+   * state, so a hook moved below the `!terminal` return would pass all of them
+   * and break only here — "Rendered more hooks than during the previous
+   * render", which this repository has shipped twice. It also proves the
+   * summary is asked for fresh at the flip, not served from anything a live
+   * run filled: the first `/agent` request comes after it.
+   */
+  it('survives the run finishing under it, and asks for its figures only then', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { requested, finish } = renderSection({ terminal: false });
+    expect(await screen.findAllByTestId('live-notice-withheld')).toHaveLength(TITLES.length);
+    const before = requested.length;
+    expect(requested.filter((u) => u.includes('/agent'))).toEqual([]);
+
+    await finish();
+    await waitForCharts();
+    const firstAgent = requested.findIndex((u) => u.includes('/agent'));
+    expect(firstAgent).toBeGreaterThanOrEqual(before);
+    expect(errors.mock.calls.flat().join(' ')).not.toMatch(/rendered (more|fewer) hooks/i);
+    errors.mockRestore();
+  });
+
+  it('draws the charts on a phone once asked, and only then asks for them', async () => {
+    const user = userEvent.setup();
+    useIsCompactMock.mockReturnValue(true);
+    const { requested } = renderSection();
+    const open = await screen.findByRole('button', { name: 'Open the connection charts' });
+    expect(connectionsRequests(requested)).toEqual([]);
+    await user.click(open);
+    await waitForCharts();
+    expect(connectionsRequests(requested)).toEqual([agentConnectionsPath(RUN, '*')]);
+  });
+
+  it('shows one neutral loading state until the summary answers, not nine charts', async () => {
+    renderSection({ holdSummary: true });
+    expect(await screen.findByText("Loading this run's agent figures…")).toBeInTheDocument();
+    expect(screen.queryAllByRole('figure')).toHaveLength(0);
+  });
+
+  it('names a single remote rather than offering a choice that changes nothing', async () => {
+    renderSection({ summary: { ...SUMMARY, remotes: [REMOTES[0]!] } });
+    await waitForCharts();
+    expect(screen.queryByRole('combobox')).toBeNull();
+    expect(screen.getByRole('term')).toHaveTextContent('Remote');
+    expect(screen.getByRole('definition')).toHaveTextContent(REMOTES[0]!);
+  });
+
+  it('draws no remote control for a run with no remote', async () => {
+    renderSection({ summary: { ...SUMMARY, remotes: [] } });
+    await waitForCharts();
+    expect(screen.queryByRole('combobox')).toBeNull();
+    expect(screen.queryByText('Remote')).toBeNull();
+  });
+
+  it('offers a choice between two remotes and every remote together', async () => {
+    renderSection();
+    await waitForCharts();
+    const options = within(screen.getByRole('combobox', { name: 'Remote' })).getAllByRole('option');
+    expect(options.map((o) => o.textContent)).toEqual(['All remotes', ...REMOTES]);
+  });
+
+  it("names every control after its chart, so no two in the section share a name", async () => {
+    renderSection();
+    await waitForCharts();
+    const durations = [
+      { overTime: TITLES[2]!, curve: TITLES[4]! },
+      { overTime: TITLES[5]!, curve: TITLES[7]! },
+    ];
+    const groups = durations.flatMap((d) => [`${d.overTime}: Percentile rows`, `${d.overTime}: Outcome`, `${d.curve}: Outcome`]);
+    // `getByRole` throws on a second match, so each finding exactly one is the uniqueness.
+    for (const name of groups) expect(screen.getByRole('group', { name })).toBeInTheDocument();
+    expect(screen.getAllByRole('group')).toHaveLength(groups.length);
+    for (const d of durations) {
+      expect(
+        screen.getByRole('button', { name: `${d.overTime}: Percentile rows, ${DEFAULT_AGENT_ROWS.length} selected` }),
+      ).toBeInTheDocument();
+    }
+  });
+
+  it("asks for the shell's window", async () => {
+    const window: Window = { fromMs: 1000, toMs: 3000, bucketWidthMs: 1000 };
+    const { requested } = renderSection({ window });
+    await waitFor(() => expect(connectionsRequests(requested)).toEqual([agentConnectionsPath(RUN, '*', window)]));
+    const url = new URL(connectionsRequests(requested)[0]!, 'http://x');
+    expect(url.searchParams.get('from')).toBe('1000');
+    expect(url.searchParams.get('to')).toBe('3000');
+  });
+
+  it("gives the agent's own reason TCP states were not read", async () => {
+    const reason = 'macOS: kernel TCP states are not readable';
+    renderSection({
+      summary: {
+        ...SUMMARY,
+        header: { ...SUMMARY.header!, collects: { http: true, machine: false }, reasons: { machine: reason } },
+      },
+      connections: { ...ALL, buckets: ALL.buckets.map((b) => ({ ...b, states: null })) },
+    });
+    // Queried inside the wait: the drawn chart REPLACES the loading figure, so a
+    // node taken before the read answers is a detached one.
+    await waitFor(() =>
+      expect(within(screen.getByTestId('chart-agent-tcp-states')).getByRole('status')).toHaveTextContent(reason),
+    );
   });
 });
