@@ -155,9 +155,35 @@ describe('toDurationDistribution', () => {
     }
   });
 
-  it('carries the mean when there is one, and no note when there is not', () => {
+  it('names the label column for the grid it is: exact values at a 1 ms step, midpoints otherwise', () => {
+    expect(tls.distribution.stepMs).toBe(1);
+    expect(toDurationDistribution(tls, RUN).columns[0]).toBe('Duration (ms, exact value)');
+    const wide = toDurationDistribution({ ...tls, distribution: { ...tls.distribution, stepMs: 5 } }, RUN);
+    expect(wide.columns[0]).toBe('Duration (ms, bin midpoint)');
+  });
+
+  it('names the count columns after what was counted, keeping the series OK and KO', () => {
+    const chart = toDurationDistribution(tls, { windowSelected: false, noun: 'TLS handshakes' });
+    expect(chart.columns.slice(1)).toEqual(['OK TLS handshakes', 'KO TLS handshakes']);
+    expect(chart.series.map((s) => s.name)).toEqual(['OK', 'KO']);
+  });
+
+  it('draws a bin one array lacks as a gap and a dash, never an invented zero', () => {
+    const d = tls.distribution;
+    const short: DurationSection = { ...tls, distribution: { ...d, ko: d.ko.slice(0, -1) } };
+    const chart = toDurationDistribution(short, RUN);
+    const last = d.ok.length - 1;
+    expect(chart.axisLabels).toHaveLength(d.ok.length);
+    expect(values(chart, 'KO')[last]).toBeNull();
+    expect(values(chart, 'OK')[last]).toBe(d.ok[last]);
+    expect(chart.rows[last]!.values).toEqual([d.ok[last], '—']);
+  });
+
+  it('carries the merged mean, saying it is OK and KO together, and no note when there is none', () => {
     const chart = toDurationDistribution(tls, RUN);
-    expect(chart.limitation).toContain(`Mean ${roundForReading(tls.distribution.meanMs!)} ms`);
+    expect(chart.limitation).toBe(
+      `Mean of all TCP connects, OK and KO together: ${roundForReading(tls.distribution.meanMs!)} ms`,
+    );
     const noMean = toDurationDistribution(
       { ...tls, distribution: { ...tls.distribution, meanMs: null } },
       RUN,
@@ -184,6 +210,15 @@ describe('toDurationPercentiles', () => {
       expect(curve[0]).toEqual([0, min]);
       expect(curve[curve.length - 1]).toEqual([100, max]);
     }
+  });
+
+  it("carries the chosen outcome's own mean, naming the outcome", () => {
+    const ok = toDurationPercentiles(tls, 'ok', RUN);
+    expect(ok.limitation).toBe(
+      `Mean of successful TCP connects: ${roundForReading(tls.percentiles.meanMs.ok!)} ms`,
+    );
+    const all = toDurationPercentiles(tls, 'all', RUN);
+    expect(all.limitation).toBe(`Mean of all TCP connects: ${roundForReading(tls.percentiles.meanMs.all!)} ms`);
   });
 
   it('says the run had no failures rather than drawing an empty KO curve', () => {

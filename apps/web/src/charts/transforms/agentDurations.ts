@@ -2,6 +2,8 @@ import { AGENT_PERCENTILE_ROWS, roundForReading } from '@perfportal/contracts';
 import type { AgentPercentileRow, DurationSection } from '@perfportal/contracts';
 import type { ChartData, ChartSeries, ChartTableRow } from '../types';
 import { TIME_COLUMN, emptySentence } from './agentRates';
+import { binLabelColumn } from './distribution';
+import { SERIES_NAME } from './percentileDistribution';
 import type { Outcome } from './percentiles';
 
 /**
@@ -15,7 +17,8 @@ import type { Outcome } from './percentiles';
  * A bucket whose population is `null` measured none of that outcome, so every
  * row is a null y there — a gap — and a dash in the table. A distribution bin's
  * count, by contrast, is a measured zero when nothing landed in it, and KO is
- * drawn even when every bin is zero, the `toDistribution` rule.
+ * drawn even when every bin is zero, the `toDistribution` rule — but a bin the
+ * payload does not carry at all is a gap, not a zero (see `toDurationDistribution`).
  *
  * Unlike `/series`, each population carries its OWN thirteen rows (min and max
  * included), so the min/max caveat `toPercentiles` carries does not apply here.
@@ -55,12 +58,18 @@ type Opts = { readonly windowSelected: boolean; readonly noun: string };
 /** "failed TCP connects" — the noun narrowed to one outcome; `all` narrows nothing. */
 const OUTCOME_ADJECTIVE: Record<Outcome, string> = { ok: 'successful ', ko: 'failed ', all: '' };
 
-/** The one series name the percentile curve carries, as `toPercentileDistribution` names its own. */
-const SERIES_NAME: Record<Outcome, string> = { ok: 'OK', ko: 'KO', all: 'All' };
+/**
+ * "Mean of failed TCP connects: 4.2 ms", at the product's one two-decimal
+ * rounding. `population` is always named, because a KO curve's mean sitting
+ * beside a distribution's merged mean must not read as the overall figure.
+ */
+function meanNote(population: string, meanMs: number | null): string | undefined {
+  return meanMs === null ? undefined : `Mean of ${population}: ${roundForReading(meanMs)} ms`;
+}
 
-/** "Mean 4.2 ms", at the product's one two-decimal rounding. */
-function meanNote(meanMs: number | null): string | undefined {
-  return meanMs === null ? undefined : `Mean ${roundForReading(meanMs)} ms`;
+/** "all TCP connects", "failed TCP connects" — whose mean a curve's note gives. */
+function populationOf(outcome: Outcome, noun: string): string {
+  return outcome === 'all' ? `all ${noun}` : `${OUTCOME_ADJECTIVE[outcome]}${noun}`;
 }
 
 /**
@@ -124,19 +133,29 @@ export function toDurationOverTime(
  * GE's "… Duration Distribution": OK and KO counts per bin, on Gatling's
  * uniform grid. Bin `i` is labelled `offsetMs + i * stepMs`, the payload's own
  * position for it, never the bin index.
+ *
+ * WHAT A LABEL IS depends on the grid, as it does for the request charts
+ * (`binLabelColumn`): the producer's wide branch labels bin MIDPOINTS, while
+ * its narrow "exact values" branch (a range of 100 ms or less) lays one bin on
+ * every millisecond, `stepMs: 1`. A wide step is the range over 100 plots, so
+ * it exceeds 1 — `stepMs === 1` is the exact branch and nothing else.
+ *
+ * The mean is the producer's over OK and KO MERGED, and its note says so.
  */
 export function toDurationDistribution(section: DurationSection, opts: Opts): ChartData {
   const d = section.distribution;
-  const columns = ['Duration (ms)', 'OK', 'KO'];
-  // Indexed off the longer array, so the axis, series and table are one length
-  // even if a payload's arrays ever disagreed; the schema makes them parallel.
+  const columns = [binLabelColumn('Duration', d.stepMs === 1), `OK ${opts.noun}`, `KO ${opts.noun}`];
+  // Indexed off the longer array, so the axis, series and table are one length.
+  // The PRODUCER keeps the two parallel (it builds both from one label set);
+  // `DurationSectionSchema` does not refine for it. So a bin one array lacks is
+  // a gap and a dash, never a zero bin nobody counted.
   const length = Math.max(d.ok.length, d.ko.length);
   const bins = Array.from({ length }, (_, i) => ({
     label: d.offsetMs + i * d.stepMs,
-    ok: d.ok[i] ?? 0,
-    ko: d.ko[i] ?? 0,
+    ok: d.ok[i] ?? null,
+    ko: d.ko[i] ?? null,
   }));
-  const binned = bins.reduce((sum, b) => sum + b.ok + b.ko, 0);
+  const binned = bins.reduce((sum, b) => sum + (b.ok ?? 0) + (b.ko ?? 0), 0);
   if (binned === 0) {
     // Not a row of zero-height bars, which would read as "measured, and every one took no time".
     return { series: [], axisLabels: [], columns, rows: [], empty: emptySentence(opts.noun, opts) };
@@ -150,8 +169,8 @@ export function toDurationDistribution(section: DurationSection, opts: Opts): Ch
     ],
     axisLabels: bins.map((b) => b.label),
     columns,
-    rows: bins.map((b) => ({ label: String(b.label), values: [b.ok, b.ko] })),
-    limitation: meanNote(d.meanMs),
+    rows: bins.map((b) => ({ label: String(b.label), values: [b.ok ?? '—', b.ko ?? '—'] })),
+    limitation: meanNote(`all ${opts.noun}, OK and KO together`, d.meanMs),
   };
 }
 
@@ -178,6 +197,6 @@ export function toDurationPercentiles(section: DurationSection, outcome: Outcome
     axisLabels: [],
     columns,
     rows: curve.map(([p, ms]) => ({ label: String(p), values: [ms] })),
-    limitation: meanNote(section.percentiles.meanMs[outcome]),
+    limitation: meanNote(populationOf(outcome, opts.noun), section.percentiles.meanMs[outcome]),
   };
 }

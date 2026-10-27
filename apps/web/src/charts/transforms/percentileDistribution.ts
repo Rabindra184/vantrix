@@ -1,5 +1,6 @@
 import type { DistributionResponse } from '@perfportal/contracts';
 import type { ChartData, ChartTableRow } from '../types';
+import { binLabelColumn } from './distribution';
 import type { Outcome } from './percentiles';
 
 /**
@@ -24,22 +25,6 @@ import type { Outcome } from './percentiles';
 const PERCENTILE_COLUMN = 'Percentile (%)';
 
 /**
- * Names which kind of number the response times are, exactly as the histogram
- * transform does and for the same reason.
- *
- * The labels are normally bin MIDPOINTS, but when the observed range is narrow
- * enough that Gatling skips bucketing (`exactValues`) a label is a millisecond
- * value some request actually took. Those are different quantities carried in
- * the same array, and a reader who takes a midpoint for an observation
- * concludes the fastest request took 28 ms when it took 16.
- */
-function labelColumn(exactValues: boolean): string {
-  return exactValues
-    ? 'Response time (ms, exact value)'
-    : 'Response time (ms, bin midpoint)';
-}
-
-/**
  * The counts this outcome is a curve of.
  *
  * `all` sums the two rather than reading a third array, because the payload
@@ -52,7 +37,11 @@ function countsFor(d: DistributionResponse, outcome: Outcome): readonly number[]
   return d.labels.map((_, i) => (d.okCount[i] ?? 0) + (d.koCount[i] ?? 0));
 }
 
-const SERIES_NAME: Record<Outcome, string> = { ok: 'OK', ko: 'KO', all: 'All' };
+/**
+ * The one series a curve of each outcome is named. Exported for the agent's
+ * duration curves (`agentDurations.ts`), which name theirs the same way.
+ */
+export const SERIES_NAME: Record<Outcome, string> = { ok: 'OK', ko: 'KO', all: 'All' };
 
 /**
  * What a run with none of the selected outcome recorded none of.
@@ -103,7 +92,7 @@ export function toPercentileDistribution(
   /** REQUIRED, no default — see `toDistribution`. */
   opts: { readonly windowSelected: boolean },
 ): ChartData {
-  const columns = [PERCENTILE_COLUMN, labelColumn(d.exactValues), 'Requests at or below'];
+  const columns = [PERCENTILE_COLUMN, binLabelColumn('Response time', d.exactValues), 'Requests at or below'];
   // Emitted in the empty branch too: "everything overflowed" is exactly the
   // case with no curve to draw AND the case where the reader most needs to
   // know why.

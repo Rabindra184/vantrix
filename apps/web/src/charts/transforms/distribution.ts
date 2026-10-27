@@ -55,7 +55,7 @@ const KO = 'KO';
 /**
  * The value columns of the data table, in row-`values` order. See
  * `ChartTableRow`: `columns[0]` heads the label column and is built separately
- * by `labelColumn`, because what the label MEANS depends on the payload.
+ * by `binLabelColumn`, because what the label MEANS depends on the payload.
  *
  * The percent columns say "of all requests" because that is the one thing
  * about this chart a reader can get wrong on their own: a column headed "OK %"
@@ -85,11 +85,14 @@ const VALUE_COLUMNS = [
  * on the chart distinguishes them: both render as a bare number under a bar. A
  * reader who takes a midpoint for an observation concludes the fastest request
  * took 28 ms when it took 16.
+ *
+ * `subject` names what was measured — "Response time" here, "Duration" for the
+ * agent's connect, handshake and lookup distributions (`agentDurations.ts`),
+ * whose grid is the same midpoint-or-exact choice. Exported so the request
+ * percentile curve and those charts state the rule in one place.
  */
-function labelColumn(exactValues: boolean): string {
-  return exactValues
-    ? 'Response time (ms, exact value)'
-    : 'Response time (ms, bin midpoint)';
+export function binLabelColumn(subject: string, exactValues: boolean): string {
+  return exactValues ? `${subject} (ms, exact value)` : `${subject} (ms, bin midpoint)`;
 }
 
 function total(counts: readonly number[]): number {
@@ -140,7 +143,7 @@ export function toDistribution(
    */
   opts: { readonly windowSelected: boolean },
 ): ChartData {
-  const columns = [labelColumn(d.exactValues), ...VALUE_COLUMNS];
+  const columns = [binLabelColumn('Response time', d.exactValues), ...VALUE_COLUMNS];
   // Emitted in the empty branch too: "everything overflowed" is exactly the
   // case where there are no bins to draw AND the reader most needs to know why.
   const limitation = d.overflowCount > 0 ? overflowNote(d.overflowCount) : undefined;
