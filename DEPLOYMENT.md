@@ -301,7 +301,9 @@ per-remote bytes, the socket states and the Netty memory figures, which come
 from the same instrumentation. Under any other version it records garbage
 collection and heap, plus CPU, memory and the kernel's TCP counters on Linux,
 and says in its file why the rest is missing. It never stops or fails a simulation. It runs for jobs the on-prem
-runner executes, and for nothing uploaded or sent by the Gradle plugin.
+runner executes and, from plugin version 0.3.0, for runs the Gradle plugin
+streams (below). A bundle uploaded by hand carries it only if it contains the
+file.
 
 The file is written in the job's work directory during the run and stored in
 the bucket at `runs/<runId>/agent.ndjson` before the run is closed — also for
@@ -325,6 +327,28 @@ connection, DNS and JVM data* (through the API, `"agentEnabled": false` in
 either start request: the upload's metadata or the start-from-package body).
 A retry keeps the original job's choice.
 
+**From the Gradle plugin.** The `dev.vantrix.gatling` plugin carries the same
+agent jar and attaches it to `gatlingRun`'s simulation JVMs — Gatling starts
+one JVM per simulation, so each writes its own file — then sends each run its
+own file with `PUT /v1/runs/{id}/agent` before it closes the run. That needs
+nothing new on the token: the plugin's `stream`-scoped token, the one it
+already streams with, is what the API asks for. The API refuses the file once
+the run has closed (409) and stores at most:
+
+| Variable | Notes |
+|---|---|
+| `PERFPORTAL_MAX_AGENT_LOG_BYTES` | The most the API stores of one run's agent file from the plugin, in bytes. Empty, or anything that is not a whole number larger than 1024, means 268435456 (256 MiB) — the runner's own default. A bigger file is refused (413 `AGENT_LOG_TOO_LARGE`) and the run keeps everything else |
+
+The API reads each upload into its own temporary directory before storing it,
+so every concurrent agent PUT can hold up to that many bytes on the API host's
+temp filesystem while it is in flight — size it for the builds you run at once.
+
+The plugin is switched off per build with `vantrix { agent = false }` or
+`VANTRIX_AGENT=false` (its README says what it collects and how a file is
+matched to its run). Upgrade the API before builds move to plugin 0.3.0: an
+older API answers the upload 404, which the plugin logs once per run and
+otherwise ignores — the run itself is unaffected, it just has no agent figures.
+
 **Where the figures appear.** At ingest the worker builds the run's agent
 figures from the stored file, on the run's own time buckets and with Gatling's
 HTTP warm-up left out, and keeps them with the run — so they outlive the raw
@@ -334,9 +358,9 @@ log's retention. The API serves them with the read scope:
 `…/agent/status`. A run with nothing to show answers `available: false` and a
 reason — `not_collected` for a job run without the agent, `unreadable` with
 why, `http_not_collected` when the HTTP events were not recorded — never a row
-of zeros. The Report's charts for these figures arrive in a later release. A
-missing or unreadable agent file never fails the run or changes its other
-figures.
+of zeros. The Report draws them in its Connections, DNS and Load generators
+sections. A missing or unreadable agent file never fails the run or changes
+its other figures.
 
 Verification checks the agent figures too, each against the stored agent file
 (verifier version 3). Upgrading re-checks every run verified by the previous

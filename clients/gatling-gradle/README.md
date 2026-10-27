@@ -46,7 +46,7 @@ pluginManagement {
 // build.gradle.kts
 plugins {
     id("io.gatling.gradle") version "3.15.1.2"
-    id("dev.vantrix.gatling") version "0.2.0-SNAPSHOT"
+    id("dev.vantrix.gatling") version "0.3.0-SNAPSHOT"
 }
 ```
 
@@ -73,7 +73,7 @@ its token lacks that scope. Inside GitHub Actions, the workflow's own
 
 Versioned releases are published by pushing a `v<semver>` tag
 (`.github/workflows/release.yml`); `main` republishes the CURRENT SNAPSHOT on
-every push — `0.2.0-SNAPSHOT` today, and whatever
+every push — `0.3.0-SNAPSHOT` today, and whatever
 `clients/gatling-gradle/build.gradle.kts`'s `version` line says thereafter,
 since that publish passes no `-PreleaseVersion`. Read it from the build
 rather than from here (`./gradlew properties -q | awk '/^version:/{print $2}'`,
@@ -102,6 +102,7 @@ vantrix {
     test = "checkout-soak"            // optional — a test SLUG, not a name
     tickSeconds = 5                   // optional, default 5
     uploadIfLiveUnavailable = false   // optional, default false — see below
+    agent = true                      // optional, default true — see "The Gatling agent"
 }
 ```
 
@@ -114,6 +115,7 @@ vantrix {
 | `test` | `VANTRIX_TEST` | none | Which **test** these runs belong to, as a slug — `checkout-soak`, never `"Checkout soak"`. Leave it unset and runs group by the simulation class in the log header, which is what every project did before this existed. Set it to run **one simulation as two tests** with different injection profiles — the only way to express that. A slug naming no existing test creates it, so no setup step in the UI is needed first. See below. |
 | `tickSeconds` | `VANTRIX_TICK_SECONDS` | `5` | How often the tailer polls `simulation.log` and, if there's anything new, ships it. Does not change how often Gatling itself flushes — see Liveness expectations below. |
 | `uploadIfLiveUnavailable` | `VANTRIX_UPLOAD_IF_LIVE_UNAVAILABLE` | `false` | Opt-in post-run bundle upload when the live run could never be opened. See its own section below. |
+| `agent` | `VANTRIX_AGENT` | `true` | Attach the PerfPortal Gatling agent to each simulation JVM and send each run its own agent file. `false` turns it off. The variable is read strictly: `true` or `false` in any case, spaces ignored; anything else, including an empty value, leaves it on (a blank is unset, never off). See its own section below. |
 | `resultsDir` | *(none — build-file only)* | `build/reports/gatling` (Gradle's own `layout.buildDirectory`) | Where Gatling writes its results directories. Only needed if your build customises Gatling's own output location away from the default. |
 
 There is no `vantrix.token` key. That is not an omission — see the token
@@ -177,6 +179,10 @@ carry any combination of these scopes at once —
 need of `ingest`) and the script uses
 that same value both as `VANTRIX_TOKEN` for the plugin and to poll the run
 it opened.
+
+**The agent file needs no new scope.** It travels as `PUT /v1/runs/{id}/agent`,
+which the API guards with `stream` — the same scope the live run is opened,
+fed and closed with.
 
 ## Liveness expectations
 
@@ -276,6 +282,62 @@ execution's tailer was constructed. You do not need to, and should not need
 to, delete `build/reports/gatling` between runs for the plugin to behave
 correctly.
 
+## The Gatling agent
+
+From 0.3.0 the plugin carries PerfPortal's Gatling agent
+(`clients/gatling-agent`, the same jar the on-prem runner loads) and attaches
+it to `gatlingRun` unless `agent = false` / `VANTRIX_AGENT=false`. It records
+what `simulation.log` does not: DNS lookups, TCP connects, TLS handshakes and
+connection closes, each response's status code, and once a second the JVM's
+garbage collection, heap, Netty memory and the bytes sent and received per
+remote — plus, on Linux only, CPU, memory, the kernel's TCP counters and the
+states of Gatling's sockets. The run's Report draws them in its Connections,
+DNS and Load generators sections. The agent never stops or fails a
+simulation, and nothing it does can fail the build.
+
+**How it attaches.** In `gatlingRun`'s `doFirst` the plugin extracts the jar
+to `build/vantrix/agent/gatling-agent.jar`, empties
+`build/vantrix/agent/out/`, and sets the task's `jvmArgs` to the list Gatling
+itself would have used — the task's own `jvmArgs` when that list is set and
+not empty, otherwise the `gatling { jvmArgs = … }` extension's — with one
+`-javaagent:…=out=…/agent-{jvm}.ndjson,max=268434432` appended. Your heap and
+`--add-opens` flags are kept. A list that already carries this jar is not
+given a second one.
+
+**One JVM per simulation, one file per JVM.** Gatling's Gradle plugin starts a
+fresh JVM for each simulation, and the `{jvm}` token makes each write its own
+`agent-<pid>-<millis>.ndjson`. Before closing a run the plugin chooses its file
+by the header's `startedAt`: the latest one at or after the task started,
+after the previous simulation's results directory was last written, and no
+later than this run's results directory was last written — never a file
+another run of the same `gatlingRun` already took. The lower bound is what
+keeps a run whose own JVM left no file from taking an earlier simulation's
+file that nothing claimed; that run carries no agent data instead. There is
+no slack on the upper bound, and it matters: on a real two-simulation run the first
+simulation's results directory was last written 160 ms before the second
+JVM's agent started. The chosen file is sent with `PUT /v1/runs/{id}/agent`
+and only then is the run closed; a refused or failed upload is one warning and
+the run is closed as usual. With `uploadIfLiveUnavailable`, the fallback
+bundle carries the run's file as `run-1/perfportal-agent.ndjson`.
+
+**What it does not cover.** A simulation Gatling runs in the Gradle process
+itself (`runInSameProcess`) starts no JVM, so the agent records nothing for
+it. A simulation JVM killed mid-run is NOT left to the server's sweeper:
+Gatling's Gradle plugin ignores each JVM's exit code and reports "Some of the
+simulations crashed:" only after every simulation has run, so `gatlingRun`
+finishes, this plugin's finalizer uploads whatever agent file the killed JVM
+left (cut short where it died) and closes the run itself, over a log that also
+ends where the JVM died — the close has no way to say its producer died. A
+build directory whose path contains `=` or `,` cannot be passed in a
+`-javaagent` argument (the JVM ends the jar path at the first `=`, the agent
+splits its options on `,`): the plugin warns once and runs without the agent.
+A results directory on storage whose clock is not the build machine's (an NFS
+mount) can be matched to no file.
+
+**Local development** needs the whole repository: the plugin's build includes
+`../gatling-agent` and packages its jar, so `clients/gatling-gradle` alone no
+longer builds.
+
 ## `uploadIfLiveUnavailable`
 
 Default **off**. When a simulation's live run could never be opened (bad
@@ -291,6 +353,15 @@ which a token minted for streaming alone does not have — see the token rule
 above. Turning this flag on without also adding `ingest` to the token means
 the fallback fires, 403s, and the simulation is lost exactly as before,
 just with an extra failed HTTP call and a warning in the log.
+
+**The fallback pins HTTP/1.1 too, as `LiveClient` does.** Until plugin
+0.3.0 `BundleUploader`'s `HttpClient` did not, so its POST carried the h2c
+upgrade headers (`Upgrade: h2c`, `HTTP2-Settings`) and the API, reached
+directly, answered that 404 with an empty body — measured 2026-10-27: the
+fallback logged `upload failed: HTTP 404` and the run was lost, while through a
+reverse proxy that dropped those hop-by-hop headers the same upload was
+accepted (202, the run complete with its agent figures). The pin is what makes
+the fallback work against an API with no proxy in front of it.
 
 **A duplicate is possible, and that is a known, accepted trade-off, not
 silent data loss.** If a live `open()` call actually succeeds on the server
@@ -329,7 +400,11 @@ Gatling run, streamed live by this plugin, into a real running Vantrix (API
 re-evaluated assertions matching the fixture simulation's deliberately
 mixed pass/fail shape. It is **manual, on demand** — it is not part of any
 `pnpm` gate and not part of the CI `plugin` job, because it needs a seeded
-local stack. Prerequisites: the Docker Compose stack up
+local stack. It also asserts the run's `GET /v1/runs/{id}/agent`: run it as
+is and the agent must be `available` with a header naming a host; run it again
+with `VANTRIX_AGENT=false` and it must answer `available: false`,
+`not_collected`. `VANTRIX_URL` points it at an API other than
+`http://localhost:3000`. Prerequisites: the Docker Compose stack up
 (`docker compose -f infra/docker-compose.yml up -d`), the API and worker
 both running against it, Node 22+ on `PATH`, and a JDK 21 `JAVA_HOME`. Run
 it from `clients/gatling-gradle/e2e/`; it prints its own remediation for

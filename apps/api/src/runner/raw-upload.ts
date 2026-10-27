@@ -5,13 +5,72 @@ import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { ingestError } from '@perfportal/core';
 import type { Request } from 'express';
-import { badRequest } from '../common/validation.js';
+import { badRequest, payloadTooLarge } from '../common/validation.js';
 import { emptyFile } from './package-files.js';
 
 /**
+ * WHICH file a raw upload is, and so how each of its refusals reads: a
+ * package's file (`PUT …/packages/{id}/content`) or a live run's agent file
+ * (`PUT /v1/runs/{id}/agent`). REQUIRED, with no default — a forgetting
+ * caller defaulted to one would tell the other's caller about a file it never
+ * sent, and name a limit that is not the one it hit.
+ */
+export type RawUploadKind = 'package-file' | 'agent-log';
+
+interface RawUploadRefusals {
+  consumed(contentType: string): Error;
+  tooLarge(maxBytes: number): Error;
+  empty(): Error;
+  /** Never sent — the client that would read it has gone — but kept apart so a log names the right upload. */
+  abortedMessage: string;
+}
+
+const REFUSALS: Record<RawUploadKind, RawUploadRefusals> = {
+  'package-file': {
+    consumed: (contentType) =>
+      badRequest(
+        'STREAM_BODY_CONSUMED',
+        `The package file's body was already consumed by a body parser, which happens when Content-Type is one Express parses ("${contentType}" here).`,
+        'Send the file with "Content-Type: application/octet-stream" and the raw bytes as the body.',
+      ),
+    tooLarge: (maxBytes) =>
+      ingestError('BUNDLE_TOO_LARGE', {
+        message: `This package file exceeds the ${maxBytes}-byte upload limit.`,
+        remediation: 'Upload a smaller artifact, or raise MAX_RUNNER_ARTIFACT_BYTES for this on-prem node.',
+        detail: { maxBytes },
+      }),
+    empty: () => emptyFile('package-upload'),
+    abortedMessage: 'The package upload was aborted by the client.',
+  },
+  'agent-log': {
+    consumed: (contentType) =>
+      badRequest(
+        'STREAM_BODY_CONSUMED',
+        `The agent file's body was already consumed by a body parser, which happens when Content-Type is one Express parses ("${contentType}" here).`,
+        'Send the agent file with "Content-Type: application/x-ndjson" and the raw bytes as the body.',
+      ),
+    tooLarge: (maxBytes) =>
+      payloadTooLarge(
+        'AGENT_LOG_TOO_LARGE',
+        `This agent file exceeds the ${maxBytes}-byte limit on a run's agent file.`,
+        "Raise MAX_AGENT_LOG_BYTES on the API to at least the file's size. The run itself is unaffected; only its agent figures are missing.",
+      ),
+    empty: () =>
+      badRequest(
+        'AGENT_LOG_EMPTY',
+        'The agent file was empty.',
+        "Send the file the agent wrote once the simulation's JVM has exited. A run with no agent file goes on without agent figures.",
+      ),
+    abortedMessage: 'The agent file upload was aborted by the client.',
+  },
+};
+
+/**
  * Streams a raw request body to `targetPath`, hashing as it goes — the shape of
- * Gatling Enterprise's `PUT …/content`. Never buffers the body: a package is up
- * to MAX_RUNNER_ARTIFACT_BYTES (512 MB by default).
+ * Gatling Enterprise's `PUT …/content`, and of `PUT /v1/runs/{id}/agent`'s
+ * agent file. Never buffers the body: a package is up to
+ * MAX_RUNNER_ARTIFACT_BYTES (512 MB by default), an agent file up to
+ * MAX_AGENT_LOG_BYTES (256 MiB). `kind` decides how each refusal below reads.
  *
  * A body a parser already drained is REFUSED, not waited on: Express's global
  * json()/urlencoded() consume a matching Content-Type before any handler runs,
@@ -43,19 +102,17 @@ export async function readRawUpload(
   req: Request,
   targetPath: string,
   maxBytes: number,
+  kind: RawUploadKind,
 ): Promise<{ sha256: string; bytes: number }> {
+  const refusals = REFUSALS[kind];
   if (req.readableEnded) {
-    throw badRequest(
-      'STREAM_BODY_CONSUMED',
-      `The package file's body was already consumed by a body parser, which happens when Content-Type is one Express parses ("${req.headers['content-type'] ?? '(none)'}" here).`,
-      'Send the file with "Content-Type: application/octet-stream" and the raw bytes as the body.',
-    );
+    throw refusals.consumed(req.headers['content-type'] ?? '(none)');
   }
   assertClientStillConnected(req);
   const declared = req.headers['content-length'];
   if (declared !== undefined && Number(declared) > maxBytes) {
     req.resume();
-    throw tooLarge(maxBytes);
+    throw refusals.tooLarge(maxBytes);
   }
 
   const hash = createHash('sha256');
@@ -64,7 +121,7 @@ export async function readRawUpload(
     transform(chunk: Buffer, _encoding, callback) {
       bytes += chunk.length;
       if (bytes > maxBytes) {
-        callback(tooLarge(maxBytes));
+        callback(refusals.tooLarge(maxBytes));
         return;
       }
       hash.update(chunk);
@@ -73,7 +130,7 @@ export async function readRawUpload(
   });
   // What `pipeline(req, …)` would have done for a client that goes away.
   const abandoned = (): void => {
-    if (!req.readableEnded) meter.destroy(new Error('The package upload was aborted by the client.'));
+    if (!req.readableEnded) meter.destroy(new Error(refusals.abortedMessage));
   };
   const failed = (err: Error): void => {
     meter.destroy(err);
@@ -102,17 +159,9 @@ export async function readRawUpload(
   }
   if (bytes === 0) {
     await unlink(targetPath).catch(() => undefined);
-    throw emptyFile('package-upload');
+    throw refusals.empty();
   }
   return { sha256: hash.digest('hex'), bytes };
-}
-
-function tooLarge(maxBytes: number) {
-  return ingestError('BUNDLE_TOO_LARGE', {
-    message: `This package file exceeds the ${maxBytes}-byte upload limit.`,
-    remediation: 'Upload a smaller artifact, or raise MAX_RUNNER_ARTIFACT_BYTES for this on-prem node.',
-    detail: { maxBytes },
-  });
 }
 
 /**

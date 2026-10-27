@@ -6,6 +6,7 @@ import {
   HttpStatus,
   NotFoundException,
   ParseUUIDPipe,
+  PayloadTooLargeException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { PASSWORD_CHANGE_REQUIRED } from '@perfportal/contracts';
@@ -187,6 +188,16 @@ export function rateLimited(message: string, remediation: string): HttpException
     code: 'RATE_LIMITED',
     remediation,
   });
+}
+
+/**
+ * A 413 with its own code: `ProblemFilter` would otherwise name every 413
+ * BUNDLE_TOO_LARGE, which is the code for a bundle and a package file, not for
+ * every file a route takes (`PUT /v1/runs/{id}/agent` answers
+ * AGENT_LOG_TOO_LARGE, and a client branches on the code).
+ */
+export function payloadTooLarge(code: string, message: string, remediation: string): PayloadTooLargeException {
+  return Object.assign(new PayloadTooLargeException(message), { code, remediation });
 }
 
 /**

@@ -44,4 +44,35 @@ class ResolvedConfigTest {
                  mapOf("VANTRIX_TOKEN" to "t")) as ResolvedConfig.Ok).config
         assertEquals("https://x.example", c.baseUrl)
     }
+
+    // ---- agentEnabled: extension, then VANTRIX_AGENT, then on ----
+
+    private fun agentFor(e: VantrixExtension, env: Map<String, String> = emptyMap()): Boolean =
+        (ResolvedConfig.from(e.apply { url = "https://x.example" }, env + ("VANTRIX_TOKEN" to "t"))
+            as ResolvedConfig.Ok).config.agentEnabled
+
+    @Test fun `the agent is on by default`() {
+        assertTrue(agentFor(ext()))
+    }
+
+    @Test fun `the extension can turn the agent off`() {
+        assertFalse(agentFor(ext().apply { agent = false }))
+    }
+
+    @Test fun `VANTRIX_AGENT=false turns the agent off`() {
+        assertFalse(agentFor(ext(), mapOf("VANTRIX_AGENT" to "false")))
+    }
+
+    @Test fun `the extension wins over VANTRIX_AGENT`() {
+        assertTrue(agentFor(ext().apply { agent = true }, mapOf("VANTRIX_AGENT" to "false")))
+        assertFalse(agentFor(ext().apply { agent = false }, mapOf("VANTRIX_AGENT" to "true")))
+    }
+
+    @Test fun `a blank or unrecognised VANTRIX_AGENT leaves the agent on`() {
+        // Compose passes an unset variable as "", and "".toBoolean() is false: a default-on
+        // switch must not be turned off by a value nobody chose.
+        assertTrue(agentFor(ext(), mapOf("VANTRIX_AGENT" to "")))
+        assertTrue(agentFor(ext(), mapOf("VANTRIX_AGENT" to "yes")))
+        assertFalse(agentFor(ext(), mapOf("VANTRIX_AGENT" to " FALSE ")))
+    }
 }

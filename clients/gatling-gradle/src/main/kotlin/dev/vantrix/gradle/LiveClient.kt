@@ -8,6 +8,7 @@ import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.nio.charset.StandardCharsets
+import java.nio.file.Path
 import java.time.Duration
 
 /** A run opened for live streaming: its id, the ABSOLUTE URL to stream chunks to, and the next byte offset expected. */
@@ -19,6 +20,17 @@ sealed class StreamResult {
     data class Resume(val nextOffset: Long) : StreamResult()
     object AuthFailed : StreamResult()
     object GaveUp : StreamResult()
+}
+
+/**
+ * Outcome of one `uploadAgent(...)` call. [Refused] is the server answering anything but 204 --
+ * its status and the problem document's `code`, null when the body carries none (an API older
+ * than the route answers a bare 404); [Failed] is no answer at all.
+ */
+sealed class AgentUpload {
+    object Stored : AgentUpload()
+    data class Refused(val status: Int, val code: String?) : AgentUpload()
+    data class Failed(val message: String) : AgentUpload()
 }
 
 /**
@@ -34,6 +46,12 @@ interface LiveApi {
 
     /** POSTs `/v1/runs/{id}/close`. True on success or if the run was already closed. */
     fun close(run: OpenedRun): Boolean
+
+    /**
+     * PUTs `/v1/runs/{id}/agent` with [file] as the body. Must be called while the run is still
+     * running -- i.e. BEFORE [close]. Never throws: every outcome is an [AgentUpload].
+     */
+    fun uploadAgent(run: OpenedRun, file: Path): AgentUpload
 }
 
 /**
@@ -172,6 +190,38 @@ class LiveClient(
         }
     }
 
+    /**
+     * PUTs [file] to `/v1/runs/{id}/agent` as `application/x-ndjson`, streamed from disk -- an
+     * agent file can reach 256 MiB, so it is never read into memory. 204 is [AgentUpload.Stored];
+     * any other status is [AgentUpload.Refused]; no response (or no file) is
+     * [AgentUpload.Failed]. Logs nothing: the caller logs one line naming the run, so a refusal is
+     * never reported twice. One attempt, no retry: the file is an extra, and the run it belongs
+     * to is closed next whatever happened here.
+     */
+    override fun uploadAgent(run: OpenedRun, file: Path): AgentUpload {
+        return try {
+            val request = HttpRequest.newBuilder(URI.create("${config.baseUrl}/v1/runs/${run.runId}/agent"))
+                // Longer than the other calls' 30 s: this timeout runs until the response headers
+                // arrive, so it covers sending the whole file, up to the API's 256 MiB cap.
+                .timeout(AGENT_UPLOAD_TIMEOUT)
+                .header("Authorization", "Bearer ${config.token}")
+                .header("Content-Type", "application/x-ndjson")
+                .PUT(HttpRequest.BodyPublishers.ofFile(file))
+                .build()
+            val response = http.send(request, HttpResponse.BodyHandlers.ofString())
+            if (response.statusCode() == 204) {
+                AgentUpload.Stored
+            } else {
+                AgentUpload.Refused(response.statusCode(), parseCode(response.body().orEmpty()))
+            }
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            AgentUpload.Failed("interrupted")
+        } catch (e: Exception) {
+            AgentUpload.Failed(e.message?.takeIf { it.isNotBlank() } ?: e.javaClass.simpleName)
+        }
+    }
+
     private fun buildStreamRequest(run: OpenedRun, bytes: ByteArray): HttpRequest =
         HttpRequest.newBuilder(URI.create(run.streamUrl))
             .timeout(Duration.ofSeconds(30))
@@ -222,5 +272,7 @@ class LiveClient(
 
     companion object {
         private const val MAX_ATTEMPTS = 3
+
+        private val AGENT_UPLOAD_TIMEOUT: Duration = Duration.ofMinutes(5)
     }
 }

@@ -155,6 +155,15 @@ services:
       RAW_LOG_RETENTION_DAYS: ${PERFPORTAL_RAW_LOG_RETENTION_DAYS:-}
       VERIFY_ENABLED: ${PERFPORTAL_VERIFY_ENABLED:-}
       VERIFY_SCAN_INTERVAL_MS: ${PERFPORTAL_VERIFY_SCAN_INTERVAL_MS:-}
+      # ═══ THE GRADLE PLUGIN'S AGENT FILE (the API reads this) ═══
+      #
+      # The most the API stores of one live run's agent file, sent by the
+      # Gradle plugin through PUT /v1/runs/{id}/agent, in bytes. Passed EMPTY
+      # when unset, and the API reads empty -- or anything that is not a whole
+      # number larger than 1024 -- as 268435456 (256 MiB), the runner's own
+      # default. A bigger file is refused 413 AGENT_LOG_TOO_LARGE and the run is
+      # otherwise unaffected.
+      MAX_AGENT_LOG_BYTES: ${PERFPORTAL_MAX_AGENT_LOG_BYTES:-}
       # ═══ GATLING'S OWN METHOD, BESIDE EACH VERIFICATION (the worker reads these) ═══
       #
       # The verifier also replays a run's response times through Gatling's

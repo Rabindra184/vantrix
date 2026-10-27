@@ -128,9 +128,9 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **278 files / 4583 tests**, it
+`nvm use` first, and if a run reports fewer than **278 files / 4587 tests**, it
 did not run everything — nor did an integration run reporting fewer than
-**257 files / 4072 tests**, an e2e run fewer than **213**, or a
+**258 files / 4088 tests**, an e2e run fewer than **213**, or a
 `pnpm test:e2e:cross` run fewer than **639** (213 on each of three engines).
 (Update those numbers when a sub-project adds suites, or the next reader
 calibrates against a stale floor and a silently-skipped run looks like a
@@ -150,6 +150,245 @@ still Chromium and still 102; `pnpm test:e2e:cross` was 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The GE report parity Gradle-plugin branch (`feat/ge-report-gradle`, PR 4 of
+`docs/superpowers/specs/2026-10-22-ge-report-parity-design.md`, plan
+`docs/superpowers/plans/2026-10-27-ge-report-parity-pr4-gradle-plugin.md`).
+Unit **278 / 4583 to 278 / 4587** (`apps/api/test/config.test.ts` +4),
+integration **257 / 4072 to 258 / 4088**
+(`apps/api/test/live-agent.integration.test.ts`, 11, plus `config` +4 and
+`access-routes` +1), **e2e stays 213**. Each was predicted first — Task 2
+named 278 / 4587 and 258 / 4088 from per-file deltas — and each collected
+exactly that. The agent's build is **9 classes / 65 tests**, 1 skipped on macOS (63 + 2: the `{jvm}`
+token); the plugin's is **8 classes / 93 tests** (42 + 51 — 89 before the final
+fix wave, whose four cases are F1's two, F2's one and F3's one, below).
+
+**A RUN STREAMED BY THE GRADLE PLUGIN NOW CARRIES THE AGENT FILE THE ON-PREM
+RUNNER'S DID.** PRs 1-3 collected, stored, built and drew the agent's figures
+for runner jobs only. Now: the agent replaces a literal `{jvm}` in its `out=`
+path with `<pid>-<epochMillis>`, so every simulation JVM writes its own file
+(`AgentOptions.JVM_TOKEN`; a path without the token reaches `Path.of` exactly
+as the runner's always did). The plugin jar carries the agent jar
+(`dev/vantrix/gradle/agent/gatling-agent.jar`, the plugin build includes
+`../gatling-agent`, version 0.3.0-SNAPSHOT, +9.4 MB). In `gatlingRun`'s
+`doFirst` `AgentLauncher` extracts it to `build/vantrix/agent/`, empties
+`out/`, and appends
+`-javaagent:…=out=…/agent-{jvm}.ndjson,max=268434432` to the jvmArgs upstream
+would use; `vantrix { agent = false }` or `VANTRIX_AGENT=false` (read
+strictly — a blank is unset, never off) turns it off. Before each live run
+closes, `RunTailer.closeRun` — now the ONE place `api.close(` appears — pairs
+the run's results directory with its file and sends it with
+`PUT /v1/runs/{id}/agent` (bearer, `stream`, 204; 400 `INVALID_ID` /
+`AGENT_LOG_EMPTY` / `STREAM_BODY_CONSUMED`, 404, 409 `RUN_NOT_RUNNING`, 413
+`AGENT_LOG_TOO_LARGE`), which stores `runs/<id>/agent.ndjson` on a RUNNING run
+— the runner's exact key — and records `agent_log_*` on its row; the worker's
+existing reader builds the figures at finalize. The `uploadIfLiveUnavailable`
+bundle carries the file as `run-1/perfportal-agent.ndjson`. `MAX_AGENT_LOG_BYTES`
+(API; compose `PERFPORTAL_MAX_AGENT_LOG_BYTES`, empty or ≤ 1024 is
+268435456) caps it. No migration, no contract change beyond the route.
+
+**RULINGS, EACH A DECISION RATHER THAN AN OVERSIGHT:**
+
+  - **One upload, not a second stream.** The file is PUT whole once, before
+    close; nothing about the live protocol changes, and a refused or failed
+    upload is one warning and the run is closed as usual. A PUT after close is
+    409, so the order is the contract.
+  - **One file per JVM, paired by the header's `startedAt`, with NO slack.**
+    The run takes the LARGEST `startedAt` with
+    `notBeforeMs <= startedAt <= its results directory's last write`, both
+    inclusive, and never a file another run of the same `gatlingRun` already
+    took (`AgentRun.paired`) — and, since the final fix wave, only one that
+    started AFTER the previous simulation's results directory was last written
+    (the latest last write, below this directory's, among the directories beside
+    it written after `notBeforeMs`). The plan allowed +1000 ms past the last write;
+    the controller struck it, because Gatling writes its reports right before
+    its JVM exits and the next JVM's premain follows within a second — and the
+    real two-simulation run below MEASURED that gap at **160 ms**, so the
+    slack would have handed run 1 the second simulation's file. The file NAME
+    is never parsed (a pid-less fallback names it `agent-<millis>.ndjson`).
+  - **jvmArgs are rebuilt from upstream's own choice.** `GatlingRunTask`
+    passes `task.jvmArgs ?: gatlingExt.jvmArgs` — a Groovy elvis, so a null
+    OR EMPTY task list falls back to the `gatling` extension's (measured from
+    the 3.15.1.2 bytecode). The plan's "a null list becomes [ours]" would have
+    dropped every user's `gatling { jvmArgs = … }` silently. Base = the task's
+    list if non-empty, else the extension's (reflection); result = base +
+    ours, set on the task; a list already carrying our jar gets nothing more.
+  - **The PUT looks the run up, scoped and `running`, before storing.** The
+    key is the run id alone, so storing first would let another project's
+    stream token overwrite this run's object; the conditional row write stays
+    the authority for a close landing in between. The body is still read to
+    a temp file first, so a refused PUT drains rather than resets.
+  - **`readRawUpload` takes a REQUIRED `kind`**, so the agent route's
+    consumed-body 400 names "the agent file" and the package route keeps its
+    wording byte for byte; `payloadTooLarge(code, …)` exists because
+    `ProblemFilter` would code every 413 `BUNDLE_TOO_LARGE`.
+  - **The OpenAPI path item is shared.** `/v1/runs/{id}/agent` already held
+    the GET; a second literal key for the PUT was silently REPLACED by the
+    later one, and only the route-coverage guard noticed.
+  - **Shadow unpacks nested jars.** shadow 8.3.6's `isArchive` is a pure
+    `endsWith(".jar")`, so the agent jar as a resource was exploded into 9,161
+    entries beside the plugin's own; `shadowJar` excludes it and appends it in
+    a `doLast`, and `verifyShadedJar` requires the entry, its manifest's
+    `Premain-Class` and byte equality with the agent build's own jar.
+
+**RED-VERIFIED** (the task reports hold the rest):
+
+```
+  pre-check removed from storeAgentLog       the cross-project 404 case, at "object absent"
+  agent left to the shadow copy              verifyShadedJar: no gatling-agent.jar entry
+  a non-agent / one-byte-longer jar           verifyShadedJar: Premain-Class=null / size differs
+  agentEnabled forced on, no ext fallback     4: null-list, empty-list, already-on-ext, agent=false
+  api.close deleted from closeRun             16 RunTailer cases
+  close before upload                         the upload-before-close case
+  maybeSwitchDirectory bypasses closeRun      that case alone
+  +1000 ms slack restored                     the 1-ms-after case and the 4000/9000 pairing case
+  no paired memory                            the three already-paired cases (files, tailer, bundle)
+  < for <= on either bound                    that bound's case alone
+  FINAL WAVE, the three fixes reverted at once, each landing on its own class:
+  the `=`/`,` check disabled                   both new AgentLauncher cases (an AgentRun returned)
+  the HTTP/1.1 pin removed                     the new BundleUploader case: "Upgrade header: h2c"
+  the previous-directory bound dropped         the new AgentFiles case (the earlier run's file)
+```
+
+**THE REAL RUNS**, on `perfportal_pr4`, Redis db 13, bucket `perfportal-pr4`
+(removed afterwards), this tree's API (:3801) and worker from `dist`, Java 21,
+the plugin from `publishToMavenLocal` (0.3.0-SNAPSHOT) into `e2e-project` with
+`ParitySimulation` copied in, a stream+read token from `seed.mjs` (revoked):
+
+  - **Agent on**, run `67039f50`: `complete`, **895 / 871 / 24**,
+    **`verified`, 23,001 figures**. The simulation JVM's command line carried
+    Gatling's own `-XX:+HeapDumpOnOutOfMemoryError -XX:MaxInlineLevel=20
+    -XX:MaxTrivialSize=12` and both `--add-opens`, then ours, then `-Xmx1G` —
+    the upstream list kept, the agent appended. One file,
+    `agent-46662-1793114954612.ndjson`, 81,013 bytes, its sha256 equal to
+    `agent_log_sha256`. `/agent/status` sums to **895** (871 × 200, 14 × 500,
+    10 × 503 — the file's own codes); `/agent/connections` opened / closed
+    **21 / 21** = the file's 21 non-warm-up connects and their closes (the
+    warm-up's to `gatling.io:443` left out); header host named, `machine:
+    false` (macOS).
+  - **Agent off** (`VANTRIX_AGENT=false`), run `42bd2e9b`: 895 / 867 / 28,
+    no `-javaagent` in any of the JVM's 33 sampled command lines, no new file,
+    `agent_log_key` null, no `run_agent` row, `/agent` `available: false,
+    reason 'not_collected'`, `verified`, 21,622 figures.
+  - **Two simulations in ONE `gatlingRun --all`** (`ParitySimulation` and a
+    renamed copy): two JVMs (pids 52978, 55306), each with the agent, two
+    files, two runs. `5ccd0a71` (`ParitySimulation`) got
+    `agent-52978-…` (header `startedAt` 1793115240501, sha `bacd2205…`),
+    `fa8630bf` (`ParitySimulationTwo`) got `agent-55306-…` (1793115304855,
+    sha `553a2d65…`). Both runs read 895 / 876 / 19 — and their status codes
+    still tell the files apart: 876 / 10 / 9 and 876 / 15 / 4 against 500 /
+    503, each equal to its own file's. Connections 20 / 20 and 21 / 21, each
+    its own file's. Both `verified` (22,747 and 22,862 figures). The first
+    run's results directory was last written at 1793115304695 — **160 ms
+    before the second JVM's header** — which is the measurement behind the
+    no-slack ruling.
+  - **`run-e2e.sh`**, now asserting `/agent`: as is, **PASS**, `available`,
+    header host named; with `VANTRIX_AGENT=false`, **PASS**, `not_collected`.
+    Both against :3801 through the new `VANTRIX_URL` override.
+  - **The fallback** (`VANTRIX_UPLOAD_IF_LIVE_UNAVAILABLE=true`, the live
+    open refused 503 by a local proxy): straight at the API it answered
+    **404** — the h2c defect the final fix wave closes (below; the real run was
+    not repeated after the pin). Through the same proxy dropping the h2c
+    headers it answered 202: run `bd3934c2` `complete`, 895 / 868 / 27, `run_agent`
+    `collected`, the bundle carrying `run-1/perfportal-agent.ndjson` (80,765
+    bytes, the JVM's file), `/agent/status` 895, `verified`, 23,052 figures.
+  - The Report was NOT opened in a browser here: that needs a signed-in
+    session, which this task could not obtain without typing credentials.
+
+**WHAT WAS RUN**, Node v22.19.0, `perfportal_pr4`, Redis db 13 flushed before
+integration and before e2e, every `.tsbuildinfo` outside `node_modules`
+deleted before typecheck, nothing of the real runs still running: `pnpm
+build`, `typecheck` and `lint` exit 0 by their own exit codes; `test:unit`
+**278 / 4587**, exit 0, zero `Errors` lines — on its SECOND run: the first
+failed `named-symbols-resolve` on upstream's Gradle extension class, named in
+backticks in a Task 4 test comment — put in that guard's `EXEMPT` then, and
+taken out again by the final fix wave, which unbackticked the name instead: the
+guard's exemptions are past-tense records, and that is a live upstream type;
+`test:integration` COLLECTED **258 / 4088** (load 2.43 / 7.55 at
+start) and exited 1 on THREE files, each a P1001 "Can't reach database
+server" at `localhost:5433`: `agent.integration`'s setup ingest answered 500,
+and `parity-endpoints` and `read.integration` each met a run its ingest had
+failed (400). None of the three is a file this branch changed, and the
+ingest path they fail in is untouched. Alone, each passed:
+**17 / 17, 8 / 8, 70 / 70**; the full suite was not re-run. `pnpm test:e2e
+--workers=2` (port 3800) read back `Running 213 tests using 2 workers`,
+**213 passed, exit 0**; the agent's `./gradlew clean build --no-daemon` exit 0, **65 tests,
+1 skipped**; the plugin's `./gradlew build --no-daemon` exit 0, **89 tests**.
+`node infra/test/env-example-covers-compose.mjs` exit 0 (27 variables) and
+`docker compose config --quiet`, base and `onprem`, exit 0.
+
+**THE FINAL FIX WAVE**, after the whole-branch review, took seven findings
+and three doc corrections in one pass:
+
+  - **F1, a build path carrying `=` or `,`.** The JVM ends `-javaagent:`'s
+    jar path at the first `=`, so a Jenkins matrix workspace
+    (`…/JDK=jdk21,label=linux/`) stopped EVERY simulation JVM from starting;
+    and the agent splits its options on `,`, so a comma cut `out=` short and
+    sent the agent's file — truncating whatever was there — outside the
+    build. `prepare()` now checks the jar and `out` paths first, logs one
+    warning naming the character, and returns null with jvmArgs untouched and
+    nothing extracted.
+  - **F2, the fallback's h2c upgrade.** `BundleUploader`'s `HttpClient` is
+    pinned to HTTP/1.1, as `LiveClient`'s has been: the default HTTP/2
+    preference put `Upgrade: h2c` / `HTTP2-Settings` on the POST, and the API
+    reached directly answered 404 — reproduced by `curl` with those headers
+    alone against the same POST without them (403 for a token lacking
+    `ingest`). It predates this branch (`eb65603b`, 2026-08-20); the case
+    asserts neither header reaches the server, because the JDK fake server
+    tolerates both.
+  - **F3, a lower pairing bound.** A run whose own file is missing — its JVM
+    died before premain wrote the header, or the agent could not write; a JVM
+    that died AFTER its header still has its file — could take an EARLIER
+    run's file that nothing claimed (that run never opened live, the fallback
+    off). `pairFor` now also requires `startedAt` after the previous
+    simulation's directory's last write, read from the directories beside
+    this one (a pure function of the filesystem and the `AgentRun`). Two
+    existing cases had put a second directory beside an earlier one whose
+    write now bounds it; each moved that directory to its own root, keeping
+    its own claim.
+  - F4 a reflective failure names its cause rather than "(null)"; F5 a stray
+    blank line; F6 the resource stream is closed on every path; F7 above.
+  - **The floors do not move.** Every change is under `clients/` (the plugin
+    gate, 89 to 93) or a doc, but for F7's exemption, which removes a map
+    entry and no case: unit stays **278 / 4587**, integration **258 / 4088**,
+    e2e **213**. What it ran: the plugin's `./gradlew build --no-daemon`,
+    `named-symbols-resolve` alone, `pnpm typecheck` and `pnpm lint`, each by
+    its own exit code; no suite was re-run in full.
+
+**KNOWN AND LEFT:**
+
+  - The pairing assumes the results directory's mtime comes from the build
+    machine's clock — an NFS mount's comes from the server's.
+  - `runInSameProcess` collects nothing (no JVM is started). A simulation JVM
+    killed mid-run is NOT left to the sweeper: upstream sets
+    `ignoreExitValue` and reports "Some of the simulations crashed:" only
+    after every simulation has run, so the task finishes, the finalizer runs
+    `finish()`, and the plugin uploads the killed JVM's partial agent file and
+    closes the run itself, over a log cut short where the JVM died — the
+    client-driven close has no way to say its producer died.
+  - The agent's pid-unreadable fallback (`agent-<millis>.ndjson`) is
+    untested: `ProcessHandle.current()` cannot be made to throw without a
+    seam.
+  - Run k's agent upload runs on the tailer thread while simulation k+1
+    generates load: negligible for a typical file, noticeable for a large
+    soak file, and it holds the tailer's lock for up to the 5-minute upload
+    timeout (and `finish()` for as long, per run).
+  - Each concurrent agent PUT can write up to `MAX_AGENT_LOG_BYTES` to the API
+    host's temp directory while it is in flight (`DEPLOYMENT.md` says so).
+  - A `gatlingRun` without `jvmArgs` accessors (the TestKit fakes' plain
+    `DefaultTask`) logs one extra warning per run.
+  - Two concurrent PUTs can leave the row's sha and the object out of step
+    (the run's agent source then reads `unreadable`, the run is unaffected);
+    a refused PUT writes its whole body to disk before the 404/409; the 409's
+    "already being processed" wording also covers a completed run that was
+    never live; Content-Type is not enforced.
+  - `shadowJar`'s `doLast` is configuration-cache-incompatible and its
+    appended entry is not reproducible; the plugin build needs the sibling
+    `../gatling-agent` (a full checkout); the fallback's 512 MiB pre-check
+    counts `simulation.log` alone.
+  - CI resolving the included build on a runner was argued from the checkout
+    layout first; the PR's own `plugin` job then OBSERVED it, green on
+    `117f01cc`.
 
 The audit-better-auth-device branch (`fix/audit-better-auth-device`) added no
 test and moves no floor: unit stays **278 / 4583**, integration

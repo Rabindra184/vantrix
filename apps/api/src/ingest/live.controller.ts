@@ -1,4 +1,7 @@
-import { Controller, Inject, Param, Post, Req, Res } from '@nestjs/common';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Controller, HttpCode, Inject, Param, Post, Put, Req, Res } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { ingestError } from '@perfportal/core';
 import { OpenLiveRunRequestSchema } from '@perfportal/contracts';
@@ -6,7 +9,8 @@ import { CONFIG } from '../auth/auth.module.js';
 import type { AppConfig } from '../config.js';
 import { Scopes } from '../auth/scopes.decorator.js';
 import { problem } from '../common/problem.js';
-import { badRequest, uuidParam } from '../common/validation.js';
+import { badRequest, conflict, uuidParam } from '../common/validation.js';
+import { assertClientStillConnected, readRawUpload } from '../runner/raw-upload.js';
 import { respondWithRun } from '../runs/runs.controller.js';
 import { RunsService } from '../runs/runs.service.js';
 import { IDEMPOTENCY_HEADER, resolveIdempotencyKey } from './idempotency.js';
@@ -287,5 +291,49 @@ export class LiveController {
     }
 
     await respondWithRun(this.runs, outcome.run, res);
+  }
+
+  /**
+   * A live run's Gatling agent file, sent once by the Gradle plugin after the
+   * simulation's JVM exits and before it closes the run — the API-side
+   * equivalent of the on-prem runner's own `storeAgentLog`. The body is the
+   * file's raw bytes under "application/x-ndjson", which Express does not
+   * parse, so it arrives unread.
+   *
+   * It is streamed to a temporary file under the agent cap (`readRawUpload`:
+   * a declared length over it is refused before a byte is read, a chunked
+   * body is drained so the 413 reaches the client rather than a reset), then
+   * handed to `LiveService.storeAgentLog`, which looks the run up before the
+   * object store is touched. The temporary file is removed whatever happens.
+   */
+  @Put(':id/agent')
+  @BearerOnly()
+  @Scopes('stream')
+  @HttpCode(204)
+  async agent(@Param('id', uuidParam('id')) id: string, @Req() req: Request): Promise<void> {
+    const tenant = req.tenant!;
+    // Before a directory is made: a client already gone has nothing to store.
+    assertClientStillConnected(req);
+    const dir = await mkdtemp(join(tmpdir(), 'perfportal-agent-'));
+    try {
+      const file = join(dir, 'agent.ndjson');
+      await readRawUpload(req, file, this.config.maxAgentLogBytes, 'agent-log');
+      const outcome = await this.live.storeAgentLog(
+        { orgId: tenant.orgId, projectId: tenant.projectId },
+        id,
+        file,
+      );
+      if (outcome === 'not_found') throw runNotFound(id);
+      if (outcome === 'not_running') {
+        throw conflict(
+          'RUN_NOT_RUNNING',
+          `Run ${id} is not open for streaming (already closed, or never a live run), so it is ` +
+            'already being processed and its agent file can no longer join it.',
+          'Send the agent file after the simulation exits and before closing the run.',
+        );
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   }
 }

@@ -7,6 +7,8 @@ import java.io.ByteArrayInputStream
 import java.io.File
 import java.net.InetSocketAddress
 import java.nio.charset.StandardCharsets
+import java.nio.file.Files
+import java.nio.file.attribute.FileTime
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
 import org.junit.jupiter.api.AfterEach
@@ -63,7 +65,7 @@ class BundleUploaderTest {
         baseUrl = "http://localhost:${srv.address.port}",
         token = token,
         environment = environment, branch = branch, commitSha = commitSha, test = test,
-        tickSeconds = 5, uploadIfLiveUnavailable = true, resultsDir = null,
+        tickSeconds = 5, uploadIfLiveUnavailable = true, resultsDir = null, agentEnabled = false,
     )
 
     private fun extractBoundary(contentType: String): String {
@@ -128,7 +130,7 @@ class BundleUploaderTest {
         File(tmp, "simulation.log").writeBytes(logBytes)
         val (srv, requests) = startServer(status = 202)
 
-        val result = BundleUploader(logger = {}).upload(configFor(srv), tmp.toPath())
+        val result = BundleUploader(logger = {}).upload(configFor(srv), tmp.toPath(), null)
 
         assertTrue(result)
         assertEquals(1, requests.size)
@@ -184,6 +186,7 @@ class BundleUploaderTest {
         val result = BundleUploader(logger = {}).upload(
             configFor(srv, environment = null, branch = "main", commitSha = "sha123"),
             tmp.toPath(),
+            null,
         )
 
         assertTrue(result)
@@ -197,12 +200,29 @@ class BundleUploaderTest {
         assertEquals("sha123", metadataJson.get("commitSha").asString)
     }
 
+    /**
+     * java.net.http.HttpClient prefers HTTP/2, and over cleartext that means an h2c upgrade:
+     * `Upgrade: h2c` and `HTTP2-Settings` on the POST. The API's Node server answers that with a
+     * 404 (or a reset) when it is reached directly, so the fallback is pinned to HTTP/1.1, as
+     * LiveClient is. This fake server tolerates the headers, so the case asserts they are absent.
+     */
+    @Test
+    fun `the fallback POST is plain HTTP-1-1 -- no h2c upgrade headers`(@TempDir tmp: File) {
+        File(tmp, "simulation.log").writeBytes("x".toByteArray())
+        val (srv, requests) = startServer(status = 202)
+
+        assertTrue(BundleUploader(logger = {}).upload(configFor(srv), tmp.toPath(), null))
+        val headers = requests.single().headers
+        assertNull(headers.getFirst("Upgrade"), "unexpected Upgrade header: ${headers.getFirst("Upgrade")}")
+        assertNull(headers.getFirst("HTTP2-Settings"), "unexpected HTTP2-Settings header")
+    }
+
     @Test
     fun `202 is success`(@TempDir tmp: File) {
         File(tmp, "simulation.log").writeBytes("x".toByteArray())
         val (srv, _) = startServer(status = 202)
 
-        assertTrue(BundleUploader(logger = {}).upload(configFor(srv), tmp.toPath()))
+        assertTrue(BundleUploader(logger = {}).upload(configFor(srv), tmp.toPath(), null))
     }
 
     @Test
@@ -211,9 +231,68 @@ class BundleUploaderTest {
         val (srv, _) = startServer(status = 500, responseBody = "internal error, try later")
         val logs = mutableListOf<String>()
 
-        val result = BundleUploader(logger = { logs.add(it) }).upload(configFor(srv), tmp.toPath())
+        val result = BundleUploader(logger = { logs.add(it) }).upload(configFor(srv), tmp.toPath(), null)
 
         assertFalse(result)
         assertTrue(logs.any { it.contains("500") }, "expected a warning naming the 500 status, got: $logs")
+    }
+
+    @Test
+    fun `a paired agent file travels in the bundle beside simulation-log, byte for byte`(@TempDir tmp: File) {
+        val outDir = Files.createDirectory(tmp.toPath().resolve("agent-out"))
+        val agentBytes = ("{\"t\":\"header\",\"startedAt\":1000}\n" + "{\"t\":\"s\",\"ts\":2}\n".repeat(50))
+            .toByteArray(StandardCharsets.UTF_8)
+        Files.write(outDir.resolve("agent-11-1000.ndjson"), agentBytes)
+        val resultsDir = Files.createDirectory(tmp.toPath().resolve("sim-20260820134041213"))
+        val logBytes = "GATLING LOG LINE\n".repeat(20).toByteArray(StandardCharsets.UTF_8)
+        Files.write(resultsDir.resolve("simulation.log"), logBytes)
+        Files.setLastModifiedTime(resultsDir, FileTime.fromMillis(3500))
+        val (srv, requests) = startServer(status = 202)
+
+        val result = BundleUploader(logger = {}).upload(configFor(srv), resultsDir, AgentRun(outDir, notBeforeMs = 0))
+
+        assertTrue(result)
+        val boundary = extractBoundary(requests[0].headers.getFirst("Content-Type")!!)
+        val untarred = untarGzip(parseMultipart(requests[0].body, boundary).getValue("bundle").body)
+        assertEquals(setOf("run-1/simulation.log", "run-1/perfportal-agent.ndjson"), untarred.keys)
+        assertContentEquals(logBytes, untarred.getValue("run-1/simulation.log"))
+        assertContentEquals(agentBytes, untarred.getValue("run-1/perfportal-agent.ndjson"))
+    }
+
+    @Test
+    fun `with an agent run but no paired file the bundle holds simulation-log alone`(@TempDir tmp: File) {
+        val outDir = Files.createDirectory(tmp.toPath().resolve("agent-out"))
+        // Started after the directory was last written: a later JVM's file.
+        Files.writeString(outDir.resolve("agent-11-9000.ndjson"), "{\"t\":\"header\",\"startedAt\":9000}\n")
+        val resultsDir = Files.createDirectory(tmp.toPath().resolve("sim-20260820134041213"))
+        Files.write(resultsDir.resolve("simulation.log"), "x".toByteArray())
+        Files.setLastModifiedTime(resultsDir, FileTime.fromMillis(3500))
+        val (srv, requests) = startServer(status = 202)
+
+        assertTrue(BundleUploader(logger = {}).upload(configFor(srv), resultsDir, AgentRun(outDir, notBeforeMs = 0)))
+
+        val boundary = extractBoundary(requests[0].headers.getFirst("Content-Type")!!)
+        val untarred = untarGzip(parseMultipart(requests[0].body, boundary).getValue("bundle").body)
+        assertEquals(setOf("run-1/simulation.log"), untarred.keys)
+    }
+
+    @Test
+    fun `a file the tailer already paired with another run is left out of the bundle`(@TempDir tmp: File) {
+        val outDir = Files.createDirectory(tmp.toPath().resolve("agent-out"))
+        Files.writeString(outDir.resolve("agent-11-1000.ndjson"), "{\"t\":\"header\",\"startedAt\":1000}\n")
+        val agent = AgentRun(outDir, notBeforeMs = 0)
+        val streamedDir = Files.createDirectory(tmp.toPath().resolve("sim-20260820134041213"))
+        Files.setLastModifiedTime(streamedDir, FileTime.fromMillis(2000))
+        assertNotNull(AgentFiles.pairFor(agent, streamedDir)) // the tailer's run took it
+        val resultsDir = Files.createDirectory(tmp.toPath().resolve("sim-20260820134199987"))
+        Files.write(resultsDir.resolve("simulation.log"), "x".toByteArray())
+        Files.setLastModifiedTime(resultsDir, FileTime.fromMillis(3500))
+        val (srv, requests) = startServer(status = 202)
+
+        assertTrue(BundleUploader(logger = {}).upload(configFor(srv), resultsDir, agent))
+
+        val boundary = extractBoundary(requests[0].headers.getFirst("Content-Type")!!)
+        val untarred = untarGzip(parseMultipart(requests[0].body, boundary).getValue("bundle").body)
+        assertEquals(setOf("run-1/simulation.log"), untarred.keys)
     }
 }

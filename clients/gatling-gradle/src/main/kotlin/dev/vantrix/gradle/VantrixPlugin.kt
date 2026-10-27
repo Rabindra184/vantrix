@@ -5,8 +5,10 @@ import org.gradle.api.Project
 import java.util.concurrent.atomic.AtomicReference
 
 /** The `doFirst`-to-finalizer handoff: the tailer plus the resolved config it was opened with,
- *  so the finalizer can read `uploadIfLiveUnavailable` without re-resolving anything. */
-private data class TailerHandle(val tailer: RunTailer, val config: PluginConfig)
+ *  so the finalizer can read `uploadIfLiveUnavailable` without re-resolving anything, and the
+ *  agent run [AgentLauncher] prepared for this `gatlingRun` (`null` when the agent is off or
+ *  could not be attached). */
+private data class TailerHandle(val tailer: RunTailer, val config: PluginConfig, val agentRun: AgentRun?)
 
 /**
  * Wires [RunTailer] into the `gatlingRun` task lifecycle, whatever plugin (real Gatling, or a
@@ -70,7 +72,7 @@ class VantrixPlugin : Plugin<Project> {
                             val failures = handle.tailer.openFailures()
                             if (failures.isNotEmpty()) {
                                 val uploader = BundleUploader(logger = { msg -> project.logger.warn("vantrix: $msg") })
-                                failures.forEach { dir -> uploader.upload(handle.config, dir) }
+                                failures.forEach { dir -> uploader.upload(handle.config, dir, handle.agentRun) }
                             }
                         }
                     } catch (t: Throwable) {
@@ -91,6 +93,18 @@ class VantrixPlugin : Plugin<Project> {
                             }
                             is ResolvedConfig.Ok -> {
                                 val config = resolved.config
+                                // Before Gatling's own action runs, so the jvmArgs it reads already
+                                // carry the agent; prepare() never throws, so a failure here costs
+                                // the agent and nothing else.
+                                val agentRun = if (config.agentEnabled) {
+                                    AgentLauncher.prepare(
+                                        task,
+                                        project.layout.buildDirectory.get().asFile.toPath(),
+                                        logger = { msg -> project.logger.warn("vantrix: $msg") },
+                                    )
+                                } else {
+                                    null
+                                }
                                 val resultsRoot = config.resultsDir
                                     ?.let { project.file(it).toPath() }
                                     ?: project.layout.buildDirectory.dir("reports/gatling").get().asFile.toPath()
@@ -104,9 +118,10 @@ class VantrixPlugin : Plugin<Project> {
                                     api = client,
                                     config = config,
                                     resultsRoot = resultsRoot,
+                                    agent = agentRun,
                                     logger = { msg -> project.logger.warn(msg) },
                                 )
-                                handleRef.set(TailerHandle(tailer, config))
+                                handleRef.set(TailerHandle(tailer, config, agentRun))
                                 tailer.start()
                             }
                         }

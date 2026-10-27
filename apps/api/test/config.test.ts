@@ -82,3 +82,21 @@ describe('loadConfig rawLogRetentionDays', () => {
     expect(() => loadConfig({ ...base, RAW_LOG_RETENTION_DAYS: v })).toThrow(/RAW_LOG_RETENTION_DAYS/);
   });
 });
+
+/**
+ * `MAX_AGENT_LOG_BYTES`, the cap on `PUT /v1/runs/{id}/agent`: the runner's
+ * own rule for its `RUNNER_MAX_AGENT_LOG_BYTES`, so a Gradle-plugin run's file
+ * and a runner run's are held to the same 256 MiB by default. Blank is unset
+ * (compose passes an unset variable as ""), and a cap not larger than the
+ * plugin's 1024-byte headroom would tell the agent a max of nothing.
+ */
+describe('loadConfig maxAgentLogBytes', () => {
+  it.each(['', 'abc', '1024'])('reads MAX_AGENT_LOG_BYTES=%j as the 256 MiB default', (v) => {
+    expect(loadConfig({ ...base, MAX_AGENT_LOG_BYTES: v }).maxAgentLogBytes).toBe(268435456);
+  });
+
+  it('honours a cap above the headroom, and defaults when unset', () => {
+    expect(loadConfig({ ...base, MAX_AGENT_LOG_BYTES: '1025' }).maxAgentLogBytes).toBe(1025);
+    expect(loadConfig({ ...base }).maxAgentLogBytes).toBe(268435456);
+  });
+});

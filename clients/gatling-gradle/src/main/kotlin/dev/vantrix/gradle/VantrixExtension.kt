@@ -22,4 +22,11 @@ open class VantrixExtension {
     var tickSeconds: Int? = null
     var uploadIfLiveUnavailable: Boolean? = null
     var resultsDir: String? = null   // default applied at wiring time: build/reports/gatling
+
+    /**
+     * Whether `gatlingRun` starts each simulation JVM with the PerfPortal Gatling agent, which
+     * records what `simulation.log` never does (DNS, TCP connects, TLS handshakes, response
+     * statuses, the JVM's own GC and memory). On unless set to `false` here or `VANTRIX_AGENT=false`.
+     */
+    var agent: Boolean? = null
 }

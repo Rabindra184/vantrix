@@ -187,6 +187,7 @@ const ACCESS_BY_ROUTE: Readonly<Record<string, Access>> = {
   'POST /v1/runs/live': 'bearer-only',
   'POST /v1/runs/:id/stream': 'bearer-only',
   'POST /v1/runs/:id/close': 'bearer-only',
+  'PUT /v1/runs/:id/agent': 'bearer-only',
   'POST /v1/telemetry': 'bearer-only',
   'GET /v1/projects/:slug/runs': 'bearer-only',
 
@@ -931,10 +932,10 @@ describe('the role matrix', () => {
    * There are two kinds of refusal:
    *
    *   - THE SCOPE, 403 FORBIDDEN, where no session holds it (`stream`,
-   *     `telemetry`). On stream and close this is the ONLY refusal: those
-   *     handlers look the run up by org when the credential names no project,
-   *     so a session let past the scope would write to, or close, any running
-   *     run in its org.
+   *     `telemetry`). On stream, close and the agent PUT this is the ONLY
+   *     refusal: those handlers look the run up by org when the credential
+   *     names no project, so a session let past the scope would write to,
+   *     close, or store an agent file on any running run in its org.
    *   - PROJECT_REQUIRED, 400, raised before the handler looks up a project
    *     or validates a body (on GET /v1/projects/:slug/runs only the query's
    *     single-value checks come first). A session names no project
@@ -946,7 +947,7 @@ describe('the role matrix', () => {
    *     scope, which is why their pair is the scope's: a session reaching the
    *     handler there means the scope stopped refusing it.
    *
-   * The list must equal the walk's @BearerOnly set, so a seventh route fails
+   * The list must equal the walk's @BearerOnly set, so an eighth route fails
    * until its refusal is written down.
    */
   describe('a @BearerOnly route refuses a session', () => {
@@ -1028,6 +1029,15 @@ describe('the role matrix', () => {
       'POST /v1/runs/:id/close': {
         expected: [403, 'FORBIDDEN'],
         send: () => asAdmin(server().post(`/v1/runs/${liveRunId}/close`)),
+      },
+      // A running run and a real agent file under the Content-Type the route
+      // reads raw: past the scope, a token's PUT stores it.
+      'PUT /v1/runs/:id/agent': {
+        expected: [403, 'FORBIDDEN'],
+        send: () =>
+          asAdmin(server().put(`/v1/runs/${liveRunId}/agent`))
+            .set('Content-Type', 'application/x-ndjson')
+            .send(Buffer.from('{"t":"header","format":"perfportal-agent/1"}\n')),
       },
       // A valid batch: INVALID_TELEMETRY cannot answer it.
       'POST /v1/telemetry': {
