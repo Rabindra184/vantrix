@@ -160,7 +160,8 @@ integration **257 / 4072 to 258 / 4088**
 `access-routes` +1), **e2e stays 213**. Each was predicted first — Task 2
 named 278 / 4587 and 258 / 4088 from per-file deltas — and each collected
 exactly that. The agent's build is **9 classes / 65 tests**, 1 skipped on macOS (63 + 2: the `{jvm}`
-token); the plugin's is **8 classes / 89 tests** (42 + 47).
+token); the plugin's is **8 classes / 93 tests** (42 + 51 — 89 before the final
+fix wave, whose four cases are F1's two, F2's one and F3's one, below).
 
 **A RUN STREAMED BY THE GRADLE PLUGIN NOW CARRIES THE AGENT FILE THE ON-PREM
 RUNNER'S DID.** PRs 1-3 collected, stored, built and drew the agent's figures
@@ -196,7 +197,10 @@ bundle carries the file as `run-1/perfportal-agent.ndjson`. `MAX_AGENT_LOG_BYTES
     The run takes the LARGEST `startedAt` with
     `notBeforeMs <= startedAt <= its results directory's last write`, both
     inclusive, and never a file another run of the same `gatlingRun` already
-    took (`AgentRun.paired`). The plan allowed +1000 ms past the last write;
+    took (`AgentRun.paired`) — and, since the final fix wave, only one that
+    started AFTER the previous simulation's results directory was last written
+    (the latest last write, below this directory's, among the directories beside
+    it written after `notBeforeMs`). The plan allowed +1000 ms past the last write;
     the controller struck it, because Gatling writes its reports right before
     its JVM exits and the next JVM's premain follows within a second — and the
     real two-simulation run below MEASURED that gap at **160 ms**, so the
@@ -240,6 +244,10 @@ bundle carries the file as `run-1/perfportal-agent.ndjson`. `MAX_AGENT_LOG_BYTES
   +1000 ms slack restored                     the 1-ms-after case and the 4000/9000 pairing case
   no paired memory                            the three already-paired cases (files, tailer, bundle)
   < for <= on either bound                    that bound's case alone
+  FINAL WAVE, the three fixes reverted at once, each landing on its own class:
+  the `=`/`,` check disabled                   both new AgentLauncher cases (an AgentRun returned)
+  the HTTP/1.1 pin removed                     the new BundleUploader case: "Upgrade header: h2c"
+  the previous-directory bound dropped         the new AgentFiles case (the earlier run's file)
 ```
 
 **THE REAL RUNS**, on `perfportal_pr4`, Redis db 13, bucket `perfportal-pr4`
@@ -278,9 +286,10 @@ the plugin from `publishToMavenLocal` (0.3.0-SNAPSHOT) into `e2e-project` with
     header host named; with `VANTRIX_AGENT=false`, **PASS**, `not_collected`.
     Both against :3801 through the new `VANTRIX_URL` override.
   - **The fallback** (`VANTRIX_UPLOAD_IF_LIVE_UNAVAILABLE=true`, the live
-    open refused 503 by a local proxy): see KNOWN AND LEFT — straight at the
-    API it answers **404**. Through the same proxy dropping the h2c headers it
-    answered 202: run `bd3934c2` `complete`, 895 / 868 / 27, `run_agent`
+    open refused 503 by a local proxy): straight at the API it answered
+    **404** — the h2c defect the final fix wave closes (below; the real run was
+    not repeated after the pin). Through the same proxy dropping the h2c
+    headers it answered 202: run `bd3934c2` `complete`, 895 / 868 / 27, `run_agent`
     `collected`, the bundle carrying `run-1/perfportal-agent.ndjson` (80,765
     bytes, the JVM's file), `/agent/status` 895, `verified`, 23,052 figures.
   - The Report was NOT opened in a browser here: that needs a signed-in
@@ -291,8 +300,10 @@ integration and before e2e, every `.tsbuildinfo` outside `node_modules`
 deleted before typecheck, nothing of the real runs still running: `pnpm
 build`, `typecheck` and `lint` exit 0 by their own exit codes; `test:unit`
 **278 / 4587**, exit 0, zero `Errors` lines — on its SECOND run: the first
-failed `named-symbols-resolve` on `GatlingPluginExtension`, upstream's class
-named in a Task 4 test comment, now in that guard's `EXEMPT` with its reason;
+failed `named-symbols-resolve` on upstream's Gradle extension class, named in
+backticks in a Task 4 test comment — put in that guard's `EXEMPT` then, and
+taken out again by the final fix wave, which unbackticked the name instead: the
+guard's exemptions are past-tense records, and that is a live upstream type;
 `test:integration` COLLECTED **258 / 4088** (load 2.43 / 7.55 at
 start) and exited 1 on THREE files, each a P1001 "Can't reach database
 server" at `localhost:5433`: `agent.integration`'s setup ingest answered 500,
@@ -306,28 +317,66 @@ ingest path they fail in is untouched. Alone, each passed:
 `node infra/test/env-example-covers-compose.mjs` exit 0 (27 variables) and
 `docker compose config --quiet`, base and `onprem`, exit 0.
 
+**THE FINAL FIX WAVE**, after the whole-branch review, took seven findings
+and three doc corrections in one pass:
+
+  - **F1, a build path carrying `=` or `,`.** The JVM ends `-javaagent:`'s
+    jar path at the first `=`, so a Jenkins matrix workspace
+    (`…/JDK=jdk21,label=linux/`) stopped EVERY simulation JVM from starting;
+    and the agent splits its options on `,`, so a comma cut `out=` short and
+    sent the agent's file — truncating whatever was there — outside the
+    build. `prepare()` now checks the jar and `out` paths first, logs one
+    warning naming the character, and returns null with jvmArgs untouched and
+    nothing extracted.
+  - **F2, the fallback's h2c upgrade.** `BundleUploader`'s `HttpClient` is
+    pinned to HTTP/1.1, as `LiveClient`'s has been: the default HTTP/2
+    preference put `Upgrade: h2c` / `HTTP2-Settings` on the POST, and the API
+    reached directly answered 404 — reproduced by `curl` with those headers
+    alone against the same POST without them (403 for a token lacking
+    `ingest`). It predates this branch (`eb65603b`, 2026-08-20); the case
+    asserts neither header reaches the server, because the JDK fake server
+    tolerates both.
+  - **F3, a lower pairing bound.** A run whose own file is missing — its JVM
+    died before premain wrote the header, or the agent could not write; a JVM
+    that died AFTER its header still has its file — could take an EARLIER
+    run's file that nothing claimed (that run never opened live, the fallback
+    off). `pairFor` now also requires `startedAt` after the previous
+    simulation's directory's last write, read from the directories beside
+    this one (a pure function of the filesystem and the `AgentRun`). Two
+    existing cases had put a second directory beside an earlier one whose
+    write now bounds it; each moved that directory to its own root, keeping
+    its own claim.
+  - F4 a reflective failure names its cause rather than "(null)"; F5 a stray
+    blank line; F6 the resource stream is closed on every path; F7 above.
+  - **The floors do not move.** Every change is under `clients/` (the plugin
+    gate, 89 to 93) or a doc, but for F7's exemption, which removes a map
+    entry and no case: unit stays **278 / 4587**, integration **258 / 4088**,
+    e2e **213**. What it ran: the plugin's `./gradlew build --no-daemon`,
+    `named-symbols-resolve` alone, `pnpm typecheck` and `pnpm lint`, each by
+    its own exit code; no suite was re-run in full.
+
 **KNOWN AND LEFT:**
 
-  - **The `uploadIfLiveUnavailable` fallback cannot reach the API directly,
-    and predates this branch** (`eb65603b`, 2026-08-20). `BundleUploader`'s
-    `HttpClient` does not pin HTTP/1.1 the way `LiveClient`'s does, so its
-    POST carries the h2c upgrade headers (`Connection: Upgrade,
-    HTTP2-Settings`), and the API answers that 404 with an empty body —
-    reproduced by `curl` with those three headers alone (404) against the
-    same POST without them (403 for a token lacking `ingest`). The fix is the
-    one-line pin; the plugin README now says so.
-  - A run whose own JVM left no file can still take an EARLIER run's
-    unclaimed one (an unopened earlier run with the fallback off, a JVM that
-    died after its header, or several pending directories processed in name
-    order behind a slow upload); a lower bound from this `gatlingRun`'s other
-    directories would close it.
   - The pairing assumes the results directory's mtime comes from the build
     machine's clock — an NFS mount's comes from the server's.
-  - `runInSameProcess` collects nothing (no JVM is started); a simulation JVM
-    killed mid-run leaves its run to the sweeper, `incomplete` with no agent
-    data.
-  - A build directory whose path contains `,` splits the agent's `out=`
-    option (the agent splits on `,`), with no warning.
+  - `runInSameProcess` collects nothing (no JVM is started). A simulation JVM
+    killed mid-run is NOT left to the sweeper: upstream sets
+    `ignoreExitValue` and reports "Some of the simulations crashed:" only
+    after every simulation has run, so the task finishes, the finalizer runs
+    `finish()`, and the plugin uploads the killed JVM's partial agent file and
+    closes the run itself, over a log cut short where the JVM died — the
+    client-driven close has no way to say its producer died.
+  - The agent's pid-unreadable fallback (`agent-<millis>.ndjson`) is
+    untested: `ProcessHandle.current()` cannot be made to throw without a
+    seam.
+  - Run k's agent upload runs on the tailer thread while simulation k+1
+    generates load: negligible for a typical file, noticeable for a large
+    soak file, and it holds the tailer's lock for up to the 5-minute upload
+    timeout (and `finish()` for as long, per run).
+  - Each concurrent agent PUT can write up to `MAX_AGENT_LOG_BYTES` to the API
+    host's temp directory while it is in flight (`DEPLOYMENT.md` says so).
+  - A `gatlingRun` without `jvmArgs` accessors (the TestKit fakes' plain
+    `DefaultTask`) logs one extra warning per run.
   - Two concurrent PUTs can leave the row's sha and the object out of step
     (the run's agent source then reads `unreadable`, the run is unaffected);
     a refused PUT writes its whole body to disk before the 404/409; the 409's
@@ -335,9 +384,8 @@ ingest path they fail in is untouched. Alone, each passed:
     never live; Content-Type is not enforced.
   - `shadowJar`'s `doLast` is configuration-cache-incompatible and its
     appended entry is not reproducible; the plugin build needs the sibling
-    `../gatling-agent` (a full checkout); a slow agent upload (5-minute
-    timeout) holds the tailer and `finish()` for that long per run; the
-    fallback's 512 MiB pre-check counts `simulation.log` alone.
+    `../gatling-agent` (a full checkout); the fallback's 512 MiB pre-check
+    counts `simulation.log` alone.
   - CI resolving the included build on a runner was argued from the checkout
     layout, not yet observed — the PR's own `plugin` job is the arbiter.
 

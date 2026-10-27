@@ -307,10 +307,13 @@ given a second one.
 **One JVM per simulation, one file per JVM.** Gatling's Gradle plugin starts a
 fresh JVM for each simulation, and the `{jvm}` token makes each write its own
 `agent-<pid>-<millis>.ndjson`. Before closing a run the plugin chooses its file
-by the header's `startedAt`: the latest one at or after the task started and
-no later than the run's results directory was last written, never a file
-another run of the same `gatlingRun` already took. There is no slack on that
-upper bound, and it matters: on a real two-simulation run the first
+by the header's `startedAt`: the latest one at or after the task started,
+after the previous simulation's results directory was last written, and no
+later than this run's results directory was last written — never a file
+another run of the same `gatlingRun` already took. The lower bound is what
+keeps a run whose own JVM left no file from taking an earlier simulation's
+file that nothing claimed; that run carries no agent data instead. There is
+no slack on the upper bound, and it matters: on a real two-simulation run the first
 simulation's results directory was last written 160 ms before the second
 JVM's agent started. The chosen file is sent with `PUT /v1/runs/{id}/agent`
 and only then is the run closed; a refused or failed upload is one warning and
@@ -319,10 +322,17 @@ bundle carries the run's file as `run-1/perfportal-agent.ndjson`.
 
 **What it does not cover.** A simulation Gatling runs in the Gradle process
 itself (`runInSameProcess`) starts no JVM, so the agent records nothing for
-it. A simulation JVM killed mid-run leaves its run to the server's sweeper,
-which finalizes it `incomplete` without agent figures. A results directory on
-storage whose clock is not the build machine's (an NFS mount) can be matched
-to no file.
+it. A simulation JVM killed mid-run is NOT left to the server's sweeper:
+Gatling's Gradle plugin ignores each JVM's exit code and reports "Some of the
+simulations crashed:" only after every simulation has run, so `gatlingRun`
+finishes, this plugin's finalizer uploads whatever agent file the killed JVM
+left (cut short where it died) and closes the run itself, over a log that also
+ends where the JVM died — the close has no way to say its producer died. A
+build directory whose path contains `=` or `,` cannot be passed in a
+`-javaagent` argument (the JVM ends the jar path at the first `=`, the agent
+splits its options on `,`): the plugin warns once and runs without the agent.
+A results directory on storage whose clock is not the build machine's (an NFS
+mount) can be matched to no file.
 
 **Local development** needs the whole repository: the plugin's build includes
 `../gatling-agent` and packages its jar, so `clients/gatling-gradle` alone no
@@ -344,13 +354,14 @@ above. Turning this flag on without also adding `ingest` to the token means
 the fallback fires, 403s, and the simulation is lost exactly as before,
 just with an extra failed HTTP call and a warning in the log.
 
-**Measured 2026-10-27: the fallback cannot reach the API directly.** Unlike
-`LiveClient`, `BundleUploader`'s `HttpClient` does not pin HTTP/1.1 (see "Two
-things the real end-to-end run found"), so its POST carries the h2c upgrade
-headers, and the API answers that 404 with an empty body — the fallback logs
-`upload failed: HTTP 404` and the run is lost. Through a reverse proxy that
-drops those hop-by-hop headers the same upload is accepted (202, the run
-complete with its agent figures). Pinning HTTP/1.1 there is the fix.
+**The fallback pins HTTP/1.1 too, as `LiveClient` does.** Until plugin
+0.3.0 `BundleUploader`'s `HttpClient` did not, so its POST carried the h2c
+upgrade headers (`Upgrade: h2c`, `HTTP2-Settings`) and the API, reached
+directly, answered that 404 with an empty body — measured 2026-10-27: the
+fallback logged `upload failed: HTTP 404` and the run was lost, while through a
+reverse proxy that dropped those hop-by-hop headers the same upload was
+accepted (202, the run complete with its agent figures). The pin is what makes
+the fallback work against an API with no proxy in front of it.
 
 **A duplicate is possible, and that is a known, accepted trade-off, not
 silent data loss.** If a live `open()` call actually succeeds on the server

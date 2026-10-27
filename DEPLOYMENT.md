@@ -339,6 +339,10 @@ the run has closed (409) and stores at most:
 |---|---|
 | `PERFPORTAL_MAX_AGENT_LOG_BYTES` | The most the API stores of one run's agent file from the plugin, in bytes. Empty, or anything that is not a whole number larger than 1024, means 268435456 (256 MiB) — the runner's own default. A bigger file is refused (413 `AGENT_LOG_TOO_LARGE`) and the run keeps everything else |
 
+The API reads each upload into its own temporary directory before storing it,
+so every concurrent agent PUT can hold up to that many bytes on the API host's
+temp filesystem while it is in flight — size it for the builds you run at once.
+
 The plugin is switched off per build with `vantrix { agent = false }` or
 `VANTRIX_AGENT=false` (its README says what it collects and how a file is
 matched to its run). Upgrade the API before builds move to plugin 0.3.0: an
