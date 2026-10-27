@@ -1,26 +1,15 @@
 import '@testing-library/jest-dom/vitest';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter, Outlet, Route, Routes, useLocation } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AgentConnectionsResponseSchema, AgentSummaryResponseSchema } from '@perfportal/contracts';
-import type {
-  AgentConnectionsResponse,
-  AgentSummaryResponse,
-  RunResponse,
-  TelemetryResponse,
-  Window,
-} from '@perfportal/contracts';
-import { useProjectAccess } from '../src/access/useAccess';
+import { AgentConnectionsResponseSchema } from '@perfportal/contracts';
+import type { AgentConnectionsResponse, AgentSummaryResponse, Window } from '@perfportal/contracts';
 import { agentConnectionsPath } from '../src/api/metricPaths';
-import { runQueryKey } from '../src/api/run';
 import { DEFAULT_AGENT_ROWS } from '../src/charts/transforms/agentDurations';
 import ConnectionsSection from '../src/routes/report/ConnectionsSection';
-import type { RunWindowContext } from '../src/routes/useRunWindow';
 import useIsCompact from '../src/useIsCompact';
 import fixture from './fixtures/agent-run.json';
-import { seedAccess } from './support/access';
+import { AGENT_RUN, AGENT_SUMMARY, locationParams, renderAgentSection, waitForDrawn } from './support/agentSection';
 
 /**
  * The Report's Connections section, drawn from the run's agent file (GE report
@@ -35,10 +24,9 @@ import { seedAccess } from './support/access';
 vi.mock('../src/useIsCompact.js', () => ({ default: vi.fn(() => false) }));
 const useIsCompactMock = vi.mocked(useIsCompact);
 
-// Parsed rather than cast: the JSON's tuples read as `number[][]`, and parsing
-// also proves the captured bodies still satisfy today's contract.
-const SUMMARY = AgentSummaryResponseSchema.parse(fixture.summary);
-const RUN = SUMMARY.runId;
+const SUMMARY = AGENT_SUMMARY;
+const RUN = AGENT_RUN;
+// Parsed rather than cast: the JSON's tuples read as `number[][]`.
 const ALL = AgentConnectionsResponseSchema.parse(fixture.connections);
 const BY_REMOTE: Record<string, AgentConnectionsResponse> = Object.fromEntries(
   Object.entries(fixture.connectionsByRemote).map(([remote, body]) => [remote, AgentConnectionsResponseSchema.parse(body)]),
@@ -58,128 +46,35 @@ const TITLES = [
   'Bandwidth Usage per second',
 ];
 
-const COMPLETE_RUN: RunResponse = {
-  id: RUN,
-  project: { id: '11111111-1111-4111-8111-111111111111', slug: 'checkout', name: 'Checkout' },
-  status: 'complete',
-  verdict: 'not_evaluated',
-  tool: 'gatling',
-  toolVersion: '3.15.1',
-  simulation: 'example.ParitySimulation',
-  description: null,
-  durationMs: 63161,
-  startedAt: '2026-08-14T10:43:49.546Z',
-  toolStartedAt: '2026-08-07T05:30:02.171Z',
-  assertions: [],
-};
-
-const NO_TELEMETRY: TelemetryResponse = { runId: RUN, available: false, bucketWidthMs: 1000, window: null, hosts: [] };
-
-/** `RunShell`'s outlet as the section meets it; `window` is the brush's selection. */
-function ShellStandIn({ window }: { readonly window: Window | null }) {
-  const projectAccess = useProjectAccess(COMPLETE_RUN.project.slug);
-  return (
-    <Outlet
-      context={
-        {
-          window, durationMs: null, liveDurationMs: null, warmupMs: null, live: null, projectAccess,
-        } satisfies RunWindowContext
-      }
-    />
-  );
-}
-
-function LocationProbe() {
-  return <output data-testid="location">{useLocation().search}</output>;
-}
-
-const RUNNING = { state: 'processing' as const, run: { id: RUN, status: 'running' as const, statusUrl: `/v1/runs/${RUN}` } };
-const READY = { state: 'ready' as const, run: COMPLETE_RUN };
-
 function renderSection(
   options: {
     readonly summary?: AgentSummaryResponse;
     /** The summary read never answers: the section's state before it does. */
     readonly holdSummary?: boolean;
+    readonly failSummary?: boolean;
     readonly connections?: AgentConnectionsResponse;
     readonly search?: string;
     readonly terminal?: boolean;
     readonly window?: Window | null;
   } = {},
 ) {
-  const summary = options.summary ?? SUMMARY;
-  const requested: string[] = [];
-  // What `/v1/runs/:id` answers, MUTABLE: the run query has no staleTime, so
-  // mounting refetches it, and the transition case changes the answer.
-  let current: typeof RUNNING | typeof READY = options.terminal === false ? RUNNING : READY;
-  vi.stubGlobal('fetch', async (input: RequestInfo) => {
-    const url = String(input);
-    requested.push(url);
-    const path = url.split('?')[0]!;
-    const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
-    if (path === `/v1/runs/${RUN}`) {
-      await Promise.resolve();
-      return json(current.run, current.state === 'ready' ? 200 : 202);
-    }
-    if (path === `/v1/runs/${RUN}/agent`) {
-      return options.holdSummary === true ? new Promise<Response>(() => {}) : json(summary);
-    }
-    if (path === `/v1/runs/${RUN}/agent/connections`) {
-      if (options.connections !== undefined) return json(options.connections);
-      const remote = new URL(url, 'http://x').searchParams.get('remote');
-      return json(remote === null ? ALL : BY_REMOTE[remote]);
-    }
-    if (path === `/v1/runs/${RUN}/telemetry`) return json(NO_TELEMETRY);
-    if (url === '/auth/get-session') return new Promise<Response>(() => {});
-    return json({}, 500);
+  return renderAgentSection(<ConnectionsSection runId={RUN} />, {
+    ...options,
+    figures: (path, params) => {
+      if (!path.endsWith('/agent/connections')) return undefined;
+      if (options.connections !== undefined) return options.connections;
+      const remote = params.get('remote');
+      return remote === null ? ALL : BY_REMOTE[remote];
+    },
   });
-
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  seedAccess(client, { isAdmin: true });
-  client.setQueryData(runQueryKey(RUN), current);
-  render(
-    <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={[`/runs/${RUN}/report${options.search ?? ''}`]}>
-        <Routes>
-          <Route path="/runs/:runId" element={<ShellStandIn window={options.window ?? null} />}>
-            <Route
-              path="report"
-              element={
-                <>
-                  <ConnectionsSection runId={RUN} />
-                  <LocationProbe />
-                </>
-              }
-            />
-          </Route>
-        </Routes>
-      </MemoryRouter>
-    </QueryClientProvider>,
-  );
-  /** The run finishes, on the same client and the same mounted section. */
-  const finish = async () => {
-    current = READY;
-    await act(async () => {
-      client.setQueryData(runQueryKey(RUN), READY);
-    });
-  };
-  return { requested, finish };
 }
 
 /**
- * Waits for the nine charts to have DRAWN. Counting figures is not enough: a
- * pending or failed read renders nine `Undrawn` figures under the same ids and
- * titles. Only a drawn chart holds a plotting surface (`data-chart-canvas`) —
- * and every one of the nine does on the fixture's every-remote read, which
- * carries connects and handshakes of the default outcome.
+ * Waits for the nine charts to have DRAWN — every one of them does on the
+ * fixture's every-remote read, which carries connects and handshakes of the
+ * default outcome. See `waitForDrawn` for why counting figures is not enough.
  */
-async function waitForCharts() {
-  await waitFor(() => {
-    const figures = screen.getAllByRole('figure');
-    expect(figures).toHaveLength(TITLES.length);
-    for (const f of figures) expect(f.querySelector('[data-chart-canvas]'), f.getAttribute('data-testid') ?? '').not.toBeNull();
-  });
-}
+const waitForCharts = () => waitForDrawn(TITLES.length);
 
 const connectionsRequests = (requested: readonly string[]) =>
   requested.filter((u) => u.includes('/agent/connections'));
@@ -232,7 +127,7 @@ describe('ConnectionsSection', () => {
     const second = REMOTES[1]!;
     await user.selectOptions(screen.getByLabelText('Remote'), second);
     await waitFor(() => {
-      const p = new URLSearchParams(screen.getByTestId('location').textContent ?? '');
+      const p = locationParams();
       expect(p.get('remote')).toBe(second);
       expect(p.get('from')).toBe('1000');
     });
@@ -408,5 +303,14 @@ describe('ConnectionsSection', () => {
     await waitFor(() =>
       expect(within(screen.getByTestId('chart-agent-tcp-states')).getByRole('status')).toHaveTextContent(reason),
     );
+  });
+
+  it('says once that the summary could not be read, and asks for no figures', async () => {
+    const { requested } = renderSection({ failSummary: true });
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent("This run's agent figures could not be loaded");
+    expect(alert).toHaveTextContent('The agent summary could not be read.');
+    expect(screen.queryAllByRole('figure')).toHaveLength(0);
+    expect(connectionsRequests(requested)).toEqual([]);
   });
 });

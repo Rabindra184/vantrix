@@ -1,21 +1,17 @@
-import { useId, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import type { AgentConnectionsResponse, AgentUnavailableReason } from '@perfportal/contracts';
-import { agentConnectionsQuery, agentSummaryQuery } from '../../api/agent';
+import type { AgentConnectionsResponse } from '@perfportal/contracts';
+import { agentConnectionsQuery } from '../../api/agent';
 import AgentDurationCharts from '../../charts/AgentDurationCharts';
 import Chart from '../../charts/Chart';
 import { RUN_TIME_GROUP } from '../../charts/crosshair';
 import type { TelemetryChartId } from '../../charts/TelemetryCharts';
 import { toBandwidth, toConnectionRate, toTcpStates } from '../../charts/transforms/agentRates';
 import type { TimeDomainMs } from '../../charts/types';
-import useIsCompact from '../../useIsCompact';
-import DesktopOnly from '../DesktopOnly';
-import LiveNotice from '../LiveNotice';
-import { ErrorState, LoadingState } from '../../components/States';
-import { Payload, explain, type Slot } from '../payload';
+import { Payload, type Slot } from '../payload';
 import RunTelemetry from '../RunTelemetry';
-import { useRunTerminal, useTimeDomainFromShell, useWindowFromShell } from '../useRunWindow';
-import AgentUnavailable from './AgentUnavailable';
+import AgentSectionGate, { REPORT_GRID, useAgentSection } from './AgentSectionGate';
+import ReportFilterControl from './ReportFilterControl';
 import useReportFilter from './useReportFilter';
 
 /* The load-generator telemetry this section falls back to for a run with no
@@ -51,174 +47,65 @@ const SLOTS: readonly Slot[] = [
   { id: 'agent-bandwidth', title: 'Bandwidth Usage per second' },
 ];
 
-// The run page's chart grid — see `RunReport`'s `GRID`.
-const GRID = 'grid grid-cols-1 gap-6 2xl:grid-cols-2';
-
 /**
  * The Report's Connections section, from the run's agent file — GE's nine
  * charts, filtered by remote (`?remote=`, `useReportFilter`).
  *
- * ═══ WHAT EACH STATE SAYS, IN ORDER ═══
- *
- * 1. NOT TERMINAL: a withheld notice per chart, and NO request. Every agent
- *    read answers 200 or an error, never a run body at 202, and a live run's
- *    figures do not exist yet — `RunTelemetry`'s `enabled: … && terminal` rule.
- *    Ahead of the phone gate, as there: nine sentences are not nine charts.
- * 2. THE SUMMARY decides the rest (one loading state until it answers), so it is read first and the figure read is
- *    held until it answers — which is what lets `useReportFilter` check
- *    `?remote=` against `summary.remotes` before any request carries it.
- *    It is read on a phone too: one small body, and without it a phone could
- *    not tell "no agent file" (telemetry's own phone gate takes over) from a
- *    collected run (this section's gate), and would gate twice.
- * 3. NO AGENT FILE (`not_collected`) keeps `RunTelemetry`'s two connection
- *    charts, as this section drew before (spec §7.5) — they may still exist.
- * 4. ANY OTHER UNAVAILABLE ANSWER is said, never replaced: an `unreadable`
- *    file was there, and showing telemetry instead would misstate the run.
- *    An HTTP collector that was off is read from the summary's header — the
- *    same fact the API answers `http_not_collected` from — so no figure read
- *    is made for it; the figure read's own answer is honoured too.
- * 5. A PHONE is offered the charts (§22.6) and fetches nothing until asked.
+ * What it says before it can draw — withheld while the run streams, one
+ * loading state until the summary answers, the load-generator telemetry for a
+ * run with no agent file (spec §7.5), any other unavailable answer in its own
+ * words, a phone's notice — is `AgentSectionGate`'s, shared with DNS and Load
+ * generators. Connections come from the agent's HTTP collector, so it
+ * `needsHttp`. The summary is read before the figures so that `?remote=` is
+ * checked against `summary.remotes` before any request carries it.
  */
 export default function ConnectionsSection({ runId }: { readonly runId: string }) {
-  const { terminal } = useRunTerminal(runId);
-  const window = useWindowFromShell();
-  const domainMs = useTimeDomainFromShell();
-  const compact = useIsCompact();
-  const [shown, setShown] = useState(false);
-  const remoteSelectId = useId();
-
-  // EVERY HOOK RUNS ON EVERY RENDER: the early returns below come after all of
-  // them, so a run finishing, or a phone reader pressing the button, changes
-  // no hook order. What would have been implicit in "not constructed" is said
-  // through `enabled` instead.
-  const summaryQuery = useQuery({ ...agentSummaryQuery(runId), enabled: terminal });
-  const summary = summaryQuery.data;
+  // EVERY HOOK RUNS ON EVERY RENDER, above the gate's early returns.
+  const section = useAgentSection(runId, { needsHttp: true });
+  const { summary, window, domainMs } = section;
   const [remote, setRemote] = useReportFilter('remote', summary?.remotes);
-  const collected = summary?.available === true && summary.header?.collects.http !== false;
-  const connections = useQuery({
-    ...agentConnectionsQuery(runId, remote, window),
-    enabled: terminal && collected && (!compact || shown),
-  });
-
-  if (!terminal) {
-    return (
-      <div className={GRID}>
-        {SLOTS.map((slot) => (
-          <LiveNotice key={slot.id} kind="withheld" subject={slot.title} />
-        ))}
-      </div>
-    );
-  }
-
-  // ONE neutral state, not nine titled figures: for a run with no agent file —
-  // every upload and plugin run — those nine titles would be replaced by the
-  // telemetry's two a moment later, promising charts that never come.
-  if (summary === undefined) {
-    return summaryQuery.isError ? (
-      <ErrorState title="This run's agent figures could not be loaded" detail={explain(summaryQuery.error, 'section')} />
-    ) : (
-      <LoadingState label="Loading this run's agent figures…" />
-    );
-  }
-
-  if (!summary.available) return <Unavailable reason={summary.reason} detail={summary.detail} />;
-  if (summary.header?.collects.http === false) {
-    return <Unavailable reason="http_not_collected" detail={summary.header.reasons.http ?? null} />;
-  }
-
-  if (compact && !shown) {
-    return (
-      <DesktopOnly compact what="Nine connection charts of this run" action={ACTION} onShow={() => setShown(true)}>
-        {() => null}
-      </DesktopOnly>
-    );
-  }
-
-  if (connections.data !== undefined && !connections.data.available) {
-    return <Unavailable reason={connections.data.reason} detail={connections.data.detail} />;
-  }
-
-  // The agent's own reason its machine collector was off, for the TCP states chart.
-  const notMeasuredReason = summary.header?.collects.machine === false ? summary.header.reasons.machine : undefined;
+  const connections = useQuery({ ...agentConnectionsQuery(runId, remote, window), enabled: section.fetchFigures });
 
   return (
-    <div className="flex flex-col gap-4">
-      <RemoteControl id={remoteSelectId} remotes={summary.remotes} value={remote} onChange={setRemote} />
-      <div className={GRID}>
-        <Payload query={connections} slots={SLOTS}>
-          {(data) => (
-            <ConnectionCharts
-              data={data}
-              domainMs={domainMs}
-              windowSelected={window !== null}
-              notMeasuredReason={notMeasuredReason}
+    <AgentSectionGate
+      section={section}
+      slots={SLOTS}
+      what="Nine connection charts of this run"
+      action={ACTION}
+      subject={SUBJECT}
+      noAgentFile={<RunTelemetry only={CONNECTION_CHARTS} action={ACTION} />}
+      figures={connections.data}
+    >
+      {(collected) => {
+        // The agent's own reason its machine collector was off, for the TCP states chart.
+        const notMeasuredReason =
+          collected.header?.collects.machine === false ? collected.header.reasons.machine : undefined;
+        return (
+          <div className="flex flex-col gap-4">
+            <ReportFilterControl
+              label="Remote"
+              allLabel="All remotes"
+              values={collected.remotes}
+              value={remote}
+              onChange={setRemote}
             />
-          )}
-        </Payload>
-      </div>
-    </div>
+            <div className={REPORT_GRID}>
+              <Payload query={connections} slots={SLOTS}>
+                {(data) => (
+                  <ConnectionCharts
+                    data={data}
+                    domainMs={domainMs}
+                    windowSelected={window !== null}
+                    notMeasuredReason={notMeasuredReason}
+                  />
+                )}
+              </Payload>
+            </div>
+          </div>
+        );
+      }}
+    </AgentSectionGate>
   );
-}
-
-/**
- * The remote filter, sized to what the run has.
- *
- *   none        no control: there is nothing to choose and nothing to name
- *   one         a read-only field naming it — a select whose options all draw
- *               the same data is a control that does nothing (the rule the
- *               Load generators picker and `RunTelemetry`'s host picker follow)
- *   two or more the select, "All remotes" first
- */
-function RemoteControl({
-  id,
-  remotes,
-  value,
-  onChange,
-}: {
-  readonly id: string;
-  readonly remotes: readonly string[];
-  readonly value: string;
-  readonly onChange: (remote: string) => void;
-}) {
-  if (remotes.length === 0) return null;
-  if (remotes.length === 1) {
-    return (
-      <dl className="flex items-center gap-2">
-        <dt className="shrink-0 text-[0.75rem] text-muted">Remote</dt>
-        <dd className="min-w-0 break-all text-sm text-primary">{remotes[0]}</dd>
-      </dl>
-    );
-  }
-  return (
-    <div className="flex items-center gap-2">
-      <label htmlFor={id} className="shrink-0 text-[0.75rem] text-muted">
-        Remote
-      </label>
-      <select
-        id={id}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        className="min-w-0 rounded border border-default bg-surface px-2 py-1 text-sm text-primary"
-      >
-        <option value="*">All remotes</option>
-        {remotes.map((r) => (
-          <option key={r} value={r}>
-            {r}
-          </option>
-        ))}
-      </select>
-    </div>
-  );
-}
-
-/**
- * Why there are no agent figures. `not_collected` — and a null reason, which
- * the API never sends with `available: false` but the contract allows — keeps
- * the load-generator telemetry; anything else is said in its own words.
- */
-function Unavailable({ reason, detail }: { readonly reason: AgentUnavailableReason | null; readonly detail: string | null }) {
-  if (reason === null || reason === 'not_collected') return <RunTelemetry only={CONNECTION_CHARTS} action={ACTION} />;
-  return <AgentUnavailable reason={reason} detail={detail} subject={SUBJECT} />;
 }
 
 function ConnectionCharts({
