@@ -297,6 +297,39 @@ the agent write whose savepoint still rolls back (a deadlock, a lock timeout)
 is recorded `write_failed` rather than retried; no real KO connect or lookup,
 and no machine figure (macOS), was read end to end.
 
+The audit-zod-body-parser-multer-undici branch
+(`fix/audit-zod-body-parser-multer-undici`) added no test and moves no floor.
+Its diff is four `pnpm.overrides` lines, one `pnpm.auditConfig.ignoreGhsas`
+entry and the lockfile: body-parser 2.3.0 to 2.4.0 (GHSA-27r3-jxmh-p828),
+multer 2.4.0 to 2.5.0 (GHSA-q7qp-rjg7-q26m), undici 8.11.2 to 8.12.3
+(GHSA-xjj6-f33q-929c, -4qv8-2p9j-2685, -f72v-6w45-q472), and better-auth's
+transitive zod 4.4.3 to 4.6.7 (GHSA-mrhx-c7xc-m3w5), each inside its major,
+nothing else moving. CI's audit gate on GE parity PR 2 (#283) is what found
+them, published after `main`'s last green run.
+
+**THE FIRST `ignoreGhsas` IN THIS REPO, AND WHY THIS ONE IS DIFFERENT.** This
+file's rule is never an exception while a patched release exists inside the
+range in use. GHSA-mrhx-c7xc-m3w5 covers every zod below 4.6.6, so it covers
+this repo's OWN zod 3.25.76 (`contracts`, `api`, `web`, 51 import sites), and
+3.25.76 is the last 3.x: no patched release exists in the major in use. The
+only fix is a zod 4 migration, which also likely replaces the OpenAPI
+generator's `zod-to-json-schema`, and that is its own branch. The user chose
+the exception on 2026-10-24.
+
+**THE EXPOSURE WAS MEASURED, NOT ASSUMED.** zod 3's classic `ZodArray` DOES
+accumulate one issue per failing element, the advisory's mechanism:
+`z.array(z.string())` over 100,000 numbers produced 100,000 issues and about
+35 MB of heap. What bounds it here is input size: JSON bodies go through
+Nest's default 100 KB parser (about 50,000 elements at most, about 17 MB),
+and the largest multipart field busboy accepts is 1 MB (the runner's
+`systemProperties` record, roughly 170,000 issues and 60 MB, behind a
+session or a runner token). Neither approaches a crash.
+
+**THE EXCEPTION IS GLOBAL, SO THE `zod@4` OVERRIDE STAYS.** `ignoreGhsas`
+silences the advisory for every copy, so a future transitive zod 4 below
+4.6.6 would pass the gate silently; the override is what keeps those
+patched. Delete the exception in the branch that moves this repo to zod 4.
+
 The GE report parity agent-and-runner branch (`feat/ge-report-parity`, PR 1
 of `docs/superpowers/specs/2026-10-22-ge-report-parity-design.md`, plan
 `docs/superpowers/plans/2026-10-23-ge-report-parity-pr1-agent-and-runner.md`).
