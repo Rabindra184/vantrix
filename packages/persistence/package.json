@@ -22,7 +22,7 @@
     "@perfportal/plugin-gatling": "workspace:*",
     "@perfportal/statistics": "workspace:*",
     "@prisma/client": "^6.19.3",
-    "better-auth": "1.6.26",
+    "better-auth": "1.7.14",
     "pg": "^8.13.0"
   },
   "devDependencies": {
