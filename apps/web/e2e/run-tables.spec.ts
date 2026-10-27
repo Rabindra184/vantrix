@@ -274,6 +274,7 @@ test('a completed run shows every request and group in one table', async ({ page
     'Groups',
     'Virtual users',
     'Connections',
+    'DNS',
     'Load generators',
   ]);
   // The table's own heading is one level down, which is what keeps it out of

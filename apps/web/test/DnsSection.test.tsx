@@ -185,7 +185,7 @@ describe('DnsSection', () => {
 
   it('shows one neutral loading state until the summary answers, not four charts', async () => {
     renderSection({ holdSummary: true });
-    expect(await screen.findByText("Loading this run's agent figures…")).toBeInTheDocument();
+    expect(await screen.findByText("Loading this run's DNS resolution figures…")).toBeInTheDocument();
     expect(screen.queryAllByRole('figure')).toHaveLength(0);
     expect(screen.queryByText(TITLES[0]!)).toBeNull();
   });

@@ -186,7 +186,7 @@ describe('LoadGeneratorsSection', () => {
 
   it('shows one neutral loading state until the summary answers, not six charts', async () => {
     renderSection({ holdSummary: true });
-    expect(await screen.findByText("Loading this run's agent figures…")).toBeInTheDocument();
+    expect(await screen.findByText("Loading this run's load-generator figures…")).toBeInTheDocument();
     expect(screen.queryAllByRole('figure')).toHaveLength(0);
     expect(screen.queryByText('Load generator')).toBeNull();
   });

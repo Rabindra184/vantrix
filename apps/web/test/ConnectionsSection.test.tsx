@@ -236,7 +236,7 @@ describe('ConnectionsSection', () => {
 
   it('shows one neutral loading state until the summary answers, not nine charts', async () => {
     renderSection({ holdSummary: true });
-    expect(await screen.findByText("Loading this run's agent figures…")).toBeInTheDocument();
+    expect(await screen.findByText("Loading this run's connection figures…")).toBeInTheDocument();
     expect(screen.queryAllByRole('figure')).toHaveLength(0);
   });
 
@@ -308,7 +308,7 @@ describe('ConnectionsSection', () => {
   it('says once that the summary could not be read, and asks for no figures', async () => {
     const { requested } = renderSection({ failSummary: true });
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent("This run's agent figures could not be loaded");
+    expect(alert).toHaveTextContent("This run's connection figures could not be loaded");
     expect(alert).toHaveTextContent('The agent summary could not be read.');
     expect(screen.queryAllByRole('figure')).toHaveLength(0);
     expect(connectionsRequests(requested)).toEqual([]);

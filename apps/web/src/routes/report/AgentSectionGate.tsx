@@ -92,6 +92,9 @@ export function useAgentSection(runId: string, { needsHttp }: { readonly needsHt
  *    loading state — not the section's titled figures, which for a run with no
  *    agent file (every upload and plugin run) would be replaced a moment later,
  *    promising charts that never come — and one `ErrorState` if it fails.
+ *    Both name the section's `subject`: the three sections share one summary,
+ *    so open together they load and fail together, and three identical lines
+ *    on one page would not say which section each belongs to.
  * 3. NO AGENT FILE (`not_collected`, or a null reason the contract allows) is
  *    the section's `noAgentFile` when it has one — Connections and Load
  *    generators keep the load-generator telemetry, which may still exist (spec
@@ -122,7 +125,7 @@ export default function AgentSectionGate({
   readonly what: string;
   /** The phone notice's button, named after the section's charts. */
   readonly action: string;
-  /** What the section would have shown, for `AgentUnavailable` ("connection figures"). */
+  /** What the section would have shown ("connection figures"): named in its loading and failure lines, and by `AgentUnavailable`. */
   readonly subject: string;
   /** What a run with no agent file draws instead; absent, the not-collected notice. */
   readonly noAgentFile?: ReactNode;
@@ -145,9 +148,9 @@ export default function AgentSectionGate({
 
   if (summary === undefined) {
     return summaryQuery.isError ? (
-      <ErrorState title="This run's agent figures could not be loaded" detail={explain(summaryQuery.error, 'section')} />
+      <ErrorState title={`This run's ${subject} could not be loaded`} detail={explain(summaryQuery.error, 'section')} />
     ) : (
-      <LoadingState label="Loading this run's agent figures…" />
+      <LoadingState label={`Loading this run's ${subject}…`} />
     );
   }
 

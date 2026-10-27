@@ -90,7 +90,7 @@ describe('AgentSectionGate', () => {
   it('says once that the summary could not be read, with the server’s own words', async () => {
     const { requested } = renderGate({}, { failSummary: true });
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent("This run's agent figures could not be loaded");
+    expect(alert).toHaveTextContent("This run's stand-in figures could not be loaded");
     expect(alert).toHaveTextContent('The agent summary could not be read. Retry the request.');
     expect(screen.queryByText(/Drawn for/)).toBeNull();
     expect(screen.queryByText('Stand-in A')).toBeNull();
@@ -99,7 +99,7 @@ describe('AgentSectionGate', () => {
 
   it('shows one neutral loading state until the summary answers, not the section’s titles', async () => {
     renderGate({}, { holdSummary: true });
-    expect(await screen.findByText("Loading this run's agent figures…")).toBeInTheDocument();
+    expect(await screen.findByText("Loading this run's stand-in figures…")).toBeInTheDocument();
     expect(screen.queryByText('Stand-in A')).toBeNull();
     expect(screen.queryAllByTestId('live-notice-withheld')).toHaveLength(0);
   });

@@ -5,7 +5,9 @@ import { cleanup, render, screen, waitFor, within } from '@testing-library/react
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Outlet, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { AgentStatusResponseSchema, AgentSummaryResponseSchema } from '@perfportal/contracts';
 import type { RunResponse } from '@perfportal/contracts';
+import agentRun from './fixtures/agent-run.json';
 import reference from './fixtures/reference-run.json';
 import { runQueryKey } from '../src/api/run';
 import RunReport from '../src/routes/RunReport';
@@ -83,15 +85,67 @@ const TWO_HOSTS = {
   })),
 };
 
+/** The captured agent run's summary and status reads, parsed so the bodies
+ *  still satisfy today's contract. Their `runId` is the captured run's, which
+ *  nothing here reads. */
+const AGENT_SUMMARY = AgentSummaryResponseSchema.parse(agentRun.summary);
+const AGENT_STATUS = AgentStatusResponseSchema.parse(agentRun.status);
+
+/** What `/agent` answers unless a case says otherwise: no agent file — every
+ *  upload and plugin run — so Connections and Load generators keep the
+ *  load-generator telemetry, which is what most cases below are about. */
+const NO_AGENT_SUMMARY = {
+  ...AGENT_SUMMARY,
+  runId: RUN_ID,
+  available: false,
+  reason: 'not_collected' as const,
+  header: null,
+  bucketWidthMs: null,
+  remotes: [],
+  hostnames: [],
+  injector: { host: null, sharedWithPerfPortal: false },
+};
+
+/** `/agent/status` answering unavailable, in the API's own shape. */
+function statusUnavailable(reason: 'not_collected' | 'unreadable' | 'http_not_collected', detail: string | null) {
+  return { runId: RUN_ID, available: false, reason, detail, bucketWidthMs: null, window: null, codes: [], buckets: [] };
+}
+
+interface AgentBodies {
+  /** What `/agent` answers; `'hold'` never answers, `null` is a 500. */
+  readonly summary?: unknown;
+  /** What `/agent/status` answers. */
+  readonly status?: unknown;
+}
+
 /** Answers each endpoint from the captured fixture; anything else is a 404,
  *  which `Payload` renders as an undrawn slot — still a figure with its id. */
-function stubFetch(statsBody: unknown = reference.stats, telemetryBody: unknown = NO_TELEMETRY): string[] {
+function stubFetch(
+  statsBody: unknown = reference.stats,
+  telemetryBody: unknown = NO_TELEMETRY,
+  agent: AgentBodies = {},
+): string[] {
   const seen: string[] = [];
   vi.stubGlobal('fetch', (input: RequestInfo | URL) => {
     const url = String(input);
     seen.push(url);
     const path = new URL(url, 'http://x').pathname;
-    const body = path.endsWith('/users')
+    if (path.endsWith('/agent')) {
+      const summary = agent.summary === undefined ? NO_AGENT_SUMMARY : agent.summary;
+      if (summary === 'hold') return new Promise<Response>(() => {});
+      if (summary === null) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ status: 500, title: 'Internal', code: 'INTERNAL', detail: 'The agent summary could not be read.', remediation: 'Retry the request.' }),
+            { status: 500, headers: { 'content-type': 'application/problem+json' } },
+          ),
+        );
+      }
+      return Promise.resolve(new Response(JSON.stringify(summary), { status: 200, headers: { 'content-type': 'application/json' } }));
+    }
+    const body = path.endsWith('/agent/status')
+      ? (agent.status ?? statusUnavailable('not_collected', null))
+      : path.endsWith('/users')
       ? reference.users
       : path.endsWith('/series')
         ? reference.series
@@ -119,9 +173,12 @@ function renderReport({
   window = null,
   stats,
   telemetry,
+  agent,
   run,
 }: {
   url?: string;
+  /** What the agent reads answer; defaults to a run with no agent file. */
+  agent?: AgentBodies;
   /** Fields of the run's identity to override — `statsMethod` among them. */
   run?: Partial<RunResponse>;
   window?: RunWindowContext['window'];
@@ -130,7 +187,7 @@ function renderReport({
   /** What `/telemetry` answers; defaults to no agent having reported. */
   telemetry?: unknown;
 } = {}) {
-  const seen = stubFetch(stats, telemetry);
+  const seen = stubFetch(stats, telemetry, agent);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   client.setQueryData(runQueryKey(RUN_ID), { state: 'ready', run: readyRun(run) });
   render(
@@ -150,7 +207,8 @@ function renderReport({
   return seen;
 }
 
-const SECTIONS = ['Requests', 'Groups', 'Virtual users', 'Connections', 'Load generators'];
+/** GE's sections in GE's order — DNS between Connections and Load generators. */
+const SECTIONS = ['Requests', 'Groups', 'Virtual users', 'Connections', 'DNS', 'Load generators'];
 
 describe('RunReport — GE’s sections', () => {
   it('lists GE’s sections in GE’s order, with only Requests open', () => {
@@ -167,6 +225,8 @@ describe('RunReport — GE’s sections', () => {
     await screen.findByTestId('chart-requests-and-responses');
     expect(seen.some((u) => u.includes('/users'))).toBe(false);
     expect(seen.some((u) => u.includes('/telemetry'))).toBe(false);
+    // The agent sections are shut, so not even the summary they all read first.
+    expect(seen.some((u) => new URL(u, 'http://x').pathname.endsWith('/agent'))).toBe(false);
 
     await userEvent.click(screen.getByRole('button', { name: 'Virtual users' }));
     await waitFor(() => expect(seen.some((u) => u.includes('/users'))).toBe(true));
@@ -183,6 +243,7 @@ describe('RunReport — GE’s sections', () => {
       'chart-distribution',
       'chart-percentile-distribution',
       'chart-errors-over-time',
+      'chart-agent-status',
       'chart-indicators',
       'chart-request-counts',
     ]);
@@ -257,8 +318,10 @@ describe('RunReport — GE’s sections', () => {
   it('narrows every Requests query to the window', async () => {
     const seen = renderReport({ window: { fromMs: 10_000, toMs: 20_000, bucketWidthMs: 1_000 } });
     await screen.findByTestId('chart-requests-and-responses');
-    const metric = seen.filter((u) => /\/(series|stats|distribution|errors\/series)/.test(u));
-    expect(metric.length).toBeGreaterThan(3);
+    const metric = seen.filter((u) => /\/(series|stats|distribution|errors\/series|agent\/status)/.test(u));
+    // The status chart reads the agent file through the same window.
+    expect(metric.some((u) => u.includes('/agent/status'))).toBe(true);
+    expect(metric.length).toBeGreaterThan(4);
     for (const url of metric) expect(url).toMatch(/[?&]from=10000/);
   });
 
@@ -419,3 +482,99 @@ describe('RunReport — GE’s sections', () => {
     expect(seen.some((u) => u.includes(path))).toBe(false);
   });
 });
+
+/**
+ * ═══ GE'S "RESPONSES PER SECOND BY STATUS" ═══
+ *
+ * A `simulation.log` carries no HTTP status code, so this chart reads the
+ * run's agent file (`/agent/status`) and nothing else. For the three ways a
+ * run can lack one, the figure stays in its place and says which — never an
+ * empty chart, which would read as "measured, and no responses came back".
+ * The not-collected sentence is a fact about the run's FILE, not about any
+ * window, so a window cannot make it false.
+ */
+describe('RunReport — Responses per Second by Status', () => {
+  // Queried afresh every time: the drawn chart (or its sentence) REPLACES the
+  // loading figure under the same id, so a node taken before the read answers
+  // is a detached one.
+  const statusFigure = () => within(screen.getByTestId('section-requests')).getByTestId('chart-agent-status');
+
+  it('draws one series per status code for a run with an agent file', async () => {
+    renderReport({ agent: { summary: AGENT_SUMMARY, status: AGENT_STATUS } });
+    // Drawn, not a placeholder: only a drawn chart holds a plotting surface.
+    await waitFor(() => expect(statusFigure().querySelector('[data-chart-canvas]')).not.toBeNull());
+    expect(within(statusFigure()).getByRole('heading', { name: 'Responses per Second by Status' })).toBeInTheDocument();
+    // The data table's columns are the codes the payload carries.
+    const columns = [...screen.getByTestId('chart-data-agent-status').querySelectorAll('thead th')].map((th) =>
+      th.textContent?.trim(),
+    );
+    expect(AGENT_STATUS.codes.length).toBeGreaterThan(1);
+    for (const code of AGENT_STATUS.codes) expect(columns).toContain(code);
+  });
+
+  it('says the run carries no status codes when it has no agent file', async () => {
+    renderReport();
+    await waitFor(() =>
+      expect(within(statusFigure()).getByRole('status')).toHaveTextContent(
+        'This run carries no HTTP status codes: it has no agent file.',
+      ),
+    );
+    expect(statusFigure().querySelector('[data-chart-canvas]')).toBeNull();
+  });
+
+  it.each([
+    ['unreadable', 'checksum mismatch'],
+    ['http_not_collected', 'disabled by -Dperfportal.agent.http=false'],
+  ] as const)('says why for %s, in the stored reason’s own words, never as a missing file', async (reason, detail) => {
+    renderReport({ agent: { status: statusUnavailable(reason, detail) } });
+    await waitFor(() => expect(within(statusFigure()).getByRole('status')).toHaveTextContent(detail));
+    expect(statusFigure().textContent).not.toMatch(/no agent file/);
+  });
+});
+
+/**
+ * ═══ THREE AGENT SECTIONS OPEN TOGETHER, AND EACH SAYS WHICH IT IS ═══
+ *
+ * Connections, DNS and Load generators draw through one gate, which used to
+ * print "Loading this run's agent figures…" in each — three identical lines
+ * on one page, and three identical alerts when the summary failed, so a
+ * reader could not tell which section a line belonged to. Asserted on the
+ * SET, not on three strings: any section that reuses another's line
+ * collapses it.
+ */
+describe('RunReport — the agent sections', () => {
+  const AGENT_SECTIONS = [
+    ['connections', 'Connections'],
+    ['dns', 'DNS'],
+    ['load-generators', 'Load generators'],
+  ] as const;
+
+  async function openAll() {
+    for (const [, title] of AGENT_SECTIONS) await userEvent.click(screen.getByRole('button', { name: title }));
+  }
+
+  it('never prints the same loading line twice', async () => {
+    renderReport({ agent: { summary: 'hold' } });
+    await openAll();
+    const lines = await Promise.all(
+      AGENT_SECTIONS.map(async ([id]) => (await within(screen.getByTestId(`section-${id}`)).findByRole('status')).textContent),
+    );
+    expect(lines).toHaveLength(3);
+    expect(new Set(lines).size).toBe(3);
+  });
+
+  it('never prints the same failure twice', async () => {
+    renderReport({ agent: { summary: null } });
+    await openAll();
+    const alerts = await Promise.all(
+      AGENT_SECTIONS.map(async ([id]) => (await within(screen.getByTestId(`section-${id}`)).findByRole('alert')).textContent),
+    );
+    expect(new Set(alerts).size).toBe(3);
+  });
+
+  it('mounts DNS under its own id, and opens it from a URL fragment', () => {
+    renderReport({ url: `/runs/${RUN_ID}/report#dns` });
+    expect(within(screen.getByTestId('section-dns')).getByRole('button', { name: 'DNS' })).toHaveAttribute('aria-expanded', 'true');
+  });
+});
+

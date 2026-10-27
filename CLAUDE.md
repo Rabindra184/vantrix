@@ -5054,8 +5054,11 @@ with its replacement count asserted:
   - DNS, GC, TCP-connect and TLS-handshake charts are OMITTED, never drawn
     empty: nothing here collects them. **[Corrected later: the on-prem
     runner's Gatling agent collects all four since GE report parity PR 1, and
-    the API serves them under `/v1/runs/:id/agent/*` since PR 2. The charts
-    are still not drawn; they are PR 3's.]**
+    the API serves them under `/v1/runs/:id/agent/*` since PR 2, and PR 3
+    (`feat/ge-report-sections`) draws them: the Report's Connections (TCP
+    connect and TLS handshake), DNS (a section of its own, between Connections
+    and Load generators) and Load generators (GC) sections, plus Requests'
+    "Responses per Second by Status".]**
   - "Back to this run" on a request or group page lands on the Summary. The
     URL keeps `from`/`to` and the Report tab restores the window, so the
     window travels as the spec says; a reader who drilled down from a

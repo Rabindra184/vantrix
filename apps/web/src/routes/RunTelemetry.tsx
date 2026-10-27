@@ -188,8 +188,8 @@ export default function RunTelemetry({
         // `run-telemetry.spec.ts`, which is the one sentence distinguishing
         // "never measured" from "measured and found idle". Only THIS branch
         // changes.
-        title="Load generator telemetry is not available yet."
-        body="Load generator telemetry appears once the run finishes — it is placed on the run's own elapsed axis, which needs the tool's start time from the parsed report."
+        title="Load-generator telemetry is not available yet."
+        body="Load-generator telemetry appears once the run finishes — it is placed on the run's own elapsed axis, which needs the tool's start time from the parsed report."
       />
     );
   }
@@ -266,7 +266,8 @@ export default function RunTelemetry({
               body={
                 'Telemetry arrives only when the load-generator agent runs alongside the test, ' +
                 'posting with a token that carries the Generator telemetry permission. Nothing ' +
-                'reported for this run — the agent ships in this repository under agent/.'
+                'reported for this run — the agent ships in this repository under agent/. The ' +
+                "on-prem runner's Gatling agent records these figures too, for the runs it starts."
               }
               action={
                 projectSlug === undefined || !projectAccess.can('tokens:manage') ? undefined : (

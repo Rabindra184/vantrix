@@ -1,15 +1,18 @@
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Outlet, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { AgentStatusResponseSchema } from '@perfportal/contracts';
 import type {
   LiveDelta,
   RunProcessing,
+  RunResponse,
   SeriesResponse,
   UsersResponse,
 } from '@perfportal/contracts';
+import agentRun from './fixtures/agent-run.json';
 import { runQueryKey } from '../src/api/run';
 import { seriesQuery, usersQuery } from '../src/api/metrics';
 import type { LiveRunState } from '../src/api/live';
@@ -127,7 +130,7 @@ function renderCharts({
 }
 
 describe('RunReport — live', () => {
-  it('draws the live figures and states the five that are withheld', async () => {
+  it('draws the live figures and states the six that are withheld', async () => {
     renderCharts({ live: liveWith({ count: 1200 }) });
 
     // Requests opens first: the two charts a live run has a source for. Each
@@ -139,14 +142,17 @@ describe('RunReport — live', () => {
       'chart-percentiles',
     ]);
 
-    // The other five Requests figures are STATED, never left as a gap — and
-    // Errors per second is among them now: it lives in this section.
+    // The other six Requests figures are STATED, never left as a gap — and
+    // Errors per second is among them now: it lives in this section. So is
+    // GE's status chart, which reads the agent file a live run does not have
+    // yet.
     const withheld = within(requests).getAllByTestId('live-notice-withheld').map((n) => n.textContent ?? '');
-    expect(withheld).toHaveLength(5);
+    expect(withheld).toHaveLength(6);
     for (const subject of [
       'Response time distribution',
       'Response time percentiles distribution',
       'Errors per second',
+      'Responses per Second by Status',
       'Response time ranges',
       'Number of requests',
     ]) {
@@ -235,18 +241,114 @@ describe('RunReport — live', () => {
       </QueryClientProvider>,
     );
 
-    for (const title of ['Groups', 'Virtual users', 'Connections', 'Load generators']) {
+    for (const title of ['Groups', 'Virtual users', 'Connections', 'DNS', 'Load generators']) {
       await userEvent.click(screen.getByRole('button', { name: title }));
     }
     // Every section really is open, so the assertions below are about built
     // bodies and not about shut ones.
-    for (const title of ['Requests', 'Groups', 'Virtual users', 'Connections', 'Load generators']) {
+    for (const title of ['Requests', 'Groups', 'Virtual users', 'Connections', 'DNS', 'Load generators']) {
       expect(screen.getByRole('button', { name: title })).toHaveAttribute('aria-expanded', 'true');
     }
 
     const urls = fetchSpy.mock.calls.map((c) => String(c[0]));
-    for (const path of ['/stats', '/users', '/distribution', '/series', '/errors', '/telemetry']) {
+    // `/agent` covers the summary every agent section reads and the status chart's read.
+    for (const path of ['/stats', '/users', '/distribution', '/series', '/errors', '/telemetry', '/agent']) {
       expect(urls.some((u) => u.includes(path)), path).toBe(false);
     }
+  });
+
+  /**
+   * ═══ THE RUN FINISHES UNDER A MOUNTED REPORT ═══
+   *
+   * Mounted RUNNING, then the SAME client is told the run is ready and the
+   * SAME tree re-renders. Mounting each state separately cannot catch a hook
+   * that sits below a `!terminal` early return — "Rendered more hooks than
+   * during the previous render." is a defect of the TRANSITION, and this page
+   * has shipped it twice (CLAUDE.md). The status chart's read is the one this
+   * guards: asked for only once the run is terminal, never while it streams.
+   */
+  it('survives the run finishing: the status chart draws, and is asked for only after the flip', async () => {
+    const requested: string[] = [];
+    let flippedAt: number | null = null;
+    const processing: RunProcessing = { id: RUN_ID, status: 'running', statusUrl: `/v1/runs/${RUN_ID}` };
+    const ready: RunResponse = {
+      id: RUN_ID,
+      project: { id: '11111111-1111-4111-8111-111111111111', slug: 'checkout', name: 'Checkout' },
+      status: 'complete',
+      verdict: 'passed',
+      tool: 'gatling',
+      toolVersion: '3.15.1',
+      simulation: 'example.ParitySimulation',
+      description: null,
+      durationMs: 63161,
+      startedAt: '2026-08-14T10:43:49.546Z',
+      toolStartedAt: '2026-08-07T05:30:02.171Z',
+      assertions: [],
+      toolAssertions: [],
+    };
+    const status = AgentStatusResponseSchema.parse(agentRun.status);
+    const json = (body: unknown, code = 200) => new Response(JSON.stringify(body), { status: code });
+    vi.stubGlobal('fetch', (input: RequestInfo) => {
+      const url = String(input);
+      requested.push(url);
+      const path = new URL(url, 'http://x').pathname;
+      if (path === `/v1/runs/${RUN_ID}`) return Promise.resolve(flippedAt === null ? json(processing, 202) : json(ready));
+      if (path.endsWith('/agent/status')) return Promise.resolve(json(status));
+      return Promise.resolve(json({ status: 404, title: 'Not Found', code: 'NOT_FOUND', detail: 'stub', remediation: 'stub' }, 404));
+    });
+    const hookErrors = vi.spyOn(console, 'error');
+
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(runQueryKey(RUN_ID), { state: 'processing', run: processing });
+    client.setQueryData(usersQuery(RUN_ID, null).queryKey, EMPTY_USERS);
+    client.setQueryData(seriesQuery(RUN_ID, 'run', '', 'response_time', null).queryKey, EMPTY_SERIES);
+    const tree = (
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={[`/runs/${RUN_ID}/report`]}>
+          <Routes>
+            <Route
+              path="/runs/:runId"
+              element={
+                <Outlet
+                  context={
+                    {
+                      window: null, durationMs: null, liveDurationMs: null, warmupMs: null,
+                      live: liveWith({ count: 1200 }),
+                      projectAccess: UNKNOWN_ACCESS,
+                    } satisfies RunWindowContext
+                  }
+                />
+              }
+            >
+              <Route path="report" element={<RunReport />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+    const { rerender } = render(tree);
+    const requests = screen.getByTestId('section-requests');
+    expect(within(requests).getByText('Responses per Second by Status')).toBeInTheDocument();
+    expect(within(requests).queryByTestId('chart-agent-status')).toBeNull();
+
+    // The run query refetches on mount; let that answer land first, or it
+    // would overwrite the flip below with the running body it was asked for.
+    await waitFor(() => expect(client.isFetching()).toBe(0));
+    flippedAt = requested.length;
+    await act(async () => {
+      client.setQueryData(runQueryKey(RUN_ID), { state: 'ready', run: ready });
+    });
+    rerender(tree);
+
+    // Queried inside the wait: the drawn chart REPLACES its loading figure.
+    await waitFor(() =>
+      expect(within(requests).getByTestId('chart-agent-status').querySelector('[data-chart-canvas]')).not.toBeNull(),
+    );
+    const asked = requested.findIndex((u) => u.includes('/agent/status'));
+    expect(asked, 'the status chart was asked for').toBeGreaterThanOrEqual(0);
+    expect(asked, 'and only after the run finished').toBeGreaterThanOrEqual(flippedAt);
+    const hookOrder = hookErrors.mock.calls.filter((call) => /hooks/i.test(String(call[0])));
+    expect(hookOrder).toEqual([]);
+    hookErrors.mockRestore();
   });
 });

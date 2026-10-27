@@ -13,6 +13,7 @@ import PercentileDistributionChart from '../charts/PercentileDistributionChart';
 import PercentilesChart from '../charts/PercentilesChart';
 import { RequestsAndResponsesChart } from '../charts/RatesChart';
 import RequestCountChart from '../charts/RequestCountChart';
+import ResponsesByStatusChart, { RESPONSES_BY_STATUS } from '../charts/ResponsesByStatusChart';
 import { ConcurrentUsersChart, UserEndRateChart, UserStartRateChart } from '../charts/UsersChart';
 import StatisticsTable, { STATISTICS_SKELETON_COLUMNS } from '../tables/StatisticsTable';
 import useIsCompact from '../useIsCompact';
@@ -22,10 +23,10 @@ import LiveNotice from './LiveNotice';
 import { Payload, TableSection, explain, type Slot } from './payload';
 import RunGlossary from './RunGlossary';
 import { isExact } from './statsMethod';
-import RunTelemetry from './RunTelemetry';
-import { CONNECTION_CHARTS } from './report/ConnectionsSection';
+import ConnectionsSection from './report/ConnectionsSection';
+import DnsSection from './report/DnsSection';
 import { REPORT_GRID } from './report/grid';
-import { LOAD_GENERATOR_CHARTS } from './report/LoadGeneratorsSection';
+import LoadGeneratorsSection from './report/LoadGeneratorsSection';
 import { PERCENTILES, REQUESTS_AND_RESPONSES } from './runSlots';
 import {
   useLiveFromShell,
@@ -38,9 +39,11 @@ import WaitingPanel from './WaitingPanel';
 
 /* The Requests charts, in GE's measured order (Requests and Responses per
    Second, Response Time Percentiles, Response Time Distribution, Response
-   Time Percentiles Distribution, Errors per Second), then this product's two
-   (Gatling's own open-source report has both). GE's "Responses per Second by
-   Status" is not drawn: a `simulation.log` carries no HTTP status code. The
+   Time Percentiles Distribution, Errors per Second, Responses per Second by
+   Status), then this product's two (Gatling's own open-source report has
+   both). The status chart is the one with another source: a `simulation.log`
+   carries no HTTP status code, so it reads the run's agent file, and a run
+   without one keeps the figure saying so (`ResponsesByStatusChart`). The
    first two slots are imported from `runSlots.ts`: the Summary draws those same
    two charts and the two pages share one spelling of their titles. */
 const DISTRIBUTION: Slot = { id: 'distribution', title: 'Response time distribution' };
@@ -57,15 +60,20 @@ const CONCURRENT_USERS: Slot = { id: 'concurrent-users', title: 'Concurrent user
  * order, under the time window. This page draws no window control of its own;
  * `RunShell` draws the one brush above it — on this page and no other, since
  * this is the only run page that applies a window — and this page reads the
- * window it sets. DNS is left out for now: the on-prem runner's Gatling agent
- * records DNS lookups and the API serves them (`/v1/runs/:id/agent/dns`, GE
- * report parity PR 2), but this page draws no chart for them yet — PR 3 does.
- * Until then a section here could only be empty, a false claim about the run.
+ * window it sets.
+ *
+ * CONNECTIONS, DNS AND LOAD GENERATORS DRAW THE RUN'S AGENT FILE — the
+ * on-prem runner's Gatling agent records them and the API serves them under
+ * `/v1/runs/:id/agent/*` (GE report parity PRs 1 and 2). A run with no agent
+ * file keeps the load-generator telemetry in Connections and Load generators
+ * (spec §7.5); DNS, which nothing else records, says the run has none. Each
+ * section's states before drawing are one gate's (`AgentSectionGate`), so the
+ * three cannot drift into saying them three ways.
  *
  * EACH SECTION BODY IS ITS OWN COMPONENT, because `CollapsibleSection` builds
  * its children only while open: the hooks a body runs — and so the queries it
  * fires — exist only while its section is. A shut Virtual users section asks
- * for no `/users`, and a shut Connections section for no `/telemetry`.
+ * for no `/users`, and a shut Connections section for no `/agent`.
  *
  * Reads the window from the shell, as the tabs it replaces did, so the shell's
  * own fetches and these share their cache keys.
@@ -97,10 +105,13 @@ export default function RunReport() {
         {() => <VirtualUsersSection runId={runId} />}
       </CollapsibleSection>
       <CollapsibleSection id="connections" title="Connections">
-        {() => <RunTelemetry only={CONNECTION_CHARTS} action="Open the connection charts" />}
+        {() => <ConnectionsSection runId={runId} />}
+      </CollapsibleSection>
+      <CollapsibleSection id="dns" title="DNS">
+        {() => <DnsSection runId={runId} />}
       </CollapsibleSection>
       <CollapsibleSection id="load-generators" title="Load generators">
-        {() => <RunTelemetry only={LOAD_GENERATOR_CHARTS} action="Open the load-generator charts" />}
+        {() => <LoadGeneratorsSection runId={runId} />}
       </CollapsibleSection>
     </div>
   );
@@ -161,8 +172,9 @@ function RequestsCharts({ runId }: { readonly runId: string }) {
   const compact = useIsCompact();
   const [shown, setShown] = useState(false);
   // `enabled` carries the phone gate as well as the render below: the point is
-  // not to draw less on a phone but to fetch four payloads and build seven
-  // ECharts instances for a screen that cannot usefully show them (§22.6).
+  // not to draw less on a phone but to fetch five payloads and build eight
+  // ECharts instances for a screen that cannot usefully show them (§22.6). The
+  // status chart fetches its own, and is mounted only behind both gates.
   const on = (!compact || shown) && terminal;
   const series = useQuery({ ...seriesQuery(runId, 'run', '', 'response_time', window), enabled: on });
   const stats = useQuery({ ...statsQuery(runId, window), enabled: on });
@@ -173,7 +185,7 @@ function RequestsCharts({ runId }: { readonly runId: string }) {
     return (
       <DesktopOnly
         compact
-        what="Seven charts of this run"
+        what="Eight charts of this run"
         action="Open the request charts"
         onShow={() => setShown(true)}
       >
@@ -184,7 +196,9 @@ function RequestsCharts({ runId }: { readonly runId: string }) {
 
   if (!terminal) {
     // While a run streams only the series has a live source (the delta writes
-    // its cache key); the other five are stated, never left as a silent gap.
+    // its cache key); the other six are stated, never left as a silent gap.
+    // The status chart among them reads an agent file the run does not have
+    // yet, so it is withheld here and never mounted: no request while live.
     return (
       <div className={REPORT_GRID}>
         {series.data !== undefined && (
@@ -196,6 +210,7 @@ function RequestsCharts({ runId }: { readonly runId: string }) {
         <LiveNotice kind="withheld" subject="Response time distribution" />
         <LiveNotice kind="withheld" subject="Response time percentiles distribution" />
         <LiveNotice kind="withheld" subject="Errors per second" />
+        <LiveNotice kind="withheld" subject={RESPONSES_BY_STATUS.title} />
         <LiveNotice kind="withheld" subject="Response time ranges" />
         <LiveNotice kind="withheld" subject="Number of requests" />
       </div>
@@ -223,6 +238,7 @@ function RequestsCharts({ runId }: { readonly runId: string }) {
       <Payload query={errorSeries} slots={[ERRORS_PER_SECOND]}>
         {(data) => <ErrorsChart data={data} domainMs={domainMs} warmupMs={warmupMs} windowSelected={windowSelected} />}
       </Payload>
+      <ResponsesByStatusChart runId={runId} domainMs={domainMs} windowSelected={windowSelected} />
       <Payload query={stats} slots={[INDICATORS, REQUEST_COUNTS]}>
         {(data) => (
           <>
