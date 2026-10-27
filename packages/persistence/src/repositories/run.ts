@@ -959,6 +959,38 @@ export class RunRepository {
     });
   }
 
+  /**
+   * `recordAgentLog` for a LIVE run whose file arrives over the API
+   * (`PUT /v1/runs/{id}/agent`, the Gradle plugin's path) rather than from the
+   * runner: scoped by org and project, and written ONLY while the run is still
+   * `running`. Unlike the runner, the plugin is a remote client that may PUT
+   * after its own close, and a file joining a run that is already being
+   * processed would describe bytes the run's figures never read — so a closed
+   * run is `not_running` and its row is never touched.
+   *
+   * One conditional UPDATE decides it; the follow-up read only says WHICH
+   * refusal it was. A close landing between the two reports `not_running`,
+   * which is what the run then is.
+   */
+  async recordLiveAgentLog(
+    scope: TenantScope,
+    runId: string,
+    input: { key: string; sha256: string; bytes: number },
+  ): Promise<'recorded' | 'not_found' | 'not_running'> {
+    const where = {
+      id: runId,
+      orgId: scope.orgId,
+      projectId: scope.projectId ? scope.projectId : undefined,
+    };
+    const { count } = await this.prisma.run.updateMany({
+      where: { ...where, status: 'running' },
+      data: { agentLogKey: input.key, agentLogSha256: input.sha256, agentLogBytes: BigInt(input.bytes) },
+    });
+    if (count === 1) return 'recorded';
+    const exists = await this.prisma.run.findFirst({ where, select: { id: true } });
+    return exists ? 'not_running' : 'not_found';
+  }
+
   async findById(scope: TenantScope, id: string): Promise<RunRecord | null> {
     const row = await this.prisma.run.findFirst({
       where: {

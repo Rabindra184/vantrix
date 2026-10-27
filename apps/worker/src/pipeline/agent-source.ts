@@ -46,15 +46,17 @@ const messageOf = (err: unknown): string => (err instanceof Error ? err.message 
 /**
  * Where a run's agent file is, in order:
  *
- * 1. The object the on-prem runner stored (`agentLogKey`), unless retention
- *    has deleted it — after which the key names a deleted object, so it is
- *    gated on `rawLogDeletedAt` and never on the key alone. Verified against
+ * 1. The object stored for the run (`agentLogKey`) — by the on-prem runner,
+ *    or for a Gradle-plugin live run by `PUT /v1/runs/{id}/agent` — unless
+ *    retention has deleted it. After that the key names a deleted object, so
+ *    it is gated on `rawLogDeletedAt` and never on the key alone. Verified against
  *    `agentLogSha256` as the run's own log is against `bundleSha256`.
  * 2. An entry named `AGENT_BUNDLE_FILE` in the SAME directory as the
  *    `simulation.log` the Gatling plugin parses (`findSimulationLog`, the
  *    plugin's own rule) — so a bundle holding several result directories pairs
  *    the log with its own agent file and never another run's. A live run's
- *    source is the raw log alone, so it never has one.
+ *    source is the raw log alone, so it never has one here: its file arrives
+ *    through `agentLogKey` (option 1), from the runner or that route.
  * 3. Nothing.
  *
  * Used by the ingest pipeline and by the verifier, so both read the one file.

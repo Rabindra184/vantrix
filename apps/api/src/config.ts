@@ -37,6 +37,16 @@ export interface AppConfig {
    * stays bounded at a few MB apiece rather than half a gigabyte.
    */
   maxStreamChunkBytes: number;
+  /**
+   * The most `PUT /v1/runs/{id}/agent` stores of a live run's agent file, from
+   * `MAX_AGENT_LOG_BYTES` — the runner's own cap for the file it stores
+   * itself (`RUNNER_MAX_AGENT_LOG_BYTES`), by the runner's own rule: 256 MiB by
+   * default, and a value that is blank, not a positive integer, or not larger
+   * than the 1024 bytes of headroom the agent is given under it falls back to
+   * the default. The body is streamed to a temporary file, never held, so this
+   * bounds disk and object-store bytes rather than heap.
+   */
+  maxAgentLogBytes: number;
   betterAuthUrl: string;
   /** See `cookiesAreSecure` — off unless `ALLOW_INSECURE_COOKIES=true`. */
   allowInsecureCookies: boolean;
@@ -113,6 +123,22 @@ function positiveInteger(env: NodeJS.ProcessEnv, key: string, fallback: number):
   return parsed;
 }
 
+const DEFAULT_MAX_AGENT_LOG_BYTES = 268_435_456;
+
+/** The agent writes one closing `capped` line past its own `max`, which the plugin sets this far under the cap. */
+const AGENT_CAP_HEADROOM_BYTES = 1024;
+
+/**
+ * Blank is unset — compose passes an unset variable as "", and `Number('')` is
+ * 0, a cap that would refuse every agent file — and so is anything that is not
+ * a whole number larger than the headroom.
+ */
+function agentLogCap(value: string | undefined): number {
+  if (value === undefined || value.trim() === '') return DEFAULT_MAX_AGENT_LOG_BYTES;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > AGENT_CAP_HEADROOM_BYTES ? parsed : DEFAULT_MAX_AGENT_LOG_BYTES;
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   requireAuthSecretInProduction(env);
   return {
@@ -133,6 +159,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       maxArtifactBytes: positiveInteger(env, 'MAX_RUNNER_ARTIFACT_BYTES', 512 * 1024 * 1024),
     },
     maxStreamChunkBytes: Number(env.MAX_STREAM_CHUNK_BYTES ?? 8 * 1024 * 1024),
+    maxAgentLogBytes: agentLogCap(env.MAX_AGENT_LOG_BYTES),
     // Optional with a default, never required(): a new mandatory environment
     // variable would break M0's "a stranger deploys a running instance and
     // authenticates". Better Auth derives trustedOrigins (its CSRF origin

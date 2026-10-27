@@ -217,7 +217,7 @@ export class PackagesController {
     const finalPath = path.resolve(this.config.runner.artifactDir, storagePath);
     await mkdir(path.dirname(finalPath), { recursive: true });
     // readRawUpload removes its own partial file when it fails.
-    const stored = await readRawUpload(req, finalPath, this.config.runner.maxArtifactBytes);
+    const stored = await readRawUpload(req, finalPath, this.config.runner.maxArtifactBytes, 'package-file');
 
     try {
       const facts = await inspectArtifact(finalPath, pkg.kind);

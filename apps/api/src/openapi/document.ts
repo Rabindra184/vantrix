@@ -925,6 +925,24 @@ const responses: Record<string, ResponseObject> = {
       'in the first place. application/problem+json with a required "remediation".',
     content: problem(),
   },
+  AgentLogRejected: {
+    description:
+      'The agent file could not be accepted: code INVALID_ID ("id" is not a UUID), ' +
+      'AGENT_LOG_EMPTY (the body held no bytes), STREAM_BODY_CONSUMED (it was sent under a ' +
+      'Content-Type the server parses, such as application/json, so it never reached this route ' +
+      'as raw bytes) or UPLOAD_ABORTED (the client closed the connection first). ' +
+      'application/problem+json with a required "remediation".',
+    content: problem(),
+  },
+  AgentLogTooLarge: {
+    description:
+      'The agent file is larger than MAX_AGENT_LOG_BYTES (256 MiB by default) — code ' +
+      'AGENT_LOG_TOO_LARGE. A declared Content-Length over the limit is refused before the body ' +
+      'is read; a chunked body is cut off as it crosses the limit, and either way nothing is ' +
+      'stored and the run is unchanged. application/problem+json with a required "remediation" ' +
+      'naming the setting.',
+    content: problem(),
+  },
 };
 
 /** The five response entries every "same code for the same state" operation shares. */
@@ -1531,6 +1549,43 @@ const paths: Record<string, PathItemObject> = {
         '200': { description: 'The agent summary.', content: json(schemaRef('AgentSummaryResponse')) },
         '400': ref('BadRequest'),
         '404': ref('NotFound'),
+        ...authFailureResponses,
+      },
+    },
+    // The PUT shares this path with the GET above: one object key per path,
+    // so a second '/v1/runs/{id}/agent' entry would silently replace the first.
+    put: {
+      operationId: 'uploadRunAgentLog',
+      summary: "Store a live run's Gatling agent file",
+      tags: ['runs'],
+      // Same reasoning as POST /v1/runs/live: a session can never carry the
+      // "stream" scope, so this route is bearer-only.
+      security: [{ bearerAuth: [] }],
+      description:
+        'Requires the "stream" scope — the credential a live run is streamed with. The body is ' +
+        'the raw bytes of the file the PerfPortal Gatling agent wrote for this run ' +
+        '("perfportal-agent/1" NDJSON), sent once after the simulation\'s JVM exits and BEFORE ' +
+        'POST /v1/runs/{id}/close: it is stored beside the run\'s log and read when the closed ' +
+        'run is processed, which gives it the connection, DNS, load-generator and ' +
+        'responses-by-status figures GET /v1/runs/{id}/agent and its siblings serve. A second ' +
+        'PUT before close replaces the first. A run that is not "running" (already closed, or ' +
+        'never a live run) is a 409: it is already being processed, and the file can no longer ' +
+        'join it. An agent file never changes the run itself — without one the run simply has ' +
+        'no agent figures. Send the body as "application/x-ndjson"; one sent as ' +
+        '"application/json" or "application/x-www-form-urlencoded" is consumed by the ' +
+        'framework\'s own body parser and refused 400 "STREAM_BODY_CONSUMED".',
+      parameters: [parameters['RunId']!],
+      requestBody: {
+        required: true,
+        description: 'The agent file\'s raw bytes, up to MAX_AGENT_LOG_BYTES.',
+        content: { 'application/x-ndjson': { schema: { type: 'string', format: 'binary' } } },
+      },
+      responses: {
+        '204': { description: 'Stored, and recorded on the run. No body.' },
+        '400': ref('AgentLogRejected'),
+        '404': ref('NotFound'),
+        '409': ref('RunNotRunning'),
+        '413': ref('AgentLogTooLarge'),
         ...authFailureResponses,
       },
     },

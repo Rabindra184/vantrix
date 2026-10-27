@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { createReadStream } from 'node:fs';
 import { Inject, Injectable } from '@nestjs/common';
 import { engineOptionsFrom, ingestError } from '@perfportal/core';
 import {
@@ -358,5 +359,37 @@ export class LiveService {
 
     const finalRun = (await this.runs.findById(scope, runId)) ?? run;
     return { kind: 'closed', run: finalRun };
+  }
+
+  /**
+   * Stores a live run's Gatling agent file (`PUT /v1/runs/{id}/agent`, the
+   * Gradle plugin's path) at `runs/<runId>/agent.ndjson` — the runner's own
+   * key — and records it on the run, which the worker reads as the run's agent
+   * source (`openAgentSource`, option 1) once the run is closed.
+   *
+   * ═══ THE RUN IS LOOKED UP BEFORE ANY BYTE IS STORED ═══
+   *
+   * The key is derived from the run id alone, so writing it for a run outside
+   * the caller's project would OVERWRITE the file that run's own owner stored,
+   * and its figures would then fail their checksum. The scoped lookup refuses
+   * a run the credential cannot see, and one that is not `running`, before the
+   * object store is touched. The OBJECT is then written before the ROW — the
+   * runner's order — and `recordLiveAgentLog`'s conditional write is the
+   * authority: a close landing between the lookup and that write leaves an
+   * object no row names (`not_running`), which is the cheaper inconsistency,
+   * never a row naming bytes that are not there. A second PUT before close
+   * replaces both.
+   */
+  async storeAgentLog(
+    scope: TenantScope,
+    runId: string,
+    file: string,
+  ): Promise<'recorded' | 'not_found' | 'not_running'> {
+    const run = await this.runs.findById(scope, runId);
+    if (!run) return 'not_found';
+    if (run.status !== 'running') return 'not_running';
+    const key = `runs/${runId}/agent.ndjson`;
+    const { sha256, bytes } = await this.blobs.putStream(key, createReadStream(file), this.config.maxAgentLogBytes);
+    return this.runs.recordLiveAgentLog(scope, runId, { key, sha256, bytes });
   }
 }
