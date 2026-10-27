@@ -775,6 +775,58 @@ describe('Chart — the warm-up band', () => {
   });
 });
 
+/**
+ * ═══ A LONE READING IS STILL DRAWN ═══
+ *
+ * Measured in Chromium against ECharts 6.1.0's SVG renderer: a line series
+ * with `showSymbol: false` whose reading has a gap on both sides emits a
+ * polyline of two bare move-tos (`M90 142.5M390 111.5`), zero red pixels.
+ * KO durations with scattered failures are exactly that series, and so is
+ * any one-bucket window. Only such a series takes symbols, and only its lone
+ * readings get one.
+ */
+describe('Chart — a reading with no neighbour keeps a mark', () => {
+  const msAxis = { type: 'value', tickUnit: 'ms-as-s' } as const;
+  const lineOf = (n: number) =>
+    (lastOption()['series'] as { showSymbol?: boolean; data?: unknown[] }[])[n]!;
+  const pairs = (name: string, points: readonly (readonly [number, number | null])[]): ChartData => ({
+    series: [{ name, data: points }],
+    axisLabels: points.map(([x]) => x),
+    columns: ['Elapsed (s)', name],
+    rows: [],
+  });
+
+  it('marks a reading with a gap on both sides, and only that reading', () => {
+    const points = [[0, 5], [1000, 6], [2000, null], [3000, 7], [4000, null]] as const;
+    render(<Chart id="ko" title="KO" data={pairs('KO', points)} xAxis={msAxis} pairValue="y" />);
+    const line = lineOf(0);
+    expect(line.showSymbol).toBe(true);
+    // The lone reading is handed over as it came, so it takes the series symbol.
+    expect(line.data![3]).toEqual(points[3]);
+    // Its neighbours on the drawn segment carry no symbol: still a bare line.
+    expect(line.data![0]).toEqual({ value: points[0], symbol: 'none' });
+    expect(line.data![1]).toEqual({ value: points[1], symbol: 'none' });
+    // A gap stays a gap, untouched.
+    expect(line.data![2]).toEqual(points[2]);
+    // And the tooltip still reads the pair: an item's `value` is the point.
+    const formatter = (lastOption()['tooltip'] as { formatter: (p: unknown) => string }).formatter;
+    expect(formatter([{ seriesName: 'KO', value: points[3], axisValueLabel: '3' }])).toContain('7');
+  });
+
+  it('marks a one-bucket series', () => {
+    render(<Chart id="one" title="KO" data={pairs('KO', [[0, 9]])} xAxis={msAxis} pairValue="y" />);
+    expect(lineOf(0).showSymbol).toBe(true);
+    expect(lineOf(0).data).toEqual([[0, 9]]);
+  });
+
+  it('leaves a series with no lone reading exactly as it was: no symbols, the data as handed', () => {
+    const points = [[0, 5], [1000, 6], [2000, null], [3000, 7], [4000, 8]] as const;
+    render(<Chart id="ok" title="OK" data={pairs('OK', points)} xAxis={msAxis} pairValue="y" />);
+    expect(lineOf(0).showSymbol).toBe(false);
+    expect(lineOf(0).data).toEqual(points);
+  });
+});
+
 /* ======================================================================== *
  * THE TIME MODE: Gatling Enterprise's Offset and Datetime
  * ======================================================================== */
