@@ -5,15 +5,25 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from '../components/ui/dropdown-menu';
-import { BAND_LABEL, BANDS, type Band } from './transforms/percentiles';
 
 /**
- * The percentile chart's band selector, as one menu (clean UI, PR 2).
+ * A percentile chart's band selector, as one menu (clean UI, PR 2).
  *
  * Ten chips sat above a legend listing the same ten bands in the same colours,
  * so the chart's controls were longer than its key. One trigger reads the
- * COUNT (`Bands · 6`) and opens a checkbox item per band, in `BANDS` order —
- * the legend's order — each with the swatch of the line it draws.
+ * COUNT (`Bands · 6`) and opens a checkbox item per band, in the order the
+ * caller hands them — the legend's order — each with the swatch of the line it
+ * draws.
+ *
+ * ═══ GENERIC OVER ITS BANDS (GE report parity PR 3) ═══
+ *
+ * Two charts own a band set now: the response-time chart's ten (`BANDS`,
+ * labelled as Gatling's report names its series) and the agent duration
+ * charts' thirteen GE rows (`AGENT_PERCENTILE_ROWS`, labelled as GE does, with
+ * `p99_9` and `mean`). The caller passes both the set and its labels, so a menu
+ * can never list one chart's bands under the other's names. The swatch stays
+ * `--chart-pct-${band}`: every band either set can hold has a token, and
+ * `palette.test.ts` fails if `tokens.css` drops one.
  *
  * ═══ THE MENU STAYS OPEN WHILE BANDS ARE TICKED ═══
  *
@@ -31,16 +41,22 @@ import { BAND_LABEL, BANDS, type Band } from './transforms/percentiles';
  * The accessible name carries the count in words ("Percentile bands, 6
  * selected") because "Bands · 6" read aloud is a middle dot and a bare number.
  */
-export default function BandsMenu({
+export default function BandsMenu<B extends string>({
   id,
+  bands,
+  labels,
   selected,
   onToggle,
 }: {
   /** The owning chart's id: every testid derives from it, so a page with two
    *  percentile charts has two menus a test can tell apart. */
   readonly id: string;
-  readonly selected: readonly Band[];
-  readonly onToggle: (band: Band) => void;
+  /** Every band the chart can draw, in legend order. */
+  readonly bands: readonly B[];
+  /** Each band's name, exactly as its line is named in the legend. */
+  readonly labels: Readonly<Record<B, string>>;
+  readonly selected: readonly B[];
+  readonly onToggle: (band: B) => void;
 }) {
   const n = selected.length;
   return (
@@ -57,7 +73,7 @@ export default function BandsMenu({
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="min-w-[9rem]">
-        {BANDS.map((band) => (
+        {bands.map((band) => (
           <DropdownMenuCheckboxItem
             key={band}
             checked={selected.includes(band)}
@@ -72,7 +88,7 @@ export default function BandsMenu({
               className="h-2.5 w-2.5 shrink-0 rounded-[3px]"
               style={{ backgroundColor: `var(--chart-pct-${band})` }}
             />
-            {BAND_LABEL[band]}
+            {labels[band]}
           </DropdownMenuCheckboxItem>
         ))}
       </DropdownMenuContent>
