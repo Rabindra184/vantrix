@@ -333,6 +333,11 @@ describe('tokens.css and theme.ts agree about the chart tokens', () => {
     expect(found).toEqual(PERCENTILE_RAMP.map((role) => PERCENTILE_COLORS[mode][role].toUpperCase()));
   });
 
+  /** And the mean, which sits outside the ramp and so outside the check above. */
+  it.each(BLOCKS)('$where carries the percentile mean theme.ts exports', ({ where, block, mode }) => {
+    expect(tokenIn(block(), '--chart-pct-mean', where)).toBe(PERCENTILE_COLORS[mode]['pct-mean'].toUpperCase());
+  });
+
   /** The SURFACE, text and accent tokens (Task 2), in the same three blocks. */
   const SURFACE_TOKENS_UNDER_TEST: readonly { role: SurfaceRole; token: string }[] = [
     { role: 'page', token: '--color-surface-page' },
@@ -511,10 +516,18 @@ describe('the indicator band ramp', () => {
 
 /**
  * An ORDERED ramp, so the gate is ordering, not separation. Hue must fall
- * monotonically green→red across all ten; that rotation IS the information.
+ * monotonically green→red across all twelve; that rotation IS the information.
+ *
+ * TWELVE since GE report parity PR 3: GE's agent duration charts carry 99.9%
+ * and 99.99% between 99% and Max, and a ramp is one ordered scale or it is
+ * nothing — two more steps squeezed into the orange-to-red arc, not a second
+ * palette beside it. That arc is the narrowest stretch of the ramp (99% → Max
+ * is ΔE 10.4 at one lightness), so the two new steps are found by DROPPING
+ * lightness rather than by splitting the hue evenly: three equal hue steps
+ * there would be ~3.5 apart, under the adjacent floor below.
  *
  * The ΔE floors are lower than the band ramp's on purpose and are the MEASURED
- * minima rounded down. Ten steps across one hue arc are necessarily closer
+ * minima rounded down. Twelve steps across one hue arc are necessarily closer
  * together than four; a floor set at the four-step ramp's 7.5 would be a
  * demand that this ramp stop being a ramp. Their job is to catch a duplicate
  * or a step nudged onto its neighbour, not to claim adjacent steps are
@@ -528,12 +541,15 @@ describe('the indicator band ramp', () => {
 const PCT_ADJACENT_FLOOR = 4.0;
 const PCT_TWO_APART_FLOOR = 8.0;
 const PCT_ENDS_FLOOR = 35;
+/** WCAG 1.4.11's floor for a non-text graphic — a line, not a word. */
+const NON_TEXT = 3;
 
 describe.each(['light', 'dark'] as const)('the percentile ramp (%s)', (mode) => {
   const ramp = PERCENTILE_RAMP.map((role) => PERCENTILE_COLORS[mode][role]);
 
-  it('is ten distinct colours', () => {
-    expect(new Set(ramp).size).toBe(10);
+  it('is twelve distinct colours', () => {
+    expect(ramp).toHaveLength(12);
+    expect(new Set(ramp).size).toBe(12);
   });
 
   it('rotates hue monotonically from green to red', () => {
@@ -559,7 +575,21 @@ describe.each(['light', 'dark'] as const)('the percentile ramp (%s)', (mode) => 
   });
 
   it('separates its ends', () => {
-    expect(deltaE(hexToOkLab(ramp[0]!), hexToOkLab(ramp[9]!))).toBeGreaterThanOrEqual(PCT_ENDS_FLOOR);
+    expect(deltaE(hexToOkLab(ramp[0]!), hexToOkLab(ramp[ramp.length - 1]!))).toBeGreaterThanOrEqual(PCT_ENDS_FLOOR);
+  });
+
+  /**
+   * MEAN IS NOT A STEP OF THE RAMP, so it is gated as a MARK instead: a line
+   * that has to be seen on the card in both themes (WCAG 1.4.11's 3:1 for a
+   * non-text graphic), with a hue the ramp does not use, because the ramp's
+   * hue IS its meaning and a mean drawn in one of its colours would read as a
+   * percentile it is not.
+   */
+  it('draws the mean at 3:1 or better against the card, off the ramp', () => {
+    const mean = PERCENTILE_COLORS[mode]['pct-mean'];
+    expect(contrast(mean, SURFACE_TOKENS[mode].card)).toBeGreaterThanOrEqual(NON_TEXT);
+    expect(ramp).not.toContain(mean);
+    expect(PERCENTILE_RAMP).not.toContain('pct-mean');
   });
 });
 

@@ -128,10 +128,10 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **267 files / 4367 tests**, it
+`nvm use` first, and if a run reports fewer than **278 files / 4583 tests**, it
 did not run everything — nor did an integration run reporting fewer than
-**252 files / 3955 tests**, an e2e run fewer than **207**, or a
-`pnpm test:e2e:cross` run fewer than **621** (207 on each of three engines).
+**257 files / 4072 tests**, an e2e run fewer than **213**, or a
+`pnpm test:e2e:cross` run fewer than **639** (213 on each of three engines).
 (Update those numbers when a sub-project adds suites, or the next reader
 calibrates against a stale floor and a silently-skipped run looks like a
 pass.)
@@ -150,6 +150,195 @@ still Chromium and still 102; `pnpm test:e2e:cross` was 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The GE report parity Report-sections branch (`feat/ge-report-sections`, PR 3
+of `docs/superpowers/specs/2026-10-22-ge-report-parity-design.md`, plan
+`docs/superpowers/plans/2026-10-27-ge-report-parity-pr3-report-sections.md`).
+Unit **267 / 4367 to 278 / 4583**, integration **252 / 3955 to
+257 / 4072**, **e2e 207 to 213** (`agent-report.spec.ts`, 6; `--list`
+collects 639 on three engines; `test:e2e:cross` was not run). Each was
+predicted first — unit from the fix wave's measured 278 / 4581 plus this
+entry's two cases, integration from `vitest list` over the seven `.ts` test
+files the branch touched on both trees (five new files, 112 cases, and
+`palette.test.ts` 97 to 102), e2e from `--list` — and each collected
+exactly that.
+
+**THE REPORT DRAWS WHAT THE AGENT COLLECTED.** PR 2 stored and served the
+agent's figures and nothing read them; the Report now draws GE's own charts
+from the five `/v1/runs/:id/agent*` endpoints, titles, legends and units
+verbatim from spec §2. **Connections** (nine: open/close rate, TCP state, TCP
+connect and TLS handshake duration percentiles / distribution / percentiles
+distribution, bandwidth in Mbps), a new **DNS** section between Connections
+and Load generators (`id="dns"`, four, in GE's DNS order — distribution,
+percentiles distribution, percentiles — which differs from its TCP/TLS
+order), **Load generators** (six: GC counts and time, CPU %, memory in MB,
+TCP connection events, TCP segment events) and, in Requests, **"Responses per
+Second by Status"**, one series per code. GE's 13 percentile rows in its own
+order, five hidden by default, behind one "Percentile bands" menu per chart.
+Pure transforms in `apps/web/src/charts/transforms/agent*.ts` (the shared kit
+in `agentChart.ts`), sections in `apps/web/src/routes/report/`, one gate
+(`AgentSectionGate`) under all three. No API, contract or database change.
+
+**A RUN WITHOUT AN AGENT FILE LOSES NOTHING.** Connections and Load
+generators keep `RunTelemetry`'s Go-agent charts; DNS, which has no Go-agent
+equivalent, says "No agent data for this run". An `unreadable` agent file
+does NOT fall back to telemetry — there was a file, and hiding it would
+misstate the run — and `http_not_collected` explains itself on Connections,
+DNS and the status chart while Load generators still draws (the API's own
+`needsHttp` matrix, read off `agent.controller.ts`). A capped file, an agent
+error or skipped malformed lines each get one sentence above a section's
+figures, never a live region. Every new chart waits for a terminal run (spec
+§4): while a run streams each renders the withheld notice and asks for
+nothing.
+
+**RULINGS, EACH A DECISION RATHER THAN AN OVERSIGHT:**
+
+  - **Zero and unread are different facts, and neither draws a line.** A
+    series whose every reading is zero is not plotted and the chart's ⓘ says
+    "Not drawn: every reading is zero — …"; a series with NO reading (all
+    `null`, e.g. every TCP state on macOS) is named separately ("No reading:
+    …"), because "every reading is zero" would be a false claim about a state
+    nobody read. The data table keeps every column. The unread rule covers
+    every chart, gauges included; Memory and CPU are not put under the zero
+    rule.
+  - **No markless grid.** A chart left with nothing to plot after dropping is
+    `empty`, with that sentence, never empty axes — fixed centrally in
+    `withoutAllZero`, where it had shipped in seven transforms at once.
+  - **A sparse payload's gaps follow the measure.** Durations, DNS and status
+    rows exist only for buckets that saw an event; dense series are written
+    every sample. A `counter` fills a missing `bucketWidthMs` step with a
+    measured 0; a `gauge` (TCP states, CPU, memory, `established`) and every
+    duration break with `null`. `Measure.gap` is REQUIRED, because
+    `toTcpEvents` mixes four counters with the `established` gauge.
+  - **Rates are the reader's.** A counter is `value / (bucketWidthMs / 1000)`
+    on the payload's own width — a 2 s bucket of 10 opens draws 5/s — and a
+    null width is `empty`, never an assumed 1000. Gauges are drawn as stored.
+  - **A lone reading is marked.** ECharts 6.1.0 draws NOTHING for a line point
+    with no non-null neighbour under `showSymbol: false` — measured in a
+    browser at 0 px against a 247 px control — so a KO duration with scattered
+    failures, or a one-bucket window, was invisible. `Chart` marks exactly
+    those points, with `showAllSymbol: true` so a category axis cannot hide
+    them.
+  - **The filters are 0/1/many.** `?remote=` and `?hostname=` live in the URL,
+    written `replace: true` keeping every other parameter and the section's
+    hash, so a shared link reopens that section. No value, no control; one
+    value, a read-only labelled field (a one-option select does nothing); two
+    or more, a select. The load-generator picker follows the same rule.
+  - **The summary validates the filter before any figure is asked for.** A
+    stale link's unknown value never reaches the API (which answers 400
+    `UNKNOWN_REMOTE`): the page reads all remotes and one line says the link
+    named a value this run never contacted. `figureQuery` returns the gated
+    query options, so a section cannot hand-write an `enabled` that forgets
+    the gate.
+  - **Three open sections never print the same line three times.** Each
+    gate's loading and error sentence names its section; one `/agent` summary
+    read serves all three.
+  - **Duration settings are lifted, without `keepPreviousData`.** The chosen
+    bands and outcomes survive a remote or window change (`useDurationSettings`
+    above the gate); a previous remote's figures are never shown under the new
+    filter.
+  - **A filtered empty chart says "for this remote" / "for this hostname"**,
+    never "for this run" — the scoped-empty-result rule, met again.
+
+**RED-VERIFIED**, every mutation from a committed checkpoint with its
+replacement count asserted (the task reports hold the rest):
+
+```
+  perSecond without the width division        5: the unit case and four 2000 ms cases
+  states: null read as 0                       the null-states case alone
+  established divided by the width             the gauge case alone
+  central `empty` branch removed               8: every nothing-drawn case, seven charts
+  Chart's lone-reading set always empty        the two lone-reading cases
+  showAllSymbol back to 'auto'                 the category-axis case alone
+  useReportFilter accepts any URL value        the unknown-remote/hostname cases, and in
+                                               a browser `remote=nope` reaching the API
+  unreadable falls back to telemetry           the unreadable case alone
+  DNS bypasses figureQuery                     6 DNS cases, the hold-until-validated one first
+  counter fill -> null / gauge fill -> 0       3 each: draw, table, the mixed tcpEvents case
+  filter write drops the hash                  the hash case alone
+  a fresh useDurationSettings per chart        the settings-survive case alone
+  status query without enabled: terminal       the isolated status-chart case alone
+```
+
+**THE FILTER'S HASH MOVED THE READER, AND THE FIRST FIX FOR THAT OUTLIVED
+ITS MOMENT.** Writing the section's hash back on a filter change made `AppShell`'s
+fragment reveal (review 09-13 C04) scroll the page and pull focus off the
+select the reader had just used. `FRAGMENT_IN_PLACE` rides in the
+navigation's `state` and the reveal skips it. **But `history.state` outlives
+the moment**: a reload of the filtered URL, or Back onto it from another
+page, arrived carrying the mark with the reader on no control, and the
+section opened unscrolled. The reveal now skips only when the location before
+this one, in this mount, had the same path — tracked by location `key`, so
+StrictMode's second run of a mount is the same location rather than a
+same-path move from itself. That last half was red-verified only once the
+test's section arrived a task late, as the Report's do: present at once,
+StrictMode's FIRST pass scrolled before its second could skip, and an unkeyed
+tracker passed 34 of 34. **A StrictMode case whose target exists at mount
+cannot see an effect that misbehaves on the second run.**
+
+**THE REAL RUN**, on the scratch stores (`perfportal_pr3`, Redis db 12, bucket
+`perfportal-pr3`), this tree's API, worker and runner from `dist`, Java 21,
+`RUNNER_AGENT_JAR` the built jar, PR 2's thin `ParitySimulation` jar. Job
+`07d4df44` → run `cdecd5ff`: `complete`, **895 / 866 OK / 29 KO**,
+**`verified`, 23,002 figures**. `/agent/status` sums to **895** (866 × 200,
+20 × 500, 9 × 503) and the status chart's legend reads `200, 500, 503`, its
+table summing to 866 / 20 / 9; **opened / closed 21 / 21**. One remote, so
+Connections shows a read-only "Remote" field; no hostname (the one lookup is
+warm-up), so DNS shows no control and says no lookup outside the warm-up was
+recorded; the machine is shared with PerfPortal and says so. macOS: TCP
+state, CPU and both TCP event charts explain the agent's own
+`machine: false` reason; Memory draws heap and Netty and names RAM as not
+read; GC draws two collectors and names G1 Old Generation as all zero. Every
+agent chart's y-axis carries its unit (read off the SVG in a browser). Its
+three copy findings (a filtered chart saying "for this run", a line across a
+29 s gap of sparse connects, the bare lowercase machine reason) were fixed by
+the final wave.
+
+**WHAT WAS RUN**, Node v22.19.0, `perfportal_pr3` (migrated, nothing pending),
+Redis db 12 flushed before integration and before e2e, port 3797, every
+`.tsbuildinfo` outside `node_modules` deleted first: `pnpm build`,
+`typecheck` and `lint` exit 0 by their own exit codes; `test:unit`
+**278 / 4583**, exit 0, zero `Errors` lines; `test:integration` COLLECTED
+**257 / 4072** and exited 1 on ONE case, `org-tests.integration`'s
+estimated-statsMethod case: a body with every field undefined, which a local
+probe read as a **500 carrying a P1001 "Can't reach database server"** from
+`TestRepository` at Prisma's ~5.9 s connect timeout, Postgres logging nothing
+and holding 6 of 200 connections — a connect that never reached it. No file
+under `apps/api`, `apps/worker` or `packages` differs from base. Alone that
+file failed 3 of 9 runs, a DIFFERENT case each time and always this P1001,
+with the load as low as 3.6; the full suite was not re-run. `pnpm test:e2e
+--workers=2` read back `Running 213 tests using 2 workers`, **213 passed,
+exit 0**. The agent's Gradle build was not run: the branch touches nothing
+under `clients/`. The machine sat at 600 MB to 1.3 GB of swap free
+throughout, loads 3 to 18; integration (6.47 / 8.10) and e2e (3.27 / 4.14)
+started under the 8 / 10 gate.
+
+**KNOWN AND LEFT:**
+
+  - **The AC-STAT-4 warm-up band never renders.** `MarkAreaComponent` is not
+    registered in `charts/echarts.ts`, so the `markArea` `Chart` emits is
+    discarded; `Chart.test` mocks ECharts, which is why no suite saw it. Its
+    own branch, with a browser check.
+  - `RunTelemetry`'s `!terminal` branch is unreachable from the product now —
+    the Report withholds every section's charts while a run streams.
+  - `PercentilesChart`'s bands and outcome still reset on a window change; the
+    agent duration charts no longer do. A follow-up.
+  - A counter that is NEVER read but sits in a sparse payload would have its
+    filled gaps called zero rather than unread — theoretical: no injector
+    payload is sparse, and no fixture has one.
+  - Sampler jitter and `ErrorsChart`'s own sparse buckets are out of scope.
+  - A warm-up-only run repeats "no DNS lookups" across the section sentence
+    and four charts; the duration charts' "N of the M buckets this chart spans
+    recorded no …" note appears on most real runs, because scattered connects
+    leave most buckets empty. Both true, both common.
+  - The Remote and Hostname SELECTS were exercised on the Linux-recorded
+    fixture only; the real run had one remote and no hostname, and no machine
+    figure was read end to end (macOS).
+  - While a run streams, each new chart renders its own withheld notice
+    rather than one per section, as spec §4 asks; PR 4 makes them true for
+    plugin runs.
+  - Task 1's parked minor: `metricPaths.test`'s `strip()` eats the `//` of an
+    `http://` URL (pre-existing).
 
 The GE report parity agent-figures branch (`feat/ge-report-figures`, PR 2
 of `docs/superpowers/specs/2026-10-22-ge-report-parity-design.md`, plan
@@ -5054,8 +5243,11 @@ with its replacement count asserted:
   - DNS, GC, TCP-connect and TLS-handshake charts are OMITTED, never drawn
     empty: nothing here collects them. **[Corrected later: the on-prem
     runner's Gatling agent collects all four since GE report parity PR 1, and
-    the API serves them under `/v1/runs/:id/agent/*` since PR 2. The charts
-    are still not drawn; they are PR 3's.]**
+    the API serves them under `/v1/runs/:id/agent/*` since PR 2, and PR 3
+    (`feat/ge-report-sections`) draws them: the Report's Connections (TCP
+    connect and TLS handshake), DNS (a section of its own, between Connections
+    and Load generators) and Load generators (GC) sections, plus Requests'
+    "Responses per Second by Status".]**
   - "Back to this run" on a request or group page lands on the Summary. The
     URL keeps `from`/`to` and the Report tab restores the window, so the
     window travels as the spec says; a reader who drilled down from a

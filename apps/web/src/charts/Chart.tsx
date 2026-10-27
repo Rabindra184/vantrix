@@ -16,7 +16,7 @@ import {
   type ChartMode,
   type MarkRole,
 } from './theme';
-import type { ChartData } from './types';
+import type { ChartData, ChartSeries } from './types';
 
 export interface ChartYAxis {
   /**
@@ -972,19 +972,26 @@ export default function Chart({
               })),
             };
           }
+          const lone = kind === 'line' ? loneReadings(source.data) : NO_LONE_READINGS;
           return {
             type: kind,
             name,
             stack: stacked ? 'total' : undefined,
-            data: [...source.data],
+            data: lone.size === 0 ? [...source.data] : markOnlyLoneReadings(source.data, lone),
             // 2px lines and 8px markers (design §11). Symbols stay off on the
             // line itself — a marker per bucket on a 600-bucket series is
             // noise — and the size applies to the emphasised/hovered point.
             lineStyle: { width: 2 },
             symbolSize: 8,
             // A scatter IS its symbols. `showSymbol: false` — right for a
-            // 600-bucket line — draws an empty grid here.
-            showSymbol: kind === 'scatter' ? true : false,
+            // 600-bucket line — draws an empty grid here. And a line with a
+            // reading that has a gap on BOTH sides takes symbols too, for
+            // that reading alone: see `loneReadings`.
+            showSymbol: kind === 'scatter' || lone.size > 0,
+            // On a CATEGORY axis ECharts' default 'auto' thins symbols that would
+            // crowd each other, and a lone reading's mark is exactly what it may
+            // thin. A value axis never thins; this is for the category charts.
+            showAllSymbol: lone.size > 0 ? true : 'auto',
             /**
              * AC-STAT-4's demarcation, on the FIRST drawn series only.
              *
@@ -1265,5 +1272,57 @@ export default function Chart({
         )}
       </dialog>
     </Card>
+  );
+}
+
+/**
+ * ═══ A LONE READING IS DRAWN AS A MARK ═══
+ *
+ * The indices of a line series' readings with no non-null neighbour on either
+ * side. With `showSymbol: false` ECharts draws such a reading as NOTHING:
+ * measured in Chromium against 6.1.0's SVG renderer, `[[0,5],[1000,null],
+ * [2000,7],[3000,null]]` emits a polyline of two bare move-tos
+ * (`M90 142.5M390 111.5`) and zero coloured pixels, where `[[0,5],[1000,6]]`
+ * draws a segment. A per-point `symbol` cannot override `showSymbol: false`
+ * (also measured). So a KO duration chart with scattered failures, or any
+ * one-bucket window, plotted a grid and said nothing — the markless-grid
+ * defect `b00c54ed` closed for an EMPTY series, here for a non-empty one.
+ *
+ * A series with no lone reading — every dense 600-bucket line — is handed over
+ * exactly as before: `showSymbol: false`, its data untouched.
+ */
+function loneReadings(data: ChartSeries['data']): ReadonlySet<number> {
+  const present = (j: number): boolean => j >= 0 && j < data.length && yOf(data[j]!) !== null;
+  const lone = new Set<number>();
+  for (let j = 0; j < data.length; j++) {
+    if (present(j) && !present(j - 1) && !present(j + 1)) lone.add(j);
+  }
+  return lone;
+}
+
+const NO_LONE_READINGS: ReadonlySet<number> = new Set();
+
+/** A point's measured value: the y of a pair, or the scalar itself. */
+function yOf(point: ChartSeries['data'][number]): number | null {
+  return typeof point === 'number' || point === null ? point : point[1];
+}
+
+/**
+ * The series turns symbols ON, so every OTHER reading opts back out with
+ * `symbol: 'none'` and the line stays bare everywhere a segment carries it.
+ * The lone readings keep the series' own `emptyCircle`, the hover marker's
+ * shape, and so does the legend icon (it reads the series-level symbol; a
+ * `symbol` callback would have turned it into a filled dot). A gap is left as
+ * it came: ECharts draws nothing at a null either way.
+ *
+ * `{ value, symbol }` keeps the pair intact for the tooltip, which reads a
+ * param's `value`, never its `data`. THE COST, measured: a `symbol: 'none'`
+ * reading has no hover marker, because ECharts builds its temporary one from
+ * the same visual. Only a series that has a lone reading pays it, and the
+ * tooltip still names the value.
+ */
+function markOnlyLoneReadings(data: ChartSeries['data'], lone: ReadonlySet<number>): unknown[] {
+  return data.map((point, j) =>
+    lone.has(j) || yOf(point) === null ? point : { value: point, symbol: 'none' },
   );
 }

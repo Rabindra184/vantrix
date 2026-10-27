@@ -6,7 +6,7 @@ import type { TimeDomainMs } from './types';
 import BandsMenu from './BandsMenu';
 import { ControlBar, ControlGroup, Segmented, Switch } from './ChartControls';
 import type { MarkRole } from './theme';
-import { BANDS, type Band, type Outcome, toPercentiles } from './transforms/percentiles';
+import { BAND_LABEL, BANDS, type Band, type Outcome, toPercentiles } from './transforms/percentiles';
 
 /**
  * The outcome control's three states, in the order they are drawn.
@@ -129,7 +129,7 @@ export default function PercentilesChart({
               only way to find out which line `95%` was, was to switch it off
               and see what vanished. */}
           <ControlGroup label="Percentile bands">
-            <BandsMenu id={id} selected={bands} onToggle={toggle} />
+            <BandsMenu id={id} bands={BANDS} labels={BAND_LABEL} selected={bands} onToggle={toggle} />
           </ControlGroup>
 
           {/* Segments, not chips: these REPLACE each other, and drawn as chips

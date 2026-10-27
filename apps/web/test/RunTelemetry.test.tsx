@@ -202,6 +202,11 @@ describe('RunTelemetry', () => {
        is that nobody set the agent up. */
     expect(await screen.findByText(/no generator telemetry recorded/i)).toBeInTheDocument();
     expect(screen.getByText(/agent runs alongside the test/i)).toBeInTheDocument();
+    // Both sources, because this run reached the fallback for having no agent
+    // FILE: the on-prem runner's Gatling agent records these figures too, for
+    // the runs it starts, and a reader who only learns of the Go agent would
+    // set up the wrong one. Asserted as the claim, not the sentence.
+    expect(screen.getByText(/agent runs alongside the test/i)).toHaveTextContent(/on-prem runner.*Gatling agent/i);
 
     // Not a chart with nothing in it: NO figure on the page at all, which is
     // the whole reason `available: false` gets a dedicated branch rather than

@@ -67,13 +67,16 @@
  * apps/web/test/palette.test.ts fails if the two disagree - in any of the
  * three blocks. Edit the hexes there, not here.
  *
- * --chart-pct-* are the TEN percentile-chart colours (design section 13.2
- * element 9, appendix G-22): min through max, another SEVERITY RAMP, green at
- * min through red at max. Percentiles are an ORDERED measure like the
- * indicator bands, but this ramp has ten steps to the bands' four, so its
- * gates in palette.test.ts are looser - ten steps across one hue arc sit
- * closer together than four by necessity. Light and dark share one set of
- * values.
+ * --chart-pct-* are the percentile-chart colours (design section 13.2
+ * element 9, appendix G-22): TWELVE steps, min through max, another SEVERITY
+ * RAMP, green at min through red at max - the response-time chart's ten plus
+ * GE's 99.9% and 99.99% (GE report parity PR 3). Percentiles are an ORDERED
+ * measure like the indicator bands, but this ramp has twelve steps to the
+ * bands' four, so its gates in palette.test.ts are looser - twelve steps
+ * across one hue arc sit closer together than four by necessity. Light and
+ * dark share one set of values. --chart-pct-mean is the thirteenth colour and
+ * NOT a step: a mean is not a rank, so it takes a hue the ramp does not use,
+ * gated at 3:1 against the card as a line.
  *
  * Like the palette, these are mirrored in apps/web/src/charts/theme.ts
  * (PERCENTILE_RAMP / PERCENTILE_COLORS) and apps/web/test/palette.test.ts
@@ -272,7 +275,10 @@
   --chart-pct-p90: #e8b10c;
   --chart-pct-p95: #f59e0b;
   --chart-pct-p99: #f97316;
+  --chart-pct-p99_9: #c2410c;
+  --chart-pct-p99_99: #dc2626;
   --chart-pct-max: #ef4444;
+  --chart-pct-mean: #3b82f6;
 
   /*
    * THE LOGS TAB'S PANEL (RunLogs.tsx) — dark in BOTH themes, as Gatling
@@ -434,7 +440,10 @@ pre {
     --chart-pct-p90: #e8b10c;
     --chart-pct-p95: #f59e0b;
     --chart-pct-p99: #f97316;
+    --chart-pct-p99_9: #c2410c;
+    --chart-pct-p99_99: #dc2626;
     --chart-pct-max: #ef4444;
+    --chart-pct-mean: #3b82f6;
 
     /* A drop shadow is the absence of light and does not exist on a
        near-black canvas. Depth here is a hairline top highlight plus a
@@ -498,7 +507,10 @@ pre {
   --chart-pct-p90: #e8b10c;
   --chart-pct-p95: #f59e0b;
   --chart-pct-p99: #f97316;
+  --chart-pct-p99_9: #c2410c;
+  --chart-pct-p99_99: #dc2626;
   --chart-pct-max: #ef4444;
+  --chart-pct-mean: #3b82f6;
 
   --elevation-panel: inset 0 1px 0 rgba(255, 255, 255, 0.04);
   --elevation-raised: 0 8px 24px -12px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.05);

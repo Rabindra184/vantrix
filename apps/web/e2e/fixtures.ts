@@ -10,7 +10,7 @@ import { mkdirSync, mkdtempSync, readFileSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { hashToken, mintToken } from '@perfportal/core';
+import { AGENT_BUNDLE_FILE, hashToken, mintToken } from '@perfportal/core';
 import {
   createAuth, createPool, createPrisma, OrgMemberRepository, PackageRepository, ProjectMemberRepository,
   RunnerRepository, TelemetryStore, type InboundTelemetrySample,
@@ -194,14 +194,36 @@ export async function openLiveRun(orgId: string): Promise<string> {
 const FIXTURE_LOG = fileURLToPath(
   new URL('../../../fixtures/gatling-3.15.1.2/reference-report/simulation.log', import.meta.url),
 );
-let bundlePromise: Promise<Buffer> | null = null;
+
+/**
+ * What goes into one uploaded bundle: each results-directory file name beside
+ * the fixture it is copied from. The reference bundle is `simulation.log` alone.
+ */
+type BundleFiles = Readonly<Record<string, string>>;
+const REFERENCE_FILES: BundleFiles = { 'simulation.log': FIXTURE_LOG };
+
+/**
+ * The paired agent run (`fixtures/gatling-3.15.1.2/agent-run/`, its README
+ * says what it holds): one JVM's `simulation.log` and agent file. The agent
+ * file goes in under `AGENT_BUNDLE_FILE`, the name the worker looks for beside
+ * an upload's `simulation.log` — imported rather than spelled, so the two
+ * cannot drift, the way `scripts/capture-agent-fixture.mjs` does it.
+ */
+const AGENT_RUN_DIR = new URL('../../../fixtures/gatling-3.15.1.2/agent-run/', import.meta.url);
+const AGENT_RUN_FILES: BundleFiles = {
+  'simulation.log': fileURLToPath(new URL('simulation.log', AGENT_RUN_DIR)),
+  [AGENT_BUNDLE_FILE]: fileURLToPath(new URL('agent.ndjson', AGENT_RUN_DIR)),
+};
+
+/** One cached tarball per file set, keyed by the set itself (the objects above are constants). */
+const bundles = new Map<BundleFiles, Promise<Buffer>>();
 /**
  * The reference bundle's bytes, for a test that needs the FILE rather than an
  * ingested run (review 09-13 M05's browser upload drives a real file input).
  * Same cached buffer `seedRunWithData` posts, so the two cannot diverge.
  */
 export function referenceBundle(): Promise<Buffer> {
-  return loadBundle();
+  return loadBundle(REFERENCE_FILES);
 }
 
 /**
@@ -260,17 +282,21 @@ export async function parseUploadedRun(orgId: string): Promise<string> {
   return runId;
 }
 
-function loadBundle(): Promise<Buffer> {
-  bundlePromise ??= (async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'e2e-bundle-'));
-    const results = join(dir, 'run-1');
-    mkdirSync(results, { recursive: true });
-    copyFileSync(FIXTURE_LOG, join(results, 'simulation.log'));
-    const out = join(dir, 'bundle.tgz');
-    execFileSync('tar', ['-czf', out, '-C', dir, 'run-1']);
-    return readFileSync(out);
-  })();
-  return bundlePromise;
+function loadBundle(files: BundleFiles): Promise<Buffer> {
+  let bundle = bundles.get(files);
+  if (bundle === undefined) {
+    bundle = (async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'e2e-bundle-'));
+      const results = join(dir, 'run-1');
+      mkdirSync(results, { recursive: true });
+      for (const [name, source] of Object.entries(files)) copyFileSync(source, join(results, name));
+      const out = join(dir, 'bundle.tgz');
+      execFileSync('tar', ['-czf', out, '-C', dir, 'run-1']);
+      return readFileSync(out);
+    })();
+    bundles.set(files, bundle);
+  }
+  return bundle;
 }
 
 /**
@@ -283,8 +309,8 @@ function loadBundle(): Promise<Buffer> {
  * brings up Postgres/Redis/MinIO), so without this direct call the run
  * would sit at 'pending' forever, waiting for a consumer that doesn't exist.
  */
-async function ingestAndProcess(token: string): Promise<string> {
-  const bundle = await loadBundle();
+async function ingestAndProcess(token: string, files: BundleFiles = REFERENCE_FILES): Promise<string> {
+  const bundle = await loadBundle(files);
   const form = new FormData();
   form.set('metadata', JSON.stringify({ tool: 'gatling', waitMs: 0 }));
   form.set('bundle', new Blob([new Uint8Array(bundle)]), 'bundle.tgz');
@@ -415,6 +441,20 @@ export async function seedRunWithData(orgId: string): Promise<string> {
   const projectId = await projectFor(orgId);
   const token = await mintIngestToken(orgId, projectId);
   return ingestAndProcess(token);
+}
+
+/**
+ * A real run WITH an agent file: the paired fixture's `simulation.log` and its
+ * agent file, uploaded together and parsed through the same path
+ * `seedRunWithData` takes, so the worker finds the agent file beside the log
+ * and files its figures (GE report parity PR 2). The only seeded run whose
+ * Connections, DNS and Load generators sections draw the agent's charts, and
+ * whose Requests section draws "Responses per Second by Status".
+ */
+export async function seedRunWithAgent(orgId: string): Promise<string> {
+  const projectId = await projectFor(orgId);
+  const token = await mintIngestToken(orgId, projectId);
+  return ingestAndProcess(token, AGENT_RUN_FILES);
 }
 
 /**

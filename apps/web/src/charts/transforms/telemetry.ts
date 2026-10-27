@@ -46,7 +46,8 @@ type TelemetryPoint = TelemetryHost['points'][number];
  *  one is a value axis `Chart` names itself, from the viewer's time mode. */
 const TIME_COLUMN = 'Elapsed (ms)';
 
-const BYTES_PER_MB = 1024 * 1024;
+/** Exported for the agent's "Memory Usage in MB" (`agentInjectors.ts`), so both mean one MB. */
+export const BYTES_PER_MB = 1024 * 1024;
 
 /** One drawn series: its name, and how to read it off a point. */
 interface Measure {

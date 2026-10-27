@@ -69,6 +69,18 @@ const VIRTUAL_USERS_IDS = ['user-start-rate', 'user-end-rate', 'concurrent-users
 const CHART_IDS = [...REQUESTS_IDS, ...VIRTUAL_USERS_IDS] as const;
 
 /**
+ * GE's "Responses per Second by Status", which sits in Requests after Errors
+ * per second — and is NOT among the ten above, because no seeded run can draw
+ * it. It reads the run's AGENT FILE (a `simulation.log` carries no status
+ * code), and the reference bundle has none, so on every run this file seeds it
+ * is a figure saying why rather than a plot. Kept out of `figures()` so the
+ * ten-chart claims below stay claims about charts that draw; its place in the
+ * section and its sentence are asserted where the sections are.
+ */
+const STATUS_ID = 'agent-status';
+const NO_AGENT_FILE = 'This run carries no HTTP status codes: it has no agent file.';
+
+/**
  * The Report with its charts drawn: Requests (open on arrival), and Virtual
  * users too when the case counts all ten. Virtual users is shut on arrival and
  * a shut section builds nothing, so a case that wants its charts opens it —
@@ -97,7 +109,9 @@ async function openReport(page: Page, runId: string, sections: 'requests' | 'all
  * nothing, so this is Requests' seven until Virtual users is opened.
  */
 function figures(page: Page): Locator {
-  return page.locator('figure[data-testid^="chart-"]:not([data-testid="chart-time-window"])');
+  return page.locator(
+    `figure[data-testid^="chart-"]:not([data-testid="chart-time-window"]):not([data-testid="chart-${STATUS_ID}"])`,
+  );
 }
 
 interface Cell {
@@ -275,11 +289,21 @@ test('every chart sits in its GE section', async ({ page }) => {
     'Groups',
     'Virtual users',
     'Connections',
+    'DNS',
     'Load generators',
   ]);
 
+  // Requests holds the status figure too, in GE's place after Errors per
+  // second — present, and saying the seeded run has no agent file.
+  const REQUESTS_FIGURE_IDS = [
+    ...REQUESTS_IDS.slice(0, REQUESTS_IDS.indexOf('errors-over-time') + 1),
+    STATUS_ID,
+    ...REQUESTS_IDS.slice(REQUESTS_IDS.indexOf('errors-over-time') + 1),
+  ];
+  await expect(page.getByTestId(`chart-${STATUS_ID}`).getByRole('status')).toHaveText(NO_AGENT_FILE);
+
   const SECTIONS = [
-    { heading: 'Requests', ids: REQUESTS_IDS },
+    { heading: 'Requests', ids: REQUESTS_FIGURE_IDS },
     { heading: 'Virtual users', ids: VIRTUAL_USERS_IDS },
   ] as const;
 
@@ -302,8 +326,8 @@ test('every chart sits in its GE section', async ({ page }) => {
   // sections would satisfy every assertion above while being exactly the
   // ungrouped page this case exists to prevent.
   const grouped = SECTIONS.flatMap((s) => s.ids);
-  expect(grouped).toHaveLength(CHART_IDS.length);
-  expect([...grouped].sort()).toEqual([...CHART_IDS].sort());
+  expect(grouped).toHaveLength(CHART_IDS.length + 1);
+  expect([...grouped].sort()).toEqual([...CHART_IDS, STATUS_ID].sort());
 });
 
 test('every chart actually draws — the real ECharts renders SVG marks for all ten', async ({
@@ -646,6 +670,10 @@ test('a processing run mounts no charts at all', async ({ page }) => {
   // yet and put seven "no data" figures under a run nobody has parsed —
   // stating as a measurement ("nothing was recorded") what is merely "not yet".
   await expect(figures(page)).toHaveCount(0);
+  // Named on its own too: the status chart reads the agent file, which a
+  // processing run does not have yet, and `figures` counting zero could be a
+  // selector that stopped matching it.
+  await expect(page.getByTestId('chart-agent-status')).toHaveCount(0);
 });
 
 test('a completed run with no data explains every chart rather than showing empty axes', async ({

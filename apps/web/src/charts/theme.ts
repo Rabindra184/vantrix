@@ -126,8 +126,14 @@ export type StatusRole = 'passed' | 'pending' | 'neutral' | 'failed';
 export type BandRole = 'band-under' | 'band-between' | 'band-over' | 'band-failed';
 
 /**
- * The percentile chart's SEVERITY RAMP — one ordered ten-step scale, one role
- * per band `PercentilesChart` can draw (`min` through `max`, D-7's exact set).
+ * The percentile charts' SEVERITY RAMP — one ordered twelve-step scale, one
+ * role per row a percentile chart can draw: `PercentilesChart`'s ten (`min`
+ * through `max`, D-7's exact set), plus GE's `99.9%` and `99.99%`, which the
+ * agent duration charts carry between `99%` and `Max`.
+ *
+ * `pct-mean` is a role and NOT a step: a mean is not a rank, so it has no
+ * place on a scale ordered by rank. It is the thirteenth row GE draws, in a
+ * hue the ramp never uses.
  *
  * `pct-` prefixed, distinct from `BandRole`'s `band-*`: two charts each own an
  * ordered ramp, and the prefixes are what keeps `ROLE_TOKEN` and `fallbackFor`
@@ -144,7 +150,10 @@ export type PercentileRole =
   | 'pct-p90'
   | 'pct-p95'
   | 'pct-p99'
-  | 'pct-max';
+  | 'pct-p99_9'
+  | 'pct-p99_99'
+  | 'pct-max'
+  | 'pct-mean';
 
 /** Every semantic palette. What `Chart`'s `roles` prop accepts. */
 export type MarkRole = StatusRole | BandRole | PercentileRole;
@@ -179,7 +188,10 @@ const ROLE_TOKEN: Readonly<Record<MarkRole, string>> = {
   'pct-p90': '--chart-pct-p90',
   'pct-p95': '--chart-pct-p95',
   'pct-p99': '--chart-pct-p99',
+  'pct-p99_9': '--chart-pct-p99_9',
+  'pct-p99_99': '--chart-pct-p99_99',
   'pct-max': '--chart-pct-max',
+  'pct-mean': '--chart-pct-mean',
 };
 
 /**
@@ -247,24 +259,24 @@ export const BAND_RAMP: readonly BandRole[] = [
 ];
 
 /**
- * The percentile chart's SEVERITY RAMP, in band order — `min` (fastest, green)
- * through `max` (slowest, red). `PercentilesChart` filters this down to
- * whichever bands are selected and hands the result to `Chart` as `roles`; see
- * that component for why the filter must follow `BANDS`' order rather than
- * toggle order.
+ * The percentile charts' SEVERITY RAMP, in rank order — `min` (fastest, green)
+ * through `max` (slowest, red), twelve steps. `pct-mean` is not in it.
+ * `PercentilesChart` filters this down to whichever bands are selected and
+ * hands the result to `Chart` as `roles`; see that component for why the
+ * filter must follow `BANDS`' order rather than toggle order.
  *
  * Do not reorder: `palette.test.ts` reads the ramp off it, and reordering
  * would silently recolour every selected band.
  */
 export const PERCENTILE_RAMP: readonly PercentileRole[] = [
-  'pct-min', 'pct-p25', 'pct-p50', 'pct-p75', 'pct-p80',
-  'pct-p85', 'pct-p90', 'pct-p95', 'pct-p99', 'pct-max',
+  'pct-min', 'pct-p25', 'pct-p50', 'pct-p75', 'pct-p80', 'pct-p85',
+  'pct-p90', 'pct-p95', 'pct-p99', 'pct-p99_9', 'pct-p99_99', 'pct-max',
 ];
 
 /**
- * MEASURED, ten steps, hue falling monotonically 181.7° → 25.3° (green to
+ * MEASURED, twelve steps, hue falling monotonically 181.7° → 25.3° (green to
  * red). Light and dark share these values, as the reference this ramp is
- * drawn from does — a ten-step ramp spread across both a light and a dark
+ * drawn from does — a twelve-step ramp spread across both a light and a dark
  * derivation would only multiply the ways two steps could end up too close.
  *
  * Lightness is NOT monotonic here (it dips at `pct-p50` and rises again
@@ -280,12 +292,32 @@ export const PERCENTILE_RAMP: readonly PercentileRole[] = [
  * those tokens are severity scales where red means "worst", so the same hex
  * meaning the same thing in two ramps is the point, not a coincidence to
  * collapse into a shared alias.
+ *
+ * `pct-p99_9` / `pct-p99_99` (GE report parity PR 3) sit in the ramp's
+ * narrowest arc: `99%` → `Max` is ΔE 10.4 at one lightness, so splitting the
+ * hue evenly would give three steps ~3.5 apart, under the adjacent floor. They
+ * DROP lightness instead — Tailwind's orange-700 and red-600, hue 38.4° and
+ * 27.3° — which is what lets `p99_9` stand ΔE 9.99 from `Max` (the tightest
+ * two-apart pair, floor 8) and every adjacent pair at least ΔE 6.05 apart
+ * (floor 4). A search over the arc for the pair maximising the worst margin
+ * within the rest of the ramp's lightness band did no better than these two.
+ *
+ * `#c2410c` is also the LIGHT theme's `--color-accent-base`. Not an alias and
+ * not to be deduped: the accent is the interactive colour and this is a
+ * data step — `pct-p99`'s `#f97316` is the dark accent for the same reason,
+ * and neither page draws its accent on a chart line.
+ *
+ * `pct-mean` is `#3b82f6`, a blue, because the ramp spends 181.7° → 25.3° and
+ * a mean drawn inside that arc would read as a percentile. It is a LINE, so
+ * it is gated as a mark: 3.68:1 on the light card and 4.63:1 on the dark one,
+ * both over WCAG 1.4.11's 3:1.
  */
 const RAMP = {
   'pct-min': '#2fdac4', 'pct-p25': '#32d29c', 'pct-p50': '#22c55e',
   'pct-p75': '#84cc16', 'pct-p80': '#b6c641', 'pct-p85': '#d4c026',
   'pct-p90': '#e8b10c', 'pct-p95': '#f59e0b', 'pct-p99': '#f97316',
-  'pct-max': '#ef4444',
+  'pct-p99_9': '#c2410c', 'pct-p99_99': '#dc2626', 'pct-max': '#ef4444',
+  'pct-mean': '#3b82f6',
 } as const;
 
 export const PERCENTILE_COLORS: Readonly<Record<ChartMode, Readonly<Record<PercentileRole, string>>>> =

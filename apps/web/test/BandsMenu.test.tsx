@@ -3,6 +3,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SeriesResponseSchema } from '@perfportal/contracts';
+import BandsMenu from '../src/charts/BandsMenu';
 import PercentilesChart from '../src/charts/PercentilesChart';
 import fixture from './fixtures/reference-run.json';
 
@@ -140,5 +141,40 @@ describe('BandsMenu', () => {
     await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
     await user.click(trigger(0));
     expect(await screen.findAllByRole('menuitemcheckbox')).toHaveLength(10);
+  });
+});
+
+/**
+ * ═══ GENERIC OVER ITS BANDS (GE report parity PR 3) ═══
+ *
+ * The agent duration charts carry GE's thirteen rows, keyed differently from
+ * the response-time chart's ten (`p99_9`, `mean`) and labelled differently
+ * (`Min` where Gatling's own report says `min`). The menu takes its bands and
+ * their labels from the caller rather than importing one chart's set, so this
+ * renders it with a set that exists nowhere else: if the menu still reached
+ * for `BANDS` or `BAND_LABEL` it would list ten items, not these three.
+ */
+describe('BandsMenu, given its own bands', () => {
+  const bands = ['p99_9', 'mean', 'max'] as const;
+  type B = (typeof bands)[number];
+  const labels: Record<B, string> = { p99_9: '99.9%', mean: 'Mean', max: 'Max' };
+
+  it('lists one checkbox per band it is handed, named by the labels it is handed', async () => {
+    const user = userEvent.setup();
+    const onToggle = vi.fn();
+    render(<BandsMenu id="tcp" bands={bands} labels={labels} selected={['mean']} onToggle={onToggle} />);
+    await user.click(screen.getByRole('button', { name: 'Percentile bands, 1 selected' }));
+    const items = await screen.findAllByRole('menuitemcheckbox');
+    expect(items.map((i) => i.textContent)).toEqual(bands.map((b) => labels[b]));
+    for (const band of bands) {
+      expect(screen.getByRole('menuitemcheckbox', { name: labels[band] })).toHaveAttribute(
+        'data-testid',
+        `band-${band}-tcp`,
+      );
+    }
+    expect(screen.getByRole('menuitemcheckbox', { name: 'Mean' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('menuitemcheckbox', { name: '99.9%' })).toHaveAttribute('aria-checked', 'false');
+    await user.click(screen.getByRole('menuitemcheckbox', { name: 'Max' }));
+    expect(onToggle).toHaveBeenCalledWith('max');
   });
 });

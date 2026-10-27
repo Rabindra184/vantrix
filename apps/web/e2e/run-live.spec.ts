@@ -212,22 +212,24 @@ test.describe('a running run draws its live dashboard', () => {
       // Report now.
       await expect(page.getByTestId('live-notice-withheld')).toHaveCount(0);
 
-      /* ---- Report: Requests' two live charts and five withheld notices ---- */
+      /* ---- Report: Requests' two live charts and six withheld notices ---- */
       await page.goto(runReportPath(runId));
 
       // Requests is the one section open on arrival. Its two live charts really
-      // drew; the other five of GE's seven are stated, never left as a silent
-      // gap — and each by NAME, because a count alone is satisfied by five
-      // notices about the wrong things.
+      // drew; the other six of Requests' eight are stated, never left as a silent
+      // gap — and each by NAME, because a count alone is satisfied by six
+      // notices about the wrong things. The status chart is among them: it
+      // reads an agent file a streaming run does not have yet.
       await expect(page.locator('section#requests')).toBeVisible();
       for (const id of ['requests-and-responses', 'percentiles']) {
         await expect(plot(page.getByTestId(`chart-${id}`))).toHaveCount(1);
       }
-      await expect(page.getByTestId('live-notice-withheld')).toHaveCount(5);
+      await expect(page.getByTestId('live-notice-withheld')).toHaveCount(6);
       for (const subject of [
         'Response time distribution',
         'Response time percentiles distribution',
         'Errors per second',
+        'Responses per Second by Status',
         'Response time ranges',
         'Number of requests',
       ]) {

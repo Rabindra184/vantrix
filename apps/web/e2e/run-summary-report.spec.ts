@@ -103,11 +103,23 @@ const REPORT_REQUEST_CHARTS = [
   'request-counts',
 ] as const;
 
+/**
+ * GE's "Responses per Second by Status", the Requests figure after Errors per
+ * second — outside the seven above because no seeded run draws it: it reads
+ * the run's agent file, which the reference bundle does not carry, so here it
+ * is a figure saying the run has none. That sentence is about the run's FILE,
+ * which no window can make false, so it is the one figure a window does not
+ * re-word.
+ */
+const STATUS_FIGURE = 'chart-agent-status';
+const NO_AGENT_FILE = 'This run carries no HTTP status codes: it has no agent file.';
+
 const SECTIONS = [
   ['requests', 'Requests', true],
   ['groups', 'Groups', false],
   ['virtual-users', 'Virtual users', false],
   ['connections', 'Connections', false],
+  ['dns', 'DNS', false],
   ['load-generators', 'Load generators', false],
 ] as const;
 
@@ -125,7 +137,7 @@ const SECTIONS = [
  *
  * AND ONLY REQUESTS IS OPEN AFTER A RELOAD, which is GE's own behaviour — open
  * sections are kept nowhere, not in the URL and not across a load. The loop
- * asserts all five states at once so a section that survived the reload, and
+ * asserts all six states at once so a section that survived the reload, and
  * Requests failing to open on its own, are both caught. It runs after the
  * section's CONTENT has been seen, so the reload is of a section that really
  * was open.
@@ -213,6 +225,9 @@ for (const [old, rest, hash] of [
         if (id === 'errors-over-time') await expect(figure, id).not.toContainText('Loading…');
         else await expect(plot(figure), id).toHaveCount(1);
       }
+      // The status figure sits above `#load-generators` too, and settles on its
+      // sentence rather than a plot.
+      await expect(page.getByTestId(STATUS_FIGURE)).toContainText(NO_AGENT_FILE);
       await expect(page.locator('section#load-generators')).toBeInViewport();
     }
     if (old === 'errors') {
@@ -573,7 +588,8 @@ test('under a window that selects no requests, the Report’s charts name the wi
     'true',
   );
 
-  const figures = requests.locator('figure[data-testid^="chart-"]');
+  // The seven that re-word for a window; the status figure is asserted below.
+  const figures = requests.locator(`figure[data-testid^="chart-"]:not([data-testid="${STATUS_FIGURE}"])`);
   await expect(figures).toHaveCount(7);
   for (const id of REPORT_REQUEST_CHARTS) {
     await expect(requests.getByTestId(`chart-${id}`).getByRole('status'), id).toContainText(/selected window/i);
@@ -583,7 +599,12 @@ test('under a window that selects no requests, the Report’s charts name the wi
   await expect(requests.getByTestId('chart-percentiles')).toContainText('No response times fall in the selected window.');
 
   // Every figure has settled on a window sentence, so reading them all is safe.
-  const said = await requests.locator('figure[data-testid^="chart-"] [role="status"]').allTextContents();
+  const said = await requests
+    .locator(`figure[data-testid^="chart-"]:not([data-testid="${STATUS_FIGURE}"]) [role="status"]`)
+    .allTextContents();
   expect(said, 'one sentence per chart').toHaveLength(7);
   for (const sentence of said) expect(sentence).not.toMatch(/this run/i);
+  // The status figure says what the run's file is, which no window changes —
+  // the ingestion-sentence rule this file's window cases already follow.
+  await expect(requests.getByTestId(STATUS_FIGURE).getByRole('status')).toHaveText(NO_AGENT_FILE);
 });

@@ -49,6 +49,15 @@ const PROBES: Record<string, { windowed: (w: Window | null) => string } | { unwi
   scatterPath: { windowed: (w) => paths.scatterPath(ID, 'Cart/Add To Cart', w) },
   telemetryPath: { windowed: (w) => paths.telemetryPath(ID, w) },
   trendsPath: { unwindowed: paths.trendsPath(ID) },
+  // The run's agent summary takes no window: it names the remotes and
+  // hostnames the four figure reads accept, which a window cannot change.
+  agentSummaryPath: { unwindowed: paths.agentSummaryPath(ID) },
+  // Probed WITH a filter, because that is the case where the window has to
+  // join with `&`; `agentApi.test.ts` pins the `*` case, where it joins with `?`.
+  agentConnectionsPath: { windowed: (w) => paths.agentConnectionsPath(ID, 'localhost/127.0.0.1:443', w) },
+  agentDnsPath: { windowed: (w) => paths.agentDnsPath(ID, 'localhost', w) },
+  agentInjectorsPath: { windowed: (w) => paths.agentInjectorsPath(ID, w) },
+  agentStatusPath: { windowed: (w) => paths.agentStatusPath(ID, w) },
 };
 
 describe('every metrics URL has one definition', () => {
@@ -103,14 +112,26 @@ describe('every metrics URL has one definition', () => {
    * this repository already prescribes — run the loose spelling against a
    * correct tree and see whether it still passes.
    */
-  it('lets neither caller spell a metrics URL for itself', () => {
-    const files = ['apps/web/src/api/metrics.ts', 'scripts/capture-chart-fixture.mjs'];
-    for (const file of files) {
+  it('lets no caller spell a metrics URL for itself', () => {
+    // The agent pair is the same arrangement one feature over: `api/agent.ts`
+    // for the browser and `capture-agent-fixture.mjs` for the fixture its
+    // transforms are tested against. Each file carries its own vacuity floor,
+    // because `agent.ts` is legitimately small — and the agent capture is held
+    // to the agent endpoints' own path segment rather than `/v1/`, because it
+    // legitimately spells two URLs that are not metrics reads: the token mint
+    // and the bundle upload, which no builder here owns.
+    const files: [file: string, floor: number, banned: RegExp][] = [
+      ['apps/web/src/api/metrics.ts', 2000, /\/v1\//g],
+      ['scripts/capture-chart-fixture.mjs', 2000, /\/v1\//g],
+      ['apps/web/src/api/agent.ts', 500, /\/v1\//g],
+      ['scripts/capture-agent-fixture.mjs', 2000, /\/agent[/?'"`]/g],
+    ];
+    for (const [file, floor, banned] of files) {
       const src = read(file);
       // Vacuity: an empty or renamed file would satisfy every assertion below.
-      expect(src.length, `${file} is empty — the path has rotted`).toBeGreaterThan(2000);
+      expect(src.length, `${file} is empty — the path has rotted`).toBeGreaterThan(floor);
       expect(src, `${file} no longer imports the shared builders`).toContain('metricPaths');
-      expect(strip(src).match(/\/v1\//g) ?? [], `${file} hand-writes a metrics URL`).toEqual([]);
+      expect(strip(src).match(banned) ?? [], `${file} hand-writes a metrics URL`).toEqual([]);
     }
   });
 });
