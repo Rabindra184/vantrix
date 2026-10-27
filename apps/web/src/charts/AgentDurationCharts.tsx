@@ -136,10 +136,10 @@ export default function AgentDurationCharts({
         kind="line"
         controls={
           <ControlBar>
-            <ControlGroup label="Percentile rows" context={titles.overTime}>
+            <ControlGroup label="Percentile bands" context={titles.overTime}>
               <BandsMenu
                 id={overTimeId}
-                label={`${titles.overTime}: Percentile rows`}
+                label={`${titles.overTime}: Percentile bands`}
                 bands={AGENT_PERCENTILE_ROWS}
                 labels={AGENT_ROW_LABEL}
                 selected={rows}

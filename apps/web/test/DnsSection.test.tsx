@@ -229,11 +229,11 @@ describe('DnsSection', () => {
   it('names every control after its chart', async () => {
     renderSection();
     await waitForCharts();
-    const groups = [`${CURVE}: Outcome`, `${OVER_TIME}: Percentile rows`, `${OVER_TIME}: Outcome`];
+    const groups = [`${CURVE}: Outcome`, `${OVER_TIME}: Percentile bands`, `${OVER_TIME}: Outcome`];
     for (const name of groups) expect(screen.getByRole('group', { name })).toBeInTheDocument();
     expect(screen.getAllByRole('group')).toHaveLength(groups.length);
     expect(
-      screen.getByRole('button', { name: `${OVER_TIME}: Percentile rows, ${DEFAULT_AGENT_ROWS.length} selected` }),
+      screen.getByRole('button', { name: `${OVER_TIME}: Percentile bands, ${DEFAULT_AGENT_ROWS.length} selected` }),
     ).toBeInTheDocument();
   });
 });

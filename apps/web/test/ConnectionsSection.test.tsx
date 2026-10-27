@@ -111,7 +111,7 @@ describe('ConnectionsSection', () => {
     await waitForCharts();
     const trigger = screen.getByTestId('bands-agent-tcp-connect-percentiles');
     expect(trigger).toHaveAccessibleName(
-      `TCP Connect Duration Percentiles: Percentile rows, ${DEFAULT_AGENT_ROWS.length} selected`,
+      `TCP Connect Duration Percentiles: Percentile bands, ${DEFAULT_AGENT_ROWS.length} selected`,
     );
     await user.click(trigger);
     const checked = (await screen.findAllByRole('menuitemcheckbox'))
@@ -269,15 +269,19 @@ describe('ConnectionsSection', () => {
       { overTime: TITLES[2]!, curve: TITLES[4]! },
       { overTime: TITLES[5]!, curve: TITLES[7]! },
     ];
-    const groups = durations.flatMap((d) => [`${d.overTime}: Percentile rows`, `${d.overTime}: Outcome`, `${d.curve}: Outcome`]);
+    const groups = durations.flatMap((d) => [`${d.overTime}: Percentile bands`, `${d.overTime}: Outcome`, `${d.curve}: Outcome`]);
     // `getByRole` throws on a second match, so each finding exactly one is the uniqueness.
     for (const name of groups) expect(screen.getByRole('group', { name })).toBeInTheDocument();
     expect(screen.getAllByRole('group')).toHaveLength(groups.length);
     for (const d of durations) {
       expect(
-        screen.getByRole('button', { name: `${d.overTime}: Percentile rows, ${DEFAULT_AGENT_ROWS.length} selected` }),
+        screen.getByRole('button', { name: `${d.overTime}: Percentile bands, ${DEFAULT_AGENT_ROWS.length} selected` }),
       ).toBeInTheDocument();
     }
+    // One word for one control: the trigger reads "Bands · N", the response-time
+    // chart's menu is "Percentile bands", and these say the same.
+    expect(screen.queryAllByRole('group', { name: /percentile rows/i })).toEqual([]);
+    expect(screen.queryAllByRole('button', { name: /percentile rows/i })).toEqual([]);
   });
 
   it("asks for the shell's window", async () => {
