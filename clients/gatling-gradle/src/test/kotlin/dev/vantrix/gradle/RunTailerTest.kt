@@ -3,6 +3,7 @@ package dev.vantrix.gradle
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
+import java.nio.file.attribute.FileTime
 import java.util.concurrent.TimeUnit
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
@@ -19,6 +20,7 @@ class RunTailerTest {
         object OpenFailed : ApiCall()
         data class StreamCalled(val runId: String, val offset: Long, val byteCount: Int) : ApiCall()
         data class Closed(val runId: String) : ApiCall()
+        data class AgentUploaded(val runId: String, val file: Path) : ApiCall()
     }
 
     private class FakeApi : LiveApi {
@@ -42,7 +44,13 @@ class RunTailerTest {
             stickyStreamOutcome = result
         }
 
+        /** What every uploadAgent() call answers; a thrown error is thrown instead. */
+        var agentUploadOutcome: AgentUpload = AgentUpload.Stored
+        var agentUploadThrows: Throwable? = null
+
         fun streamCalls(): List<ApiCall.StreamCalled> = calls.filterIsInstance<ApiCall.StreamCalled>()
+
+        fun agentUploads(): List<ApiCall.AgentUploaded> = calls.filterIsInstance<ApiCall.AgentUploaded>()
 
         override fun open(idempotencyKey: String): OpenedRun? {
             calls += ApiCall.OpenAttempt(idempotencyKey)
@@ -66,6 +74,12 @@ class RunTailerTest {
         override fun close(run: OpenedRun): Boolean {
             calls += ApiCall.Closed(run.runId)
             return true
+        }
+
+        override fun uploadAgent(run: OpenedRun, file: Path): AgentUpload {
+            calls += ApiCall.AgentUploaded(run.runId, file)
+            agentUploadThrows?.let { throw it }
+            return agentUploadOutcome
         }
     }
 
@@ -94,7 +108,7 @@ class RunTailerTest {
         val staleDir = Files.createDirectory(tmp.resolve(realDirName("20260820134041213")))
         writeLog(staleDir, 10)
         val api = FakeApi()
-        val tailer = RunTailer(api, configFor(), tmp)
+        val tailer = RunTailer(api, configFor(), tmp, null)
 
         tailer.tick()
         tailer.tick()
@@ -124,7 +138,7 @@ class RunTailerTest {
         // System.currentTimeMillis() -- a different shape from real Gatling's, but still
         // `<something>-<digits>`, so it must still be recognised post-snapshot.
         val api = FakeApi()
-        val tailer = RunTailer(api, configFor(), tmp)
+        val tailer = RunTailer(api, configFor(), tmp, null)
 
         val dir = Files.createDirectory(tmp.resolve("fake-${System.currentTimeMillis()}"))
         writeLog(dir, 7)
@@ -144,7 +158,7 @@ class RunTailerTest {
         // anything, z-sim would be processed first. Within a single tick, discovery order must be
         // by NAME.
         val api = FakeApi()
-        val tailer = RunTailer(api, configFor(), tmp)
+        val tailer = RunTailer(api, configFor(), tmp, null)
 
         val dirZ = Files.createDirectory(tmp.resolve("z-sim-20260820134041213"))
         writeLog(dirZ, 3)
@@ -162,7 +176,7 @@ class RunTailerTest {
 
     @Test fun `ships partial blocks -- whatever bytes exist at the tick`(@TempDir tmp: Path) {
         val api = FakeApi()
-        val tailer = RunTailer(api, configFor(), tmp)
+        val tailer = RunTailer(api, configFor(), tmp, null)
 
         val dir = Files.createDirectory(tmp.resolve(realDirName("20260820134041213")))
         writeLog(dir, 5000)
@@ -177,7 +191,7 @@ class RunTailerTest {
 
     @Test fun `caps a single read at 4 MiB and drains the rest next tick`(@TempDir tmp: Path) {
         val api = FakeApi()
-        val tailer = RunTailer(api, configFor(), tmp)
+        val tailer = RunTailer(api, configFor(), tmp, null)
 
         val dir = Files.createDirectory(tmp.resolve(realDirName("20260820134041213")))
         val fiveMiB = 5 * 1024 * 1024
@@ -198,7 +212,7 @@ class RunTailerTest {
 
     @Test fun `a second directory closes the first run and opens a second`(@TempDir tmp: Path) {
         val api = FakeApi()
-        val tailer = RunTailer(api, configFor(), tmp)
+        val tailer = RunTailer(api, configFor(), tmp, null)
 
         val dirA = Files.createDirectory(tmp.resolve(realDirName("20260820134041213")))
         Files.write(dirA.resolve("simulation.log"), "hello".toByteArray())
@@ -231,7 +245,7 @@ class RunTailerTest {
     @Test fun `409 resume rewinds the read position`(@TempDir tmp: Path) {
         val api = FakeApi()
         api.scriptNextStream(StreamResult.Resume(0))
-        val tailer = RunTailer(api, configFor(), tmp)
+        val tailer = RunTailer(api, configFor(), tmp, null)
 
         val dir = Files.createDirectory(tmp.resolve(realDirName("20260820134041213")))
         writeLog(dir, 100)
@@ -248,7 +262,7 @@ class RunTailerTest {
 
     @Test fun `finish drains the tail then closes -- including bytes written after the last tick`(@TempDir tmp: Path) {
         val api = FakeApi()
-        val tailer = RunTailer(api, configFor(), tmp)
+        val tailer = RunTailer(api, configFor(), tmp, null)
 
         val dir = Files.createDirectory(tmp.resolve(realDirName("20260820134041213")))
         val logFile = dir.resolve("simulation.log")
@@ -280,7 +294,7 @@ class RunTailerTest {
     @Test fun `auth failure stops streaming but finish still closes`(@TempDir tmp: Path) {
         val api = FakeApi()
         api.scriptNextStream(StreamResult.AuthFailed)
-        val tailer = RunTailer(api, configFor(), tmp)
+        val tailer = RunTailer(api, configFor(), tmp, null)
 
         val dir = Files.createDirectory(tmp.resolve(realDirName("20260820134041213")))
         val logFile = dir.resolve("simulation.log")
@@ -305,7 +319,7 @@ class RunTailerTest {
 
     @Test fun `no directory ever appearing means no open and a clean finish`(@TempDir tmp: Path) {
         val api = FakeApi()
-        val tailer = RunTailer(api, configFor(), tmp)
+        val tailer = RunTailer(api, configFor(), tmp, null)
 
         tailer.tick()
         tailer.tick()
@@ -318,7 +332,7 @@ class RunTailerTest {
     @Test fun `open failure is recorded in openFailures with no stream calls, and finish stays clean`(@TempDir tmp: Path) {
         val api = FakeApi()
         api.failNextOpen()
-        val tailer = RunTailer(api, configFor(), tmp)
+        val tailer = RunTailer(api, configFor(), tmp, null)
 
         val dir = Files.createDirectory(tmp.resolve(realDirName("20260820134041213")))
         writeLog(dir, 10)
@@ -339,7 +353,7 @@ class RunTailerTest {
         val api = FakeApi()
         api.alwaysReturnFromStream(StreamResult.Resume(0))
         val logs = mutableListOf<String>()
-        val tailer = RunTailer(api, configFor(), tmp, logger = { logs.add(it) })
+        val tailer = RunTailer(api, configFor(), tmp, null, logger = { logs.add(it) })
 
         val dir = Files.createDirectory(tmp.resolve(realDirName("20260820134041213")))
         // Well more than one MAX_CHUNK_BYTES read on disk -- an unguarded loop, re-reading and
@@ -367,7 +381,7 @@ class RunTailerTest {
         val api = FakeApi()
         val cap = RunTailer.MAX_CHUNK_BYTES.toLong()
         val logs = mutableListOf<String>()
-        val tailer = RunTailer(api, configFor(), tmp, logger = { logs.add(it) })
+        val tailer = RunTailer(api, configFor(), tmp, null, logger = { logs.add(it) })
 
         val dir = Files.createDirectory(tmp.resolve(realDirName("20260820134041213")))
         val logFile = dir.resolve("simulation.log")
@@ -404,7 +418,7 @@ class RunTailerTest {
 
     @Test fun `finish opens, drains and closes a directory that appears only after the last tick`(@TempDir tmp: Path) {
         val api = FakeApi()
-        val tailer = RunTailer(api, configFor(), tmp)
+        val tailer = RunTailer(api, configFor(), tmp, null)
 
         val dirA = Files.createDirectory(tmp.resolve(realDirName("20260820134041213")))
         Files.write(dirA.resolve("simulation.log"), "hello".toByteArray())
@@ -439,7 +453,7 @@ class RunTailerTest {
 
     @Test fun `a directory whose open fails during finish lands in openFailures, and finish still completes cleanly`(@TempDir tmp: Path) {
         val api = FakeApi()
-        val tailer = RunTailer(api, configFor(), tmp)
+        val tailer = RunTailer(api, configFor(), tmp, null)
 
         val dirA = Files.createDirectory(tmp.resolve(realDirName("20260820134041213")))
         Files.write(dirA.resolve("simulation.log"), "hello".toByteArray())
@@ -455,5 +469,162 @@ class RunTailerTest {
         assertTrue(api.calls.any { it is ApiCall.Closed && it.runId == runIdA }, "A must still be closed")
         assertEquals(listOf(dirB), tailer.openFailures())
         assertTrue(api.streamCalls().none { it.runId != runIdA }, "no stream calls should ever happen for a directory whose open failed")
+    }
+
+    // ── The agent file: uploaded before its run is closed ──────────────────────────────────
+
+    private fun header(startedAt: Long) = """{"t":"header","format":"perfportal-agent/1","startedAt":$startedAt}"""
+
+    private fun agentFile(outDir: Path, name: String, startedAt: Long): Path {
+        val file = outDir.resolve(name)
+        Files.writeString(file, header(startedAt) + "\n")
+        return file
+    }
+
+    /** A results directory with a log, last written at [lastModifiedMs] (set AFTER the log, which moves it). */
+    private fun resultsDir(root: Path, name: String, lastModifiedMs: Long): Path {
+        val dir = Files.createDirectory(root.resolve(name))
+        writeLog(dir, 10)
+        Files.setLastModifiedTime(dir, FileTime.fromMillis(lastModifiedMs))
+        return dir
+    }
+
+    private fun closeIndex(api: FakeApi, runId: String) =
+        api.calls.indexOfFirst { it is ApiCall.Closed && it.runId == runId }
+
+    @Test fun `each run uploads its own agent file before it is closed`(@TempDir tmp: Path) {
+        val outDir = Files.createDirectory(tmp.resolve("agent-out"))
+        val root = Files.createDirectory(tmp.resolve("results"))
+        val fileA = agentFile(outDir, "agent-11-1000.ndjson", 1000)
+        val fileB = agentFile(outDir, "agent-22-5000.ndjson", 5000)
+        val api = FakeApi()
+        val tailer = RunTailer(api, configFor(), root, AgentRun(outDir, notBeforeMs = 0))
+
+        resultsDir(root, realDirName("20260820134041213"), 3500)
+        tailer.tick() // opens A
+        resultsDir(root, realDirName("20260820134199987"), 9000)
+        tailer.tick() // closes A (maybeSwitchDirectory), opens B
+        tailer.finish() // closes B
+
+        val uploads = api.agentUploads()
+        assertEquals(listOf("run-1" to fileA, "run-2" to fileB), uploads.map { it.runId to it.file })
+        for (upload in uploads) {
+            val uploadIdx = api.calls.indexOf(upload)
+            val closeIdx = closeIndex(api, upload.runId)
+            assertTrue(closeIdx >= 0, "run ${upload.runId} must be closed")
+            assertTrue(uploadIdx < closeIdx, "run ${upload.runId}'s agent file must be sent BEFORE the run is closed")
+        }
+    }
+
+    @Test fun `a directory that first appears during finish uploads its agent file too`(@TempDir tmp: Path) {
+        val outDir = Files.createDirectory(tmp.resolve("agent-out"))
+        val root = Files.createDirectory(tmp.resolve("results"))
+        val file = agentFile(outDir, "agent-11-1000.ndjson", 1000)
+        val api = FakeApi()
+        val tailer = RunTailer(api, configFor(), root, AgentRun(outDir, notBeforeMs = 0))
+
+        resultsDir(root, realDirName("20260820134041213"), 3500)
+        tailer.finish() // never ticked: finish() opens, drains and closes it
+
+        val upload = api.agentUploads().single()
+        assertEquals(file, upload.file)
+        assertTrue(api.calls.indexOf(upload) < closeIndex(api, upload.runId))
+    }
+
+    @Test fun `a refused upload is logged with the run id and the run is still closed`(@TempDir tmp: Path) {
+        val outDir = Files.createDirectory(tmp.resolve("agent-out"))
+        val root = Files.createDirectory(tmp.resolve("results"))
+        agentFile(outDir, "agent-11-1000.ndjson", 1000)
+        val api = FakeApi()
+        api.agentUploadOutcome = AgentUpload.Refused(404, null)
+        val logs = mutableListOf<String>()
+        val tailer = RunTailer(api, configFor(), root, AgentRun(outDir, notBeforeMs = 0), logger = { logs.add(it) })
+
+        resultsDir(root, realDirName("20260820134041213"), 3500)
+        tailer.tick()
+        tailer.finish()
+
+        assertEquals(1, api.agentUploads().size)
+        assertTrue(closeIndex(api, "run-1") >= 0, "a refused agent file must never keep the run open")
+        assertEquals(1, logs.count { it.contains("run-1") && it.contains("404") }, "expected one line naming run-1 and 404, got: $logs")
+    }
+
+    @Test fun `a failed upload is logged with its message and the run is still closed`(@TempDir tmp: Path) {
+        val outDir = Files.createDirectory(tmp.resolve("agent-out"))
+        val root = Files.createDirectory(tmp.resolve("results"))
+        agentFile(outDir, "agent-11-1000.ndjson", 1000)
+        val api = FakeApi()
+        api.agentUploadOutcome = AgentUpload.Failed("connection refused")
+        val logs = mutableListOf<String>()
+        val tailer = RunTailer(api, configFor(), root, AgentRun(outDir, notBeforeMs = 0), logger = { logs.add(it) })
+
+        resultsDir(root, realDirName("20260820134041213"), 3500)
+        tailer.finish()
+
+        assertTrue(closeIndex(api, "run-1") >= 0)
+        assertEquals(1, logs.count { it.contains("run-1") && it.contains("connection refused") }, "got: $logs")
+    }
+
+    @Test fun `an upload that throws still closes the run`(@TempDir tmp: Path) {
+        val outDir = Files.createDirectory(tmp.resolve("agent-out"))
+        val root = Files.createDirectory(tmp.resolve("results"))
+        agentFile(outDir, "agent-11-1000.ndjson", 1000)
+        val api = FakeApi()
+        api.agentUploadThrows = IllegalStateException("boom")
+        val logs = mutableListOf<String>()
+        val tailer = RunTailer(api, configFor(), root, AgentRun(outDir, notBeforeMs = 0), logger = { logs.add(it) })
+
+        resultsDir(root, realDirName("20260820134041213"), 3500)
+        tailer.finish()
+
+        assertTrue(closeIndex(api, "run-1") >= 0)
+        assertTrue(logs.any { it.contains("run-1") && it.contains("boom") }, "got: $logs")
+    }
+
+    @Test fun `without an agent run nothing is uploaded, even with agent files on disk`(@TempDir tmp: Path) {
+        val outDir = Files.createDirectory(tmp.resolve("agent-out"))
+        val root = Files.createDirectory(tmp.resolve("results"))
+        agentFile(outDir, "agent-11-1000.ndjson", 1000)
+        val api = FakeApi()
+        val tailer = RunTailer(api, configFor(), root, null)
+
+        resultsDir(root, realDirName("20260820134041213"), 3500)
+        tailer.tick()
+        tailer.finish()
+
+        assertTrue(api.agentUploads().isEmpty())
+        assertTrue(closeIndex(api, "run-1") >= 0)
+    }
+
+    @Test fun `a directory with no paired agent file is closed with no upload`(@TempDir tmp: Path) {
+        val outDir = Files.createDirectory(tmp.resolve("agent-out"))
+        val root = Files.createDirectory(tmp.resolve("results"))
+        // Started after this directory was last written: it belongs to a later JVM.
+        agentFile(outDir, "agent-11-9000.ndjson", 9000)
+        val api = FakeApi()
+        val tailer = RunTailer(api, configFor(), root, AgentRun(outDir, notBeforeMs = 0))
+
+        resultsDir(root, realDirName("20260820134041213"), 3500)
+        tailer.tick()
+        tailer.finish()
+
+        assertTrue(api.agentUploads().isEmpty())
+        assertTrue(closeIndex(api, "run-1") >= 0)
+    }
+
+    @Test fun `after the server refuses the token, no agent file is sent but the run is still closed`(@TempDir tmp: Path) {
+        val outDir = Files.createDirectory(tmp.resolve("agent-out"))
+        val root = Files.createDirectory(tmp.resolve("results"))
+        agentFile(outDir, "agent-11-1000.ndjson", 1000)
+        val api = FakeApi()
+        api.scriptNextStream(StreamResult.AuthFailed)
+        val tailer = RunTailer(api, configFor(), root, AgentRun(outDir, notBeforeMs = 0))
+
+        resultsDir(root, realDirName("20260820134041213"), 3500)
+        tailer.tick()
+        tailer.finish()
+
+        assertTrue(api.agentUploads().isEmpty(), "the same token would be refused again")
+        assertTrue(closeIndex(api, "run-1") >= 0)
     }
 }

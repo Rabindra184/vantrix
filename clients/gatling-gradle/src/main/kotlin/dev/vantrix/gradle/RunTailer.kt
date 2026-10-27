@@ -32,6 +32,10 @@ import kotlin.concurrent.withLock
  * sidesteps wall-clock reasoning entirely: the trailing digits are used only to recognise the
  * SHAPE of a results directory, never interpreted as a point in time.
  *
+ * When the agent ran, [agent] is where its files land, and each run is sent its own one just
+ * before it is closed (see [closeRun]). It is REQUIRED, with no default: a forgotten argument
+ * would silently drop every run's agent file, so a caller with no agent passes null outright.
+ *
  * Single-threaded by design: [start] launches one daemon thread that owns the tick loop, and
  * every state mutation ([tick], [finish]) is taken under [lock] so [finish] -- normally called
  * from a different thread, the task's finalizer -- can never race a tick in flight.
@@ -40,6 +44,7 @@ class RunTailer(
     private val api: LiveApi,
     private val config: PluginConfig,
     private val resultsRoot: Path,
+    private val agent: AgentRun?,
     private val sleeper: (Long) -> Unit = Thread::sleep,
     private val logger: (String) -> Unit = {},
 ) {
@@ -113,7 +118,7 @@ class RunTailer(
             finished = true
             current?.let { state ->
                 drain(state)
-                api.close(state.run)
+                closeRun(state)
             }
             current = null
 
@@ -126,7 +131,7 @@ class RunTailer(
                 }
                 val state = TailState(next.resolve("simulation.log"), opened)
                 drain(state)
-                api.close(state.run)
+                closeRun(state)
             }
         }
     }
@@ -135,7 +140,7 @@ class RunTailer(
         val next = nextEligibleDir() ?: return
         current?.let { state ->
             drain(state)
-            api.close(state.run)
+            closeRun(state)
             current = null
         }
         val opened = api.open(UUID.randomUUID().toString())
@@ -144,6 +149,42 @@ class RunTailer(
             return
         }
         current = TailState(next.resolve("simulation.log"), opened)
+    }
+
+    /**
+     * The ONE place a run is closed -- [maybeSwitchDirectory] and both of [finish]'s sites come
+     * through here. When the agent ran ([agent] non-null), first sends the run its own agent file
+     * ([AgentFiles.pairFor] its results directory): the server takes it only while the run is
+     * still running, so it must arrive before the close. A refusal or a failure is one logged
+     * line naming the run, and the run is closed whatever happened -- an agent file never keeps a
+     * run open, and nothing here may throw past the close.
+     *
+     * Skipped after [StreamResult.AuthFailed]: the upload carries the same token the server has
+     * just refused, so it could only be refused again.
+     */
+    private fun closeRun(state: TailState) {
+        val agentRun = agent
+        if (agentRun != null && !authFailedPermanently) {
+            val runId = state.run.runId
+            try {
+                val file = AgentFiles.pairFor(agentRun, state.logFile.parent)
+                if (file != null) {
+                    when (val result = api.uploadAgent(state.run, file)) {
+                        AgentUpload.Stored -> Unit
+                        is AgentUpload.Refused -> logger(
+                            "agent file for run $runId refused: HTTP ${result.status}" +
+                                (result.code?.let { " $it" } ?: "") + "; the run carries no agent data",
+                        )
+                        is AgentUpload.Failed -> logger(
+                            "agent file for run $runId not sent: ${result.message}; the run carries no agent data",
+                        )
+                    }
+                }
+            } catch (t: Throwable) {
+                logger("agent file for run $runId not sent: ${t.message}; the run carries no agent data")
+            }
+        }
+        api.close(state.run)
     }
 
     /**

@@ -72,7 +72,7 @@ class VantrixPlugin : Plugin<Project> {
                             val failures = handle.tailer.openFailures()
                             if (failures.isNotEmpty()) {
                                 val uploader = BundleUploader(logger = { msg -> project.logger.warn("vantrix: $msg") })
-                                failures.forEach { dir -> uploader.upload(handle.config, dir) }
+                                failures.forEach { dir -> uploader.upload(handle.config, dir, handle.agentRun) }
                             }
                         }
                     } catch (t: Throwable) {
@@ -118,6 +118,7 @@ class VantrixPlugin : Plugin<Project> {
                                     api = client,
                                     config = config,
                                     resultsRoot = resultsRoot,
+                                    agent = agentRun,
                                     logger = { msg -> project.logger.warn(msg) },
                                 )
                                 handleRef.set(TailerHandle(tailer, config, agentRun))

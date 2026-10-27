@@ -7,6 +7,8 @@ import java.io.ByteArrayInputStream
 import java.io.File
 import java.net.InetSocketAddress
 import java.nio.charset.StandardCharsets
+import java.nio.file.Files
+import java.nio.file.attribute.FileTime
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
 import org.junit.jupiter.api.AfterEach
@@ -128,7 +130,7 @@ class BundleUploaderTest {
         File(tmp, "simulation.log").writeBytes(logBytes)
         val (srv, requests) = startServer(status = 202)
 
-        val result = BundleUploader(logger = {}).upload(configFor(srv), tmp.toPath())
+        val result = BundleUploader(logger = {}).upload(configFor(srv), tmp.toPath(), null)
 
         assertTrue(result)
         assertEquals(1, requests.size)
@@ -184,6 +186,7 @@ class BundleUploaderTest {
         val result = BundleUploader(logger = {}).upload(
             configFor(srv, environment = null, branch = "main", commitSha = "sha123"),
             tmp.toPath(),
+            null,
         )
 
         assertTrue(result)
@@ -202,7 +205,7 @@ class BundleUploaderTest {
         File(tmp, "simulation.log").writeBytes("x".toByteArray())
         val (srv, _) = startServer(status = 202)
 
-        assertTrue(BundleUploader(logger = {}).upload(configFor(srv), tmp.toPath()))
+        assertTrue(BundleUploader(logger = {}).upload(configFor(srv), tmp.toPath(), null))
     }
 
     @Test
@@ -211,9 +214,48 @@ class BundleUploaderTest {
         val (srv, _) = startServer(status = 500, responseBody = "internal error, try later")
         val logs = mutableListOf<String>()
 
-        val result = BundleUploader(logger = { logs.add(it) }).upload(configFor(srv), tmp.toPath())
+        val result = BundleUploader(logger = { logs.add(it) }).upload(configFor(srv), tmp.toPath(), null)
 
         assertFalse(result)
         assertTrue(logs.any { it.contains("500") }, "expected a warning naming the 500 status, got: $logs")
+    }
+
+    @Test
+    fun `a paired agent file travels in the bundle beside simulation-log, byte for byte`(@TempDir tmp: File) {
+        val outDir = Files.createDirectory(tmp.toPath().resolve("agent-out"))
+        val agentBytes = ("{\"t\":\"header\",\"startedAt\":1000}\n" + "{\"t\":\"s\",\"ts\":2}\n".repeat(50))
+            .toByteArray(StandardCharsets.UTF_8)
+        Files.write(outDir.resolve("agent-11-1000.ndjson"), agentBytes)
+        val resultsDir = Files.createDirectory(tmp.toPath().resolve("sim-20260820134041213"))
+        val logBytes = "GATLING LOG LINE\n".repeat(20).toByteArray(StandardCharsets.UTF_8)
+        Files.write(resultsDir.resolve("simulation.log"), logBytes)
+        Files.setLastModifiedTime(resultsDir, FileTime.fromMillis(3500))
+        val (srv, requests) = startServer(status = 202)
+
+        val result = BundleUploader(logger = {}).upload(configFor(srv), resultsDir, AgentRun(outDir, notBeforeMs = 0))
+
+        assertTrue(result)
+        val boundary = extractBoundary(requests[0].headers.getFirst("Content-Type")!!)
+        val untarred = untarGzip(parseMultipart(requests[0].body, boundary).getValue("bundle").body)
+        assertEquals(setOf("run-1/simulation.log", "run-1/perfportal-agent.ndjson"), untarred.keys)
+        assertContentEquals(logBytes, untarred.getValue("run-1/simulation.log"))
+        assertContentEquals(agentBytes, untarred.getValue("run-1/perfportal-agent.ndjson"))
+    }
+
+    @Test
+    fun `with an agent run but no paired file the bundle holds simulation-log alone`(@TempDir tmp: File) {
+        val outDir = Files.createDirectory(tmp.toPath().resolve("agent-out"))
+        // Started after the directory was last written: a later JVM's file.
+        Files.writeString(outDir.resolve("agent-11-9000.ndjson"), "{\"t\":\"header\",\"startedAt\":9000}\n")
+        val resultsDir = Files.createDirectory(tmp.toPath().resolve("sim-20260820134041213"))
+        Files.write(resultsDir.resolve("simulation.log"), "x".toByteArray())
+        Files.setLastModifiedTime(resultsDir, FileTime.fromMillis(3500))
+        val (srv, requests) = startServer(status = 202)
+
+        assertTrue(BundleUploader(logger = {}).upload(configFor(srv), resultsDir, AgentRun(outDir, notBeforeMs = 0)))
+
+        val boundary = extractBoundary(requests[0].headers.getFirst("Content-Type")!!)
+        val untarred = untarGzip(parseMultipart(requests[0].body, boundary).getValue("bundle").body)
+        assertEquals(setOf("run-1/simulation.log"), untarred.keys)
     }
 }

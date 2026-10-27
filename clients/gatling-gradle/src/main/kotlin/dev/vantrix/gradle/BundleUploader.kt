@@ -22,7 +22,8 @@ import org.apache.commons.compress.compressors.gzip.GzipCompressorOutputStream
 /**
  * The `uploadIfLiveUnavailable` fallback: when a simulation's live run could never be opened
  * (`RunTailer.openFailures()`), its finished `simulation.log` would otherwise just be lost. This
- * tars that one file as `run-1/simulation.log`, gzips the tar, and POSTs it as a batch bundle to
+ * tars that one file as `run-1/simulation.log` (and that simulation's own agent file beside it,
+ * when the agent ran and one pairs), gzips the tar, and POSTs it as a batch bundle to
  * `{base}/v1/runs` -- the same ingest endpoint a manual upload would use -- so the run shows up
  * late instead of not at all.
  *
@@ -45,7 +46,8 @@ class BundleUploader(
         .build()
 
     /**
-     * Tars and gzips `resultsDir/simulation.log` to a temp file, then streams it as the `bundle`
+     * Tars and gzips `resultsDir/simulation.log` -- with this directory's own agent file beside it
+     * when [agent] is non-null and [AgentFiles.pairFor] finds one -- to a temp file, then streams it as the `bundle`
      * part of a two-part multipart body (`metadata` JSON, `bundle` file) POSTed to
      * `{base}/v1/runs`. Returns true on 202 (accepted -- the worker processes it later); false on
      * any other response status, on a log over [MAX_BUNDLE_BYTES], or on any thrown `Exception` --
@@ -54,7 +56,7 @@ class BundleUploader(
      * (`VantrixPlugin`'s finalizer) wraps every call site in its own `catch (Throwable)`, which is
      * the actual backstop.
      */
-    fun upload(config: PluginConfig, resultsDir: Path): Boolean {
+    fun upload(config: PluginConfig, resultsDir: Path, agent: AgentRun?): Boolean {
         val logFile = resultsDir.resolve("simulation.log")
         return try {
             val logSize = Files.size(logFile)
@@ -67,7 +69,16 @@ class BundleUploader(
             }
             val tmpBundle = Files.createTempFile("vantrix-bundle-", ".tgz")
             try {
-                writeBundle(logFile, logSize, tmpBundle)
+                val agentFile = agent?.let { AgentFiles.pairFor(it, resultsDir) }
+                try {
+                    writeBundle(logFile, logSize, agentFile, tmpBundle)
+                } catch (e: Exception) {
+                    // The agent file is an extra and never costs the run: a bundle that could not
+                    // carry it is written again without it.
+                    if (agentFile == null) throw e
+                    logger("agent file ${agentFile.fileName} left out of the bundle: ${e.message}")
+                    writeBundle(logFile, logSize, null, tmpBundle)
+                }
                 postBundle(config, tmpBundle)
             } finally {
                 Files.deleteIfExists(tmpBundle)
@@ -128,11 +139,13 @@ class BundleUploader(
     }
 
     /**
-     * Writes a gzip stream to [tmpBundle] wrapping a tar with exactly one entry:
-     * `run-1/simulation.log`. Streams [logFile] in through an 8 KiB (default) buffer -- never
-     * holds it whole in memory.
+     * Writes a gzip stream to [tmpBundle] (replacing anything there) wrapping a tar of
+     * `run-1/simulation.log` and, when [agentFile] is non-null, `run-1/perfportal-agent.ndjson`
+     * beside it -- [AGENT_BUNDLE_FILE], the name the worker looks for in the same directory as
+     * the log. Streams each file in through an 8 KiB (default) buffer -- never holds one whole in
+     * memory.
      */
-    private fun writeBundle(logFile: Path, logSize: Long, tmpBundle: Path) {
+    private fun writeBundle(logFile: Path, logSize: Long, agentFile: Path?, tmpBundle: Path) {
         Files.newOutputStream(tmpBundle).use { fileOut ->
             GzipCompressorOutputStream(BufferedOutputStream(fileOut)).use { gz ->
                 TarArchiveOutputStream(gz).use { tar ->
@@ -141,8 +154,29 @@ class BundleUploader(
                     tar.putArchiveEntry(entry)
                     Files.newInputStream(logFile).use { it.copyTo(tar) }
                     tar.closeArchiveEntry()
+                    if (agentFile != null) {
+                        val agentSize = Files.size(agentFile)
+                        val agentEntry = TarArchiveEntry("run-1/$AGENT_BUNDLE_FILE")
+                        agentEntry.size = agentSize
+                        tar.putArchiveEntry(agentEntry)
+                        // Exactly the size the entry declares, so a file still growing cannot
+                        // overrun it.
+                        Files.newInputStream(agentFile).use { copyExactly(it, tar, agentSize) }
+                        tar.closeArchiveEntry()
+                    }
                 }
             }
+        }
+    }
+
+    private fun copyExactly(input: InputStream, output: java.io.OutputStream, size: Long) {
+        val buf = ByteArray(8192)
+        var left = size
+        while (left > 0) {
+            val n = input.read(buf, 0, minOf(buf.size.toLong(), left).toInt())
+            if (n < 0) throw java.io.EOFException("agent file ended ${left} bytes short of its $size")
+            output.write(buf, 0, n)
+            left -= n
         }
     }
 
@@ -167,6 +201,9 @@ class BundleUploader(
         "\r\n--$boundary--\r\n".toByteArray(StandardCharsets.UTF_8)
 
     companion object {
+        /** The worker's `AGENT_BUNDLE_FILE` (`packages/core/src/agent.ts`), verbatim. */
+        const val AGENT_BUNDLE_FILE = "perfportal-agent.ndjson"
+
         /**
          * Matches the server's own bundle cap (`apps/api/src/config.ts`'s `maxBundleBytes`,
          * `512 * 1024 * 1024` by default) -- a log bigger than this would answer 413 from the

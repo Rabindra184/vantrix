@@ -4,10 +4,13 @@ import com.google.gson.JsonParser
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
 import java.net.InetSocketAddress
+import java.nio.file.Files
+import java.nio.file.Path
 import java.nio.charset.StandardCharsets
 import java.util.UUID
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 import kotlin.test.*
 
 class LiveClientTest {
@@ -191,5 +194,90 @@ class LiveClientTest {
         client.stream(run, "hello".toByteArray())
 
         assertEquals("12345", requests[0].headers.getFirst("X-Stream-Offset"))
+    }
+
+    // ── uploadAgent: PUT /v1/runs/{id}/agent ─────────────────────────────────────────────
+
+    private fun agentFile(tmp: Path): Path {
+        val file = tmp.resolve("agent-1-1000.ndjson")
+        Files.writeString(file, "{\"t\":\"header\",\"startedAt\":1000}\n{\"t\":\"s\",\"ts\":1}\n")
+        return file
+    }
+
+    private fun problem(status: Int, code: String) =
+        """{"type":"t","title":"t","status":$status,"code":"$code","detail":"d","remediation":"r"}"""
+
+    @Test fun `uploadAgent PUTs the file with the bearer token as x-ndjson and reads 204 as stored`(@TempDir tmp: Path) {
+        val file = agentFile(tmp)
+        val (srv, requests) = startServer("/v1/runs/abc/agent" to { ex ->
+            ex.sendResponseHeaders(204, -1)
+            ex.close()
+        })
+        val client = LiveClient(configFor(srv, "tok"), logger = {})
+        val run = OpenedRun("abc", "http://localhost:${srv.address.port}/v1/runs/abc/stream", 0)
+
+        val result = client.uploadAgent(run, file)
+
+        assertEquals(AgentUpload.Stored, result)
+        assertEquals(1, requests.size)
+        val req = requests[0]
+        assertEquals("PUT", req.method)
+        assertEquals("/v1/runs/abc/agent", req.path)
+        assertEquals("Bearer tok", req.headers.getFirst("Authorization"))
+        assertEquals("application/x-ndjson", req.headers.getFirst("Content-Type"))
+        assertEquals(Files.readString(file), req.body)
+    }
+
+    @Test fun `uploadAgent reads 404, 409 and 413 as refusals carrying the status and the problem's code`(@TempDir tmp: Path) {
+        val file = agentFile(tmp)
+        for ((status, code) in listOf(404 to "NOT_FOUND", 409 to "RUN_NOT_RUNNING", 413 to "AGENT_LOG_TOO_LARGE")) {
+            val (srv, _) = startServer("/v1/runs/abc/agent" to { ex ->
+                respond(ex, status, problem(status, code), "application/problem+json")
+            })
+            val client = LiveClient(configFor(srv), logger = {})
+            val run = OpenedRun("abc", "http://localhost:${srv.address.port}/v1/runs/abc/stream", 0)
+
+            assertEquals(AgentUpload.Refused(status, code), client.uploadAgent(run, file))
+            srv.stop(0)
+        }
+    }
+
+    @Test fun `uploadAgent reads a refusal with no problem body as a refusal with no code`(@TempDir tmp: Path) {
+        val file = agentFile(tmp)
+        val (srv, _) = startServer("/v1/runs/abc/agent" to { ex -> respond(ex, 404, "Cannot PUT", "text/html") })
+        val client = LiveClient(configFor(srv), logger = {})
+        val run = OpenedRun("abc", "http://localhost:${srv.address.port}/v1/runs/abc/stream", 0)
+
+        assertEquals(AgentUpload.Refused(404, null), client.uploadAgent(run, file))
+    }
+
+    @Test fun `uploadAgent answers Failed, never throws, when nothing is listening`(@TempDir tmp: Path) {
+        val file = agentFile(tmp)
+        val (srv, _) = startServer()
+        val port = srv.address.port
+        val config = configFor(srv)
+        srv.stop(0)
+        server = null
+        val client = LiveClient(config, logger = {})
+        val run = OpenedRun("abc", "http://localhost:$port/v1/runs/abc/stream", 0)
+
+        val result = client.uploadAgent(run, file)
+
+        assertTrue(result is AgentUpload.Failed, "expected Failed, got $result")
+        assertTrue(result.message.isNotBlank())
+    }
+
+    @Test fun `uploadAgent answers Failed, never throws, when the file has gone`(@TempDir tmp: Path) {
+        val (srv, requests) = startServer("/v1/runs/abc/agent" to { ex ->
+            ex.sendResponseHeaders(204, -1)
+            ex.close()
+        })
+        val client = LiveClient(configFor(srv), logger = {})
+        val run = OpenedRun("abc", "http://localhost:${srv.address.port}/v1/runs/abc/stream", 0)
+
+        val result = client.uploadAgent(run, tmp.resolve("gone.ndjson"))
+
+        assertTrue(result is AgentUpload.Failed, "expected Failed, got $result")
+        assertTrue(requests.isEmpty())
     }
 }
