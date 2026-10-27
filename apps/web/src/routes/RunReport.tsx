@@ -13,7 +13,6 @@ import PercentileDistributionChart from '../charts/PercentileDistributionChart';
 import PercentilesChart from '../charts/PercentilesChart';
 import { RequestsAndResponsesChart } from '../charts/RatesChart';
 import RequestCountChart from '../charts/RequestCountChart';
-import type { TelemetryChartId } from '../charts/TelemetryCharts';
 import { ConcurrentUsersChart, UserEndRateChart, UserStartRateChart } from '../charts/UsersChart';
 import StatisticsTable, { STATISTICS_SKELETON_COLUMNS } from '../tables/StatisticsTable';
 import useIsCompact from '../useIsCompact';
@@ -25,6 +24,7 @@ import RunGlossary from './RunGlossary';
 import { isExact } from './statsMethod';
 import RunTelemetry from './RunTelemetry';
 import { CONNECTION_CHARTS } from './report/ConnectionsSection';
+import { LOAD_GENERATOR_CHARTS } from './report/LoadGeneratorsSection';
 import { PERCENTILES, REQUESTS_AND_RESPONSES } from './runSlots';
 import {
   useLiveFromShell,
@@ -50,15 +50,6 @@ const REQUEST_COUNTS: Slot = { id: 'request-counts', title: 'Number of requests'
 const USER_START_RATE: Slot = { id: 'user-start-rate', title: 'Users started per second' };
 const USER_END_RATE: Slot = { id: 'user-end-rate', title: 'Users ended per second' };
 const CONCURRENT_USERS: Slot = { id: 'concurrent-users', title: 'Concurrent users over time' };
-
-/* The rest of the telemetry agent's charts are GE's Load Generators section;
-   Connections' two (`CONNECTION_CHARTS`) are defined beside that section. */
-const LOAD_GENERATOR_CHARTS: readonly TelemetryChartId[] = [
-  'telemetry-cpu',
-  'telemetry-memory',
-  'telemetry-connection-events',
-  'telemetry-segment-events',
-];
 
 // Two columns from `2xl`, one below it — the break every chart grid on the run
 // page uses: each figure holds a 288px plot plus a legend, and two of those in
