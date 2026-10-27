@@ -68,6 +68,13 @@ const EXEMPT = new Map<string, string>([
       'the whole page on GET /v1/projects. Deleting the name would delete the ' +
       'comparison that makes the paragraph mean anything.',
   ],
+  [
+    'GatlingPluginExtension',
+    "Gatling's own Gradle extension class (io.gatling.gradle 3.15.1.2), whose " +
+      'jvmArgs the plugin reads by reflection when the task carries none. It is ' +
+      "upstream's type, never declared here, and the test naming it is about " +
+      'matching its shape.',
+  ],
 ]);
 
 const ROOTS = ['apps', 'packages', 'clients'];

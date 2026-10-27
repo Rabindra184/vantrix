@@ -35,10 +35,24 @@ TARGET_LOG="$WORK_DIR/target-server.log"
 STATUSES_LOG="$WORK_DIR/poll-statuses.log"
 SEEN_RUNNING_FILE="$WORK_DIR/seen-running"
 FINAL_JSON="$WORK_DIR/final-run.json"
+AGENT_JSON="$WORK_DIR/agent.json"
 SEED_JSON="$WORK_DIR/seed.json"
 SEED_COPY="$API_DIR/__vantrix_e2e_seed_$$.mjs"
 
-VANTRIX_URL_DEFAULT="http://localhost:3000"
+VANTRIX_URL_DEFAULT="${VANTRIX_URL:-http://localhost:3000}"
+
+# The Gatling agent (PR 4 of GE report parity): the plugin attaches it to every
+# simulation JVM by default and sends each run its own file before closing it.
+# VANTRIX_AGENT=false turns it off. This script passes the variable through and
+# asserts what the run's GET /v1/runs/{id}/agent must then answer, so the gate is
+# run TWICE to cover both halves: once as is (available: true, the header names
+# a host), once with VANTRIX_AGENT=false (available: false, reason
+# "not_collected"). Anything but the literal "false" means on, which is the
+# plugin's own reading (a blank is unset, not off).
+case "$(printf '%s' "${VANTRIX_AGENT:-}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')" in
+  false) EXPECT_AGENT=off ;;
+  *) EXPECT_AGENT=on ;;
+esac
 TARGET_PORT=8099
 
 log() { printf '[run-e2e] %s\n' "$*"; }
@@ -259,6 +273,7 @@ log "running gatlingRun (expect it to fail on the deliberate assertion -- this t
 (
   cd "$E2E_PROJECT_DIR"
   VANTRIX_URL="$VANTRIX_URL_DEFAULT" VANTRIX_TOKEN="$TOKEN" VANTRIX_TICK_SECONDS=2 \
+    VANTRIX_AGENT="$([ "$EXPECT_AGENT" = off ] && echo false || echo true)" \
     ./gradlew gatlingRun --no-daemon --stacktrace -PvantrixPluginVersion="$PLUGIN_VERSION"
 ) >"$GRADLE_LOG" 2>&1 &
 GRADLE_PID=$!
@@ -361,6 +376,11 @@ while [ "$(date +%s)" -lt "$POLL_DEADLINE" ]; do
 done
 [ -s "$FINAL_JSON" ] || fail "run $RUN_ID never reached a terminal status within the 90s cap. Poll log:\n$(cat "$STATUSES_LOG")"
 
+# The agent summary is written in the same finalize transaction as the run's
+# statistics, so a terminal run already answers it -- no second poll.
+AGENT_CODE="$(curl -s -o "$AGENT_JSON" -w '%{http_code}' "$VANTRIX_URL_DEFAULT/v1/runs/$RUN_ID/agent" -H "Authorization: Bearer $READ_TOKEN")"
+[ "$AGENT_CODE" = "200" ] || fail "GET /v1/runs/$RUN_ID/agent answered HTTP $AGENT_CODE: $(cat "$AGENT_JSON" 2>/dev/null)"
+
 # ===========================================================================
 # Step 8: assert. status == "complete"; toolAssertions is exactly 3 entries
 # whose outcomes are {failed, passed, passed} (order-independent -- see
@@ -369,11 +389,19 @@ done
 # build is the same run this script just polled to completion.
 # ===========================================================================
 log "asserting final run state..."
-ASSERT_OUT="$(node - "$FINAL_JSON" "$RUN_ID" <<'NODE'
+ASSERT_OUT="$(node - "$FINAL_JSON" "$RUN_ID" "$AGENT_JSON" "$EXPECT_AGENT" <<'NODE'
 const fs = require('fs');
-const [, , finalPath, expectedRunId] = process.argv;
+const [, , finalPath, expectedRunId, agentPath, expectAgent] = process.argv;
 const run = JSON.parse(fs.readFileSync(finalPath, 'utf8'));
+const agent = JSON.parse(fs.readFileSync(agentPath, 'utf8'));
 const problems = [];
+
+if (expectAgent === 'on') {
+  if (agent.available !== true) problems.push(`agent: expected available true, got ${JSON.stringify({ available: agent.available, reason: agent.reason, detail: agent.detail })}`);
+  if (!agent.header || typeof agent.header.host !== 'string' || agent.header.host === '') problems.push(`agent: expected a header naming a host, got ${JSON.stringify(agent.header)}`);
+} else {
+  if (agent.available !== false || agent.reason !== 'not_collected') problems.push(`agent (VANTRIX_AGENT=false): expected available false, reason "not_collected", got ${JSON.stringify({ available: agent.available, reason: agent.reason })}`);
+}
 
 if (run.status !== 'complete') problems.push(`status: expected "complete", got "${run.status}"`);
 if (run.simulation !== 'example.ParitySimulation') problems.push(`simulation: expected "example.ParitySimulation", got "${JSON.stringify(run.simulation)}"`);
@@ -401,6 +429,7 @@ if (problems.length > 0) {
   console.log(`  status:        ${run.status}`);
   console.log(`  simulation:    ${run.simulation}`);
   console.log(`  run id:        ${run.id}`);
+  console.log(`  agent:         ${expectAgent === 'on' ? `available, header host ${agent.header.host}` : `off, ${agent.reason}`}`);
   console.log(`  toolAssertions:`);
   for (const a of assertions) {
     console.log(`    ${a.outcome.padEnd(8)} ${a.expression}  (actual: ${a.actualValue})`);
