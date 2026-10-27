@@ -244,7 +244,29 @@ export default function AppShell() {
      `/auth/get-session` every time. */
   const isAdmin = useIsAdmin();
 
-  const { pathname, hash, state } = useLocation();
+  const { pathname, hash, state, key } = useLocation();
+
+  /* ═══ WHERE THE READER WAS, FOR THE IN-PLACE MARK ═══
+   *
+   * `FRAGMENT_IN_PLACE` rides in the navigation's `state`, and BrowserRouter
+   * keeps that in `history.state` — so a RELOAD of a filtered Report, or Back
+   * and Forward onto that entry from another page, arrives carrying the mark
+   * with nobody standing on the control it was written for. The mark therefore
+   * counts only when the location before this one, in this mount, had the same
+   * path: the reader really was on that page, changing a filter. A first render
+   * (a reload) or an arrival from another path reveals as any fragment does.
+   *
+   * Keyed on the location's `key`, so StrictMode's second run of a mount's
+   * effects is the same location and not a same-path navigation from itself —
+   * a plain "last pathname" ref would read the reload as in place. Declared
+   * before the reveal effect so it has run by the time that one reads it. */
+  const visited = useRef<{ readonly key: string; readonly pathname: string; readonly previous: string | null } | null>(
+    null,
+  );
+  useEffect(() => {
+    if (visited.current?.key === key) return;
+    visited.current = { key, pathname, previous: visited.current?.pathname ?? null };
+  }, [key, pathname]);
   /* `null` until the first render has run, which is also how the first render
      is told apart: nothing has been navigated FROM yet. (A strict-mode second
      run of the effect sees the same path and falls out at the next check, where
@@ -296,8 +318,9 @@ export default function AppShell() {
   useEffect(() => {
     if (hash === '') return;
     // A fragment written so the URL shares well, by a control the reader is
-    // using inside that very section (`fragmentInPlace.ts`): not a move.
-    if (isFragmentInPlace(state)) return;
+    // using inside that very section (`fragmentInPlace.ts`): not a move — but
+    // only when they were on this path a moment ago (see `visited` above).
+    if (isFragmentInPlace(state) && visited.current?.previous === pathname) return;
     const id = decodeURIComponent(hash.slice(1));
     let cancelled = false;
     let frame = 0;

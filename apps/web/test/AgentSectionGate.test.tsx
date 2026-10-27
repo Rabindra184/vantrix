@@ -215,6 +215,16 @@ describe("the agent file's own notice", () => {
     expect(agentFileFacts(summary, 10)).toEqual(['The agent stopped collecting part-way through: disk full.']);
   });
 
+  /** The message is the agent's own and may already end its sentence: one full
+   *  stop, never "disk full..". A message without one still gets it. */
+  it("ends the error's sentence once, whatever the agent's message ends with", () => {
+    const facts = (message: string) =>
+      agentFileFacts({ ...AGENT_SUMMARY, agentError: { at: 5, where: 'sampler', message } }, null);
+    expect(facts('disk full.')).toEqual(['The agent stopped collecting part-way through: disk full.']);
+    expect(facts('out of memory!')).toEqual(['The agent stopped collecting part-way through: out of memory!']);
+    expect(facts('disk full ')).toEqual(['The agent stopped collecting part-way through: disk full.']);
+  });
+
   it('counts the lines it skipped, one sentence per fact', async () => {
     renderGate({}, { summary: { ...AGENT_SUMMARY, malformedLines: 3, capped: true } });
     const notice = await screen.findByTestId('agent-file-notice');

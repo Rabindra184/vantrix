@@ -10,7 +10,11 @@
  * control they just changed — and a reveal would scroll them and pull focus
  * off that control.
  *
- * Such a navigation carries this as its `state`; `AppShell` leaves it alone.
+ * Such a navigation carries this as its `state`; `AppShell` leaves it alone
+ * when the location before it had the same path. `history.state` outlives the
+ * moment — a reload or a Back onto the entry still carries the mark — and
+ * there the reader is NOT on the control, so the fragment is revealed.
+ *
  * Its own module so the shell (in the entry chunk) and the Report (lazy) can
  * share it without the shell importing a route.
  */

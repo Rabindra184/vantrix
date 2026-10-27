@@ -212,7 +212,10 @@ export function agentFileFacts(summary: AgentSummaryResponse, toolStartedAtMs: n
   if (summary.agentError !== null) {
     const offset = toolStartedAtMs === null ? null : summary.agentError.at - toolStartedAtMs;
     const when = offset !== null && offset >= 0 ? `${formatOffset(offset)} into the run` : 'part-way through';
-    facts.push(`The agent stopped collecting ${when}: ${summary.agentError.message}.`);
+    // The agent's own message, as given — which may already end its sentence
+    // ("disk full." would otherwise read "disk full.."). `machineOffSentence`'s rule.
+    const message = summary.agentError.message.trim();
+    facts.push(`The agent stopped collecting ${when}: ${message}${/[.!?]$/.test(message) ? '' : '.'}`);
   }
   if (summary.malformedLines > 0) {
     const lines = summary.malformedLines === 1 ? '1 line' : `${summary.malformedLines} lines`;

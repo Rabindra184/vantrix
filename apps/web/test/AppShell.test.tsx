@@ -1,5 +1,6 @@
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { StrictMode, useEffect, useState, type ReactNode } from 'react';
 import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Link, MemoryRouter, Route, Routes } from 'react-router-dom';
@@ -254,29 +255,47 @@ describe('AppShell — the admin flag reaches the rail and the palette', () => {
  * assertion this environment cannot make.
  */
 describe('AppShell — a fragment reveals its target', () => {
-  function renderWithHash(entry: string | { readonly pathname: string; readonly hash: string; readonly state: unknown }) {
+  /** A section that arrives a task after its route, as the Report's do (a lazy
+   *  chunk, then a query): the reveal's FIRST attempt finds nothing to scroll. */
+  function Late({ children }: { readonly children: ReactNode }) {
+    const [shown, setShown] = useState(false);
+    useEffect(() => {
+      const timer = setTimeout(() => setShown(true), 0);
+      return () => clearTimeout(timer);
+    }, []);
+    return shown ? children : null;
+  }
+
+  function renderWithHash(
+    entry: string | { readonly pathname: string; readonly hash: string; readonly state: unknown },
+    { strict = false, late = false }: { readonly strict?: boolean; readonly late?: boolean } = {},
+  ) {
     vi.stubGlobal('fetch', () =>
       Promise.resolve(new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })),
     );
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    return render(
+    const section = (
+      <section id="simulation-assertions">
+        <h2>Simulation assertions</h2>
+        {/* What `useReportFilter` does: the same path, a new query, the
+            section's hash put back, and the in-place mark. */}
+        <Link to={{ search: '?remote=a', hash: '#simulation-assertions' }} state={FRAGMENT_IN_PLACE} replace>
+          apply a filter
+        </Link>
+      </section>
+    );
+    const tree: ReactNode = (
       <QueryClientProvider client={client}>
         <MemoryRouter initialEntries={[entry]}>
           <Routes>
             <Route element={<AppShell />}>
-              <Route
-                path="/runs/:runId"
-                element={
-                  <section id="simulation-assertions">
-                    <h2>Simulation assertions</h2>
-                  </section>
-                }
-              />
+              <Route path="/runs/:runId" element={late ? <Late>{section}</Late> : section} />
             </Route>
           </Routes>
         </MemoryRouter>
-      </QueryClientProvider>,
+      </QueryClientProvider>
     );
+    return render(strict ? <StrictMode>{tree}</StrictMode> : tree);
   }
 
   it('scrolls the named section into view and moves focus to it', async () => {
@@ -319,11 +338,33 @@ describe('AppShell — a fragment reveals its target', () => {
     const scrollIntoView = vi.fn();
     Element.prototype.scrollIntoView = scrollIntoView;
 
-    renderWithHash({ pathname: '/runs/abc', hash: '#simulation-assertions', state: FRAGMENT_IN_PLACE });
+    renderWithHash('/runs/abc');
     const section = (await screen.findByRole('heading', { name: 'Simulation assertions' })).closest('section')!;
+    await userEvent.setup().click(screen.getByRole('link', { name: 'apply a filter' }));
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(scrollIntoView).not.toHaveBeenCalled();
     expect(document.activeElement).not.toBe(section);
+  });
+
+  /** But the mark lives in `history.state`, so a RELOAD of that filtered URL
+   *  (or Back onto it from another page) arrives still carrying it — with the
+   *  reader on no control at all. A first render reveals, mark or not; under
+   *  StrictMode too, whose second run of the mount's effects is the same
+   *  location rather than a same-path move. The section arrives LATE, as the
+   *  Report's do: with it present at once, StrictMode's first pass would scroll
+   *  before its second could skip, and the case could not tell the two apart. */
+  it('reveals a fragment marked in place when nothing came before it on this path', async () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+
+    renderWithHash(
+      { pathname: '/runs/abc', hash: '#simulation-assertions', state: FRAGMENT_IN_PLACE },
+      { strict: true, late: true },
+    );
+    const section = (await screen.findByRole('heading', { name: 'Simulation assertions' })).closest('section')!;
+    await vi.waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
+    expect(scrollIntoView.mock.instances.at(-1)).toBe(section);
+    expect(document.activeElement).toBe(section);
   });
 
   /** And a plain navigation still starts at the top — the behaviour this
