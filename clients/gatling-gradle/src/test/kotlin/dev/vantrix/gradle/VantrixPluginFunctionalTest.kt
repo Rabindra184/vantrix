@@ -435,4 +435,97 @@ class VantrixPluginFunctionalTest {
                 "got marker-present=${state.runsPostMarkerPresent}",
         )
     }
+
+    // ---- the agent rides on gatlingRun's jvmArgs ----------------------------------------------
+
+    /**
+     * A fake `gatlingRun` shaped like upstream's `GatlingRunTask` where it matters here: a
+     * `jvmArgs` list property (get/set), read by its action -- which prints what it would have
+     * handed each simulation JVM. [vantrixBlock] is spliced in verbatim (e.g. `vantrix { agent = false }`).
+     */
+    private fun writeJvmArgsBuildFile(projectDir: File, vantrixBlock: String = "") {
+        File(projectDir, "build.gradle.kts").writeText(
+            """
+            |plugins {
+            |    id("dev.vantrix.gatling")
+            |}
+            |
+            |abstract class FakeGatlingRun : DefaultTask() {
+            |    @get:Internal
+            |    var jvmArgs: List<String>? = null
+            |}
+            |
+            |$vantrixBlock
+            |
+            |tasks.register<FakeGatlingRun>("gatlingRun") {
+            |    jvmArgs = listOf("-Xmx1g", "-Dkeep=me")
+            |    doLast {
+            |        println("FAKE-JVMARGS=" + (this as FakeGatlingRun).jvmArgs.orEmpty().joinToString("|"))
+            |    }
+            |}
+            """.trimMargin(),
+        )
+    }
+
+    private fun printedJvmArgs(output: String): List<String> {
+        val line = output.lineSequence().firstOrNull { it.startsWith("FAKE-JVMARGS=") }
+            ?: fail("the fake gatlingRun printed no jvmArgs line:\n$output")
+        return line.removePrefix("FAKE-JVMARGS=").split("|")
+    }
+
+    @Test
+    @Timeout(value = 90, unit = TimeUnit.SECONDS)
+    fun `with config present gatlingRun starts with the agent, after the user's own jvmArgs`(@TempDir tmp: File) {
+        val (srv, _) = startServer()
+        writeSettings(tmp)
+        writeJvmArgsBuildFile(tmp)
+        val env = envFor("VANTRIX_URL" to "http://localhost:${srv.address.port}", "VANTRIX_TOKEN" to "tok")
+
+        val result = runner(tmp, env).build()
+
+        assertEquals(TaskOutcome.SUCCESS, result.task(":gatlingRun")?.outcome)
+        val args = printedJvmArgs(result.output)
+        assertEquals(listOf("-Xmx1g", "-Dkeep=me"), args.dropLast(1), "the user's own flags, unchanged and first")
+        val jar = File(tmp, "build/vantrix/agent/gatling-agent.jar")
+        val out = File(tmp, "build/vantrix/agent/out")
+        assertTrue(jar.isFile && jar.length() > 0, "expected the extracted agent jar at $jar")
+        // TestKit's temp dir may be reached through a symlink (/var -> /private/var on macOS),
+        // so each path in the argument is compared canonically; the shape is compared exactly.
+        val ours = args.last()
+        val match = Regex("^-javaagent:(.+)=out=(.+),max=268434432$").matchEntire(ours)
+            ?: fail("expected our -javaagent last, got: $ours")
+        val (jarPart, outPart) = match.destructured
+        assertEquals(jar.canonicalPath, File(jarPart).canonicalPath)
+        assertEquals(out.canonicalPath, File(outPart).parentFile.canonicalPath)
+        assertEquals("agent-{jvm}.ndjson", File(outPart).name)
+    }
+
+    @Test
+    @Timeout(value = 90, unit = TimeUnit.SECONDS)
+    fun `vantrix agent = false leaves gatlingRun's jvmArgs alone`(@TempDir tmp: File) {
+        val (srv, _) = startServer()
+        writeSettings(tmp)
+        writeJvmArgsBuildFile(tmp, "vantrix { agent = false }")
+        val env = envFor("VANTRIX_URL" to "http://localhost:${srv.address.port}", "VANTRIX_TOKEN" to "tok")
+
+        val result = runner(tmp, env).build()
+
+        assertEquals(TaskOutcome.SUCCESS, result.task(":gatlingRun")?.outcome)
+        assertEquals(listOf("-Xmx1g", "-Dkeep=me"), printedJvmArgs(result.output))
+        assertFalse(File(tmp, "build/vantrix/agent").exists(), "nothing should be extracted with the agent off")
+    }
+
+    @Test
+    @Timeout(value = 90, unit = TimeUnit.SECONDS)
+    fun `with no Vantrix URL gatlingRun's jvmArgs are left alone`(@TempDir tmp: File) {
+        writeSettings(tmp)
+        writeJvmArgsBuildFile(tmp)
+        val env = envFor("VANTRIX_TOKEN" to "tok")
+
+        val result = runner(tmp, env).build()
+
+        assertEquals(TaskOutcome.SUCCESS, result.task(":gatlingRun")?.outcome)
+        assertEquals(listOf("-Xmx1g", "-Dkeep=me"), printedJvmArgs(result.output))
+        assertFalse(File(tmp, "build/vantrix/agent").exists(), "nothing should be extracted without config")
+    }
 }

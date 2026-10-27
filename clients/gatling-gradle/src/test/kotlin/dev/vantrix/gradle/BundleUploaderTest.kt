@@ -63,7 +63,7 @@ class BundleUploaderTest {
         baseUrl = "http://localhost:${srv.address.port}",
         token = token,
         environment = environment, branch = branch, commitSha = commitSha, test = test,
-        tickSeconds = 5, uploadIfLiveUnavailable = true, resultsDir = null,
+        tickSeconds = 5, uploadIfLiveUnavailable = true, resultsDir = null, agentEnabled = false,
     )
 
     private fun extractBoundary(contentType: String): String {

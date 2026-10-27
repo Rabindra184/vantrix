@@ -72,7 +72,7 @@ class RunTailerTest {
     private fun configFor(): PluginConfig = PluginConfig(
         baseUrl = "http://unused", token = "unused",
         environment = null, branch = null, commitSha = null, test = null,
-        tickSeconds = 5, uploadIfLiveUnavailable = false, resultsDir = null,
+        tickSeconds = 5, uploadIfLiveUnavailable = false, resultsDir = null, agentEnabled = false,
     )
 
     private fun writeLog(dir: Path, size: Int) {

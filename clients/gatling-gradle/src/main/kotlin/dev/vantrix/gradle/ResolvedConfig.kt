@@ -5,6 +5,7 @@ data class PluginConfig(
     val environment: String?, val branch: String?, val commitSha: String?,
     val test: String?,
     val tickSeconds: Int, val uploadIfLiveUnavailable: Boolean, val resultsDir: String?,
+    val agentEnabled: Boolean,
 )
 
 sealed class ResolvedConfig {
@@ -29,7 +30,18 @@ sealed class ResolvedConfig {
                 uploadIfLiveUnavailable = ext.uploadIfLiveUnavailable
                     ?: env["VANTRIX_UPLOAD_IF_LIVE_UNAVAILABLE"]?.toBoolean() ?: false,
                 resultsDir = ext.resultsDir,
+                // On unless turned off. The environment is read strictly -- only "true" or "false",
+                // any case -- because compose passes an unset variable as "" and "".toBoolean() is
+                // false: a default-on switch must not be turned off by a value nobody chose.
+                agentEnabled = ext.agent ?: strictBoolean(env["VANTRIX_AGENT"]) ?: true,
             ))
         }
+
+        private fun strictBoolean(raw: String?): Boolean? =
+            when (raw?.trim()?.lowercase()) {
+                "true" -> true
+                "false" -> false
+                else -> null
+            }
     }
 }
