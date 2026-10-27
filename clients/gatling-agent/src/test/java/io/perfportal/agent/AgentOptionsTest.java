@@ -46,4 +46,24 @@ class AgentOptionsTest {
   void aValueMayContainAnEqualsSign() {
     assertEquals(Path.of("/w/a=b.ndjson"), AgentOptions.parse("out=/w/a=b.ndjson").out());
   }
+
+  @Test
+  void replacesTheJvmTokenWithPidAndStart() {
+    // The Gradle plugin starts one JVM per simulation with the same jvmArgs, and the writer
+    // truncates its file on open: a shared path would let each simulation wipe the last.
+    Path out = AgentOptions.parse("out=/tmp/x/agent-{jvm}.ndjson").out();
+    String name = out.getFileName().toString();
+    assertTrue(name.matches("agent-\\d+-\\d+\\.ndjson"), name);
+    assertFalse(name.contains("{"), name);
+    String pid = name.substring("agent-".length(), name.indexOf('-', "agent-".length()));
+    assertEquals(ProcessHandle.current().pid(), Long.parseLong(pid));
+  }
+
+  @Test
+  void leavesAPathWithoutTheTokenUnchanged() {
+    // The on-prem runner's path never carries the token, so it must reach the writer verbatim.
+    AgentOptions o = AgentOptions.parse("out=/tmp/x/agent.ndjson,max=5");
+    assertEquals(Path.of("/tmp/x/agent.ndjson"), o.out());
+    assertEquals(5L, o.maxBytes());
+  }
 }
