@@ -24,6 +24,7 @@ import { Payload, TableSection, explain, type Slot } from './payload';
 import RunGlossary from './RunGlossary';
 import { isExact } from './statsMethod';
 import RunTelemetry from './RunTelemetry';
+import { CONNECTION_CHARTS } from './report/ConnectionsSection';
 import { PERCENTILES, REQUESTS_AND_RESPONSES } from './runSlots';
 import {
   useLiveFromShell,
@@ -50,10 +51,8 @@ const USER_START_RATE: Slot = { id: 'user-start-rate', title: 'Users started per
 const USER_END_RATE: Slot = { id: 'user-end-rate', title: 'Users ended per second' };
 const CONCURRENT_USERS: Slot = { id: 'concurrent-users', title: 'Concurrent users over time' };
 
-/* GE's Connections section holds Bandwidth and TCP Connection By State among
-   its nine; those two are what the load-generator agent collects. The rest of
-   the agent's charts are GE's Load Generators section. */
-const CONNECTION_CHARTS: readonly TelemetryChartId[] = ['telemetry-bandwidth', 'telemetry-tcp-states'];
+/* The rest of the telemetry agent's charts are GE's Load Generators section;
+   Connections' two (`CONNECTION_CHARTS`) are defined beside that section. */
 const LOAD_GENERATOR_CHARTS: readonly TelemetryChartId[] = [
   'telemetry-cpu',
   'telemetry-memory',
