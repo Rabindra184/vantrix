@@ -9,6 +9,7 @@ import DesktopOnly from '../DesktopOnly';
 import LiveNotice from '../LiveNotice';
 import { explain, type Slot } from '../payload';
 import { useRunTerminal, useTimeDomainFromShell, useWindowFromShell } from '../useRunWindow';
+import { formatOffset } from '../format';
 import AgentUnavailable from './AgentUnavailable';
 import { REPORT_GRID } from './grid';
 
@@ -20,6 +21,8 @@ export interface AgentSection {
   readonly summaryQuery: UseQueryResult<AgentSummaryResponse>;
   readonly summary: AgentSummaryResponse | undefined;
   readonly needsHttp: boolean;
+  /** When the run's tool started, as epoch ms — what the agent's own instants are offsets from; null until known. */
+  readonly toolStartedAtMs: number | null;
   readonly compact: boolean;
   readonly shown: boolean;
   readonly show: () => void;
@@ -52,7 +55,7 @@ export interface AgentSection {
  * JVM and machine figures need no HTTP collector, and still draw.
  */
 export function useAgentSection(runId: string, { needsHttp }: { readonly needsHttp: boolean }): AgentSection {
-  const { terminal } = useRunTerminal(runId);
+  const { terminal, detail } = useRunTerminal(runId);
   const window = useWindowFromShell();
   const domainMs = useTimeDomainFromShell();
   const compact = useIsCompact();
@@ -66,6 +69,8 @@ export function useAgentSection(runId: string, { needsHttp }: { readonly needsHt
   const summary = summaryQuery.data;
   const collected = summary?.available === true && (!needsHttp || summary.header?.collects.http !== false);
   const fetchFigures = terminal && collected && (!compact || shown);
+  const toolStartedAt = detail.data?.state === 'ready' ? detail.data.run.toolStartedAt : undefined;
+  const toolStartedAtMs = toolStartedAt == null ? null : Date.parse(toolStartedAt);
   return {
     terminal,
     window,
@@ -73,6 +78,7 @@ export function useAgentSection(runId: string, { needsHttp }: { readonly needsHt
     summaryQuery,
     summary,
     needsHttp,
+    toolStartedAtMs: toolStartedAtMs !== null && Number.isFinite(toolStartedAtMs) ? toolStartedAtMs : null,
     compact,
     shown,
     show: () => setShown(true),
@@ -106,7 +112,8 @@ export function useAgentSection(runId: string, { needsHttp }: { readonly needsHt
  * 5. A PHONE is offered the charts (§22.6) and fetches nothing until asked.
  * 6. THE FIGURE READ'S OWN unavailable answer is honoured too (`figures`).
  *
- * Then `children(summary)` draws.
+ * Then `children(summary)` draws — under `AgentFileNotice` when the file itself
+ * says it is incomplete.
  */
 export default function AgentSectionGate({
   section,
@@ -173,7 +180,60 @@ export default function AgentSectionGate({
 
   if (figures !== undefined && !figures.available) return unavailable(figures.reason, figures.detail);
 
-  return <>{children(summary)}</>;
+  const facts = agentFileFacts(summary, section.toolStartedAtMs);
+  if (facts.length === 0) return <>{children(summary)}</>;
+  return (
+    <div className="flex flex-col gap-4">
+      <AgentFileNotice facts={facts} />
+      {children(summary)}
+    </div>
+  );
+}
+
+/**
+ * The sentences a collected agent file's own summary carries about itself, one
+ * per fact that is present — the three things `/agent` reports and no chart can
+ * show:
+ *
+ *   capped          the file hit the agent's size cap, so everything after is gone
+ *   agentError      the agent's one `error` line: it stopped collecting there
+ *   malformedLines  lines the decoder could not read and skipped
+ *
+ * Each is a reason a chart below may be short or quiet without the run having
+ * been, which is why it sits ABOVE them. The error's instant is an offset into
+ * the run only when the run's tool start is known; otherwise "part-way
+ * through", never a guessed time.
+ */
+export function agentFileFacts(summary: AgentSummaryResponse, toolStartedAtMs: number | null): readonly string[] {
+  const facts: string[] = [];
+  if (summary.capped) {
+    facts.push('The agent file reached its size cap, so events after that point are missing.');
+  }
+  if (summary.agentError !== null) {
+    const offset = toolStartedAtMs === null ? null : summary.agentError.at - toolStartedAtMs;
+    const when = offset !== null && offset >= 0 ? `${formatOffset(offset)} into the run` : 'part-way through';
+    facts.push(`The agent stopped collecting ${when}: ${summary.agentError.message}.`);
+  }
+  if (summary.malformedLines > 0) {
+    const lines = summary.malformedLines === 1 ? '1 line' : `${summary.malformedLines} lines`;
+    facts.push(`${lines} of the agent file could not be read and ${summary.malformedLines === 1 ? 'was' : 'were'} skipped.`);
+  }
+  return facts;
+}
+
+/**
+ * `agentFileFacts`, as one short notice. NOT a live region: it is a fact about
+ * a finished run, present from the moment the section draws, and announcing it
+ * three times (one per agent section) would interrupt a reader for nothing.
+ */
+function AgentFileNotice({ facts }: { readonly facts: readonly string[] }) {
+  return (
+    <div data-testid="agent-file-notice" className="rounded border border-default bg-sunken px-3 py-2 text-sm text-primary">
+      {facts.map((fact) => (
+        <p key={fact}>{fact}</p>
+      ))}
+    </div>
+  );
 }
 
 /** Why a section has no agent figures: see `AgentSectionGate`'s points 3 and 4. */

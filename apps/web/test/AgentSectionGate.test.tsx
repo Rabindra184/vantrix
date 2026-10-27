@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AgentInjectorsResponseSchema } from '@perfportal/contracts';
 import { agentInjectorsQuery } from '../src/api/agent';
-import AgentSectionGate, { useAgentSection } from '../src/routes/report/AgentSectionGate';
+import AgentSectionGate, { agentFileFacts, useAgentSection } from '../src/routes/report/AgentSectionGate';
 import useIsCompact from '../src/useIsCompact';
 import fixture from './fixtures/agent-run.json';
 import { AGENT_RUN, AGENT_SUMMARY, renderAgentSection } from './support/agentSection';
@@ -175,5 +175,53 @@ describe('AgentSectionGate', () => {
     const held = renderGate({ ownEnabled: false });
     expect(await screen.findByText(`Drawn for ${host}`)).toBeInTheDocument();
     expect(figureRequests(held.requested)).toEqual([]);
+  });
+});
+
+describe("the agent file's own notice", () => {
+  // The harness's run started its tool here (support/agentSection.tsx).
+  const toolStartedAtMs = Date.parse('2026-08-07T05:30:02.171Z');
+
+  it('says nothing above a clean file', async () => {
+    renderGate();
+    expect(await screen.findByText(`Drawn for ${host}`)).toBeInTheDocument();
+    expect(screen.queryByTestId('agent-file-notice')).toBeNull();
+    expect(agentFileFacts(AGENT_SUMMARY, toolStartedAtMs)).toEqual([]);
+  });
+
+  it('says a capped file is missing its later events, above the figures and not as a live region', async () => {
+    renderGate({}, { summary: { ...AGENT_SUMMARY, capped: true } });
+    const notice = await screen.findByTestId('agent-file-notice');
+    expect(notice).toHaveTextContent('The agent file reached its size cap, so events after that point are missing.');
+    expect(notice).not.toHaveAttribute('role');
+    expect(notice).not.toHaveAttribute('aria-live');
+    // Above what it qualifies.
+    const drawn = screen.getByText(`Drawn for ${host}`);
+    expect(notice.compareDocumentPosition(drawn) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("says where the agent stopped, as an offset from the run's tool start", async () => {
+    const at = toolStartedAtMs + 42_000;
+    renderGate({}, { summary: { ...AGENT_SUMMARY, agentError: { at, where: 'sampler', message: 'disk full' } } });
+    expect(await screen.findByTestId('agent-file-notice')).toHaveTextContent(
+      'The agent stopped collecting 42s into the run: disk full.',
+    );
+  });
+
+  it('says "part-way through" when the tool start is not known, never a guessed time', () => {
+    const summary = { ...AGENT_SUMMARY, agentError: { at: 5, where: 'sampler', message: 'disk full' } };
+    expect(agentFileFacts(summary, null)).toEqual(['The agent stopped collecting part-way through: disk full.']);
+    // An instant before the tool start is no offset into the run either.
+    expect(agentFileFacts(summary, 10)).toEqual(['The agent stopped collecting part-way through: disk full.']);
+  });
+
+  it('counts the lines it skipped, one sentence per fact', async () => {
+    renderGate({}, { summary: { ...AGENT_SUMMARY, malformedLines: 3, capped: true } });
+    const notice = await screen.findByTestId('agent-file-notice');
+    expect(notice).toHaveTextContent('3 lines of the agent file could not be read and were skipped.');
+    expect(notice.querySelectorAll('p')).toHaveLength(2);
+    expect(agentFileFacts({ ...AGENT_SUMMARY, malformedLines: 1 }, null)).toEqual([
+      '1 line of the agent file could not be read and was skipped.',
+    ]);
   });
 });
