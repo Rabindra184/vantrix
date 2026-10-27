@@ -43,8 +43,11 @@ import type { ChartData, ChartSeries, ChartTableRow } from '../types';
  * recorded nothing.
  */
 
-/** Heads every data table's label column. The drawn axis is named by `Chart`. */
-const TIME_COLUMN = 'Elapsed (s)';
+/**
+ * Heads every data table's label column. The drawn axis is named by `Chart`.
+ * Exported for the duration charts (`agentDurations.ts`), which share it.
+ */
+export const TIME_COLUMN = 'Elapsed (s)';
 
 type Opts = { readonly windowSelected: boolean };
 type Pair = readonly [number, number | null];
@@ -135,8 +138,11 @@ function bucketChart<B extends { readonly startOffsetMs: number }>(
   return { series, axisLabels: [], columns, rows };
 }
 
-/** "No <things> fall in the selected window." or "… were recorded for this run." */
-function emptySentence(things: string, opts: Opts): string {
+/**
+ * "No <things> fall in the selected window." or "… were recorded for this run."
+ * Exported for the duration charts, so both modules say it the same way.
+ */
+export function emptySentence(things: string, opts: Opts): string {
   return opts.windowSelected
     ? `No ${things} fall in the selected window.`
     : `No ${things} were recorded for this run.`;
