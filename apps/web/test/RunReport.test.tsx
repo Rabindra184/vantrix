@@ -572,6 +572,19 @@ describe('RunReport — the agent sections', () => {
     expect(new Set(alerts).size).toBe(3);
   });
 
+  it('serves all three open sections from ONE summary read', async () => {
+    const seen = renderReport({ agent: { summary: AGENT_SUMMARY } });
+    await openAll();
+    const paths = () => seen.map((u) => new URL(u, 'http://x').pathname);
+    // Each section has asked for its own figures, so each has read the summary first.
+    await waitFor(() => {
+      for (const figures of ['/agent/connections', '/agent/dns', '/agent/injectors']) {
+        expect(paths().some((p) => p.endsWith(figures)), figures).toBe(true);
+      }
+    });
+    expect(paths().filter((p) => p.endsWith('/agent'))).toHaveLength(1);
+  });
+
   it('mounts DNS under its own id, and opens it from a URL fragment', () => {
     renderReport({ url: `/runs/${RUN_ID}/report#dns` });
     expect(within(screen.getByTestId('section-dns')).getByRole('button', { name: 'DNS' })).toHaveAttribute('aria-expanded', 'true');

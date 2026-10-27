@@ -184,6 +184,16 @@ test('Load generators names its machine and draws six charts, Memory listing Hea
   await expect(field.locator('dd')).toHaveText(summary.injector.host ?? 'Unknown host');
 
   await expect.poll(() => legend(loadGenerators, 'agent-memory')).toContain('Heap used');
+
+  // A brushed window reaches the section's own read: the shell's window, from the URL.
+  const windowed: URL[] = [];
+  page.on('request', (req) => {
+    const url = new URL(req.url());
+    if (url.pathname.endsWith('/agent/injectors')) windowed.push(url);
+  });
+  await page.goto(`${page.url().split('?')[0]!.split('#')[0]!}?from=2000&to=6000#load-generators`);
+  await openSection(page, 'load-generators', 'Load generators');
+  await expect.poll(() => windowed.some((u) => u.searchParams.get('from') === '2000' && u.searchParams.get('to') === '6000')).toBe(true);
 });
 
 test('Requests draws Responses per Second by Status, one legend entry per status code', async ({ page }) => {
@@ -241,6 +251,10 @@ test('a stale remote link opens Connections drawn for every remote', async ({ pa
   const connections = section(page, 'connections');
   await expectDrawn(connections, CONNECTION_IDS);
   await expect(connections.getByLabel('Remote', { exact: true })).toHaveValue('*');
+  // And the page says why every remote is drawn under a link that named one.
+  await expect(connections.getByTestId('filter-unknown')).toHaveText(
+    'This link named nope, which this run never contacted; showing all remotes.',
+  );
 
   // Every remote's total, from a page the reader opened without the stale link.
   await expect.poll(() => columnTotal(connections, 'agent-connection-rate', 'Opened')).not.toBeNull();
