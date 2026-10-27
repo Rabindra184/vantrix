@@ -136,6 +136,34 @@ describe('ConnectionsSection', () => {
     );
   });
 
+  it("keeps the reader's percentile bands and outcomes through a remote change", async () => {
+    const user = userEvent.setup();
+    const { requested } = renderSection();
+    await waitForCharts();
+    const curve = 'agent-tcp-connect-percentiles-distribution';
+    // 99.9% on, and the KO curve: neither is the default.
+    await user.click(screen.getByTestId('bands-agent-tcp-connect-percentiles'));
+    await user.click(await screen.findByTestId('band-p99_9-agent-tcp-connect-percentiles'));
+    await user.keyboard('{Escape}');
+    await user.click(screen.getByTestId(`outcome-ko-${curve}`));
+    const chosen = `TCP Connect Duration Percentiles: Percentile bands, ${DEFAULT_AGENT_ROWS.length + 1} selected`;
+    expect(screen.getByTestId('bands-agent-tcp-connect-percentiles')).toHaveAccessibleName(chosen);
+
+    await user.selectOptions(screen.getByLabelText('Remote'), REMOTES[1]!);
+    // The new remote's read, answered: the charts were unmounted and drawn again.
+    await waitFor(() =>
+      expect(connectionsRequests(requested).some((u) => u.startsWith(agentConnectionsPath(RUN, REMOTES[1]!)))).toBe(true),
+    );
+    // The KO curve is empty (the fixture failed nothing), so it explains itself rather than drawing.
+    await waitForDrawn(TITLES.length, [`chart-${curve}`]);
+    expect(screen.getByTestId('bands-agent-tcp-connect-percentiles')).toHaveAccessibleName(chosen);
+    expect(screen.getByTestId(`outcome-ko-${curve}`)).toHaveAttribute('aria-pressed', 'true');
+    // And only the block chosen in: TLS keeps its own defaults.
+    expect(screen.getByTestId('bands-agent-tls-percentiles')).toHaveAccessibleName(
+      `TLS Handshake Duration Percentiles: Percentile bands, ${DEFAULT_AGENT_ROWS.length} selected`,
+    );
+  });
+
   it('reads an unknown remote as every remote, and never sends it', async () => {
     const { requested } = renderSection({ search: '?remote=nope' });
     await waitForCharts();

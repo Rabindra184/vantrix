@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type { AgentConnectionsResponse } from '@perfportal/contracts';
 import { agentConnectionsQuery } from '../../api/agent';
-import AgentDurationCharts from '../../charts/AgentDurationCharts';
+import AgentDurationCharts, { useDurationSettings, type DurationSettings } from '../../charts/AgentDurationCharts';
 import Chart from '../../charts/Chart';
 import { RUN_TIME_GROUP } from '../../charts/crosshair';
 import type { TelemetryChartId } from '../../charts/TelemetryCharts';
@@ -66,6 +66,9 @@ export default function ConnectionsSection({ runId }: { readonly runId: string }
   const { summary, window, domainMs } = section;
   const [remote, setRemote, namedRemote] = useReportFilter('remote', summary?.remotes, 'connections');
   const connections = useQuery(section.figureQuery(agentConnectionsQuery(runId, remote, window)));
+  // Above the gate, so a remote or window change keeps the reader's rows and outcomes.
+  const tcpSettings = useDurationSettings();
+  const tlsSettings = useDurationSettings();
 
   return (
     <AgentSectionGate
@@ -106,6 +109,8 @@ export default function ConnectionsSection({ runId }: { readonly runId: string }
                     windowSelected={window !== null}
                     filter={remote === '*' ? null : 'remote'}
                     notMeasuredReason={notMeasuredReason}
+                    tcpSettings={tcpSettings}
+                    tlsSettings={tlsSettings}
                   />
                 )}
               </Payload>
@@ -123,6 +128,8 @@ function ConnectionCharts({
   windowSelected,
   filter,
   notMeasuredReason,
+  tcpSettings,
+  tlsSettings,
 }: {
   readonly data: AgentConnectionsResponse;
   readonly domainMs: TimeDomainMs | undefined;
@@ -130,6 +137,8 @@ function ConnectionCharts({
   /** `'remote'` when one remote is chosen: an empty chart is then about it, not the run. */
   readonly filter: 'remote' | null;
   readonly notMeasuredReason: string | undefined;
+  readonly tcpSettings: DurationSettings;
+  readonly tlsSettings: DurationSettings;
 }) {
   // Memoised: `Chart`'s option effect depends on `data` by identity.
   const rate = useMemo(() => toConnectionRate(data, { windowSelected, filter }), [data, windowSelected, filter]);
@@ -171,6 +180,7 @@ function ConnectionCharts({
         titles={TCP_CONNECT}
         section={data.tcpConnect}
         noun="TCP connects"
+        settings={tcpSettings}
         widthMs={data.bucketWidthMs}
         domainMs={domainMs}
         windowSelected={windowSelected}
@@ -181,6 +191,7 @@ function ConnectionCharts({
         titles={TLS}
         section={data.tlsHandshake}
         noun="TLS handshakes"
+        settings={tlsSettings}
         widthMs={data.bucketWidthMs}
         domainMs={domainMs}
         windowSelected={windowSelected}

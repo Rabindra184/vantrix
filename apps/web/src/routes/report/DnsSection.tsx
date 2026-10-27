@@ -2,7 +2,11 @@ import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type { AgentDnsResponse } from '@perfportal/contracts';
 import { agentDnsQuery } from '../../api/agent';
-import AgentDurationCharts, { type DurationChart } from '../../charts/AgentDurationCharts';
+import AgentDurationCharts, {
+  useDurationSettings,
+  type DurationChart,
+  type DurationSettings,
+} from '../../charts/AgentDurationCharts';
 import Chart from '../../charts/Chart';
 import { RUN_TIME_GROUP } from '../../charts/crosshair';
 import { DNS_RATE_ROLES, toDnsRate } from '../../charts/transforms/agentRates';
@@ -56,6 +60,8 @@ export default function DnsSection({ runId }: { readonly runId: string }) {
   const { summary, window, domainMs } = section;
   const [hostname, setHostname, namedHostname] = useReportFilter('hostname', summary?.hostnames, 'dns');
   const dns = useQuery(section.figureQuery(agentDnsQuery(runId, hostname, window)));
+  // Above the gate, so a hostname or window change keeps the reader's rows and outcomes.
+  const settings = useDurationSettings();
 
   return (
     <AgentSectionGate
@@ -90,6 +96,7 @@ export default function DnsSection({ runId }: { readonly runId: string }) {
                   domainMs={domainMs}
                   windowSelected={window !== null}
                   filter={hostname === '*' ? null : 'hostname'}
+                  settings={settings}
                 />
               )}
             </Payload>
@@ -105,12 +112,14 @@ function DnsCharts({
   domainMs,
   windowSelected,
   filter,
+  settings,
 }: {
   readonly data: AgentDnsResponse;
   readonly domainMs: TimeDomainMs | undefined;
   readonly windowSelected: boolean;
   /** `'hostname'` when one hostname is chosen: an empty chart is then about it, not the run. */
   readonly filter: 'hostname' | null;
+  readonly settings: DurationSettings;
 }) {
   // Memoised: `Chart`'s option effect depends on `data` by identity.
   const rate = useMemo(() => toDnsRate(data, { windowSelected, filter }), [data, windowSelected, filter]);
@@ -139,6 +148,7 @@ function DnsCharts({
         domainMs={domainMs}
         windowSelected={windowSelected}
         filter={filter}
+        settings={settings}
         order={DNS_ORDER}
       />
     </>

@@ -1,6 +1,6 @@
 import { AGENT_PERCENTILE_ROWS } from '@perfportal/contracts';
 import type { AgentPercentileRow, DurationSection } from '@perfportal/contracts';
-import { Fragment, useMemo, useState, type ReactNode } from 'react';
+import { Fragment, useCallback, useMemo, useState, type ReactNode } from 'react';
 import BandsMenu from './BandsMenu';
 import Chart from './Chart';
 import { ControlBar, ControlGroup, Segmented } from './ChartControls';
@@ -36,6 +36,45 @@ const DEFAULT_ORDER: readonly DurationChart[] = ['overTime', 'distribution', 'pe
 
 /** One curve, in its outcome's status colour — `PercentileDistributionChart`'s map. */
 const CURVE_ROLE: Record<Outcome, readonly MarkRole[]> = { ok: ['passed'], ko: ['failed'], all: ['neutral'] };
+
+/** A duration block's reader choices: the over-time rows and outcome, and the curve's outcome. */
+export interface DurationSettings {
+  readonly rows: readonly AgentPercentileRow[];
+  readonly toggleRow: (row: AgentPercentileRow) => void;
+  readonly overTimeOutcome: Outcome;
+  readonly setOverTimeOutcome: (outcome: Outcome) => void;
+  readonly curveOutcome: Outcome;
+  readonly setCurveOutcome: (outcome: Outcome) => void;
+}
+
+/**
+ * ═══ THE READER'S CHOICES OUTLIVE THE CHARTS THEY CHANGE ═══
+ *
+ * Picking a remote, a hostname or a window changes the figure read's key, so
+ * the section's `Payload` shows its loading state and the charts unmount — and
+ * with them any state they held. A reader who chose 99.9% and the KO curve,
+ * then narrowed to one remote, came back to the eight default rows and OK.
+ * So each section calls this ABOVE its gate, once per duration block (TCP
+ * connect, TLS, DNS resolution), and hands it down: the choices live as long
+ * as the section, which is as long as the reader is looking at it.
+ *
+ * Not `keepPreviousData`: drawing the previous remote's figures under the new
+ * remote's name, until the read answers, is a worse lie than a loading state.
+ *
+ * `PercentilesChart` has the same reset on the Report's Requests section and
+ * is left as it is — a follow-up, not this branch's.
+ */
+export function useDurationSettings(): DurationSettings {
+  const [rows, setRows] = useState<readonly AgentPercentileRow[]>(DEFAULT_AGENT_ROWS);
+  const [overTimeOutcome, setOverTimeOutcome] = useState<Outcome>('ok');
+  const [curveOutcome, setCurveOutcome] = useState<Outcome>('ok');
+  const toggleRow = useCallback(
+    (row: AgentPercentileRow) =>
+      setRows((current) => (current.includes(row) ? current.filter((r) => r !== row) : [...current, row])),
+    [],
+  );
+  return { rows, toggleRow, overTimeOutcome, setOverTimeOutcome, curveOutcome, setCurveOutcome };
+}
 
 /**
  * One agent duration section's three charts, as GE draws them — TCP connect
@@ -81,6 +120,7 @@ export default function AgentDurationCharts({
   domainMs,
   windowSelected,
   filter,
+  settings,
   order = DEFAULT_ORDER,
 }: {
   readonly idPrefix: string;
@@ -96,12 +136,12 @@ export default function AgentDurationCharts({
   readonly windowSelected: boolean;
   /** The section's filter when one is applied — REQUIRED for the same reason: one quiet remote is not a quiet run. */
   readonly filter: 'remote' | 'hostname' | null;
+  /** The reader's choices, held by the section above its gate (`useDurationSettings`). */
+  readonly settings: DurationSettings;
   /** The three charts' order, each named once; GE's TCP and TLS order by default. */
   readonly order?: readonly DurationChart[];
 }) {
-  const [rows, setRows] = useState<readonly AgentPercentileRow[]>(DEFAULT_AGENT_ROWS);
-  const [overTimeOutcome, setOverTimeOutcome] = useState<Outcome>('ok');
-  const [curveOutcome, setCurveOutcome] = useState<Outcome>('ok');
+  const { rows, toggleRow, overTimeOutcome, setOverTimeOutcome, curveOutcome, setCurveOutcome } = settings;
 
   const overTime = useMemo(
     () => toDurationOverTime(section, { windowSelected, filter, noun, outcome: overTimeOutcome, rows, widthMs }),
@@ -126,10 +166,6 @@ export default function AgentDurationCharts({
   const overTimeId = `${idPrefix}-percentiles`;
   const curveId = `${idPrefix}-percentiles-distribution`;
 
-  function toggle(row: AgentPercentileRow) {
-    setRows((current) => (current.includes(row) ? current.filter((r) => r !== row) : [...current, row]));
-  }
-
   const charts: Record<DurationChart, ReactNode> = {
     overTime: (
       <Chart
@@ -146,7 +182,7 @@ export default function AgentDurationCharts({
                 bands={AGENT_PERCENTILE_ROWS}
                 labels={AGENT_ROW_LABEL}
                 selected={rows}
-                onToggle={toggle}
+                onToggle={toggleRow}
               />
             </ControlGroup>
             <ControlGroup label="Outcome" context={titles.overTime}>
