@@ -527,7 +527,7 @@ describe('the indicator band ramp', () => {
  * there would be ~3.5 apart, under the adjacent floor below.
  *
  * The ΔE floors are lower than the band ramp's on purpose and are the MEASURED
- * minima rounded down. Ten steps across one hue arc are necessarily closer
+ * minima rounded down. Twelve steps across one hue arc are necessarily closer
  * together than four; a floor set at the four-step ramp's 7.5 would be a
  * demand that this ramp stop being a ramp. Their job is to catch a duplicate
  * or a step nudged onto its neighbour, not to claim adjacent steps are

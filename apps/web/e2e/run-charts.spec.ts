@@ -670,6 +670,10 @@ test('a processing run mounts no charts at all', async ({ page }) => {
   // yet and put seven "no data" figures under a run nobody has parsed —
   // stating as a measurement ("nothing was recorded") what is merely "not yet".
   await expect(figures(page)).toHaveCount(0);
+  // Named on its own too: the status chart reads the agent file, which a
+  // processing run does not have yet, and `figures` counting zero could be a
+  // selector that stopped matching it.
+  await expect(page.getByTestId('chart-agent-status')).toHaveCount(0);
 });
 
 test('a completed run with no data explains every chart rather than showing empty axes', async ({

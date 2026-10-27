@@ -238,7 +238,7 @@ function RequestsCharts({ runId }: { readonly runId: string }) {
       <Payload query={errorSeries} slots={[ERRORS_PER_SECOND]}>
         {(data) => <ErrorsChart data={data} domainMs={domainMs} warmupMs={warmupMs} windowSelected={windowSelected} />}
       </Payload>
-      <ResponsesByStatusChart runId={runId} domainMs={domainMs} windowSelected={windowSelected} />
+      <ResponsesByStatusChart runId={runId} domainMs={domainMs} warmupMs={warmupMs} windowSelected={windowSelected} />
       <Payload query={stats} slots={[INDICATORS, REQUEST_COUNTS]}>
         {(data) => (
           <>

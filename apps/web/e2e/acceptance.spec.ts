@@ -353,6 +353,6 @@ test('a keyboard alone can open a chart’s data table and get back out', async 
   await expect(table).toBeVisible();
 
   // And the caret comes back to where the reader started, rather than to the
-  // top of a document holding seven figures.
+  // top of a document holding every figure of the Requests section.
   await expect(trigger).toBeFocused();
 });

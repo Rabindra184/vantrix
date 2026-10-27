@@ -260,10 +260,10 @@ export const BAND_RAMP: readonly BandRole[] = [
 
 /**
  * The percentile charts' SEVERITY RAMP, in rank order — `min` (fastest, green)
- * through `max` (slowest, red), twelve steps. `pct-mean` is not in it. `PercentilesChart` filters this down to
- * whichever bands are selected and hands the result to `Chart` as `roles`; see
- * that component for why the filter must follow `BANDS`' order rather than
- * toggle order.
+ * through `max` (slowest, red), twelve steps. `pct-mean` is not in it.
+ * `PercentilesChart` filters this down to whichever bands are selected and
+ * hands the result to `Chart` as `roles`; see that component for why the
+ * filter must follow `BANDS`' order rather than toggle order.
  *
  * Do not reorder: `palette.test.ts` reads the ramp off it, and reordering
  * would silently recolour every selected band.
@@ -276,7 +276,7 @@ export const PERCENTILE_RAMP: readonly PercentileRole[] = [
 /**
  * MEASURED, twelve steps, hue falling monotonically 181.7° → 25.3° (green to
  * red). Light and dark share these values, as the reference this ramp is
- * drawn from does — a ten-step ramp spread across both a light and a dark
+ * drawn from does — a twelve-step ramp spread across both a light and a dark
  * derivation would only multiply the ways two steps could end up too close.
  *
  * Lightness is NOT monotonic here (it dips at `pct-p50` and rises again
@@ -292,8 +292,7 @@ export const PERCENTILE_RAMP: readonly PercentileRole[] = [
  * those tokens are severity scales where red means "worst", so the same hex
  * meaning the same thing in two ramps is the point, not a coincidence to
  * collapse into a shared alias.
- */
-/*
+ *
  * `pct-p99_9` / `pct-p99_99` (GE report parity PR 3) sit in the ramp's
  * narrowest arc: `99%` → `Max` is ΔE 10.4 at one lightness, so splitting the
  * hue evenly would give three steps ~3.5 apart, under the adjacent floor. They

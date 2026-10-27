@@ -988,6 +988,10 @@ export default function Chart({
             // reading that has a gap on BOTH sides takes symbols too, for
             // that reading alone: see `loneReadings`.
             showSymbol: kind === 'scatter' || lone.size > 0,
+            // On a CATEGORY axis ECharts' default 'auto' thins symbols that would
+            // crowd each other, and a lone reading's mark is exactly what it may
+            // thin. A value axis never thins; this is for the category charts.
+            showAllSymbol: lone.size > 0 ? true : 'auto',
             /**
              * AC-STAT-4's demarcation, on the FIRST drawn series only.
              *

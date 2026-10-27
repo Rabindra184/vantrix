@@ -166,14 +166,24 @@ async function main() {
 
   // The worker, in-process. It finds the org's newest pending run, which is
   // this one: `seedAdmin` gave this capture an org of its own.
-  const parsed = await parseUploadedRun(admin.orgId);
+  let parsed;
+  try {
+    parsed = await parseUploadedRun(admin.orgId);
+  } catch (err) {
+    // The pipeline's own error names a stage, not this script: say which run it was.
+    throw new Error(`capture-agent-fixture: parsing the uploaded run ${runId} failed: ${err instanceof Error ? err.message : String(err)}`, {
+      cause: err,
+    });
+  }
   if (parsed !== runId) throw new Error(`parsed run ${parsed}, but the upload created ${runId}`);
 
-  // Terminal by the API's own answer, not just the pipeline's: 202 is still processing.
+  // Terminal by the API's own answer, not just the pipeline's: 202 is still
+  // processing; 200 is complete, and 422 is complete with a failed verdict
+  // (`RunsService.statusFor`) — the run's own SLA gates, still a run to capture.
   const deadline = Date.now() + 30_000;
   for (;;) {
     const res = await fetch(`${BASE_URL}${runPath(runId)}`, { headers: { cookie } });
-    if (res.status === 200) break;
+    if (res.status === 200 || res.status === 422) break;
     if (res.status !== 202 || Date.now() > deadline) {
       throw new Error(`GET ${runPath(runId)} → ${res.status}: ${await res.text()}`);
     }

@@ -52,7 +52,10 @@ function subjectOf(opts: Opts): string {
   return opts.filter == null ? 'this run' : `this ${opts.filter}`;
 }
 
-/** Where a chart's nothing-to-draw sentence says it looked: "for this run", "in the selected window", … */
+/**
+ * Where a chart's nothing-to-draw sentence says it looked: "for this run",
+ * "in the selected window", "for this remote in the selected window".
+ */
 export function scopeOf(opts: Opts): string {
   if (!opts.windowSelected) return `for ${subjectOf(opts)}`;
   return opts.filter == null ? 'in the selected window' : `for ${subjectOf(opts)} in the selected window`;

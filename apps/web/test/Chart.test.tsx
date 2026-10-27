@@ -819,10 +819,25 @@ describe('Chart — a reading with no neighbour keeps a mark', () => {
     expect(lineOf(0).data).toEqual([[0, 9]]);
   });
 
+  it('keeps every lone mark on a category axis, where ECharts would otherwise thin them', () => {
+    // A category axis: one label per point, plain values rather than pairs.
+    const data: ChartData = {
+      series: [{ name: 'KO', data: [5, null, 7, null, 6, 8] }],
+      axisLabels: ['0', '1', '2', '3', '4', '5'],
+      columns: ['Bucket', 'KO'],
+      rows: [],
+    };
+    render(<Chart id="cat" title="KO" data={data} />);
+    const line = lastOption()['series'] as { showSymbol?: boolean; showAllSymbol?: boolean | 'auto' }[];
+    expect(line[0]!.showSymbol).toBe(true);
+    expect(line[0]!.showAllSymbol).toBe(true);
+  });
+
   it('leaves a series with no lone reading exactly as it was: no symbols, the data as handed', () => {
     const points = [[0, 5], [1000, 6], [2000, null], [3000, 7], [4000, 8]] as const;
     render(<Chart id="ok" title="OK" data={pairs('OK', points)} xAxis={msAxis} pairValue="y" />);
     expect(lineOf(0).showSymbol).toBe(false);
+    expect((lineOf(0) as { showAllSymbol?: unknown }).showAllSymbol).toBe('auto');
     expect(lineOf(0).data).toEqual(points);
   });
 });

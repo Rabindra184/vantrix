@@ -297,58 +297,63 @@ describe('RunReport — live', () => {
       return Promise.resolve(json({ status: 404, title: 'Not Found', code: 'NOT_FOUND', detail: 'stub', remediation: 'stub' }, 404));
     });
     const hookErrors = vi.spyOn(console, 'error');
+    // Restored whatever happens: a failing assertion below must not leave
+    // console.error spied for the next case in this file.
+    try {
 
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    client.setQueryData(runQueryKey(RUN_ID), { state: 'processing', run: processing });
-    client.setQueryData(usersQuery(RUN_ID, null).queryKey, EMPTY_USERS);
-    client.setQueryData(seriesQuery(RUN_ID, 'run', '', 'response_time', null).queryKey, EMPTY_SERIES);
-    const tree = (
-      <QueryClientProvider client={client}>
-        <MemoryRouter initialEntries={[`/runs/${RUN_ID}/report`]}>
-          <Routes>
-            <Route
-              path="/runs/:runId"
-              element={
-                <Outlet
-                  context={
-                    {
-                      window: null, durationMs: null, liveDurationMs: null, warmupMs: null,
-                      live: liveWith({ count: 1200 }),
-                      projectAccess: UNKNOWN_ACCESS,
-                    } satisfies RunWindowContext
-                  }
-                />
-              }
-            >
-              <Route path="report" element={<RunReport />} />
-            </Route>
-          </Routes>
-        </MemoryRouter>
-      </QueryClientProvider>
-    );
-    const { rerender } = render(tree);
-    const requests = screen.getByTestId('section-requests');
-    expect(within(requests).getByText('Responses per Second by Status')).toBeInTheDocument();
-    expect(within(requests).queryByTestId('chart-agent-status')).toBeNull();
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      client.setQueryData(runQueryKey(RUN_ID), { state: 'processing', run: processing });
+      client.setQueryData(usersQuery(RUN_ID, null).queryKey, EMPTY_USERS);
+      client.setQueryData(seriesQuery(RUN_ID, 'run', '', 'response_time', null).queryKey, EMPTY_SERIES);
+      const tree = (
+        <QueryClientProvider client={client}>
+          <MemoryRouter initialEntries={[`/runs/${RUN_ID}/report`]}>
+            <Routes>
+              <Route
+                path="/runs/:runId"
+                element={
+                  <Outlet
+                    context={
+                      {
+                        window: null, durationMs: null, liveDurationMs: null, warmupMs: null,
+                        live: liveWith({ count: 1200 }),
+                        projectAccess: UNKNOWN_ACCESS,
+                      } satisfies RunWindowContext
+                    }
+                  />
+                }
+              >
+                <Route path="report" element={<RunReport />} />
+              </Route>
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>
+      );
+      const { rerender } = render(tree);
+      const requests = screen.getByTestId('section-requests');
+      expect(within(requests).getByText('Responses per Second by Status')).toBeInTheDocument();
+      expect(within(requests).queryByTestId('chart-agent-status')).toBeNull();
 
-    // The run query refetches on mount; let that answer land first, or it
-    // would overwrite the flip below with the running body it was asked for.
-    await waitFor(() => expect(client.isFetching()).toBe(0));
-    flippedAt = requested.length;
-    await act(async () => {
-      client.setQueryData(runQueryKey(RUN_ID), { state: 'ready', run: ready });
-    });
-    rerender(tree);
+      // The run query refetches on mount; let that answer land first, or it
+      // would overwrite the flip below with the running body it was asked for.
+      await waitFor(() => expect(client.isFetching()).toBe(0));
+      flippedAt = requested.length;
+      await act(async () => {
+        client.setQueryData(runQueryKey(RUN_ID), { state: 'ready', run: ready });
+      });
+      rerender(tree);
 
-    // Queried inside the wait: the drawn chart REPLACES its loading figure.
-    await waitFor(() =>
-      expect(within(requests).getByTestId('chart-agent-status').querySelector('[data-chart-canvas]')).not.toBeNull(),
-    );
-    const asked = requested.findIndex((u) => u.includes('/agent/status'));
-    expect(asked, 'the status chart was asked for').toBeGreaterThanOrEqual(0);
-    expect(asked, 'and only after the run finished').toBeGreaterThanOrEqual(flippedAt);
-    const hookOrder = hookErrors.mock.calls.filter((call) => /hooks/i.test(String(call[0])));
-    expect(hookOrder).toEqual([]);
-    hookErrors.mockRestore();
+      // Queried inside the wait: the drawn chart REPLACES its loading figure.
+      await waitFor(() =>
+        expect(within(requests).getByTestId('chart-agent-status').querySelector('[data-chart-canvas]')).not.toBeNull(),
+      );
+      const asked = requested.findIndex((u) => u.includes('/agent/status'));
+      expect(asked, 'the status chart was asked for').toBeGreaterThanOrEqual(0);
+      expect(asked, 'and only after the run finished').toBeGreaterThanOrEqual(flippedAt);
+      const hookOrder = hookErrors.mock.calls.filter((call) => /hooks/i.test(String(call[0])));
+      expect(hookOrder).toEqual([]);
+    } finally {
+      hookErrors.mockRestore();
+    }
   });
 });

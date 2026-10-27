@@ -58,10 +58,13 @@ function unavailableSentence(status: AgentStatusResponse): string {
 export default function ResponsesByStatusChart({
   runId,
   domainMs,
+  warmupMs,
   windowSelected,
 }: {
   readonly runId: string;
   readonly domainMs: TimeDomainMs | undefined;
+  /** The run's warm-up, shaded as on its Requests neighbours: the same seconds, the same band. */
+  readonly warmupMs?: number;
   /**
    * REQUIRED, as on every Requests chart: a window that selects nothing and a
    * run that recorded nothing draw the same empty payload, and the sentence
@@ -76,7 +79,7 @@ export default function ResponsesByStatusChart({
     <Payload query={status} slots={[RESPONSES_BY_STATUS]}>
       {(data) =>
         data.available ? (
-          <StatusRateChart data={data} domainMs={domainMs} windowSelected={windowSelected} />
+          <StatusRateChart data={data} domainMs={domainMs} warmupMs={warmupMs} windowSelected={windowSelected} />
         ) : (
           <Undrawn slot={RESPONSES_BY_STATUS} reason={unavailableSentence(data)} />
         )
@@ -88,10 +91,12 @@ export default function ResponsesByStatusChart({
 function StatusRateChart({
   data,
   domainMs,
+  warmupMs,
   windowSelected,
 }: {
   readonly data: AgentStatusResponse;
   readonly domainMs: TimeDomainMs | undefined;
+  readonly warmupMs: number | undefined;
   readonly windowSelected: boolean;
 }) {
   // Memoised: `Chart`'s option effect depends on `data` by identity.
@@ -107,7 +112,7 @@ function StatusRateChart({
       group={RUN_TIME_GROUP}
       // Its x is an INSTANT, not a measurement — the tooltip title names it.
       pairValue="y"
-      xAxis={{ type: 'value', tickUnit: 'ms-as-s', min: domainMs?.[0], max: domainMs?.[1] }}
+      xAxis={{ type: 'value', tickUnit: 'ms-as-s', min: domainMs?.[0], max: domainMs?.[1], warmupMs }}
       yAxis={{ name: 'Responses/s' }}
       unit="/s"
     />
