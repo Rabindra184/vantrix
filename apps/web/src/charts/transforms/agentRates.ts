@@ -1,7 +1,8 @@
 import { TCP_STATE_NAMES } from '@perfportal/contracts';
 import type { AgentConnectionsResponse, AgentDnsResponse, AgentStatusResponse } from '@perfportal/contracts';
 import type { StatusRole } from '../theme';
-import type { ChartData, ChartSeries, ChartTableRow } from '../types';
+import type { ChartData } from '../types';
+import { bucketChart, emptySentence, noWidth, perSecond, withoutAllZero, type Opts } from './agentChart';
 
 /**
  * The Report's agent rate and gauge charts — Connections, DNS and the HTTP
@@ -36,187 +37,14 @@ import type { ChartData, ChartSeries, ChartTableRow } from '../types';
  * six are still left, `Chart`'s own cap and its note apply.
  *
  * Every series is `[startOffsetMs, y]` pairs on the run page's shared value
- * axis (see `telemetry.ts` for why a category axis cannot share a crosshair).
+ * axis (see `telemetry.ts` for why a category axis cannot share a crosshair),
+ * built from `agentChart.ts`' kit — which also fills the missing steps of a
+ * sparse payload, by whether each measure is a counter or a gauge.
  * The unavailable cases (`available: false`) are the section's to explain, from
  * the response's `reason` and `detail`; these functions are called only for a
  * collected run, so their empty sentences are about a run or a window that
  * recorded nothing.
  */
-
-/**
- * Heads every data table's label column. The drawn axis is named by `Chart`.
- * Exported for the duration charts (`agentDurations.ts`), which share it.
- */
-export const TIME_COLUMN = 'Elapsed (s)';
-
-type Opts = { readonly windowSelected: boolean };
-type Pair = readonly [number, number | null];
-
-/**
- * A bucket's sum as a per-second rate, or `null` where nothing was measured.
- *
- * Exported because the Load generators charts apply the same rate (GC counts
- * and time, TCP events and segments). `?? 0` is what this must never do.
- */
-export function perSecond(value: number | null, widthMs: number): number | null {
-  return value === null ? null : value / (widthMs / 1000);
-}
-
-/**
- * The zero-series ruling: the series worth drawing, and the names of the two
- * kinds that are not.
- *
- *   zero    at least one reading, and every reading is 0
- *   unread  no reading at all — every y is null
- *
- * NEITHER IS PLOTTED. An unread series drawn would be an invisible line that
- * still spends one of the palette's six hues: on a macOS load generator, whose
- * TCP states and RAM are never read, it would cap a series that HAS readings
- * under a note blaming the palette. The two groups are kept apart because
- * their sentences differ — "every reading is zero" would be false of a series
- * nobody read. Exported for the Load generators charts, which apply the same
- * rule; `zeroSeriesNote` and `unreadSeriesNote` carry the words.
- */
-export function dropAllZero(series: readonly ChartSeries[]): {
-  readonly kept: ChartSeries[];
-  readonly zero: string[];
-  readonly unread: string[];
-} {
-  const kept: ChartSeries[] = [];
-  const zero: string[] = [];
-  const unread: string[] = [];
-  for (const s of series) {
-    const values = (s.data as readonly (number | null | Pair)[]).map((d) => (Array.isArray(d) ? d[1] : d) as number | null);
-    const measured = values.filter((v): v is number => v !== null);
-    if (measured.length === 0) unread.push(s.name);
-    else if (measured.every((v) => v === 0)) zero.push(s.name);
-    else kept.push(s);
-  }
-  return { kept, zero, unread };
-}
-
-/** The `limitation` sentence for `dropAllZero`'s `zero` group, or nothing. */
-export function zeroSeriesNote(zero: readonly string[]): string | undefined {
-  return zero.length === 0 ? undefined : `Not drawn: every reading is zero — ${zero.join(', ')}.`;
-}
-
-/** The `limitation` sentence for `dropAllZero`'s `unread` group, or nothing. */
-export function unreadSeriesNote(unread: readonly string[]): string | undefined {
-  return unread.length === 0 ? undefined : `Not drawn: no reading was taken — ${unread.join(', ')}.`;
-}
-
-/** One series' name and how to read its y off a bucket. */
-export interface Measure<B> {
-  readonly name: string;
-  readonly read: (bucket: B) => number | null;
-}
-
-/**
- * Every chart here has this shape: buckets with an offset, a fixed list of
- * measures, pairs for the drawing and the same numbers for the table.
- * Exported for the Load generators charts (`agentInjectors.ts`), which share it.
- */
-export function bucketChart<B extends { readonly startOffsetMs: number }>(
-  buckets: readonly B[],
-  measures: readonly Measure<B>[],
-  empty: string,
-): ChartData {
-  const columns = [TIME_COLUMN, ...measures.map((m) => m.name)];
-  if (buckets.length === 0) {
-    // Not a flat zero line: a window or run that recorded nothing is said so.
-    return { series: [], axisLabels: [], columns, rows: [], empty };
-  }
-  const measured = measures.map((m) => buckets.map((b) => m.read(b)));
-  const series: ChartSeries[] = measures.map((m, s) => ({
-    name: m.name,
-    // A null y keeps its pair — omitting the point would draw a line across the gap.
-    data: buckets.map((b, i) => [b.startOffsetMs, measured[s]![i] ?? null] as Pair),
-  }));
-  const rows: ChartTableRow[] = buckets.map((b, i) => ({
-    label: String(b.startOffsetMs / 1000),
-    values: measured.map((line) => line[i] ?? '—'),
-  }));
-  return { series, axisLabels: [], columns, rows };
-}
-
-/**
- * "No <things> fall in the selected window." or "… were recorded for this run."
- * Exported for the duration charts, so both modules say it the same way.
- */
-export function emptySentence(things: string, opts: Opts): string {
-  return opts.windowSelected
-    ? `No ${things} fall in the selected window.`
-    : `No ${things} were recorded for this run.`;
-}
-
-/**
- * ═══ NO AGENT CHART DRAWS A MARKLESS GRID ═══
- *
- * Dropping series can leave a chart with none, and empty axes say nothing —
- * worse, they read as "the agent measured and found nothing to plot". So when
- * nothing is kept, the chart is `empty`, with the same reasons its `limitation`
- * would have given, said of the window or the run as the reader asked. The
- * data table keeps every column and row either way.
- */
-function dropAndExplain(
-  chart: ChartData,
-  opts: Opts,
-  dropZero: boolean,
-  otherNotes: readonly (string | undefined)[],
-): ChartData {
-  const split = dropAllZero(chart.series);
-  const zero = dropZero ? split.zero : [];
-  const kept = chart.series.filter((s) => !split.unread.includes(s.name) && !zero.includes(s.name));
-  const others = otherNotes.filter((n): n is string => n !== undefined);
-  if (kept.length === 0) {
-    const reasons = [
-      zero.length > 0 ? `every reading is zero — ${zero.join(', ')}` : undefined,
-      split.unread.length > 0 ? `no reading was taken — ${split.unread.join(', ')}` : undefined,
-    ].filter((r): r is string => r !== undefined);
-    const scope = opts.windowSelected ? 'in the selected window' : 'for this run';
-    const empty = reasons.length > 0 ? `Nothing to draw ${scope}: ${reasons.join('; ')}.` : `Nothing to draw ${scope}.`;
-    return { ...chart, series: [], empty, limitation: others.length > 0 ? others.join(' ') : undefined };
-  }
-  const notes = [zeroSeriesNote(zero), unreadSeriesNote(split.unread), ...others].filter(
-    (n): n is string => n !== undefined,
-  );
-  return { ...chart, series: kept, limitation: notes.length > 0 ? notes.join(' ') : undefined };
-}
-
-/**
- * Applies the zero-series ruling to a built chart — every-zero and never-read
- * series are dropped and named — joining its note to any other. Exported for
- * the Load generators' GC, TCP-event and segment charts. The ruling's scope is
- * the plan's: TCP states, status codes, GC and kernel TCP counters.
- */
-export function withoutAllZero(chart: ChartData, opts: Opts, ...otherNotes: (string | undefined)[]): ChartData {
-  return dropAndExplain(chart, opts, true, otherNotes);
-}
-
-/**
- * The half of the ruling every agent chart takes, gauges included: a series
- * with no reading at all is dropped and named, while a measured zero is drawn.
- * For CPU and memory, where 0 is a reading worth seeing.
- */
-export function withoutUnread(chart: ChartData, opts: Opts, ...otherNotes: (string | undefined)[]): ChartData {
-  return dropAndExplain(chart, opts, false, otherNotes);
-}
-
-/**
- * A rate chart for a payload with no bucket width. The contract makes it null
- * only when nothing was collected, but a rate cannot be drawn without one, and
- * assuming 1000 is the mis-scaled chart this module exists to avoid.
- * Exported for the Load generators' rate charts.
- */
-export function noWidth(names: readonly string[]): ChartData {
-  return {
-    series: [],
-    axisLabels: [],
-    columns: [TIME_COLUMN, ...names],
-    rows: [],
-    empty: 'These figures carry no bucket width, so no per-second rate can be drawn.',
-  };
-}
 
 type ConnectionBucket = AgentConnectionsResponse['buckets'][number];
 
@@ -232,10 +60,11 @@ export function toConnectionRate(c: AgentConnectionsResponse, opts: Opts): Chart
   return bucketChart<ConnectionBucket>(
     c.buckets,
     [
-      { name: 'Opened', read: (b) => perSecond(b.opened, w) },
-      { name: 'Closed', read: (b) => perSecond(b.closed, w) },
+      { name: 'Opened', read: (b) => perSecond(b.opened, w), gap: 'counter' },
+      { name: 'Closed', read: (b) => perSecond(b.closed, w), gap: 'counter' },
     ],
     emptySentence('connections', opts),
+    w,
   );
 }
 
@@ -257,8 +86,13 @@ export function toTcpStates(
 ): ChartData {
   const chart = bucketChart<ConnectionBucket>(
     c.buckets,
-    TCP_STATE_NAMES.map((state) => ({ name: state, read: (b) => (b.states === null ? null : b.states[state]) })),
+    TCP_STATE_NAMES.map((state) => ({
+      name: state,
+      read: (b: ConnectionBucket) => (b.states === null ? null : b.states[state]),
+      gap: 'gauge' as const,
+    })),
     emptySentence('connections', opts),
+    c.bucketWidthMs,
   );
   if (chart.empty !== undefined) return chart;
   if (c.buckets.every((b) => b.states === null)) {
@@ -282,10 +116,11 @@ export function toBandwidth(c: AgentConnectionsResponse, opts: Opts): ChartData 
   return bucketChart<ConnectionBucket>(
     c.buckets,
     [
-      { name: 'Sent', read: (b) => mbps(b.bitsOut) },
-      { name: 'Received', read: (b) => mbps(b.bitsIn) },
+      { name: 'Sent', read: (b) => mbps(b.bitsOut), gap: 'counter' },
+      { name: 'Received', read: (b) => mbps(b.bitsIn), gap: 'counter' },
     ],
     emptySentence('connections', opts),
+    w,
   );
 }
 
@@ -303,11 +138,12 @@ export function toDnsRate(d: AgentDnsResponse, opts: Opts): ChartData {
   return bucketChart<AgentDnsResponse['buckets'][number]>(
     d.buckets,
     [
-      { name: 'Requests', read: (b) => perSecond(b.requests, w) },
-      { name: 'OK', read: (b) => perSecond(b.ok, w) },
-      { name: 'KO', read: (b) => perSecond(b.ko, w) },
+      { name: 'Requests', read: (b) => perSecond(b.requests, w), gap: 'counter' },
+      { name: 'OK', read: (b) => perSecond(b.ok, w), gap: 'counter' },
+      { name: 'KO', read: (b) => perSecond(b.ko, w), gap: 'counter' },
     ],
     emptySentence('lookups', opts),
+    w,
   );
 }
 
@@ -322,8 +158,13 @@ export function toStatusRate(s: AgentStatusResponse, opts: Opts): ChartData {
   if (w === null) return noWidth(s.codes);
   const chart = bucketChart<AgentStatusResponse['buckets'][number]>(
     s.buckets,
-    s.codes.map((code) => ({ name: code, read: (b) => perSecond(b.counts[code] ?? 0, w) })),
+    s.codes.map((code) => ({
+      name: code,
+      read: (b: AgentStatusResponse['buckets'][number]) => perSecond(b.counts[code] ?? 0, w),
+      gap: 'counter' as const,
+    })),
     emptySentence('responses', opts),
+    w,
   );
   if (chart.empty !== undefined) return chart;
   // A payload naming no code at all has nothing to drop, and nothing to draw.

@@ -7,12 +7,9 @@ import {
 import type { AgentConnectionsResponse, AgentDnsResponse, AgentStatusResponse } from '@perfportal/contracts';
 import { describe, expect, it } from 'vitest';
 import { expectAboutTheRun, expectAboutTheWindow } from './support/emptySentence';
+import { dropAllZero, perSecond, unreadSeriesNote, zeroSeriesNote } from '../src/charts/transforms/agentChart';
 import {
   DNS_RATE_ROLES,
-  dropAllZero,
-  perSecond,
-  unreadSeriesNote,
-  zeroSeriesNote,
   toBandwidth,
   toConnectionRate,
   toDnsRate,

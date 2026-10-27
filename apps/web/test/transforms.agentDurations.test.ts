@@ -36,6 +36,8 @@ const resolution = dns.resolution;
 
 const RUN = { windowSelected: false, noun: 'TCP connects' } as const;
 const WINDOW = { windowSelected: true, noun: 'TCP connects' } as const;
+/** The payload's own width, which the over-time chart fills a sparse payload's gaps by. */
+const WIDTH = connections.bucketWidthMs;
 const HIDDEN = ['p25', 'p80', 'p85', 'p99_9', 'p99_99'] as const;
 
 /** One drawn series' pairs, by name. */
@@ -75,7 +77,7 @@ describe('the percentile rows', () => {
 });
 
 describe('toDurationOverTime', () => {
-  const all = toDurationOverTime(tcp, { ...RUN, outcome: 'ok', rows: AGENT_PERCENTILE_ROWS });
+  const all = toDurationOverTime(tcp, { ...RUN, widthMs: WIDTH, outcome: 'ok', rows: AGENT_PERCENTILE_ROWS });
 
   it("reads each row from its own index of the bucket's population", () => {
     const max = AGENT_PERCENTILE_ROWS.indexOf('max');
@@ -93,18 +95,18 @@ describe('toDurationOverTime', () => {
       ...tcp,
       overTime: tcp.overTime.map((b, i) => (i === 1 ? { ...b, ok: null } : b)),
     };
-    const chart = toDurationOverTime(gapped, { ...RUN, outcome: 'ok', rows: AGENT_PERCENTILE_ROWS });
+    const chart = toDurationOverTime(gapped, { ...RUN, widthMs: WIDTH, outcome: 'ok', rows: AGENT_PERCENTILE_ROWS });
     for (const s of chart.series) {
       const point = (s.data as readonly (readonly [number, number | null])[])[1]!;
       expect(point).toEqual([gapped.overTime[1]!.startOffsetMs, null]);
     }
     expect(chart.rows[1]!.values.every((v) => v === '—')).toBe(true);
-    expect(chart.limitation).toMatch(new RegExp(`1 of ${gapped.overTime.length}`));
+    expect(chart.limitation).toMatch(new RegExp(`1 of the ${gapped.overTime.length} buckets`));
   });
 
   it('draws only the selected rows, in GE order, while the table keeps all thirteen', () => {
     const reversed = [...DEFAULT_AGENT_ROWS].reverse();
-    const chart = toDurationOverTime(tcp, { ...RUN, outcome: 'ok', rows: reversed });
+    const chart = toDurationOverTime(tcp, { ...RUN, widthMs: WIDTH, outcome: 'ok', rows: reversed });
     expect(chart.series.map((s) => s.name)).toEqual(DEFAULT_AGENT_ROWS.map((r) => AGENT_ROW_LABEL[r]));
     expect(chart.series.map((s) => s.name)).not.toContain(AGENT_ROW_LABEL.p99_9);
     expect(chart.columns).toContain(AGENT_ROW_LABEL.p99_9);
@@ -113,7 +115,7 @@ describe('toDurationOverTime', () => {
   });
 
   it('says so when no row is selected, keeping the table', () => {
-    const chart = toDurationOverTime(tcp, { ...RUN, outcome: 'ok', rows: [] });
+    const chart = toDurationOverTime(tcp, { ...RUN, widthMs: WIDTH, outcome: 'ok', rows: [] });
     expect(chart.series).toEqual([]);
     expect(chart.empty).toMatch(/no percentile rows are selected/i);
     expect(chart.rows).toHaveLength(tcp.overTime.length);
@@ -121,16 +123,16 @@ describe('toDurationOverTime', () => {
 
   it('reads the KO population when asked, and says the run had none rather than drawing nothing', () => {
     expect(tcp.overTime.every((b) => b.ko === null)).toBe(true);
-    const run = toDurationOverTime(tcp, { ...RUN, outcome: 'ko', rows: AGENT_PERCENTILE_ROWS });
+    const run = toDurationOverTime(tcp, { ...RUN, widthMs: WIDTH, outcome: 'ko', rows: AGENT_PERCENTILE_ROWS });
     expectAboutTheRun(run.empty, /failed TCP connects/);
-    const win = toDurationOverTime(tcp, { ...WINDOW, outcome: 'ko', rows: AGENT_PERCENTILE_ROWS });
+    const win = toDurationOverTime(tcp, { ...WINDOW, widthMs: WIDTH, outcome: 'ko', rows: AGENT_PERCENTILE_ROWS });
     expectAboutTheWindow(win.empty, /failed TCP connects/);
   });
 
   it('gives the window and run sentences for an empty section', () => {
-    expectAboutTheRun(toDurationOverTime(EMPTY, { ...RUN, outcome: 'ok', rows: DEFAULT_AGENT_ROWS }).empty, /TCP connects/);
+    expectAboutTheRun(toDurationOverTime(EMPTY, { ...RUN, widthMs: WIDTH, outcome: 'ok', rows: DEFAULT_AGENT_ROWS }).empty, /TCP connects/);
     expectAboutTheWindow(
-      toDurationOverTime(EMPTY, { ...WINDOW, outcome: 'ok', rows: DEFAULT_AGENT_ROWS }).empty,
+      toDurationOverTime(EMPTY, { ...WINDOW, widthMs: WIDTH, outcome: 'ok', rows: DEFAULT_AGENT_ROWS }).empty,
       /TCP connects/,
     );
   });

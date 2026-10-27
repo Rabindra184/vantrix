@@ -77,6 +77,7 @@ export default function AgentDurationCharts({
   titles,
   section,
   noun,
+  widthMs,
   domainMs,
   windowSelected,
   order = DEFAULT_ORDER,
@@ -87,6 +88,8 @@ export default function AgentDurationCharts({
   readonly section: DurationSection;
   /** What a reading is ("TCP connects") — the empty sentences and the distribution's y-axis say it. */
   readonly noun: string;
+  /** The response's own bucket width: the over-time chart breaks its sparse payload's gaps on it. */
+  readonly widthMs: number | null;
   readonly domainMs: TimeDomainMs | undefined;
   /** REQUIRED, as on every Report chart: a quiet window must not read as a quiet run. */
   readonly windowSelected: boolean;
@@ -98,8 +101,8 @@ export default function AgentDurationCharts({
   const [curveOutcome, setCurveOutcome] = useState<Outcome>('ok');
 
   const overTime = useMemo(
-    () => toDurationOverTime(section, { windowSelected, noun, outcome: overTimeOutcome, rows }),
-    [section, windowSelected, noun, overTimeOutcome, rows],
+    () => toDurationOverTime(section, { windowSelected, noun, outcome: overTimeOutcome, rows, widthMs }),
+    [section, windowSelected, noun, overTimeOutcome, rows, widthMs],
   );
   const distribution = useMemo(
     () => toDurationDistribution(section, { windowSelected, noun }),

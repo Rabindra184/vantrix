@@ -1,7 +1,7 @@
 import { AGENT_PERCENTILE_ROWS, roundForReading } from '@perfportal/contracts';
 import type { AgentPercentileRow, DurationSection } from '@perfportal/contracts';
 import type { ChartData, ChartSeries, ChartTableRow } from '../types';
-import { TIME_COLUMN, emptySentence } from './agentRates';
+import { TIME_COLUMN, bucketGrid, emptySentence } from './agentChart';
 import { binLabelColumn } from './distribution';
 import { SERIES_NAME } from './percentileDistribution';
 import type { Outcome } from './percentiles';
@@ -79,10 +79,24 @@ function populationOf(outcome: Outcome, noun: string): string {
  * thirteen whatever is selected, `toPercentiles`' reasoning: the drawing has a
  * legibility budget, the table and a screen reader do not. Series order always
  * follows `AGENT_PERCENTILE_ROWS`, never the selection's order.
+ *
+ * ═══ THE PAYLOAD IS SPARSE, SO ITS GAPS ARE FILLED WITH BREAKS ═══
+ *
+ * The API writes a duration bucket only for a second that had one, so nine
+ * seconds of connects, thirty of nothing and one more arrive as ten buckets.
+ * Every missing `widthMs` step between two of them (`bucketGrid`) is a null
+ * point on every row — a break, never a zero: a duration nobody measured has
+ * no value at all — and a row of dashes in the table. The limitation counts
+ * the filled grid, and says so.
  */
 export function toDurationOverTime(
   section: DurationSection,
-  opts: Opts & { readonly outcome: Outcome; readonly rows: readonly AgentPercentileRow[] },
+  opts: Opts & {
+    readonly outcome: Outcome;
+    readonly rows: readonly AgentPercentileRow[];
+    /** The response's own bucket width, for filling the sparse payload's gaps; null fills nothing. */
+    readonly widthMs: number | null;
+  },
 ): ChartData {
   const columns = [TIME_COLUMN, ...AGENT_PERCENTILE_ROWS.map((r) => AGENT_ROW_LABEL[r])];
   const buckets = section.overTime;
@@ -90,18 +104,20 @@ export function toDurationOverTime(
     return { series: [], axisLabels: [], columns, rows: [], empty: emptySentence(opts.noun, opts) };
   }
 
-  const population = buckets.map((b) => b[opts.outcome]);
-  const rows: ChartTableRow[] = buckets.map((b, i) => ({
-    label: String(b.startOffsetMs / 1000),
+  const grid = bucketGrid(buckets, opts.widthMs);
+  // A filled step measured nothing, of any outcome.
+  const population = grid.map(({ bucket }) => (bucket === null ? null : bucket[opts.outcome]));
+  const rows: ChartTableRow[] = grid.map(({ x }, i) => ({
+    label: String(x / 1000),
     values: AGENT_PERCENTILE_ROWS.map((_, r) => population[i]?.[r] ?? '—'),
   }));
 
-  const unmeasured = population.filter((p) => p === null).length;
   const narrowed = `${OUTCOME_ADJECTIVE[opts.outcome]}${opts.noun}`;
-  if (unmeasured === buckets.length) {
+  if (buckets.every((b) => b[opts.outcome] === null)) {
     // Thirteen lines of nothing would be a labelled grid with no marks; say what is absent.
     return { series: [], axisLabels: [], columns, rows, empty: emptySentence(narrowed, opts) };
   }
+  const unmeasured = population.filter((p) => p === null).length;
 
   const selected = AGENT_PERCENTILE_ROWS.filter((row) => opts.rows.includes(row));
   const series: ChartSeries[] = selected.map((row) => {
@@ -109,7 +125,7 @@ export function toDurationOverTime(
     return {
       name: AGENT_ROW_LABEL[row],
       // A null y keeps its pair — omitting the point would draw a line across the gap.
-      data: buckets.map((b, i) => [b.startOffsetMs, population[i]?.[r] ?? null] as const),
+      data: grid.map(({ x }, i) => [x, population[i]?.[r] ?? null] as const),
     };
   });
 
@@ -124,7 +140,7 @@ export function toDurationOverTime(
         : undefined,
     limitation:
       unmeasured > 0
-        ? `${unmeasured} of ${buckets.length} buckets recorded no ${narrowed}, so those points are absent rather than zero.`
+        ? `${unmeasured} of the ${grid.length} buckets this chart spans recorded no ${narrowed}, so those points are absent rather than zero.`
         : undefined,
   };
 }

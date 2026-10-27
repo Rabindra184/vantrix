@@ -160,6 +160,7 @@ function ConnectionCharts({
         titles={TCP_CONNECT}
         section={data.tcpConnect}
         noun="TCP connects"
+        widthMs={data.bucketWidthMs}
         domainMs={domainMs}
         windowSelected={windowSelected}
       />
@@ -168,6 +169,7 @@ function ConnectionCharts({
         titles={TLS}
         section={data.tlsHandshake}
         noun="TLS handshakes"
+        widthMs={data.bucketWidthMs}
         domainMs={domainMs}
         windowSelected={windowSelected}
       />

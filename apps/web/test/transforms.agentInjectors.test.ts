@@ -2,7 +2,7 @@ import { AgentInjectorsResponseSchema, TCP_EVENT_NAMES, TCP_SEGMENT_NAMES } from
 import type { AgentInjectorsResponse } from '@perfportal/contracts';
 import { describe, expect, it } from 'vitest';
 import { expectAboutTheRun, expectAboutTheWindow } from './support/emptySentence';
-import { unreadSeriesNote, zeroSeriesNote } from '../src/charts/transforms/agentRates';
+import { unreadSeriesNote, zeroSeriesNote } from '../src/charts/transforms/agentChart';
 import {
   MEMORY_SERIES,
   TCP_EVENT_LABELS,

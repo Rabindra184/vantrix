@@ -11,7 +11,8 @@ import {
   withoutAllZero,
   withoutUnread,
   type Measure,
-} from './agentRates';
+  type Opts,
+} from './agentChart';
 import { BYTES_PER_MB } from './telemetry';
 
 /**
@@ -19,7 +20,7 @@ import { BYTES_PER_MB } from './telemetry';
  * figures for the load generator's JVM and machine — one function per chart,
  * all from one `/v1/runs/:id/agent/injectors` response.
  *
- * They follow `agentRates.ts` exactly, and reuse its pieces rather than a copy:
+ * They follow `agentRates.ts` exactly, and share its kit (`agentChart.ts`):
  * pair series on the run's shared value axis, a COUNTER drawn per second at the
  * payload's own width (`perSecond`), a GAUGE drawn as stored, and a `null` kept
  * a gap and a dash — never a zero.
@@ -53,7 +54,6 @@ import { BYTES_PER_MB } from './telemetry';
  * not empty then — heap and Netty are the JVM's, read on every platform.
  */
 
-type Opts = { readonly windowSelected: boolean };
 type Bucket = AgentInjectorsResponse['buckets'][number];
 type TcpEventName = (typeof TCP_EVENT_NAMES)[number];
 type TcpSegmentName = (typeof TCP_SEGMENT_NAMES)[number];
@@ -120,8 +120,9 @@ function gcChart(inj: AgentInjectorsResponse, field: 'gcCount' | 'gcTimeMs', opt
   if (w === null) return noWidth(names);
   const chart = bucketChart<Bucket>(
     inj.buckets,
-    names.map((name) => ({ name, read: (b) => perSecond(b[field][name] ?? 0, w) })),
+    names.map((name) => ({ name, read: (b: Bucket) => perSecond(b[field][name] ?? 0, w), gap: 'counter' as const })),
     emptySentence(THINGS, opts),
+    w,
   );
   if (chart.empty !== undefined) return chart;
   if (names.length === 0) return { ...chart, empty: emptySentence('garbage collections', opts) };
@@ -145,12 +146,12 @@ export function toGcTime(inj: AgentInjectorsResponse, opts: Opts): ChartData {
  */
 export function toCpu(inj: AgentInjectorsResponse, opts: Opts): ChartData {
   const measures: Measure<Bucket>[] = [
-    { name: 'User', read: (b) => b.cpuUserPct },
-    { name: 'Sys', read: (b) => b.cpuSysPct },
+    { name: 'User', read: (b) => b.cpuUserPct, gap: 'gauge' },
+    { name: 'Sys', read: (b) => b.cpuSysPct, gap: 'gauge' },
   ];
   const off = machineNotRead(inj, measures.map((m) => m.name));
   if (off !== undefined) return off;
-  const chart = bucketChart<Bucket>(inj.buckets, measures, emptySentence(THINGS, opts));
+  const chart = bucketChart<Bucket>(inj.buckets, measures, emptySentence(THINGS, opts), inj.bucketWidthMs);
   if (chart.empty !== undefined) return chart;
   return withoutUnread(chart, opts);
 }
@@ -180,8 +181,10 @@ export function toMemory(inj: AgentInjectorsResponse, opts: Opts): ChartData {
         const bytes = READ_MEMORY[name](b);
         return bytes === null ? null : bytes / BYTES_PER_MB;
       },
+      gap: 'gauge' as const,
     })),
     emptySentence(THINGS, opts),
+    inj.bucketWidthMs,
   );
   if (chart.empty !== undefined) return chart;
   const { unread } = dropAllZero(chart.series);
@@ -208,8 +211,11 @@ export function toTcpEvents(inj: AgentInjectorsResponse, opts: Opts): ChartData 
         const value = b.tcpEvents?.[k] ?? null;
         return k === 'established' ? value : perSecond(value, w);
       },
+      // The four counters' missing step saw no event; established is a level nobody read there.
+      gap: k === 'established' ? ('gauge' as const) : ('counter' as const),
     })),
     emptySentence(THINGS, opts),
+    w,
   );
   if (chart.empty !== undefined) return chart;
   // The gauge note is about a drawn line; said of a dropped one it explains nothing.
@@ -226,8 +232,13 @@ export function toTcpSegments(inj: AgentInjectorsResponse, opts: Opts): ChartDat
   if (w === null) return noWidth(names);
   const chart = bucketChart<Bucket>(
     inj.buckets,
-    TCP_SEGMENT_NAMES.map((k) => ({ name: TCP_SEGMENT_LABELS[k], read: (b) => perSecond(b.tcpSegments?.[k] ?? null, w) })),
+    TCP_SEGMENT_NAMES.map((k) => ({
+      name: TCP_SEGMENT_LABELS[k],
+      read: (b: Bucket) => perSecond(b.tcpSegments?.[k] ?? null, w),
+      gap: 'counter' as const,
+    })),
     emptySentence(THINGS, opts),
+    w,
   );
   if (chart.empty !== undefined) return chart;
   return withoutAllZero(chart, opts);

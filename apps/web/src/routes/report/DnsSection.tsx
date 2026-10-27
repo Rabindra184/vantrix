@@ -118,6 +118,7 @@ function DnsCharts({
         titles={RESOLUTION}
         section={data.resolution}
         noun="DNS lookups"
+        widthMs={data.bucketWidthMs}
         domainMs={domainMs}
         windowSelected={windowSelected}
         order={DNS_ORDER}
