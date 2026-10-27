@@ -64,7 +64,7 @@ export default function ConnectionsSection({ runId }: { readonly runId: string }
   // EVERY HOOK RUNS ON EVERY RENDER, above the gate's early returns.
   const section = useAgentSection(runId, { needsHttp: true });
   const { summary, window, domainMs } = section;
-  const [remote, setRemote] = useReportFilter('remote', summary?.remotes);
+  const [remote, setRemote] = useReportFilter('remote', summary?.remotes, 'connections');
   const connections = useQuery(section.figureQuery(agentConnectionsQuery(runId, remote, window)));
 
   return (

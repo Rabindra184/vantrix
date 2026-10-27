@@ -1,6 +1,7 @@
 import { act, cleanup, renderHook } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { MemoryRouter, useLocation, useNavigationType } from 'react-router-dom';
+import { isFragmentInPlace } from '../src/fragmentInPlace';
 import { afterEach, describe, expect, it } from 'vitest';
 import useReportFilter from '../src/routes/report/useReportFilter';
 
@@ -26,7 +27,11 @@ function mount(entry: string, opts: { readonly known: readonly string[] | undefi
     <MemoryRouter initialEntries={[entry]}>{children}</MemoryRouter>
   );
   return renderHook(
-    () => ({ filter: useReportFilter('remote', known), location: useLocation(), nav: useNavigationType() }),
+    () => ({
+      filter: useReportFilter('remote', known, 'connections'),
+      location: useLocation(),
+      nav: useNavigationType(),
+    }),
     { wrapper },
   );
 }
@@ -70,5 +75,29 @@ describe('useReportFilter', () => {
     expect(p.has('remote')).toBe(false);
     expect(p.get('from')).toBe('1000');
     expect(p.get('sort')).toBe('p95');
+  });
+
+  it("keeps the section's hash through a set and a clear, so a shared link reopens the section", () => {
+    const { result } = mount('/r?from=1000');
+    act(() => result.current.filter[1](KNOWN[0]));
+    expect(result.current.location.hash).toBe('#connections');
+    expect(params(result.current.location.search).get('remote')).toBe(KNOWN[0]);
+    act(() => result.current.filter[1]('*'));
+    expect(result.current.location.hash).toBe('#connections');
+    expect(params(result.current.location.search).has('remote')).toBe(false);
+    expect(params(result.current.location.search).get('from')).toBe('1000');
+  });
+
+  it("marks that hash as already in place, so the shell does not pull focus off the control", () => {
+    const { result } = mount('/r');
+    act(() => result.current.filter[1](KNOWN[1]));
+    expect(isFragmentInPlace(result.current.location.state)).toBe(true);
+  });
+
+  it('names a value the URL asked for that the run never had, once the run has said what it has', () => {
+    expect(mount('/r?remote=nope').result.current.filter[2]).toBe('nope');
+    expect(mount(`/r?remote=${encodeURIComponent(KNOWN[0])}`).result.current.filter[2]).toBeNull();
+    expect(mount('/r').result.current.filter[2]).toBeNull();
+    expect(mount('/r?remote=nope', { known: undefined }).result.current.filter[2]).toBeNull();
   });
 });

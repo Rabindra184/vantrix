@@ -54,7 +54,7 @@ export default function DnsSection({ runId }: { readonly runId: string }) {
   // EVERY HOOK RUNS ON EVERY RENDER, above the gate's early returns.
   const section = useAgentSection(runId, { needsHttp: true });
   const { summary, window, domainMs } = section;
-  const [hostname, setHostname] = useReportFilter('hostname', summary?.hostnames);
+  const [hostname, setHostname] = useReportFilter('hostname', summary?.hostnames, 'dns');
   const dns = useQuery(section.figureQuery(agentDnsQuery(runId, hostname, window)));
 
   return (

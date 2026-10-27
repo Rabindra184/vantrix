@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event';
 import { Link, MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import AppShell from '../src/AppShell';
+import { FRAGMENT_IN_PLACE } from '../src/fragmentInPlace';
 
 afterEach(cleanup);
 
@@ -253,7 +254,7 @@ describe('AppShell — the admin flag reaches the rail and the palette', () => {
  * assertion this environment cannot make.
  */
 describe('AppShell — a fragment reveals its target', () => {
-  function renderWithHash(entry: string) {
+  function renderWithHash(entry: string | { readonly pathname: string; readonly hash: string; readonly state: unknown }) {
     vi.stubGlobal('fetch', () =>
       Promise.resolve(new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })),
     );
@@ -309,6 +310,20 @@ describe('AppShell — a fragment reveals its target', () => {
     await screen.findByRole('heading', { name: 'Simulation assertions' });
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  /** A fragment a control wrote so the URL shares well (`fragmentInPlace.ts`)
+   *  is not a move: the reader is on that control, and keeps their place and
+   *  their focus. */
+  it('leaves a fragment marked as already in place alone', async () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+
+    renderWithHash({ pathname: '/runs/abc', hash: '#simulation-assertions', state: FRAGMENT_IN_PLACE });
+    const section = (await screen.findByRole('heading', { name: 'Simulation assertions' })).closest('section')!;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(scrollIntoView).not.toHaveBeenCalled();
+    expect(document.activeElement).not.toBe(section);
   });
 
   /** And a plain navigation still starts at the top — the behaviour this

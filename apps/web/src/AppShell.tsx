@@ -9,6 +9,7 @@ import ProjectRail from './ProjectRail';
 import AccountMenu from './AccountMenu';
 import SearchTrigger from './palette/SearchTrigger';
 import { ActivityIcon } from './components/icons';
+import { isFragmentInPlace } from './fragmentInPlace';
 import { HOME_ROUTE } from './routes/paths';
 
 /**
@@ -243,7 +244,7 @@ export default function AppShell() {
      `/auth/get-session` every time. */
   const isAdmin = useIsAdmin();
 
-  const { pathname, hash } = useLocation();
+  const { pathname, hash, state } = useLocation();
   /* `null` until the first render has run, which is also how the first render
      is told apart: nothing has been navigated FROM yet. (A strict-mode second
      run of the effect sees the same path and falls out at the next check, where
@@ -294,6 +295,9 @@ export default function AppShell() {
    */
   useEffect(() => {
     if (hash === '') return;
+    // A fragment written so the URL shares well, by a control the reader is
+    // using inside that very section (`fragmentInPlace.ts`): not a move.
+    if (isFragmentInPlace(state)) return;
     const id = decodeURIComponent(hash.slice(1));
     let cancelled = false;
     let frame = 0;
@@ -322,7 +326,7 @@ export default function AppShell() {
       cancelAnimationFrame(frame);
       stopKeeping();
     };
-  }, [pathname, hash]);
+  }, [pathname, hash, state]);
 
   return (
     <div className="min-h-screen">
