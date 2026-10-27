@@ -11,6 +11,8 @@ import {
   DNS_RATE_ROLES,
   dropAllZero,
   perSecond,
+  unreadSeriesNote,
+  zeroSeriesNote,
   toBandwidth,
   toConnectionRate,
   toDnsRate,
@@ -68,19 +70,39 @@ describe('perSecond and dropAllZero', () => {
     expect(perSecond(null, 2000)).toBeNull();
   });
 
-  it('drops a series of measured zeros and names it; keeps one with any non-zero reading', () => {
-    const { kept, dropped } = dropAllZero([
+  it('sorts series into kept, zero (read, every reading 0) and unread (no reading at all)', () => {
+    const { kept, zero, unread } = dropAllZero([
       { name: 'a', data: [[0, 0], [1000, null]] },
       { name: 'b', data: [[0, 0], [1000, 3]] },
+      { name: 'c', data: [[0, null], [1000, null]] },
     ]);
     expect(kept.map((s) => s.name)).toEqual(['b']);
-    expect(dropped).toEqual(['a']);
+    expect(zero).toEqual(['a']);
+    expect(unread).toEqual(['c']);
   });
 
-  it('keeps a series with no reading at all: "every reading is zero" needs a reading', () => {
-    const { kept, dropped } = dropAllZero([{ name: 'a', data: [[0, null]] }]);
-    expect(kept.map((s) => s.name)).toEqual(['a']);
-    expect(dropped).toEqual([]);
+  it('names each group in its own sentence, and says nothing for an empty group', () => {
+    expect(zeroSeriesNote(['a', 'b'])).toMatch(/every reading is zero.*a, b/);
+    expect(unreadSeriesNote(['c'])).toMatch(/no reading.*c/);
+    expect(unreadSeriesNote(['c'])).not.toMatch(/zero/);
+    expect(zeroSeriesNote([])).toBeUndefined();
+    expect(unreadSeriesNote([])).toBeUndefined();
+  });
+});
+
+describe('a payload with no bucket width', () => {
+  it('is empty on every rate chart rather than assuming 1000 ms', () => {
+    const charts = [
+      toConnectionRate({ ...connections, bucketWidthMs: null }, RUN),
+      toBandwidth({ ...connections, bucketWidthMs: null }, RUN),
+      toDnsRate({ ...dns, bucketWidthMs: null }, RUN),
+      toStatusRate({ ...status, bucketWidthMs: null }, RUN),
+    ];
+    for (const chart of charts) {
+      expect(chart.series).toEqual([]);
+      expect(chart.empty).toMatch(/bucket width/);
+      expect(chart.columns[0]).toBe('Elapsed (s)');
+    }
   });
 });
 
@@ -177,6 +199,42 @@ describe('toTcpStates', () => {
     expect(chart.series.map((s) => s.name)).toEqual(drawn);
     for (const s of allZero) expect(chart.limitation, s).toContain(s);
     for (const s of drawn) expect(chart.limitation, s).not.toMatch(new RegExp(`\\b${s}\\b`));
+    expect(chart.columns).toEqual(['Elapsed (s)', ...TCP_STATE_NAMES]);
+  });
+
+  it('is empty, with no series, when no bucket carries a reading — the macOS run', () => {
+    const unread = withBuckets([
+      { startOffsetMs: 0, opened: 1, closed: 0, bitsOut: 0, bitsIn: 0, states: null },
+      { startOffsetMs: 1000, opened: 0, closed: 1, bitsOut: 0, bitsIn: 0, states: null },
+    ]);
+    const chart = toTcpStates(unread, RUN);
+    expect(chart.series).toEqual([]);
+    expectAboutTheRun(chart.empty, /TCP connection state was read/);
+    expectAboutTheWindow(toTcpStates(unread, WINDOW).empty, /TCP connection state was read/);
+    expect(chart.columns).toEqual(['Elapsed (s)', ...TCP_STATE_NAMES]);
+    const reason = 'The machine collector is Linux-only.';
+    expect(toTcpStates(unread, { ...RUN, notMeasuredReason: reason }).empty).toContain(reason);
+  });
+
+  it('puts an all-null state and an all-zero state in separate sentences, beside a read one', () => {
+    // TODAY'S CONTRACT CANNOT SEND THIS: `states` is null or a whole object, so
+    // one state alone is never unread, and the all-unread payload is the empty
+    // case above. It is built with a cast because `tcpEvents` already went
+    // per-field nullable for the same reason, and the day `states` does, the
+    // transform must route the two groups to their own sentences, not draw a gap.
+    const read = Object.fromEntries(TCP_STATE_NAMES.map((s) => [s, 2])) as typeof ZERO_STATES;
+    const states = { ...read, closing: null, finWait2: 0 } as unknown as typeof ZERO_STATES;
+    const chart = toTcpStates(
+      withBuckets([
+        { startOffsetMs: 0, opened: 0, closed: 0, bitsOut: 0, bitsIn: 0, states },
+        { startOffsetMs: 1000, opened: 0, closed: 0, bitsOut: 0, bitsIn: 0, states },
+      ]),
+      RUN,
+    );
+    const names = chart.series.map((s) => s.name);
+    expect(names).toEqual(TCP_STATE_NAMES.filter((s) => s !== 'closing' && s !== 'finWait2'));
+    expect(chart.limitation).toContain(zeroSeriesNote(['finWait2'])!);
+    expect(chart.limitation).toContain(unreadSeriesNote(['closing'])!);
     expect(chart.columns).toEqual(['Elapsed (s)', ...TCP_STATE_NAMES]);
   });
 
