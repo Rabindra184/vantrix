@@ -185,15 +185,19 @@ test('Load generators names its machine and draws six charts, Memory listing Hea
 
   await expect.poll(() => legend(loadGenerators, 'agent-memory')).toContain('Heap used');
 
-  // A brushed window reaches the section's own read: the shell's window, from the URL.
+  // A brushed window reaches the section's own read: the shell's window, from the
+  // URL. Inside the run's span (the fixture run is ~3.6 s), or it is clamped to it.
   const windowed: URL[] = [];
   page.on('request', (req) => {
     const url = new URL(req.url());
     if (url.pathname.endsWith('/agent/injectors')) windowed.push(url);
   });
-  await page.goto(`${page.url().split('?')[0]!.split('#')[0]!}?from=2000&to=6000#load-generators`);
+  await page.goto(`${page.url().split('?')[0]!.split('#')[0]!}?from=1000&to=3000#load-generators`);
   await openSection(page, 'load-generators', 'Load generators');
-  await expect.poll(() => windowed.some((u) => u.searchParams.get('from') === '2000' && u.searchParams.get('to') === '6000')).toBe(true);
+  // Polled as the list of windows asked for, so a failure prints what was sent.
+  await expect
+    .poll(() => windowed.map((u) => `${u.searchParams.get('from')}-${u.searchParams.get('to')}`))
+    .toContain('1000-3000');
 });
 
 test('Requests draws Responses per Second by Status, one legend entry per status code', async ({ page }) => {
