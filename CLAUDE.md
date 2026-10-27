@@ -151,6 +151,57 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The audit-better-auth-device branch (`fix/audit-better-auth-device`) added no
+test and moves no floor: unit stays **278 / 4583**, integration
+**257 / 4072** and **e2e 213**. Its diff is two exact pins, one
+`pnpm.overrides` line and the lockfile: better-auth 1.6.26 to **1.7.14**
+(GHSA-q84f-53jg-9ppm, high: device-login approval, patched from 1.7.0-rc.3),
+which carries `@better-auth/*` 1.7.14, better-call 1.3.7 to 1.4.4 and rou3
+0.7.12 to 0.9.2 with it, and the `qs@6` override `^6.16.0` to **`~6.16.2`**
+(GHSA-6pq8-jhm2-2vcw, moderate, reached through express and body-parser).
+CI's audit gate on GE parity PR 4 (#286) found both, published after `main`'s
+last green run.
+
+**NOT REACHABLE HERE, AND UPGRADED ANYWAY.** The advisory is in Better
+Auth's device-authorization plugin, and `createAuth` loads only
+`adminPlugin()` and `refuseServerOnlyRoutes()`. This file's rule is never an
+exception while a patched release exists inside the major in use, and 1.7 is
+inside major 1, so the zod exception (2026-10-24) is not a precedent for it.
+
+**A MINOR-VERSION MOVE OF THE AUTH LIBRARY, SO ITS SURFACE WAS DIFFED, NOT
+ASSUMED.** The `createAuthEndpoint` paths in `dist/api` (30) and
+`dist/plugins/admin` are IDENTICAL between 1.6.26 and 1.7.14, so no new HTTP
+route reaches a session; the three paths `SERVER_ONLY_ROUTES` refuses still
+exist under the same names; and `forceAllowId`, which `createUser`'s
+compensation relies on, is still honoured (`db/with-hooks`). The integration
+suite's admin, members, me, password-gate and session-auth files exercise the
+rest against the real library.
+
+**`qs` IS PINNED TO THE PATCH LINE, THE `vite@8` PRECEDENT.** A caret
+override resolved to 6.17.0, a minor bump the fix does not need, on the
+parser every request goes through. `~6.16.2` resolves to exactly 6.16.2.
+
+**THE P1001 FLAKE WAS MEASURED ON BOTH VERSIONS BEFORE BEING BLAMED ON
+NEITHER.** The full integration run COLLECTED 257 / 4072 and failed two
+cases: `run-number.integration`'s number case on P1001 "Can't reach database
+server" (from `RunsService.lifecycleOf`'s own Prisma read, not a Better Auth
+path) and `verify-queue.integration`'s failed-job re-queue case, `expected 2
+to be 3`, which passed 3 of 3 alone. Better Auth shares the Prisma client, so
+`run-number.integration` alone was run six times on each version in the same
+worktree, against the same database: **2 of 6 failed on 1.7.14 and 2 of 6 on
+1.6.26**, every failure P1001, at loads 3.6 to 6.6. The rate is the
+machine's, not the upgrade's.
+
+**WHAT WAS RUN**, Node v22.19.0, `perfportal_audit` (created and migrated),
+Redis db 15 flushed before integration and e2e, e2e port 3830, every
+`.tsbuildinfo` deleted before typecheck: `pnpm audit --prod` exit 0 (`1 high
+(1 ignored)`, the zod exception); `pnpm build`, `typecheck` and `lint` exit 0
+by their own exit codes; `test:unit` **278 / 4583**, exit 0;
+`test:integration` COLLECTED **257 / 4072** with the two failures above;
+`pnpm test:e2e --workers=2` read back `Running 213 tests using 2 workers`,
+**213 passed, exit 0** — every sign-in, admin, password and project-role
+journey among them.
+
 The GE report parity Report-sections branch (`feat/ge-report-sections`, PR 3
 of `docs/superpowers/specs/2026-10-22-ge-report-parity-design.md`, plan
 `docs/superpowers/plans/2026-10-27-ge-report-parity-pr3-report-sections.md`).
