@@ -52,6 +52,9 @@ object AgentLauncher {
     /** What identifies OUR agent in an existing list: ours from an earlier `gatlingRun`, or one the user wired. */
     private const val MARKER = "/vantrix/agent/gatling-agent.jar"
 
+    /** Characters the `-javaagent:<jar>=out=<path>,max=<n>` argument cannot carry in a path. */
+    private val UNSAFE = listOf('=', ',')
+
     fun prepare(task: Task, buildDir: Path, logger: (String) -> Unit): AgentRun? {
         try {
             val notBeforeMs = System.currentTimeMillis()
@@ -66,13 +69,30 @@ object AgentLauncher {
             val jar = agentDir.resolve("gatling-agent.jar")
             val outDir = agentDir.resolve("out")
 
+            // The JVM takes everything before the first `=` of `-javaagent:` as the jar's path, and
+            // the agent splits its options on `,`. A path carrying `=` would stop every simulation
+            // JVM from starting; one carrying `,` would cut `out=` short and send the agent's file
+            // (truncating whatever is there) outside the build. Checked before anything is
+            // extracted or any argument is touched.
+            val unsafe = UNSAFE.firstOrNull { it in jar.toString() || it in outDir.toString() }
+            if (unsafe != null) {
+                logger(
+                    "the build directory path $agentDir contains '$unsafe', which a -javaagent argument " +
+                        "cannot carry; the agent is skipped and this run carries no agent data",
+                )
+                return null
+            }
+
             val stream = AgentLauncher::class.java.getResourceAsStream(RESOURCE)
             if (stream == null) {
                 logger("the plugin carries no agent jar ($RESOURCE); this run carries no agent data")
                 return null
             }
-            Files.createDirectories(agentDir)
-            stream.use { Files.copy(it, jar, StandardCopyOption.REPLACE_EXISTING) }
+            // Closed on every path, a failing createDirectories included.
+            stream.use {
+                Files.createDirectories(agentDir)
+                Files.copy(it, jar, StandardCopyOption.REPLACE_EXISTING)
+            }
             // A file left by an earlier run must never be paired with this one's results.
             emptyDirectory(outDir)
 
@@ -86,7 +106,9 @@ object AgentLauncher {
 
             return AgentRun(outDir, notBeforeMs)
         } catch (t: Throwable) {
-            logger("could not start ${task.name} with the agent (${t.message}); this run carries no agent data")
+            // A reflective failure arrives as an InvocationTargetException whose own message is null.
+            val reason = (t.cause ?: t).message ?: t.javaClass.simpleName
+            logger("could not start ${task.name} with the agent ($reason); this run carries no agent data")
             return null
         }
     }

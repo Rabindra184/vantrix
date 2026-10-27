@@ -222,7 +222,6 @@ class LiveClient(
         }
     }
 
-
     private fun buildStreamRequest(run: OpenedRun, bytes: ByteArray): HttpRequest =
         HttpRequest.newBuilder(URI.create(run.streamUrl))
             .timeout(Duration.ofSeconds(30))

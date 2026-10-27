@@ -15,11 +15,23 @@ import java.nio.file.Path
  * line, whose `startedAt` is the instant that JVM's agent started.
  *
  * The rule: the file a directory belongs to is the one with the LARGEST `startedAt` such that
- * `agent.notBeforeMs <= startedAt <= the directory's last-modified time`, both bounds inclusive,
- * among files not already paired with another run of this `gatlingRun` ([AgentRun.paired]).
- * A JVM writes its header in premain, then Gatling creates the results directory and writes into
- * it until the JVM exits; the next JVM starts after that. [AgentRun.notBeforeMs] is the instant
- * this `gatlingRun` began, before which no file can be this run's.
+ * `lower < startedAt <= the directory's last-modified time`, among files not already paired with
+ * another run of this `gatlingRun` ([AgentRun.paired]). A JVM writes its header in premain, then
+ * Gatling creates the results directory and writes into it until the JVM exits; the next JVM
+ * starts after that. So a run's file started after the PREVIOUS simulation's directory was last
+ * written, and `lower` is that instant: the latest last-modified time among this `gatlingRun`'s
+ * other results directories -- the directories beside this one, under the same results root,
+ * last written after [AgentRun.notBeforeMs] -- that is earlier than this directory's own. With
+ * no such directory (the first simulation), the bound is [AgentRun.notBeforeMs] itself, the
+ * instant this `gatlingRun` began, and inclusive: `notBeforeMs <= startedAt`.
+ *
+ * THE LOWER BOUND matters in exactly one case: this run's own file is missing -- its JVM died
+ * before premain wrote the header, or the agent could not write at all. (A JVM that died AFTER
+ * writing its header still has its file.) [AgentRun.paired] keeps an earlier run's file from
+ * being taken twice, but an earlier run's file that was never claimed -- that run's live run
+ * never opened and the fallback is off, so nothing paired its directory -- would otherwise be
+ * the largest candidate left, and this run would carry another simulation's data. With the
+ * bound, it pairs nothing.
  *
  * THERE IS NO SLACK on the upper bound, deliberately. Gatling writes its report files into the
  * directory right before its JVM exits, and the next simulation's JVM writes its header well
@@ -43,9 +55,12 @@ object AgentFiles {
     fun pairFor(agent: AgentRun, resultsDir: Path): Path? =
         try {
             val latest = Files.getLastModifiedTime(resultsDir).toMillis()
+            val previous = previousDirectoryWrite(agent, resultsDir, latest)
             val eligible = candidates(agent.outDir)
                 .mapNotNull { file -> startedAt(file)?.let { file to it } }
-                .filter { (_, startedAt) -> startedAt >= agent.notBeforeMs && startedAt <= latest }
+                .filter { (_, startedAt) ->
+                    startedAt >= agent.notBeforeMs && (previous == null || startedAt > previous) && startedAt <= latest
+                }
                 .sortedByDescending { (_, startedAt) -> startedAt }
                 .map { (file, _) -> file }
             // Claimed under the set's own monitor: the first eligible file nobody has paired yet.
@@ -53,6 +68,23 @@ object AgentFiles {
         } catch (e: Exception) {
             null
         }
+
+    /**
+     * The previous simulation's directory's last write: the latest last-modified time, below
+     * [latest], among the directories beside [resultsDir] last written after
+     * [AgentRun.notBeforeMs]; null when there is none (the first simulation of this `gatlingRun`).
+     */
+    private fun previousDirectoryWrite(agent: AgentRun, resultsDir: Path, latest: Long): Long? {
+        val root = resultsDir.toAbsolutePath().parent ?: return null
+        val self = resultsDir.toAbsolutePath().normalize()
+        return Files.newDirectoryStream(root).use { stream ->
+            stream
+                .filter { it.toAbsolutePath().normalize() != self && Files.isDirectory(it) }
+                .map { Files.getLastModifiedTime(it).toMillis() }
+                .filter { it > agent.notBeforeMs && it < latest }
+                .maxOrNull()
+        }
+    }
 
     private fun candidates(outDir: Path): List<Path> {
         if (!Files.isDirectory(outDir)) return emptyList()

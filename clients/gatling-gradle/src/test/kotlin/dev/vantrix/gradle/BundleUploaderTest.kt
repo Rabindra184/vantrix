@@ -200,6 +200,23 @@ class BundleUploaderTest {
         assertEquals("sha123", metadataJson.get("commitSha").asString)
     }
 
+    /**
+     * java.net.http.HttpClient prefers HTTP/2, and over cleartext that means an h2c upgrade:
+     * `Upgrade: h2c` and `HTTP2-Settings` on the POST. The API's Node server answers that with a
+     * 404 (or a reset) when it is reached directly, so the fallback is pinned to HTTP/1.1, as
+     * LiveClient is. This fake server tolerates the headers, so the case asserts they are absent.
+     */
+    @Test
+    fun `the fallback POST is plain HTTP-1-1 -- no h2c upgrade headers`(@TempDir tmp: File) {
+        File(tmp, "simulation.log").writeBytes("x".toByteArray())
+        val (srv, requests) = startServer(status = 202)
+
+        assertTrue(BundleUploader(logger = {}).upload(configFor(srv), tmp.toPath(), null))
+        val headers = requests.single().headers
+        assertNull(headers.getFirst("Upgrade"), "unexpected Upgrade header: ${headers.getFirst("Upgrade")}")
+        assertNull(headers.getFirst("HTTP2-Settings"), "unexpected HTTP2-Settings header")
+    }
+
     @Test
     fun `202 is success`(@TempDir tmp: File) {
         File(tmp, "simulation.log").writeBytes("x".toByteArray())

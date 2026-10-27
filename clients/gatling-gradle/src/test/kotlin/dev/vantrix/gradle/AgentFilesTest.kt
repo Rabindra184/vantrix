@@ -76,8 +76,25 @@ class AgentFilesTest {
         assertEquals(only, AgentFiles.pairFor(agent, resultsDir(results, 3000)))
         // A later directory whose own JVM left no file: the earlier run's file stays that run's.
         assertNull(AgentFiles.pairFor(agent, resultsDir(results, 6000)))
-        // The memory belongs to ONE gatlingRun: a fresh AgentRun has paired nothing yet.
-        assertEquals(only, AgentFiles.pairFor(AgentRun(outDir, notBeforeMs = 0), resultsDir(results, 7000)))
+        // The memory belongs to ONE gatlingRun: a fresh AgentRun has paired nothing yet. (Its
+        // directory sits under its own root: beside the two above, their last writes would bound
+        // it from below, which is a different rule.)
+        val otherRoot = Files.createDirectory(tmp.resolve("results-other"))
+        assertEquals(only, AgentFiles.pairFor(AgentRun(outDir, notBeforeMs = 0), resultsDir(otherRoot, 7000)))
+    }
+
+    @Test fun `a run whose own JVM left no file never takes an earlier run's unclaimed file`(@TempDir tmp: Path) {
+        val (outDir, results) = setUp(tmp)
+        // Run 1 wrote its file and its directory, but nothing ever paired them (its live run never
+        // opened and the fallback is off), so its file is still unclaimed.
+        val earlier = agentFile(outDir, "agent-11-1000.ndjson", header(1000))
+        val earlierDir = resultsDir(results, 4000)
+        val agent = AgentRun(outDir, notBeforeMs = 0)
+
+        // Run 2's JVM left no file: its directory pairs nothing, rather than run 1's file.
+        assertNull(AgentFiles.pairFor(agent, resultsDir(results, 9000)))
+        // And run 1's file is still run 1's.
+        assertEquals(earlier, AgentFiles.pairFor(agent, earlierDir))
     }
 
     @Test fun `a file started before notBeforeMs is never chosen`(@TempDir tmp: Path) {
@@ -87,8 +104,12 @@ class AgentFilesTest {
 
         assertNull(AgentFiles.pairFor(agent, resultsDir(results, 3000)))
 
+        // A file started after notBeforeMs is. (Its directory sits under its own root: beside the
+        // one above, last written at 3000, that write would bound it from below -- a header at
+        // 2500 would belong to that earlier directory's run.)
         val late = agentFile(outDir, "agent-22-2500.ndjson", header(2500))
-        assertEquals(late, AgentFiles.pairFor(agent, resultsDir(results, 3001)))
+        val otherRoot = Files.createDirectory(tmp.resolve("results-other"))
+        assertEquals(late, AgentFiles.pairFor(agent, resultsDir(otherRoot, 3001)))
     }
 
     @Test fun `empty, headerless and malformed files are skipped`(@TempDir tmp: Path) {

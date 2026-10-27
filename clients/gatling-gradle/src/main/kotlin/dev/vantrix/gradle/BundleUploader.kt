@@ -41,7 +41,11 @@ import org.apache.commons.compress.compressors.gzip.GzipCompressorOutputStream
 class BundleUploader(
     private val logger: (String) -> Unit = {},
 ) {
+    // HTTP_1_1, explicitly, as LiveClient pins it: the client's default preference is HTTP_2,
+    // which over a cleartext "http://" URI adds an h2c upgrade (`Upgrade: h2c`, `HTTP2-Settings`)
+    // to the POST, and the API's Node server answers that with a 404 when it is reached directly.
     private val http: HttpClient = HttpClient.newBuilder()
+        .version(HttpClient.Version.HTTP_1_1)
         .connectTimeout(Duration.ofSeconds(10))
         .build()
 

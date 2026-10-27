@@ -13,7 +13,7 @@ import kotlin.test.*
 
 /**
  * [AgentLauncher] against stand-ins shaped like upstream `io.gatling.gradle` 3.15.1.2:
- * `GatlingRunTask` and the `gatling` extension (`GatlingPluginExtension`) each carry a
+ * `GatlingRunTask` and the `gatling` extension (GatlingPluginExtension) each carry a
  * `List<String> getJvmArgs()` / `setJvmArgs(List<String>)` pair, and the per-simulation
  * `javaexec` passes `task.jvmArgs ?: gatlingExt.jvmArgs` -- a Groovy elvis, so a task list that
  * is null OR EMPTY falls back to the extension's. Nothing here names a Gatling class, which is
@@ -145,6 +145,30 @@ class AgentLauncherTest {
         assertTrue("jvmArgs" in logs.single(), "the warning should say what is missing: ${logs.single()}")
         assertFalse(Files.exists(buildDir.resolve("vantrix/agent")), "nothing should be extracted for a task we cannot attach to")
     }
+
+    /**
+     * The JVM takes everything before the first `=` of `-javaagent:` as the jar's path, and the
+     * agent splits its options on `,`: a path carrying either cannot be passed at all. A Jenkins
+     * matrix workspace (`.../JDK=jdk21,label=linux/`) carries both.
+     */
+    private fun assertSkippedFor(ch: Char, tmp: Path) {
+        val p = project(tmp)
+        val task = fakeTask(p, listOf("-Xmx2g"))
+        val buildDir = tmp.resolve("JDK${ch}jdk21").resolve("build")
+        val logs = mutableListOf<String>()
+
+        assertNull(prepare(task, buildDir, logs))
+        assertEquals(listOf("-Xmx2g"), task.jvmArgs, "jvmArgs must be left exactly as they were")
+        assertEquals(1, logs.size, "expected exactly one warning, got $logs")
+        assertTrue("'$ch'" in logs.single(), "the warning should name the character: ${logs.single()}")
+        assertFalse(Files.exists(buildDir.resolve("vantrix/agent")), "nothing should be extracted for a run the agent skips")
+    }
+
+    @Test fun `a build path carrying = skips the agent and leaves jvmArgs untouched`(@TempDir tmp: Path) =
+        assertSkippedFor('=', tmp)
+
+    @Test fun `a build path carrying a comma skips the agent and leaves jvmArgs untouched`(@TempDir tmp: Path) =
+        assertSkippedFor(',', tmp)
 
     @Test fun `the agent jar is extracted, non-empty, and overwritten each time`(@TempDir tmp: Path) {
         val p = project(tmp)
