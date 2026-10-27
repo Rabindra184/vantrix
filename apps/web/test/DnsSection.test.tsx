@@ -31,13 +31,19 @@ const HOSTNAMES = SUMMARY.hostnames;
 /** The fixture resolved one hostname; a select needs two, so a second is added. */
 const TWO_HOSTNAMES: AgentSummaryResponse = { ...SUMMARY, hostnames: [...HOSTNAMES, 'payments.example.test'].sort() };
 
-/** GE's own titles, verbatim (spec §2), in the order this section draws them. */
+/**
+ * GE's own titles, verbatim, in GE's DNS order (spec §2's DNS table): the
+ * distribution leads, and percentiles over time come last — unlike TCP connect
+ * and TLS, which lead with percentiles over time.
+ */
 const TITLES = [
   'DNS Resolution per Second',
-  'DNS Resolution Duration Percentiles',
   'DNS Resolution Duration Distribution',
   'DNS Resolution Duration Percentiles Distribution',
+  'DNS Resolution Duration Percentiles',
 ];
+const OVER_TIME = TITLES[3]!;
+const CURVE = TITLES[2]!;
 
 function renderSection(
   options: {
@@ -71,16 +77,16 @@ afterEach(() => {
 });
 
 describe('DnsSection', () => {
-  it("draws GE's four DNS charts, titled as GE titles them", async () => {
+  it("draws GE's four DNS charts in GE's DNS order, titled as GE titles them", async () => {
     renderSection();
     await waitForCharts();
     const figures = screen.getAllByRole('figure');
     expect(figures.map((f) => within(f).getByRole('heading', { level: 3 }).textContent)).toEqual(TITLES);
     expect(figures.map((f) => f.getAttribute('data-testid'))).toEqual([
       'chart-agent-dns-rate',
-      'chart-agent-dns-percentiles',
       'chart-agent-dns-distribution',
       'chart-agent-dns-percentiles-distribution',
+      'chart-agent-dns-percentiles',
     ]);
   });
 
@@ -118,6 +124,14 @@ describe('DnsSection', () => {
     await waitForCharts();
     expect(screen.getByLabelText('Hostname')).toHaveValue('*');
     expect(dnsRequests(requested)).toEqual([agentDnsPath(RUN, '*')]);
+  });
+
+  it('asks for a hostname the link names straight away, with no every-hostname read first', async () => {
+    const second = TWO_HOSTNAMES.hostnames[1]!;
+    const { requested } = renderSection({ summary: TWO_HOSTNAMES, search: `?hostname=${encodeURIComponent(second)}` });
+    await waitForCharts();
+    expect(screen.getByLabelText('Hostname')).toHaveValue(second);
+    expect(dnsRequests(requested)).toEqual([agentDnsPath(RUN, second)]);
   });
 
   it('draws no hostname control for a run that resolved none', async () => {
@@ -215,11 +229,11 @@ describe('DnsSection', () => {
   it('names every control after its chart', async () => {
     renderSection();
     await waitForCharts();
-    const groups = [`${TITLES[1]}: Percentile rows`, `${TITLES[1]}: Outcome`, `${TITLES[3]}: Outcome`];
+    const groups = [`${CURVE}: Outcome`, `${OVER_TIME}: Percentile rows`, `${OVER_TIME}: Outcome`];
     for (const name of groups) expect(screen.getByRole('group', { name })).toBeInTheDocument();
     expect(screen.getAllByRole('group')).toHaveLength(groups.length);
     expect(
-      screen.getByRole('button', { name: `${TITLES[1]}: Percentile rows, ${DEFAULT_AGENT_ROWS.length} selected` }),
+      screen.getByRole('button', { name: `${OVER_TIME}: Percentile rows, ${DEFAULT_AGENT_ROWS.length} selected` }),
     ).toBeInTheDocument();
   });
 });

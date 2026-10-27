@@ -10,7 +10,8 @@ import { toBandwidth, toConnectionRate, toTcpStates } from '../../charts/transfo
 import type { TimeDomainMs } from '../../charts/types';
 import { Payload, type Slot } from '../payload';
 import RunTelemetry from '../RunTelemetry';
-import AgentSectionGate, { REPORT_GRID, useAgentSection } from './AgentSectionGate';
+import AgentSectionGate, { useAgentSection } from './AgentSectionGate';
+import { REPORT_GRID } from './grid';
 import ReportFilterControl from './ReportFilterControl';
 import useReportFilter from './useReportFilter';
 
@@ -64,7 +65,7 @@ export default function ConnectionsSection({ runId }: { readonly runId: string }
   const section = useAgentSection(runId, { needsHttp: true });
   const { summary, window, domainMs } = section;
   const [remote, setRemote] = useReportFilter('remote', summary?.remotes);
-  const connections = useQuery({ ...agentConnectionsQuery(runId, remote, window), enabled: section.fetchFigures });
+  const connections = useQuery(section.figureQuery(agentConnectionsQuery(runId, remote, window)));
 
   return (
     <AgentSectionGate

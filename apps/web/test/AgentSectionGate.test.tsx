@@ -27,9 +27,21 @@ const SLOTS = [
   { id: 'stand-in-b', title: 'Stand-in B' },
 ];
 
-function StandIn({ needsHttp, fallback }: { readonly needsHttp: boolean; readonly fallback?: boolean }) {
+function StandIn({
+  needsHttp,
+  fallback,
+  ownEnabled,
+}: {
+  readonly needsHttp: boolean;
+  readonly fallback?: boolean;
+  /** An `enabled` the section's own options carry, which the gate must never override. */
+  readonly ownEnabled?: boolean;
+}) {
   const section = useAgentSection(AGENT_RUN, { needsHttp });
-  const figures = useQuery({ ...agentInjectorsQuery(AGENT_RUN, section.window), enabled: section.fetchFigures });
+  const options = agentInjectorsQuery(AGENT_RUN, section.window);
+  const figures = useQuery(
+    section.figureQuery(ownEnabled === undefined ? options : { ...options, enabled: ownEnabled }),
+  );
   return (
     <AgentSectionGate
       section={section}
@@ -46,13 +58,16 @@ function StandIn({ needsHttp, fallback }: { readonly needsHttp: boolean; readonl
 }
 
 function renderGate(
-  props: { readonly needsHttp?: boolean; readonly fallback?: boolean } = {},
+  props: { readonly needsHttp?: boolean; readonly fallback?: boolean; readonly ownEnabled?: boolean } = {},
   options: Partial<Parameters<typeof renderAgentSection>[1]> = {},
 ) {
-  return renderAgentSection(<StandIn needsHttp={props.needsHttp ?? true} fallback={props.fallback} />, {
-    figures: (path) => (path.endsWith('/agent/injectors') ? INJECTORS : undefined),
-    ...options,
-  });
+  return renderAgentSection(
+    <StandIn needsHttp={props.needsHttp ?? true} fallback={props.fallback} ownEnabled={props.ownEnabled} />,
+    {
+      figures: (path) => (path.endsWith('/agent/injectors') ? INJECTORS : undefined),
+      ...options,
+    },
+  );
 }
 
 const figureRequests = (requested: readonly string[]) => requested.filter((u) => u.includes('/agent/injectors'));
@@ -147,5 +162,18 @@ describe('AgentSectionGate', () => {
     await user.click(open);
     expect(await screen.findByText(`Drawn for ${host}`)).toBeInTheDocument();
     expect(figureRequests(requested)).toHaveLength(1);
+  });
+
+  it("gates the figure query, and never past an enabled the section's own options carry", async () => {
+    // Held off by the gate while the run streams, whatever the options say.
+    const live = renderGate({ ownEnabled: true }, { terminal: false });
+    expect(await screen.findAllByTestId('live-notice-withheld')).toHaveLength(SLOTS.length);
+    expect(figureRequests(live.requested)).toEqual([]);
+    cleanup();
+    vi.unstubAllGlobals();
+    // Collected and drawn here, and still not asked for: the options said no.
+    const held = renderGate({ ownEnabled: false });
+    expect(await screen.findByText(`Drawn for ${host}`)).toBeInTheDocument();
+    expect(figureRequests(held.requested)).toEqual([]);
   });
 });

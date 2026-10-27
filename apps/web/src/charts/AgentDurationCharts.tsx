@@ -1,6 +1,6 @@
 import { AGENT_PERCENTILE_ROWS } from '@perfportal/contracts';
 import type { AgentPercentileRow, DurationSection } from '@perfportal/contracts';
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import BandsMenu from './BandsMenu';
 import Chart from './Chart';
 import { ControlBar, ControlGroup, Segmented } from './ChartControls';
@@ -24,6 +24,16 @@ const OUTCOMES: readonly { readonly value: Outcome; readonly label: string }[] =
   { value: 'all', label: 'All' },
 ];
 
+/** Which of the three charts — the keys of `titles`. */
+export type DurationChart = 'overTime' | 'distribution' | 'percentiles';
+
+/**
+ * TCP connect and TLS handshake as GE draws them (spec §2): percentiles over
+ * time first. GE's DNS section leads with the distribution instead, and passes
+ * its own order.
+ */
+const DEFAULT_ORDER: readonly DurationChart[] = ['overTime', 'distribution', 'percentiles'];
+
 /** One curve, in its outcome's status colour — `PercentileDistributionChart`'s map. */
 const CURVE_ROLE: Record<Outcome, readonly MarkRole[]> = { ok: ['passed'], ko: ['failed'], all: ['neutral'] };
 
@@ -34,6 +44,9 @@ const CURVE_ROLE: Record<Outcome, readonly MarkRole[]> = { ok: ['passed'], ko: [
  *   `${idPrefix}-percentiles`               GE's 13 rows over time
  *   `${idPrefix}-distribution`              OK and KO per duration bin
  *   `${idPrefix}-percentiles-distribution`  the percentile curve
+ *
+ * in that order by default, as GE draws TCP connect and TLS; `order` lets DNS
+ * take GE's own DNS order, which leads with the distribution.
  *
  * A component rather than three charts per section because two sections draw
  * it three times between them, and each chart's controls and roles have to be
@@ -66,6 +79,7 @@ export default function AgentDurationCharts({
   noun,
   domainMs,
   windowSelected,
+  order = DEFAULT_ORDER,
 }: {
   readonly idPrefix: string;
   /** GE's three titles for this section, verbatim. */
@@ -76,6 +90,8 @@ export default function AgentDurationCharts({
   readonly domainMs: TimeDomainMs | undefined;
   /** REQUIRED, as on every Report chart: a quiet window must not read as a quiet run. */
   readonly windowSelected: boolean;
+  /** The three charts' order, each named once; GE's TCP and TLS order by default. */
+  readonly order?: readonly DurationChart[];
 }) {
   const [rows, setRows] = useState<readonly AgentPercentileRow[]>(DEFAULT_AGENT_ROWS);
   const [overTimeOutcome, setOverTimeOutcome] = useState<Outcome>('ok');
@@ -108,8 +124,8 @@ export default function AgentDurationCharts({
     setRows((current) => (current.includes(row) ? current.filter((r) => r !== row) : [...current, row]));
   }
 
-  return (
-    <>
+  const charts: Record<DurationChart, ReactNode> = {
+    overTime: (
       <Chart
         id={overTimeId}
         title={titles.overTime}
@@ -145,6 +161,8 @@ export default function AgentDurationCharts({
         group={RUN_TIME_GROUP}
         roles={roles}
       />
+    ),
+    distribution: (
       <Chart
         id={`${idPrefix}-distribution`}
         title={titles.distribution}
@@ -157,6 +175,8 @@ export default function AgentDurationCharts({
         xAxis={{ name: distribution.columns[0] }}
         yAxis={{ name: noun }}
       />
+    ),
+    percentiles: (
       <Chart
         id={curveId}
         title={titles.percentiles}
@@ -180,6 +200,14 @@ export default function AgentDurationCharts({
         unit="ms"
         roles={CURVE_ROLE[curveOutcome]}
       />
+    ),
+  };
+
+  return (
+    <>
+      {order.map((which) => (
+        <Fragment key={which}>{charts[which]}</Fragment>
+      ))}
     </>
   );
 }

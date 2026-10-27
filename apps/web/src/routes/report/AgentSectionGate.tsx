@@ -10,9 +10,7 @@ import LiveNotice from '../LiveNotice';
 import { explain, type Slot } from '../payload';
 import { useRunTerminal, useTimeDomainFromShell, useWindowFromShell } from '../useRunWindow';
 import AgentUnavailable from './AgentUnavailable';
-
-// The run page's chart grid — see `RunReport`'s `GRID`.
-export const REPORT_GRID = 'grid grid-cols-1 gap-6 2xl:grid-cols-2';
+import { REPORT_GRID } from './grid';
 
 /** Everything an agent section reads before it can ask for its own figures. */
 export interface AgentSection {
@@ -26,11 +24,13 @@ export interface AgentSection {
   readonly shown: boolean;
   readonly show: () => void;
   /**
-   * Whether the section's figure read may be made: the run is terminal, the
-   * summary says the figures exist, and they are being drawn here — not
-   * withheld behind a phone's notice. The figure query's `enabled`.
+   * The section's figure query options, gated: `enabled` only once the run is
+   * terminal, the summary says the figures exist, and they are being drawn
+   * here — not withheld behind a phone's notice — and never past an `enabled`
+   * the options already carry. Every section's figure read goes through this,
+   * so none can forget the gate: `useQuery(section.figureQuery(agentDnsQuery(…)))`.
    */
-  readonly fetchFigures: boolean;
+  readonly figureQuery: <O extends object>(options: O & { readonly enabled?: boolean }) => O & { readonly enabled: boolean };
 }
 
 /**
@@ -40,7 +40,7 @@ export interface AgentSection {
  *
  * A HOOK AND A COMPONENT, NOT ONE COMPONENT, because the section's own hooks
  * come between them: the filter (`useReportFilter`) is checked against the
- * summary this reads, and the figure query is `enabled` on `fetchFigures`. Both
+ * summary this reads, and the figure query is gated through `figureQuery`. Both
  * have to run on every render, above the gate's early returns, so a run
  * finishing or a phone reader pressing the button changes no hook order. The
  * gate itself holds no hooks, so it may return early freely.
@@ -65,6 +65,7 @@ export function useAgentSection(runId: string, { needsHttp }: { readonly needsHt
   const summaryQuery = useQuery({ ...agentSummaryQuery(runId), enabled: terminal });
   const summary = summaryQuery.data;
   const collected = summary?.available === true && (!needsHttp || summary.header?.collects.http !== false);
+  const fetchFigures = terminal && collected && (!compact || shown);
   return {
     terminal,
     window,
@@ -75,7 +76,7 @@ export function useAgentSection(runId: string, { needsHttp }: { readonly needsHt
     compact,
     shown,
     show: () => setShown(true),
-    fetchFigures: terminal && collected && (!compact || shown),
+    figureQuery: (options) => ({ ...options, enabled: fetchFigures && (options.enabled ?? true) }),
   };
 }
 
@@ -127,6 +128,7 @@ export default function AgentSectionGate({
   readonly noAgentFile?: ReactNode;
   /** The figure read's answer, once it has one. */
   readonly figures: { readonly available: boolean; readonly reason: AgentUnavailableReason | null; readonly detail: string | null } | undefined;
+  /** Called inside the gate's render: render components here, and never call a hook in the arrow itself. */
   readonly children: (summary: AgentSummaryResponse) => ReactNode;
 }) {
   const { terminal, summary, summaryQuery } = section;

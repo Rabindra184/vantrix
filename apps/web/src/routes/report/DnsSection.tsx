@@ -2,13 +2,14 @@ import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type { AgentDnsResponse } from '@perfportal/contracts';
 import { agentDnsQuery } from '../../api/agent';
-import AgentDurationCharts from '../../charts/AgentDurationCharts';
+import AgentDurationCharts, { type DurationChart } from '../../charts/AgentDurationCharts';
 import Chart from '../../charts/Chart';
 import { RUN_TIME_GROUP } from '../../charts/crosshair';
 import { DNS_RATE_ROLES, toDnsRate } from '../../charts/transforms/agentRates';
 import type { TimeDomainMs } from '../../charts/types';
 import { Payload, type Slot } from '../payload';
-import AgentSectionGate, { REPORT_GRID, useAgentSection } from './AgentSectionGate';
+import AgentSectionGate, { useAgentSection } from './AgentSectionGate';
+import { REPORT_GRID } from './grid';
 import ReportFilterControl from './ReportFilterControl';
 import useReportFilter from './useReportFilter';
 
@@ -19,16 +20,18 @@ const RESOLUTION = {
 } as const;
 
 /**
- * GE's four DNS charts, titled verbatim (spec §2). The three duration charts
- * are in `AgentDurationCharts`' order — percentiles over time, distribution,
- * the percentile curve — the order Connections draws its two duration
- * sections in, so the three sections read alike.
+ * GE's DNS order (spec §2's DNS table): the distribution first, then the
+ * percentile curve, then percentiles over time — where TCP connect and TLS
+ * lead with percentiles over time, `AgentDurationCharts`' default.
  */
+const DNS_ORDER: readonly DurationChart[] = ['distribution', 'percentiles', 'overTime'];
+
+/** GE's four DNS charts, in GE's order, titled verbatim (spec §2). */
 const SLOTS: readonly Slot[] = [
   { id: 'agent-dns-rate', title: 'DNS Resolution per Second' },
-  { id: 'agent-dns-percentiles', title: RESOLUTION.overTime },
   { id: 'agent-dns-distribution', title: RESOLUTION.distribution },
   { id: 'agent-dns-percentiles-distribution', title: RESOLUTION.percentiles },
+  { id: 'agent-dns-percentiles', title: RESOLUTION.overTime },
 ];
 
 /**
@@ -52,7 +55,7 @@ export default function DnsSection({ runId }: { readonly runId: string }) {
   const section = useAgentSection(runId, { needsHttp: true });
   const { summary, window, domainMs } = section;
   const [hostname, setHostname] = useReportFilter('hostname', summary?.hostnames);
-  const dns = useQuery({ ...agentDnsQuery(runId, hostname, window), enabled: section.fetchFigures });
+  const dns = useQuery(section.figureQuery(agentDnsQuery(runId, hostname, window)));
 
   return (
     <AgentSectionGate
@@ -117,6 +120,7 @@ function DnsCharts({
         noun="DNS lookups"
         domainMs={domainMs}
         windowSelected={windowSelected}
+        order={DNS_ORDER}
       />
     </>
   );

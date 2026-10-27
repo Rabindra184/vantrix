@@ -16,7 +16,8 @@ import {
 import type { TimeDomainMs } from '../../charts/types';
 import { Payload, type Slot } from '../payload';
 import RunTelemetry from '../RunTelemetry';
-import AgentSectionGate, { REPORT_GRID, useAgentSection } from './AgentSectionGate';
+import AgentSectionGate, { useAgentSection } from './AgentSectionGate';
+import { REPORT_GRID } from './grid';
 import { ReadOnlyField } from './ReportFilterControl';
 
 /* The load-generator telemetry this section falls back to for a run with no
@@ -69,7 +70,7 @@ export default function LoadGeneratorsSection({ runId }: { readonly runId: strin
   // EVERY HOOK RUNS ON EVERY RENDER, above the gate's early returns.
   const section = useAgentSection(runId, { needsHttp: false });
   const { window, domainMs } = section;
-  const injectors = useQuery({ ...agentInjectorsQuery(runId, window), enabled: section.fetchFigures });
+  const injectors = useQuery(section.figureQuery(agentInjectorsQuery(runId, window)));
 
   return (
     <AgentSectionGate
@@ -77,7 +78,7 @@ export default function LoadGeneratorsSection({ runId }: { readonly runId: strin
       slots={SLOTS}
       what="Six load-generator charts of this run"
       action={ACTION}
-      subject="load generator figures"
+      subject="load-generator figures"
       noAgentFile={<RunTelemetry only={LOAD_GENERATOR_CHARTS} action={ACTION} />}
       figures={injectors.data}
     >
@@ -133,7 +134,7 @@ function LoadGeneratorCharts({
     <>
       <Chart {...time} id={SLOTS[0].id} title={SLOTS[0].title} data={charts.gcCount} yAxis={{ name: 'Collections/s' }} unit="/s" />
       <Chart {...time} id={SLOTS[1].id} title={SLOTS[1].title} data={charts.gcTime} yAxis={{ name: 'GC time (ms/s)' }} unit="ms/s" />
-      {/* A gauge, drawn as stored. */}
+      {/* CPU and memory are gauges, drawn as stored. */}
       <Chart {...time} id={SLOTS[2].id} title={SLOTS[2].title} data={charts.cpu} yAxis={{ name: 'CPU (%)' }} unit="%" />
       <Chart {...time} id={SLOTS[3].id} title={SLOTS[3].title} data={charts.memory} yAxis={{ name: 'Memory (MB)' }} unit="MB" />
       {/* No `unit`: `established` is a gauge beside four per-second counters, and

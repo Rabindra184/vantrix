@@ -24,6 +24,7 @@ import RunGlossary from './RunGlossary';
 import { isExact } from './statsMethod';
 import RunTelemetry from './RunTelemetry';
 import { CONNECTION_CHARTS } from './report/ConnectionsSection';
+import { REPORT_GRID } from './report/grid';
 import { LOAD_GENERATOR_CHARTS } from './report/LoadGeneratorsSection';
 import { PERCENTILES, REQUESTS_AND_RESPONSES } from './runSlots';
 import {
@@ -50,11 +51,6 @@ const REQUEST_COUNTS: Slot = { id: 'request-counts', title: 'Number of requests'
 const USER_START_RATE: Slot = { id: 'user-start-rate', title: 'Users started per second' };
 const USER_END_RATE: Slot = { id: 'user-end-rate', title: 'Users ended per second' };
 const CONCURRENT_USERS: Slot = { id: 'concurrent-users', title: 'Concurrent users over time' };
-
-// Two columns from `2xl`, one below it — the break every chart grid on the run
-// page uses: each figure holds a 288px plot plus a legend, and two of those in
-// a 1280px window leave a 60-bucket time axis dropping every other tick label.
-const GRID = 'grid grid-cols-1 gap-6 2xl:grid-cols-2';
 
 /**
  * `/runs/:runId/report` — GE's Report (backlog #7): GE's sections in GE's
@@ -190,7 +186,7 @@ function RequestsCharts({ runId }: { readonly runId: string }) {
     // While a run streams only the series has a live source (the delta writes
     // its cache key); the other five are stated, never left as a silent gap.
     return (
-      <div className={GRID}>
+      <div className={REPORT_GRID}>
         {series.data !== undefined && (
           <>
             <RequestsAndResponsesChart series={series.data} domainMs={domainMs} warmupMs={warmupMs} windowSelected={windowSelected} />
@@ -207,7 +203,7 @@ function RequestsCharts({ runId }: { readonly runId: string }) {
   }
 
   return (
-    <div className={GRID}>
+    <div className={REPORT_GRID}>
       <Payload query={series} slots={[REQUESTS_AND_RESPONSES, PERCENTILES]}>
         {(data) => (
           <>
@@ -325,9 +321,9 @@ function VirtualUsersSection({ runId }: { readonly runId: string }) {
       <ConcurrentUsersChart users={data} group={RUN_TIME_GROUP} domainMs={domainMs} warmupMs={warmupMs} windowSelected={windowSelected} />
     </>
   );
-  if (!terminal) return <div className={GRID}>{users.data !== undefined && draw(users.data)}</div>;
+  if (!terminal) return <div className={REPORT_GRID}>{users.data !== undefined && draw(users.data)}</div>;
   return (
-    <div className={GRID}>
+    <div className={REPORT_GRID}>
       <Payload query={users} slots={[USER_START_RATE, USER_END_RATE, CONCURRENT_USERS]}>{draw}</Payload>
     </div>
   );
