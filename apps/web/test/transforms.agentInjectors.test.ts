@@ -85,6 +85,22 @@ const machineOff: AgentInjectorsResponse = {
   })),
 };
 
+/**
+ * The ruling every agent chart follows: a chart left with nothing to plot says
+ * why in `empty`, and draws no series — never a markless grid. Checked for the
+ * run and the window, since the sentence must be about the one asked for.
+ */
+function expectNothingDrawn(fn: (inj: AgentInjectorsResponse, o: typeof RUN | typeof WINDOW) => ChartData, inj: AgentInjectorsResponse, names: readonly string[]): void {
+  const run = fn(inj, RUN);
+  expect(run.series).toEqual([]);
+  expectAboutTheRun(run.empty);
+  for (const n of names) expect(run.empty, n).toContain(n);
+  expect(run.rows.length).toBe(inj.buckets.length);
+  const window = fn(inj, WINDOW);
+  expect(window.series).toEqual([]);
+  expectAboutTheWindow(window.empty);
+}
+
 const collectors = (field: 'gcCount' | 'gcTimeMs') =>
   [...new Set(injectors.buckets.flatMap((b) => Object.keys(b[field])))].sort();
 
@@ -121,6 +137,17 @@ describe('toGcCounts and toGcTime', () => {
     expect(ys(time, 'Old')).toEqual([0, 15]);
   });
 
+  it('is empty, naming every collector, when no collector moved — a quiet short window', () => {
+    // The producer files every collector on every sample, zero deltas included.
+    const quiet = withBuckets([
+      bucket({ startOffsetMs: 0, gcCount: { Young: 0, Old: 0 }, gcTimeMs: { Young: 0, Old: 0 } }),
+      bucket({ startOffsetMs: 1000, gcCount: { Young: 0, Old: 0 }, gcTimeMs: { Young: 0, Old: 0 } }),
+    ]);
+    expectNothingDrawn(toGcCounts, quiet, ['Old', 'Young']);
+    expectNothingDrawn(toGcTime, quiet, ['Old', 'Young']);
+    expect(toGcCounts(quiet, RUN).empty).toMatch(/zero/);
+  });
+
   it('is empty rather than assuming 1000 ms when the payload carries no width', () => {
     for (const fn of [toGcCounts, toGcTime]) {
       const chart = fn({ ...injectors, bucketWidthMs: null }, RUN);
@@ -149,6 +176,20 @@ describe('toCpu', () => {
     const chart = toCpu(injectors, RUN);
     expect(ys(chart, 'User')).toEqual(injectors.buckets.map((b) => b.cpuUserPct));
     expect(ys(chart, 'Sys')).toEqual(injectors.buckets.map((b) => b.cpuSysPct));
+  });
+
+  it('is empty, naming both, when the machine was read but no CPU figure was', () => {
+    // A machine-on run whose sample pairs gave no Δtotal: null in every bucket.
+    const noDelta = withBuckets([bucket({ startOffsetMs: 0 }), bucket({ startOffsetMs: 1000 })]);
+    expectNothingDrawn(toCpu, noDelta, ['User', 'Sys']);
+    expect(toCpu(noDelta, RUN).empty).toMatch(/no reading/);
+  });
+
+  it('drops and names a CPU series with no reading, and draws a measured zero', () => {
+    const chart = toCpu(withBuckets([bucket({ cpuUserPct: 0, cpuSysPct: null })]), RUN);
+    expect(chart.series.map((s) => s.name)).toEqual(['User']);
+    expect(ys(chart, 'User')).toEqual([0]);
+    expect(chart.limitation).toContain(unreadSeriesNote(['Sys'])!);
   });
 
   it("is empty with the machine's own reason when the machine collector was off", () => {
@@ -206,6 +247,20 @@ describe('toMemory', () => {
     );
     expect(chart.limitation).toContain(unreadSeriesNote(['RAM total', 'RAM used'])!);
     expect(chart.columns).toEqual(['Elapsed (s)', ...MEMORY_SERIES]);
+  });
+
+  it("carries the machine's reason beside the unread RAM, or a plain one", () => {
+    expect(toMemory(machineOff, RUN).limitation).toContain('macOS');
+    const noReason = { ...machineOff, machine: { available: false, reason: null } };
+    expect(toMemory(noReason, RUN).limitation).toContain('The agent did not collect machine figures.');
+    // On a machine-on run the RAM note has no machine reason to give.
+    expect(toMemory(injectors, RUN).limitation ?? '').not.toContain('machine');
+  });
+
+  it('is empty, naming all seven, when no memory figure was read', () => {
+    expectNothingDrawn(toMemory, withBuckets([bucket({ startOffsetMs: 0 }), bucket({ startOffsetMs: 1000 })]), [
+      ...MEMORY_SERIES,
+    ]);
   });
 
   it('keeps a null a gap in a series that has readings elsewhere', () => {
@@ -304,6 +359,33 @@ describe('toTcpEvents', () => {
     expect(chart.columns).toEqual(['Elapsed (s)', ...TCP_EVENT_NAMES.map((k) => TCP_EVENT_LABELS[k])]);
   });
 
+  it('does not say established is a gauge when established was not drawn', () => {
+    const chart = toTcpEvents(
+      withBuckets([
+        bucket({ startOffsetMs: 0, tcpEvents: events({ activeOpenings: 4, established: 0 }) }),
+        bucket({ startOffsetMs: 1000, tcpEvents: events({ activeOpenings: 2, established: null }) }),
+      ]),
+      RUN,
+    );
+    expect(chart.series.map((s) => s.name)).toEqual(['active openings']);
+    expect(chart.limitation).toContain('established');
+    expect(chart.limitation).not.toMatch(/drawn as stored/);
+  });
+
+  it('is empty when no bucket carries tcpEvents', () => {
+    const none = withBuckets([bucket({ startOffsetMs: 0 }), bucket({ startOffsetMs: 1000 })]);
+    expectNothingDrawn(toTcpEvents, none, TCP_EVENT_NAMES.map((k) => TCP_EVENT_LABELS[k]));
+    expect(toTcpEvents(none, RUN).limitation ?? '').not.toMatch(/drawn as stored/);
+  });
+
+  it('is empty when every counter is zero and established is zero or unread', () => {
+    const quiet = withBuckets([
+      bucket({ startOffsetMs: 0, tcpEvents: events({ established: null }) }),
+      bucket({ startOffsetMs: 1000, tcpEvents: events({}) }),
+    ]);
+    expectNothingDrawn(toTcpEvents, quiet, TCP_EVENT_NAMES.map((k) => TCP_EVENT_LABELS[k]));
+  });
+
   it("is empty with the machine's reason when the machine collector was off, buckets or not", () => {
     expect(toTcpEvents(machineOff, RUN).empty).toBe('macOS');
     expect(toTcpEvents(machineOff, RUN).series).toEqual([]);
@@ -364,6 +446,17 @@ describe('toTcpSegments', () => {
       RUN,
     );
     for (const s of chart.series) expect(ys(chart, s.name)[1], s.name).toBeNull();
+  });
+
+  it('is empty when no bucket carries tcpSegments, or every counter is zero', () => {
+    const names = TCP_SEGMENT_NAMES.map((k) => TCP_SEGMENT_LABELS[k]);
+    expectNothingDrawn(toTcpSegments, withBuckets([bucket({ startOffsetMs: 0 }), bucket({ startOffsetMs: 1000 })]), names);
+    const zero = { received: 0, sent: 0, retransmitted: 0, receivedBad: 0 };
+    expectNothingDrawn(
+      toTcpSegments,
+      withBuckets([bucket({ startOffsetMs: 0, tcpSegments: zero }), bucket({ startOffsetMs: 1000, tcpSegments: zero })]),
+      names,
+    );
   });
 
   it("is empty with the machine's reason when the machine collector was off", () => {

@@ -7,8 +7,9 @@ import {
   emptySentence,
   noWidth,
   perSecond,
-  unreadSeriesNote,
+  TIME_COLUMN,
   withoutAllZero,
+  withoutUnread,
   type Measure,
 } from './agentRates';
 import { BYTES_PER_MB } from './telemetry';
@@ -37,9 +38,11 @@ import { BYTES_PER_MB } from './telemetry';
  * Collectors are open-ended and the kernel counters mostly sit at zero, so a
  * series with no non-zero reading is not drawn and is named (`withoutAllZero`).
  * Memory is not under it: 0 bytes of Netty heap is a measurement worth seeing.
- * Only a memory series that was never READ is left out — RAM on a machine-off
- * run — and named with `unreadSeriesNote`. Its seven series exceed the six-hue
- * palette on Linux; `Chart`'s own cap and note handle that, as the plan rules.
+ * Only a memory or CPU series that was never READ is left out — RAM on a
+ * machine-off run — and named (`withoutUnread`). Memory's seven series exceed
+ * the six-hue palette on Linux; `Chart`'s own cap and note handle that, as the
+ * plan rules. Either helper turns a chart left with no series into an `empty`
+ * sentence saying why, so no chart here draws a markless grid.
  *
  * ═══ A MACHINE THAT WAS NOT READ ═══
  *
@@ -89,15 +92,20 @@ export const TCP_SEGMENT_LABELS: Readonly<Record<TcpSegmentName, string>> = {
 const ESTABLISHED_IS_A_GAUGE =
   'The established series is the number of connections the kernel held open, so it is drawn as stored, not per second.';
 
+/** The agent's own reason the machine collector was off, or a plain one. */
+function machineReason(inj: AgentInjectorsResponse): string {
+  return inj.machine.reason ?? 'The agent did not collect machine figures.';
+}
+
 /** The machine-off chart: no series, the agent's reason, every column kept. */
 function machineNotRead(inj: AgentInjectorsResponse, names: readonly string[]): ChartData | undefined {
   if (inj.machine.available) return undefined;
   return {
     series: [],
     axisLabels: [],
-    columns: ['Elapsed (s)', ...names],
+    columns: [TIME_COLUMN, ...names],
     rows: [],
-    empty: inj.machine.reason ?? 'The agent did not collect machine figures.',
+    empty: machineReason(inj),
   };
 }
 
@@ -117,7 +125,7 @@ function gcChart(inj: AgentInjectorsResponse, field: 'gcCount' | 'gcTimeMs', opt
   );
   if (chart.empty !== undefined) return chart;
   if (names.length === 0) return { ...chart, empty: emptySentence('garbage collections', opts) };
-  return withoutAllZero(chart);
+  return withoutAllZero(chart, opts);
 }
 
 /** GE's "GC Counts per Second": collections per second, per collector. */
@@ -130,15 +138,21 @@ export function toGcTime(inj: AgentInjectorsResponse, opts: Opts): ChartData {
   return gcChart(inj, 'gcTimeMs', opts);
 }
 
-/** GE's "CPU usage in percent": User and Sys, as stored. */
+/**
+ * GE's "CPU usage in percent": User and Sys, as stored. Even with the machine
+ * collector on, a bucket's CPU is null when the sample pair gave no Δtotal, so
+ * a series with no reading at all is dropped and named like any other.
+ */
 export function toCpu(inj: AgentInjectorsResponse, opts: Opts): ChartData {
   const measures: Measure<Bucket>[] = [
     { name: 'User', read: (b) => b.cpuUserPct },
     { name: 'Sys', read: (b) => b.cpuSysPct },
   ];
-  return (
-    machineNotRead(inj, measures.map((m) => m.name)) ?? bucketChart<Bucket>(inj.buckets, measures, emptySentence(THINGS, opts))
-  );
+  const off = machineNotRead(inj, measures.map((m) => m.name));
+  if (off !== undefined) return off;
+  const chart = bucketChart<Bucket>(inj.buckets, measures, emptySentence(THINGS, opts));
+  if (chart.empty !== undefined) return chart;
+  return withoutUnread(chart, opts);
 }
 
 const READ_MEMORY: Readonly<Record<(typeof MEMORY_SERIES)[number], (b: Bucket) => number | null>> = {
@@ -153,7 +167,9 @@ const READ_MEMORY: Readonly<Record<(typeof MEMORY_SERIES)[number], (b: Bucket) =
 
 /**
  * GE's "Memory Usage in MB": seven gauges, bytes / 2^20 (`telemetry.ts`' MB).
- * A series null in every bucket is left out and named; a zero is drawn.
+ * A series null in every bucket is left out and named; a zero is drawn. On a
+ * machine-off run that is RAM, and the note carries the agent's reason, so the
+ * chart says why rather than only what (`toTcpStates`' `notMeasuredReason`).
  */
 export function toMemory(inj: AgentInjectorsResponse, opts: Opts): ChartData {
   const chart = bucketChart<Bucket>(
@@ -169,11 +185,8 @@ export function toMemory(inj: AgentInjectorsResponse, opts: Opts): ChartData {
   );
   if (chart.empty !== undefined) return chart;
   const { unread } = dropAllZero(chart.series);
-  return {
-    ...chart,
-    series: chart.series.filter((s) => !unread.includes(s.name)),
-    limitation: unreadSeriesNote(unread),
-  };
+  const ramUnread = unread.includes('RAM total') || unread.includes('RAM used');
+  return withoutUnread(chart, opts, !inj.machine.available && ramUnread ? machineReason(inj) : undefined);
 }
 
 /**
@@ -199,7 +212,9 @@ export function toTcpEvents(inj: AgentInjectorsResponse, opts: Opts): ChartData 
     emptySentence(THINGS, opts),
   );
   if (chart.empty !== undefined) return chart;
-  return withoutAllZero(chart, ESTABLISHED_IS_A_GAUGE);
+  // The gauge note is about a drawn line; said of a dropped one it explains nothing.
+  const established = dropAllZero(chart.series).kept.some((s) => s.name === TCP_EVENT_LABELS.established);
+  return withoutAllZero(chart, opts, established ? ESTABLISHED_IS_A_GAUGE : undefined);
 }
 
 /** GE's "TCP Segment Events per Second": four counters, per second. */
@@ -215,5 +230,5 @@ export function toTcpSegments(inj: AgentInjectorsResponse, opts: Opts): ChartDat
     emptySentence(THINGS, opts),
   );
   if (chart.empty !== undefined) return chart;
-  return withoutAllZero(chart);
+  return withoutAllZero(chart, opts);
 }

@@ -238,6 +238,21 @@ describe('toTcpStates', () => {
     expect(chart.columns).toEqual(['Elapsed (s)', ...TCP_STATE_NAMES]);
   });
 
+  it('is empty, naming every state, when states were read and every one stayed at zero', () => {
+    const chart = toTcpStates(
+      withBuckets([
+        { startOffsetMs: 0, opened: 0, closed: 0, bitsOut: 0, bitsIn: 0, states: ZERO_STATES },
+        { startOffsetMs: 1000, opened: 0, closed: 0, bitsOut: 0, bitsIn: 0, states: ZERO_STATES },
+      ]),
+      RUN,
+    );
+    expect(chart.series).toEqual([]);
+    expectAboutTheRun(chart.empty, /zero/);
+    for (const s of TCP_STATE_NAMES) expect(chart.empty, s).toContain(s);
+    expect(chart.rows.length).toBe(2);
+    expect(chart.columns).toEqual(['Elapsed (s)', ...TCP_STATE_NAMES]);
+  });
+
   it("says GE's bound and idle are not measured", () => {
     expect(toTcpStates(connections, RUN).limitation).toMatch(/\bbound\b.*\bidle\b/);
   });
@@ -307,6 +322,25 @@ describe('toStatusRate', () => {
     expect(chart.series.map((s) => s.name)).toEqual(['200']);
     expect(chart.limitation).toContain('503');
     expect(chart.columns).toEqual(['Elapsed (s)', '200', '503']);
+  });
+
+  it('is empty, naming every code, when no code had a response', () => {
+    const quiet: AgentStatusResponse = {
+      ...status,
+      codes: ['200', '503'],
+      buckets: [{ startOffsetMs: 0, counts: {} }],
+    };
+    const chart = toStatusRate(quiet, RUN);
+    expect(chart.series).toEqual([]);
+    expectAboutTheRun(chart.empty, /200, 503/);
+    expectAboutTheWindow(toStatusRate(quiet, WINDOW).empty, /200, 503/);
+  });
+
+  it('is empty when the payload names no code while buckets exist', () => {
+    const codeless: AgentStatusResponse = { ...status, codes: [], buckets: [{ startOffsetMs: 0, counts: {} }] };
+    expect(toStatusRate(codeless, RUN).series).toEqual([]);
+    expectAboutTheRun(toStatusRate(codeless, RUN).empty, /responses/);
+    expectAboutTheWindow(toStatusRate(codeless, WINDOW).empty, /responses/);
   });
 
   it('says whether the window or the run recorded nothing', () => {

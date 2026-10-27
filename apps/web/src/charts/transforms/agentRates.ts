@@ -150,15 +150,56 @@ export function emptySentence(things: string, opts: Opts): string {
 }
 
 /**
- * Applies the zero-series ruling to a built chart, joining its note to any other.
- * Exported for the Load generators' GC, TCP-event and segment charts.
+ * ═══ NO AGENT CHART DRAWS A MARKLESS GRID ═══
+ *
+ * Dropping series can leave a chart with none, and empty axes say nothing —
+ * worse, they read as "the agent measured and found nothing to plot". So when
+ * nothing is kept, the chart is `empty`, with the same reasons its `limitation`
+ * would have given, said of the window or the run as the reader asked. The
+ * data table keeps every column and row either way.
  */
-export function withoutAllZero(chart: ChartData, ...otherNotes: string[]): ChartData {
-  const { kept, zero, unread } = dropAllZero(chart.series);
-  const notes = [zeroSeriesNote(zero), unreadSeriesNote(unread), ...otherNotes].filter(
+function dropAndExplain(
+  chart: ChartData,
+  opts: Opts,
+  dropZero: boolean,
+  otherNotes: readonly (string | undefined)[],
+): ChartData {
+  const split = dropAllZero(chart.series);
+  const zero = dropZero ? split.zero : [];
+  const kept = chart.series.filter((s) => !split.unread.includes(s.name) && !zero.includes(s.name));
+  const others = otherNotes.filter((n): n is string => n !== undefined);
+  if (kept.length === 0) {
+    const reasons = [
+      zero.length > 0 ? `every reading is zero — ${zero.join(', ')}` : undefined,
+      split.unread.length > 0 ? `no reading was taken — ${split.unread.join(', ')}` : undefined,
+    ].filter((r): r is string => r !== undefined);
+    const scope = opts.windowSelected ? 'in the selected window' : 'for this run';
+    const empty = reasons.length > 0 ? `Nothing to draw ${scope}: ${reasons.join('; ')}.` : `Nothing to draw ${scope}.`;
+    return { ...chart, series: [], empty, limitation: others.length > 0 ? others.join(' ') : undefined };
+  }
+  const notes = [zeroSeriesNote(zero), unreadSeriesNote(split.unread), ...others].filter(
     (n): n is string => n !== undefined,
   );
   return { ...chart, series: kept, limitation: notes.length > 0 ? notes.join(' ') : undefined };
+}
+
+/**
+ * Applies the zero-series ruling to a built chart — every-zero and never-read
+ * series are dropped and named — joining its note to any other. Exported for
+ * the Load generators' GC, TCP-event and segment charts. The ruling's scope is
+ * the plan's: TCP states, status codes, GC and kernel TCP counters.
+ */
+export function withoutAllZero(chart: ChartData, opts: Opts, ...otherNotes: (string | undefined)[]): ChartData {
+  return dropAndExplain(chart, opts, true, otherNotes);
+}
+
+/**
+ * The half of the ruling every agent chart takes, gauges included: a series
+ * with no reading at all is dropped and named, while a measured zero is drawn.
+ * For CPU and memory, where 0 is a reading worth seeing.
+ */
+export function withoutUnread(chart: ChartData, opts: Opts, ...otherNotes: (string | undefined)[]): ChartData {
+  return dropAndExplain(chart, opts, false, otherNotes);
 }
 
 /**
@@ -230,7 +271,7 @@ export function toTcpStates(
       empty: opts.notMeasuredReason === undefined ? unread : `${unread} ${opts.notMeasuredReason}`,
     };
   }
-  return withoutAllZero(chart, STATES_NOT_MEASURED);
+  return withoutAllZero(chart, opts, STATES_NOT_MEASURED);
 }
 
 /** GE's "Bandwidth Usage per second": Sent and Received in Mbps, `bits / (width/1000) / 1e6`. */
@@ -285,5 +326,7 @@ export function toStatusRate(s: AgentStatusResponse, opts: Opts): ChartData {
     emptySentence('responses', opts),
   );
   if (chart.empty !== undefined) return chart;
-  return withoutAllZero(chart);
+  // A payload naming no code at all has nothing to drop, and nothing to draw.
+  if (s.codes.length === 0) return { ...chart, empty: emptySentence('responses', opts) };
+  return withoutAllZero(chart, opts);
 }
