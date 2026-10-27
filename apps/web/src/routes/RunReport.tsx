@@ -71,8 +71,10 @@ const GRID = 'grid grid-cols-1 gap-6 2xl:grid-cols-2';
  * order, under the time window. This page draws no window control of its own;
  * `RunShell` draws the one brush above it — on this page and no other, since
  * this is the only run page that applies a window — and this page reads the
- * window it sets. DNS is left out: nothing this product collects could fill
- * it, and a section that can only be empty is a false claim about the run.
+ * window it sets. DNS is left out for now: the on-prem runner's Gatling agent
+ * records DNS lookups and the API serves them (`/v1/runs/:id/agent/dns`, GE
+ * report parity PR 2), but this page draws no chart for them yet — PR 3 does.
+ * Until then a section here could only be empty, a false claim about the run.
  *
  * EACH SECTION BODY IS ITS OWN COMPONENT, because `CollapsibleSection` builds
  * its children only while open: the hooks a body runs — and so the queries it

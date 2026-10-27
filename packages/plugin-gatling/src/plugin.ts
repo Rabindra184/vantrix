@@ -25,8 +25,18 @@ export const SUPPORTED_GATLING_MAJORS: readonly string[] = ['3'];
 /** Enough for the record byte plus the length-prefixed version string. */
 const HEAD_BYTES = 64;
 
+/**
+ * The `simulation.log` this plugin reads out of a bundle: the first entry
+ * named so, at the top level or in any directory. Exported so a reader of a
+ * file that travels BESIDE the log (the agent's, in the worker) finds the same
+ * entry this plugin parses rather than re-deriving the rule.
+ */
+export function findSimulationLog(files: readonly string[]): string | undefined {
+  return files.find((f) => f === SIMULATION_LOG || f.endsWith(`/${SIMULATION_LOG}`));
+}
+
 function findLog(index: BundleIndex): string | undefined {
-  return index.files.find((f) => f === SIMULATION_LOG || f.endsWith(`/${SIMULATION_LOG}`));
+  return findSimulationLog(index.files);
 }
 
 export class GatlingPlugin implements PerfPlugin {

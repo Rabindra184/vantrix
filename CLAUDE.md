@@ -128,9 +128,9 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **260 files / 4270 tests**, it
+`nvm use` first, and if a run reports fewer than **267 files / 4367 tests**, it
 did not run everything — nor did an integration run reporting fewer than
-**241 files / 3818 tests**, an e2e run fewer than **207**, or a
+**252 files / 3955 tests**, an e2e run fewer than **207**, or a
 `pnpm test:e2e:cross` run fewer than **621** (207 on each of three engines).
 (Update those numbers when a sub-project adds suites, or the next reader
 calibrates against a stale floor and a silently-skipped run looks like a
@@ -150,6 +150,152 @@ still Chromium and still 102; `pnpm test:e2e:cross` was 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The GE report parity agent-figures branch (`feat/ge-report-figures`, PR 2
+of `docs/superpowers/specs/2026-10-22-ge-report-parity-design.md`, plan
+`docs/superpowers/plans/2026-10-23-ge-report-parity-pr2-agent-figures.md`).
+Unit **260 / 4270 to 267 / 4366**, integration **241 / 3818 to
+252 / 3950**, **e2e stays 207** (`--list` collects 621 on three engines;
+`test:e2e:cross` was not run), each predicted first (seven new `.ts` files,
+four new integration files; the two edited route lists collect 100 and 35 on
+both trees) and met exactly. The agent's own build is **9 classes / 63
+tests**: this branch added one (`namesItsHostInTheHeader`, for the header's
+new `host` field, beside the `-DkeepDir` property the paired fixture was
+recorded with); the base tree already carries 62 `@Test` methods, PR 1's "56"
+being a count taken before its own later cases. **The final fix wave** added
+no file, 1 unit case and 4 integration cases: unit **267 / 4367**, measured;
+integration **252 / 3955**, by arithmetic (the full suite was not re-run).
+
+**THE AGENT FILE BECOMES FIGURES A READER CAN ASK FOR.** PR 1 stored
+`runs/<runId>/agent.ndjson`; nothing read it. Now `decodeAgentFile`
+(`packages/plugin-gatling`) decodes it, counting a bad line as malformed;
+`buildAgentFigures` (`packages/statistics`) builds, on the run's OWN series
+width and from `runStartedAtMs`, OK/KO histograms per bucket for
+`dns_resolution` (per hostname), `tcp_connect` and `tls_handshake` (per
+remote), and 15 counter/gauge metrics (`conn.*`, `bw.bits`, `tcp.state`,
+`dns.count`, `status`, `gc.*`, `heap`, `netty`, `cpu.jiffies`, `ram`,
+`tcp.evt`, `tcp.established`, `tcp.seg`), each also under dimension `*`,
+Gatling's HTTP warm-up excluded throughout. Migration
+`20261024120000_run_agent_figures` adds `run_agent` (one row a run,
+`collected` or `unreadable` with a reason; cascades from `run`) and two
+FK-free bucket tables partitioned through `2027-12` (in the residue script
+and `fk-free-tables.sql`). The worker writes them inside the finalize
+transaction (`openAgentSource`: a runner run's `agent_log_key`, or
+`perfportal-agent.ndjson` beside an upload's `simulation.log`), and **an
+agent file never fails or changes the run**: missing, checksum-mismatched,
+undecodable or unbuildable is a `run_agent` reason. Five read-scope routes —
+`GET /v1/runs/{id}/agent`, `…/connections`, `…/dns`, `…/injectors`,
+`…/status` — answer GE's 13 percentile rows, bucket sums with
+`bucketWidthMs` (never rates; CPU % is the one derived figure), and
+`available: false` with `not_collected`/`unreadable`/`http_not_collected`
+rather than zeros. `VERIFIER_VERSION` is **3**: `packages/verify` recomputes
+every agent row from the raw agent file with its own code, deriving the
+bucket width itself and checking the stored one as a figure.
+
+**RULINGS, EACH A DECISION RATHER THAN AN OVERSIGHT:**
+
+  - **A record past `durationMs` lands in the last bucket**, never dropped:
+    the file is this run's JVM alone, so it is teardown — 2 of the fixture's
+    closes land 1 ms late, and GE counts opened and closed alike (480/480).
+  - **`states` absent is no reading, `{}` a measured zero**: a bucket with
+    no reading answers `states: null`, never nine zeros; each `tcpEvents`
+    field is null on its own (a measured `established` survives a first
+    sample with no predecessor).
+  - **Warm-up**: a remote whose every connect is warm-up is dropped with its
+    `tls`/`close` whatever their `ch`. Keyed counters (`bytes`, `gc`) start
+    from 0; unkeyed machine counters (`cpu`, snmp) file nothing without an
+    earlier reading — they count since boot.
+  - **On the LAST attempt a transient agent read is `read_failed`**, not a
+    failed run; earlier attempts rethrow for the queue. The verifier
+    rethrows every transport error and maps a collected run's missing file
+    to `raw_log_missing`, any other refusal to `raw_log_unreadable`.
+  - `@perfportal/plugin-gatling` is a real dependency of `statistics` and
+    `verify`: their public types name it.
+
+**RED-VERIFIED, AND ONE RULE HAS A SINGLE GUARD.** Sixteen builder mutations
+each fail the case written for them, several more than one — one only after
+it SURVIVED and earned one (a dropped past-run sample used as a delta
+predecessor). Through the verifier,
+dropping the warm-up close exclusion reported `conn.closed/*` 7 against 6
+plus a warm-up remote's row; `Math.floor` for the µs rounding, 163
+duration-bucket mismatches; trusting the stored width, 83 + 221 row
+mismatches in place of one width figure. **In the verifier, counting an
+unkeyed counter from 0 is caught by ONE hand-built unit case**: the fixture's
+first sample precedes the run, so no fixture-based case can see that rule.
+The API's null `states` and per-field `tcpEvents` each failed against the
+zero-filling code first.
+
+**THE REAL RUN**, on a scratch database (`perfportal_figures_real`), Redis
+db 11 and bucket `perfportal-figures-real`, this tree's API, worker and runner
+from `dist`, Java 21, `RUNNER_AGENT_JAR` the built jar, the runner lending
+`~/.perfportal/gatling-home` to PR 1's thin `ParitySimulation` jar. Job
+`71ee8f3d` → run `1d66b939`: `complete`, **895 / 874 OK / 21 KO**, the
+stored object's sha256 equal to `agent_log_sha256` (80,575 bytes; 21
+connects, 1 dns and 1 tls, the warm-up's to `gatling.io:443`). `/agent`:
+header host and `"machine":false` with its macOS reason, remotes
+`['127.0.0.1/127.0.0.1:8099']`, **hostnames `[]`** (the one lookup is
+warm-up), width 1000. **`/agent/status` sums to 895** — 874 × 200, 14 × 500,
+7 × 503, the file's own codes. **`/agent/connections` `sums.opened` 20 and
+`closed` 20** = the file's 20 non-warm-up ok connects and their closes; bits
+out/in **508,440 / 1,428,072** = the last sample's cumulative bytes × 8;
+`tcpConnect` 20 OK, mean **1.7 ms** = the file's; TLS 0; `states` null in
+all 64 buckets (macOS). `/agent/injectors`: 64 buckets 0–63,000 over
+`durationMs` 63,344, heap and Netty present, CPU/RAM null with the machine
+reason. **`verified`, 22,929 figures.** Job `4421ff76` → run `95e9d9ac`,
+`agentEnabled: false`: 895 / 871 / 24, no `-javaagent`, no `run_agent` row,
+`/agent`, `/status` and `/connections` reading `available: false, reason
+'not_collected'`, **`verified`, 21,466 figures** (the gap is the agent rows
+plus the two runs' own series). One stored `conn.opened` cell (2 → 3)
+re-verified **`mismatch` naming exactly it**
+(`run_agent_metric_bucket`, stored 3, recomputed 2); restored, `verified`.
+
+**WHAT WAS RUN**, Node v22.19.0, `perfportal_figures`, Redis db 10 flushed
+before integration and e2e, every `.tsbuildinfo` deleted before build and
+typecheck: `pnpm build`, `typecheck` and `lint` exit 0 by their own exit
+codes; `test:unit` **267 / 4366**, exit 0, zero `Errors` lines;
+`test:integration` COLLECTED **252 / 3950** and exited 1 on ONE case,
+`ingest.integration`'s padded-provenance case (its POST returned no run id;
+no file under it changed here), which then passed **18 of 18** alone — the
+full suite was not re-run; `PERFPORTAL_E2E_PORT=3790 pnpm test:e2e
+--workers=2` read back `Running 207 tests using 2 workers`, **207 passed,
+exit 0**; the agent's `./gradlew build --no-daemon` exit 0, **63 tests, 1
+skipped** (macOS); and all 22 `test-residue` steps, replayed on a scratch
+database and bucket, exit 0 (schema and migrations agree, the drift guard
+exits 2, `fk-free-tables.sql` names both bucket tables, the broken residue
+script is rejected). The worker took a SIGKILL 35 s after SIGTERM, as recorded.
+
+**THE FINAL FIX WAVE MADE "NEVER FAILS THE RUN" HOLD AT THE WRITE.** The
+agent INSERTs ran inside the run's finalize transaction with nothing around
+them, and the decoder accepts what Postgres refuses: a JSON `\u0000` in a
+remote (22021 in a `text` column) and a lone `\ud800` in a header field
+(refused by `jsonb`). Either failed the run on every attempt. Each agent write
+now sits behind `SAVEPOINT agent_figures`: a failed one is rolled back and
+recorded `unreadable`, `write_failed: <message>`, and a reason row that cannot
+be written either is rolled back to nothing; only a failed ROLLBACK TO
+SAVEPOINT (a dead session) is rethrown. Red-verified: without the savepoint
+both `agent-pipeline.integration` cases fail with the database's own error.
+The same wave spans the verifier's agent file by its OWN recomputed duration
+(the stored `duration_ms` set to 1000 had reported 225 agent-row mismatches
+beside the one run figure; now only the run figure), reports a refused stored
+rank as `null` rather than the histogram's max, lays the verifier's run series
+on `runSeriesWidth` so the width really is one derivation, drops the
+never-emitted `machine_not_collected` from the contract, corrects
+`sharedWithPerfPortal`'s docstring (true means the runner's machine IS the
+PerfPortal VM, shared with the database, API and worker), round-trips one
+synthetic non-empty KO histogram through persistence, and gives this release's
+upgrade order in `DEPLOYMENT.md`. What it ran, Node v22.19.0, every
+`.tsbuildinfo` deleted first: `typecheck` and `lint` exit 0; `test:unit`
+**267 / 4367**, exit 0; and on `perfportal_figures` with Redis db 10 flushed,
+the five files it touched or that read its changes (`agent-pipeline`,
+`verify-agent`, `agent-figures`, the API's `agent` and `openapi`
+integration files) **74 of 74**, exit 0. Integration and e2e were not re-run
+in full.
+
+**KNOWN AND LEFT:** the Report draws none of this (PR 3); agent reads inherit
+`/telemetry`'s inward-select, outward-snapped window; a transient error inside
+the agent write whose savepoint still rolls back (a deadlock, a lock timeout)
+is recorded `write_failed` rather than retried; no real KO connect or lookup,
+and no machine figure (macOS), was read end to end.
 
 The audit-zod-body-parser-multer-undici branch
 (`fix/audit-zod-body-parser-multer-undici`) added no test and moves no floor.
@@ -4906,7 +5052,10 @@ with its replacement count asserted:
     account's runs had a group, and running one needs credits it no longer
     has. Groups is built to this product's own data.
   - DNS, GC, TCP-connect and TLS-handshake charts are OMITTED, never drawn
-    empty: nothing here collects them.
+    empty: nothing here collects them. **[Corrected later: the on-prem
+    runner's Gatling agent collects all four since GE report parity PR 1, and
+    the API serves them under `/v1/runs/:id/agent/*` since PR 2. The charts
+    are still not drawn; they are PR 3's.]**
   - "Back to this run" on a request or group page lands on the Summary. The
     URL keeps `from`/`to` and the Report tab restores the window, so the
     window travels as the spec says; a reader who drilled down from a

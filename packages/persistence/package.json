@@ -19,6 +19,7 @@
   "dependencies": {
     "@perfportal/contracts": "workspace:*",
     "@perfportal/core": "workspace:*",
+    "@perfportal/plugin-gatling": "workspace:*",
     "@perfportal/statistics": "workspace:*",
     "@prisma/client": "^6.19.3",
     "better-auth": "1.6.26",

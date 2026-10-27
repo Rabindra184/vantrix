@@ -36,6 +36,7 @@ group-assertions/    a second real run, for assertions that name a GROUP
   simulation.log           BINARY, header carries the group assertions
   GroupAssertions.kt       this simulation plus eight probe assertions
   gatling-report-assertions.txt   what Gatling printed, verbatim
+agent-run/           a real run's simulation.log + agent.ndjson from ONE JVM (Linux, see its README)
 basic-simulation-2026-10-15/   a third real run, for Gatling's percentile method
   simulation.log           BINARY, the 2026-10-15 BasicSimulation run
   index.html               global page

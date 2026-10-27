@@ -246,6 +246,9 @@ const TABLE_NAMES: Record<FigureMismatch['table'], string> = {
   run_error: 'Errors',
   run_error_bucket: 'Errors over time',
   run_user_bucket: 'Users',
+  run_agent: 'Agent file',
+  run_agent_duration_bucket: 'Connection and DNS timings',
+  run_agent_metric_bucket: 'Agent counters',
 };
 
 /**

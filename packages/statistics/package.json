@@ -12,9 +12,7 @@
   },
   "files": ["dist"],
   "dependencies": {
-    "@perfportal/core": "workspace:*"
-  },
-  "devDependencies": {
+    "@perfportal/core": "workspace:*",
     "@perfportal/plugin-gatling": "workspace:*"
   }
 }
