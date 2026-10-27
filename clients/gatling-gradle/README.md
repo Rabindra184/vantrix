@@ -46,7 +46,7 @@ pluginManagement {
 // build.gradle.kts
 plugins {
     id("io.gatling.gradle") version "3.15.1.2"
-    id("dev.vantrix.gatling") version "0.2.0-SNAPSHOT"
+    id("dev.vantrix.gatling") version "0.3.0-SNAPSHOT"
 }
 ```
 
@@ -73,7 +73,7 @@ its token lacks that scope. Inside GitHub Actions, the workflow's own
 
 Versioned releases are published by pushing a `v<semver>` tag
 (`.github/workflows/release.yml`); `main` republishes the CURRENT SNAPSHOT on
-every push — `0.2.0-SNAPSHOT` today, and whatever
+every push — `0.3.0-SNAPSHOT` today, and whatever
 `clients/gatling-gradle/build.gradle.kts`'s `version` line says thereafter,
 since that publish passes no `-PreleaseVersion`. Read it from the build
 rather than from here (`./gradlew properties -q | awk '/^version:/{print $2}'`,

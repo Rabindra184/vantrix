@@ -1,5 +1,9 @@
 // `java` in a build script resolves to the java{} extension, shadowing the
 // package -- hence the explicit import for the jar-content check below.
+import java.net.URI
+import java.nio.file.FileSystems
+import java.nio.file.Files
+import java.util.jar.JarInputStream
 import java.util.zip.ZipFile
 
 plugins {
@@ -17,7 +21,7 @@ group = "dev.vantrix"
 // every other build (local, CI snapshot publish) gets the -SNAPSHOT default.
 // A plain `version = "..."` assignment would silently win over -P flags, which
 // is why the override arrives through its own named property.
-version = providers.gradleProperty("releaseVersion").getOrElse("0.2.0-SNAPSHOT")
+version = providers.gradleProperty("releaseVersion").getOrElse("0.3.0-SNAPSHOT")
 
 kotlin { jvmToolchain(21) }
 
@@ -44,6 +48,45 @@ gradlePlugin {
 
 tasks.test { useJUnitPlatform() }
 
+// ─── The agent, carried as a file ───────────────────────────────────────────
+// The plugin hands the PerfPortal Gatling agent to the user's Gatling JVM as
+// `-javaagent:`, so its jar travels INSIDE the plugin jar, as a resource the
+// plugin extracts at run time. It is a FILE the user's JVM loads, never a
+// class the plugin loads -- hence a resource and not a dependency: on the
+// runtime classpath the shadow step below would merge its classes into ours
+// and keep only our manifest, losing the Premain-Class that makes it an agent.
+//
+// settings.gradle.kts includes ../gatling-agent as a build, so this one
+// coordinate is satisfied by the sibling's own shadowJar, built from source
+// in the same invocation -- a clean checkout needs no separate agent build,
+// and the agent's tests (a real-Gatling e2e among them) never run here: only
+// the task producing the artifact is scheduled. Its version is irrelevant;
+// an included build substitutes by group and name.
+val AGENT_RESOURCE = "dev/vantrix/gradle/agent/gatling-agent.jar"
+val agentJar: Configuration by configurations.creating {
+    isCanBeConsumed = false
+    // Byte Buddy is already inside the agent jar, relocated; nothing else is
+    // wanted, and nothing of the agent's may reach the plugin's classpath.
+    isTransitive = false
+    // SHADOWED selects the shadow plugin's own variant (shadowRuntimeElements).
+    // The agent build disables its plain jar, so the ordinary runtime variant
+    // names a jar that is never produced.
+    attributes {
+        attribute(Usage.USAGE_ATTRIBUTE, objects.named(Usage.JAVA_RUNTIME))
+        attribute(Category.CATEGORY_ATTRIBUTE, objects.named(Category.LIBRARY))
+        attribute(LibraryElements.LIBRARY_ELEMENTS_ATTRIBUTE, objects.named(LibraryElements.JAR))
+        attribute(Bundling.BUNDLING_ATTRIBUTE, objects.named(Bundling.SHADOWED))
+    }
+}
+dependencies { agentJar("io.perfportal:gatling-agent") }
+
+tasks.processResources {
+    from(agentJar) {
+        into(AGENT_RESOURCE.substringBeforeLast('/'))
+        rename { AGENT_RESOURCE.substringAfterLast('/') }
+    }
+}
+
 // ─── Shading ────────────────────────────────────────────────────────────────
 // The shadow jar IS the artifact: classifier "" so the publications pick it
 // up, and the plain jar is disabled so it cannot be published by accident.
@@ -57,6 +100,27 @@ tasks.shadowJar {
     // NO minimize(): gson and commons-compress both load classes reflectively
     // (type adapters; compressors resolved by name), and a minimized jar is a
     // runtime-only failure the suite cannot see. Size is irrelevant here.
+
+    // THE AGENT IS ADDED AFTER THE SHADOW COPY, NOT BY IT. Shadow's copy
+    // action unpacks EVERY file whose path ends in `.jar` and merges its
+    // entries in -- there is no opt-out (ShadowCopyAction's isArchive is a
+    // suffix test) -- so left in the main output, the agent arrived as
+    // io/perfportal/agent/*.class beside our own classes and no
+    // gatling-agent.jar at all. Measured, not assumed: the first build of
+    // this carried 9161 entries (3063 once fixed) and verifyShadedJar refused
+    // it. So the resource is excluded here and written in, byte for byte,
+    // once the jar exists. The TestKit classpath still sees it through
+    // processResources.
+    exclude(AGENT_RESOURCE)
+    inputs.files(agentJar).withPropertyName("agentJar")
+    doLast {
+        val out = archiveFile.get().asFile
+        FileSystems.newFileSystem(URI.create("jar:${out.toURI()}"), emptyMap<String, Any>()).use { fs ->
+            val target = fs.getPath(AGENT_RESOURCE)
+            Files.createDirectories(target.parent)
+            Files.copy(agentJar.singleFile.toPath(), target)
+        }
+    }
 }
 tasks.jar { enabled = false }
 
@@ -102,6 +166,32 @@ val verifyShadedJar by tasks.registering {
         }
         check(entries.any { name -> name.startsWith("dev/vantrix/gradle/VantrixPlugin") }) {
             "shadow jar is missing the plugin's own classes"
+        }
+        // The agent rides inside as a FILE, and the user's JVM is what reads
+        // it -- so the check opens it the way that JVM will: as a jar whose
+        // own manifest names the premain. A resource that is present but is
+        // not an agent (a stale copy, the plain jar the agent build disables,
+        // a jar the shadow step rewrote) would fail at `-javaagent:` on the
+        // user's machine, where nothing of ours can see it.
+        val agentBytes = ZipFile(jar).use { z ->
+            val entry = z.getEntry(AGENT_RESOURCE)
+            check(entry != null) { "shadow jar carries no $AGENT_RESOURCE -- the agent did not get packaged" }
+            z.getInputStream(entry).use { it.readBytes() }
+        }
+        val premain = JarInputStream(agentBytes.inputStream()).use {
+            it.manifest?.mainAttributes?.getValue("Premain-Class")
+        }
+        check(premain == "io.perfportal.agent.AgentMain") {
+            "$AGENT_RESOURCE is not the PerfPortal agent: its manifest names Premain-Class=$premain"
+        }
+        // Byte-identical to what the agent build produced in this same
+        // invocation, because that is the shape the agent's own gate (its
+        // tests, the image's smoke check) is written against; a copy the
+        // plugin's shadow step touched on the way in is a jar no check of the
+        // agent's describes.
+        val built = agentJar.singleFile.readBytes()
+        check(agentBytes.contentEquals(built)) {
+            "$AGENT_RESOURCE differs from the agent build's own jar (${agentBytes.size} bytes against ${built.size})"
         }
     }
 }
