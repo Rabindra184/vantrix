@@ -123,3 +123,42 @@ export const telemetryPath = (id: string, window: Window | null = null): string 
 
 export const trendsPath = (id: string, limit = 20): string =>
   `${runPath(id)}/trends?limit=${limit}`;
+
+/* -------------------------------------------------------------------- *
+ * the run's agent — Connections, DNS and Load generators (GE report parity)
+ * -------------------------------------------------------------------- */
+
+/**
+ * `/v1/runs/{id}/agent`. TAKES NO WINDOW: it names the remotes and hostnames
+ * the four figure reads accept, the header, and the load generator — facts
+ * about the file, which a window does not change.
+ */
+export const agentSummaryPath = (id: string): string => `${runPath(id)}/agent`;
+
+/**
+ * `?remote=` or `?hostname=` for one value, `''` for `*`.
+ *
+ * `*` IS NEVER SENT. The server reads an absent filter as `*` ("every remote
+ * together", `AGENT_ALL`), so omitting it and sending it are the same answer
+ * today — and sending the literal would be a second spelling of one request,
+ * the shape this module's header argues against. A remote is `host/ip:port`,
+ * so its `/` and `:` are part of the value and are encoded.
+ */
+const agentFilter = (name: 'remote' | 'hostname', value: string): string =>
+  value === '*' ? '' : `?${name}=${encodeURIComponent(value)}`;
+
+/** The window joins with `&` after a filter and with `?` without one — decided here, beside the filter. */
+const withFilter = (path: string, filter: string, window: Window | null): string =>
+  `${path}${filter}${rangeSuffix(window, filter === '' ? '?' : '&')}`;
+
+export const agentConnectionsPath = (id: string, remote: string, window: Window | null = null): string =>
+  withFilter(`${runPath(id)}/agent/connections`, agentFilter('remote', remote), window);
+
+export const agentDnsPath = (id: string, hostname: string, window: Window | null = null): string =>
+  withFilter(`${runPath(id)}/agent/dns`, agentFilter('hostname', hostname), window);
+
+export const agentInjectorsPath = (id: string, window: Window | null = null): string =>
+  `${runPath(id)}/agent/injectors${rangeSuffix(window)}`;
+
+export const agentStatusPath = (id: string, window: Window | null = null): string =>
+  `${runPath(id)}/agent/status${rangeSuffix(window)}`;
