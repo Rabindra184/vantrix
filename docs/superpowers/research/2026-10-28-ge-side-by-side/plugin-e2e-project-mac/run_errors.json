@@ -1,0 +1,33 @@
+{
+  "runId": "66bc422b-2a96-45eb-b902-7ec7453c449b",
+  "errors": [
+    {
+      "message": "status.find.is(200), found 401",
+      "count": 177
+    },
+    {
+      "message": "status.find.is(200), found 404",
+      "count": 62
+    },
+    {
+      "message": "status.find.is(200), found 403",
+      "count": 14
+    },
+    {
+      "message": "status.find.in([200, 209], 304), found 403",
+      "count": 13
+    },
+    {
+      "message": "Add To Cart: No attribute named 'sessionId' is defined ",
+      "count": 2
+    },
+    {
+      "message": "Place Order: No attribute named 'sessionId' is defined ",
+      "count": 2
+    },
+    {
+      "message": "i.n.c.ConnectTimeoutException: connection timed out after 10000 ms: api-ecomm.gatling.io/15.236.193.217:443",
+      "count": 1
+    }
+  ]
+}

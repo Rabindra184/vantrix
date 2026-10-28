@@ -151,6 +151,66 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The GE side-by-side proof branch (`docs/ge-side-by-side-proof`, PR 5 of
+`docs/superpowers/specs/2026-10-22-ge-report-parity-design.md`, check 3 of its
+section 9) added no test and moves no floor: unit stays **279 / 4589**,
+integration **259 / 4089**, e2e **214**. Its diff is
+`docs/superpowers/research/2026-10-28-ge-side-by-side/` — GE Run 2's captured
+chart JSON (user redacted), four PerfPortal runs' endpoint JSON, `compare.py`
+and the write-up — plus this entry. The write-up is the record; what follows is
+what to carry into the next branch.
+
+**EVERY SERIES GE DRAWS EXISTS ON THE LINUX RUNNER, AND THE FIGURES THAT
+DEPEND ONLY ON THE SIMULATION AGREE**: requests within 1%, users exact, the
+same four status codes, 480 connections opened and closed, bytes received
+within 2%. Latency does not, and is not expected to: GE's generator is in
+Paris beside the target, this machine is in India (TCP connect p50 1 ms
+against ~200 ms).
+
+**THE ON-PREM RUNNER HAS NEVER RUN GATLING ON BoringSSL.** Found as bits sent
+reading 6.0 Mb on Linux against 9.6 on GE and on both Mac runs, ~940 bytes a
+connection short — a post-quantum key share. `infra/docker-compose.yml` gives
+the runner `tmpfs: - /tmp`, Docker mounts a tmpfs `noexec`, and netty-tcnative
+`dlopen`s its library out of `java.io.tmpdir`: `OpenSsl.isAvailable()` is
+false in the shipped container and true with `-Dio.netty.native.workdir` on
+the ext4 volume. Netty falls back to the JDK's TLS without a word, so every
+runner job has been a different load test from the same simulation anywhere
+else. The rerun with that one option read 9.5 Mb. **A figure that disagrees
+in one path only is a claim about that path's environment before it is a
+claim about the meter.**
+
+**DNS 480 AGAINST GE's 17 IS A DEFINITION, NOT A DEFECT.** The agent counts
+every `resolveAll` — one per new connection — and the JDK answers almost all
+from its cache (median 50 µs; 3 of 480 over 1 ms). Measured from the agent
+file's own durations, which is the cheap way to tell a cache hit from a
+lookup.
+
+**THE GRADLE PLUGIN FAILS THE BUILD UNDER THE CONFIGURATION CACHE, AND
+GATLING'S OWN DEMO PROJECT TURNS IT ON.** `org.gradle.configuration-cache=true`
+in the demo's `gradle.properties` costs the agent (`AgentLauncher` reads
+`Task.project` at execution time) and fails the build with three
+configuration-cache problems (`vantrixClose` and the `gatlingRun` hook capture
+`Project`), against `VantrixPlugin`'s own "must never be the reason a build
+fails". The plugin's docstring had recorded CC as out of scope; nobody had run
+it from the project a GE user actually starts from. The demo leg ran with
+`--no-configuration-cache`.
+
+**AND THE RUNNER LEAKS EVERY JOB's RESULTS DIRECTORY**: Gatling as uid 20001
+creates `results/<sim>/` 755, and the runner is root with `cap_drop: ALL`, so
+no `CAP_DAC_OVERRIDE` — `failed to clean work dir: EACCES ... unlink
+.../simulation.log` on every job. The three defects are each their own branch.
+
+**THE TARGET RATE-LIMITS FOR ABOUT SIX MINUTES AFTER EVERY RUN.**
+`api-ecomm.gatling.io` answers 403 `{"message":"Forbidden"}` to everything
+after a load run from one IP; a run started inside that window is all 403s
+(`ae5ec7b2`, excluded). Poll `/products` for a 200 before each run, and read
+the 403 count afterwards — it rises when the limiter comes back mid-run.
+
+**AND A FULL HOST DISK STOPS DOCKER RATHER THAN BREAKING IT** — met again
+here at 12 GiB free, the VM read-only and `docker ps` hung; a force-quit of
+`com.docker.backend` and a restart brought it back with the data intact. The
+check is `df -h /System/Volumes/Data`, as recorded below.
+
 The warmup-band-renders branch (`fix/warmup-band-renders`) added ONE unit
 file — `apps/web/test/echarts-registration.test.tsx` (2) — and ONE e2e file,
 `apps/web/e2e/warmup-band.spec.ts` (1): unit **278 / 4587 to 279 / 4589**,

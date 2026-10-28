@@ -1,0 +1,355 @@
+{
+  "runId": "6108dcb3-c3bc-4e11-bc05-7717309f9dfa",
+  "stats": [
+    {
+      "scope": "group",
+      "name": "Cart",
+      "family": "group_cumulated",
+      "count": 180,
+      "okCount": 161,
+      "koCount": 19,
+      "errorRate": 0.10555555555555556,
+      "minMs": 0,
+      "maxMs": 3275,
+      "meanMs": 435.31666666666666,
+      "stddevMs": 281.3181566799018,
+      "throughputRps": 1.6998611780037964,
+      "percentiles": {
+        "p50": 437,
+        "p75": 472,
+        "p95": 591,
+        "p99": 1537
+      },
+      "indicators": {
+        "under": 158,
+        "between": 0,
+        "over": 3,
+        "failed": 19
+      }
+    },
+    {
+      "scope": "group",
+      "name": "Cart",
+      "family": "group_duration",
+      "count": 180,
+      "okCount": 161,
+      "koCount": 19,
+      "errorRate": 0.10555555555555556,
+      "minMs": 120,
+      "maxMs": 3396,
+      "meanMs": 557.8,
+      "stddevMs": 281.02762616274345,
+      "throughputRps": 1.6998611780037964,
+      "percentiles": {
+        "p50": 558,
+        "p75": 595,
+        "p95": 713,
+        "p99": 1658
+      },
+      "indicators": {
+        "under": 156,
+        "between": 2,
+        "over": 3,
+        "failed": 19
+      }
+    },
+    {
+      "scope": "group",
+      "name": "Catalog",
+      "family": "group_cumulated",
+      "count": 300,
+      "okCount": 208,
+      "koCount": 92,
+      "errorRate": 0.30666666666666664,
+      "minMs": 575,
+      "maxMs": 1833,
+      "meanMs": 716.3233333333334,
+      "stddevMs": 111.26382515844442,
+      "throughputRps": 2.8331019633396606,
+      "percentiles": {
+        "p50": 697,
+        "p75": 735,
+        "p95": 823,
+        "p99": 1210
+      },
+      "indicators": {
+        "under": 189,
+        "between": 16,
+        "over": 3,
+        "failed": 92
+      }
+    },
+    {
+      "scope": "group",
+      "name": "Catalog",
+      "family": "group_duration",
+      "count": 300,
+      "okCount": 208,
+      "koCount": 92,
+      "errorRate": 0.30666666666666664,
+      "minMs": 735,
+      "maxMs": 1986,
+      "meanMs": 870.53,
+      "stddevMs": 111.60888151636202,
+      "throughputRps": 2.8331019633396606,
+      "percentiles": {
+        "p50": 852,
+        "p75": 887,
+        "p95": 977,
+        "p99": 1362
+      },
+      "indicators": {
+        "under": 13,
+        "between": 190,
+        "over": 5,
+        "failed": 92
+      }
+    },
+    {
+      "scope": "group",
+      "name": "Catalog/Recommendations",
+      "family": "group_cumulated",
+      "count": 300,
+      "okCount": 240,
+      "koCount": 60,
+      "errorRate": 0.2,
+      "minMs": 185,
+      "maxMs": 750,
+      "meanMs": 235.66333333333333,
+      "stddevMs": 39.976784790953644,
+      "throughputRps": 2.8331019633396606,
+      "percentiles": {
+        "p50": 232,
+        "p75": 246,
+        "p95": 280,
+        "p99": 312
+      },
+      "indicators": {
+        "under": 240,
+        "between": 0,
+        "over": 0,
+        "failed": 60
+      }
+    },
+    {
+      "scope": "group",
+      "name": "Catalog/Recommendations",
+      "family": "group_duration",
+      "count": 300,
+      "okCount": 240,
+      "koCount": 60,
+      "errorRate": 0.2,
+      "minMs": 185,
+      "maxMs": 751,
+      "meanMs": 236.54333333333332,
+      "stddevMs": 39.99610133778319,
+      "throughputRps": 2.8331019633396606,
+      "percentiles": {
+        "p50": 232,
+        "p75": 247,
+        "p95": 280,
+        "p99": 313
+      },
+      "indicators": {
+        "under": 240,
+        "between": 0,
+        "over": 0,
+        "failed": 60
+      }
+    },
+    {
+      "scope": "request",
+      "name": "Cart/Add To Cart",
+      "family": "response_time",
+      "count": 162,
+      "okCount": 161,
+      "koCount": 1,
+      "errorRate": 0.006172839506172839,
+      "minMs": 205,
+      "maxMs": 3275,
+      "meanMs": 483.68518518518516,
+      "stddevMs": 254.04348495810135,
+      "throughputRps": 1.5298750602034166,
+      "percentiles": {
+        "p50": 442,
+        "p75": 483,
+        "p95": 593,
+        "p99": 1537
+      },
+      "indicators": {
+        "under": 158,
+        "between": 0,
+        "over": 3,
+        "failed": 1
+      }
+    },
+    {
+      "scope": "request",
+      "name": "Catalog/List Products",
+      "family": "response_time",
+      "count": 300,
+      "okCount": 272,
+      "koCount": 28,
+      "errorRate": 0.09333333333333334,
+      "minMs": 184,
+      "maxMs": 1336,
+      "meanMs": 241.91666666666666,
+      "stddevMs": 85.21726970254066,
+      "throughputRps": 2.8331019633396606,
+      "percentiles": {
+        "p50": 230,
+        "p75": 246,
+        "p95": 285,
+        "p99": 702
+      },
+      "indicators": {
+        "under": 271,
+        "between": 0,
+        "over": 1,
+        "failed": 28
+      }
+    },
+    {
+      "scope": "request",
+      "name": "Catalog/Product Detail",
+      "family": "response_time",
+      "count": 300,
+      "okCount": 233,
+      "koCount": 67,
+      "errorRate": 0.22333333333333333,
+      "minMs": 190,
+      "maxMs": 787,
+      "meanMs": 238.74333333333334,
+      "stddevMs": 50.923316096089245,
+      "throughputRps": 2.8331019633396606,
+      "percentiles": {
+        "p50": 233,
+        "p75": 249,
+        "p95": 288,
+        "p99": 371
+      },
+      "indicators": {
+        "under": 233,
+        "between": 0,
+        "over": 0,
+        "failed": 67
+      }
+    },
+    {
+      "scope": "request",
+      "name": "Catalog/Recommendations/Related Items",
+      "family": "response_time",
+      "count": 300,
+      "okCount": 240,
+      "koCount": 60,
+      "errorRate": 0.2,
+      "minMs": 185,
+      "maxMs": 750,
+      "meanMs": 235.66333333333333,
+      "stddevMs": 39.976784790953644,
+      "throughputRps": 2.8331019633396606,
+      "percentiles": {
+        "p50": 232,
+        "p75": 246,
+        "p95": 280,
+        "p99": 312
+      },
+      "indicators": {
+        "under": 240,
+        "between": 0,
+        "over": 0,
+        "failed": 60
+      }
+    },
+    {
+      "scope": "request",
+      "name": "Place Order",
+      "family": "response_time",
+      "count": 162,
+      "okCount": 0,
+      "koCount": 162,
+      "errorRate": 1,
+      "minMs": 185,
+      "maxMs": 406,
+      "meanMs": 239.41358024691357,
+      "stddevMs": 29.45191625569463,
+      "throughputRps": 1.5298750602034166,
+      "percentiles": {
+        "p50": 237,
+        "p75": 249,
+        "p95": 281,
+        "p99": 379
+      },
+      "indicators": {
+        "under": 0,
+        "between": 0,
+        "over": 0,
+        "failed": 162
+      }
+    },
+    {
+      "scope": "request",
+      "name": "Session",
+      "family": "response_time",
+      "count": 480,
+      "okCount": 436,
+      "koCount": 44,
+      "errorRate": 0.09166666666666666,
+      "minMs": 544,
+      "maxMs": 20734,
+      "meanMs": 1525.1895833333333,
+      "stddevMs": 2758.4047570364824,
+      "throughputRps": 4.532963141343457,
+      "percentiles": {
+        "p50": 745,
+        "p75": 789,
+        "p95": 10658,
+        "p99": 10787
+      },
+      "indicators": {
+        "under": 344,
+        "between": 57,
+        "over": 35,
+        "failed": 44
+      }
+    },
+    {
+      "scope": "run",
+      "name": "",
+      "family": "response_time",
+      "count": 1704,
+      "okCount": 1342,
+      "koCount": 362,
+      "errorRate": 0.21244131455399062,
+      "minMs": 184,
+      "maxMs": 20734,
+      "meanMs": 624.4894366197183,
+      "stddevMs": 1573.100861082099,
+      "throughputRps": 16.092019151769275,
+      "percentiles": {
+        "p50": 251,
+        "p75": 687,
+        "p95": 832,
+        "p99": 10712
+      },
+      "indicators": {
+        "under": 1246,
+        "between": 57,
+        "over": 39,
+        "failed": 362
+      }
+    }
+  ],
+  "indicators": {
+    "under": 1246,
+    "between": 57,
+    "over": 39,
+    "failed": 362
+  },
+  "configurable": true,
+  "bounds": {
+    "lowerMs": 800,
+    "higherMs": 1200
+  },
+  "window": null
+}

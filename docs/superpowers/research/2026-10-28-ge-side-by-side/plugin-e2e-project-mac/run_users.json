@@ -1,0 +1,1902 @@
+{
+  "runId": "66bc422b-2a96-45eb-b902-7ec7453c449b",
+  "window": null,
+  "scenarios": [
+    {
+      "scenario": "Browse",
+      "buckets": [
+        {
+          "startOffsetMs": 1000,
+          "started": 2,
+          "ended": 0,
+          "maxConcurrent": 2
+        },
+        {
+          "startOffsetMs": 2000,
+          "started": 2,
+          "ended": 0,
+          "maxConcurrent": 4
+        },
+        {
+          "startOffsetMs": 3000,
+          "started": 2,
+          "ended": 0,
+          "maxConcurrent": 6
+        },
+        {
+          "startOffsetMs": 4000,
+          "started": 2,
+          "ended": 1,
+          "maxConcurrent": 8
+        },
+        {
+          "startOffsetMs": 5000,
+          "started": 2,
+          "ended": 4,
+          "maxConcurrent": 8
+        },
+        {
+          "startOffsetMs": 6000,
+          "started": 2,
+          "ended": 3,
+          "maxConcurrent": 7
+        },
+        {
+          "startOffsetMs": 7000,
+          "started": 2,
+          "ended": 3,
+          "maxConcurrent": 5
+        },
+        {
+          "startOffsetMs": 8000,
+          "started": 2,
+          "ended": 1,
+          "maxConcurrent": 4
+        },
+        {
+          "startOffsetMs": 9000,
+          "started": 2,
+          "ended": 3,
+          "maxConcurrent": 5
+        },
+        {
+          "startOffsetMs": 10000,
+          "started": 2,
+          "ended": 2,
+          "maxConcurrent": 4
+        },
+        {
+          "startOffsetMs": 11000,
+          "started": 2,
+          "ended": 2,
+          "maxConcurrent": 4
+        },
+        {
+          "startOffsetMs": 12000,
+          "started": 2,
+          "ended": 2,
+          "maxConcurrent": 4
+        },
+        {
+          "startOffsetMs": 13000,
+          "started": 2,
+          "ended": 2,
+          "maxConcurrent": 4
+        },
+        {
+          "startOffsetMs": 14000,
+          "started": 2,
+          "ended": 1,
+          "maxConcurrent": 4
+        },
+        {
+          "startOffsetMs": 15000,
+          "started": 2,
+          "ended": 1,
+          "maxConcurrent": 5
+        },
+        {
+          "startOffsetMs": 16000,
+          "started": 2,
+          "ended": 1,
+          "maxConcurrent": 6
+        },
+        {
+          "startOffsetMs": 17000,
+          "started": 2,
+          "ended": 1,
+          "maxConcurrent": 8
+        },
+        {
+          "startOffsetMs": 18000,
+          "started": 2,
+          "ended": 3,
+          "maxConcurrent": 8
+        },
+        {
+          "startOffsetMs": 19000,
+          "started": 2,
+          "ended": 3,
+          "maxConcurrent": 6
+        },
+        {
+          "startOffsetMs": 20000,
+          "started": 2,
+          "ended": 2,
+          "maxConcurrent": 6
+        },
+        {
+          "startOffsetMs": 21000,
+          "started": 2,
+          "ended": 0,
+          "maxConcurrent": 7
+        },
+        {
+          "startOffsetMs": 22000,
+          "started": 2,
+          "ended": 1,
+          "maxConcurrent": 8
+        },
+        {
+          "startOffsetMs": 23000,
+          "started": 2,
+          "ended": 5,
+          "maxConcurrent": 9
+        },
+        {
+          "startOffsetMs": 24000,
+          "started": 2,
+          "ended": 1,
+          "maxConcurrent": 7
+        },
+        {
+          "startOffsetMs": 25000,
+          "started": 2,
+          "ended": 3,
+          "maxConcurrent": 7
+        },
+        {
+          "startOffsetMs": 26000,
+          "started": 2,
+          "ended": 2,
+          "maxConcurrent": 7
+        },
+        {
+          "startOffsetMs": 27000,
+          "started": 2,
+          "ended": 2,
+          "maxConcurrent": 6
+        },
+        {
+          "startOffsetMs": 28000,
+          "started": 2,
+          "ended": 2,
+          "maxConcurrent": 6
+        },
+        {
+          "startOffsetMs": 29000,
+          "started": 2,
+          "ended": 1,
+          "maxConcurrent": 6
+        },
+        {
+          "startOffsetMs": 30000,
+          "started": 2,
+          "ended": 3,
+          "maxConcurrent": 7
+        },
+        {
+          "startOffsetMs": 31000,
+          "started": 4,
+          "ended": 2,
+          "maxConcurrent": 8
+        },
+        {
+          "startOffsetMs": 32000,
+          "started": 4,
+          "ended": 3,
+          "maxConcurrent": 9
+        },
+        {
+          "startOffsetMs": 33000,
+          "started": 4,
+          "ended": 3,
+          "maxConcurrent": 9
+        },
+        {
+          "startOffsetMs": 34000,
+          "started": 4,
+          "ended": 5,
+          "maxConcurrent": 10
+        },
+        {
+          "startOffsetMs": 35000,
+          "started": 4,
+          "ended": 2,
+          "maxConcurrent": 11
+        },
+        {
+          "startOffsetMs": 36000,
+          "started": 4,
+          "ended": 0,
+          "maxConcurrent": 14
+        },
+        {
+          "startOffsetMs": 37000,
+          "started": 4,
+          "ended": 3,
+          "maxConcurrent": 17
+        },
+        {
+          "startOffsetMs": 38000,
+          "started": 4,
+          "ended": 3,
+          "maxConcurrent": 17
+        },
+        {
+          "startOffsetMs": 39000,
+          "started": 4,
+          "ended": 5,
+          "maxConcurrent": 17
+        },
+        {
+          "startOffsetMs": 40000,
+          "started": 4,
+          "ended": 8,
+          "maxConcurrent": 15
+        },
+        {
+          "startOffsetMs": 41000,
+          "started": 4,
+          "ended": 4,
+          "maxConcurrent": 12
+        },
+        {
+          "startOffsetMs": 42000,
+          "started": 4,
+          "ended": 4,
+          "maxConcurrent": 12
+        },
+        {
+          "startOffsetMs": 43000,
+          "started": 4,
+          "ended": 7,
+          "maxConcurrent": 11
+        },
+        {
+          "startOffsetMs": 44000,
+          "started": 4,
+          "ended": 4,
+          "maxConcurrent": 9
+        },
+        {
+          "startOffsetMs": 45000,
+          "started": 4,
+          "ended": 4,
+          "maxConcurrent": 9
+        },
+        {
+          "startOffsetMs": 46000,
+          "started": 4,
+          "ended": 4,
+          "maxConcurrent": 9
+        },
+        {
+          "startOffsetMs": 47000,
+          "started": 4,
+          "ended": 3,
+          "maxConcurrent": 10
+        },
+        {
+          "startOffsetMs": 48000,
+          "started": 4,
+          "ended": 4,
+          "maxConcurrent": 11
+        },
+        {
+          "startOffsetMs": 49000,
+          "started": 4,
+          "ended": 4,
+          "maxConcurrent": 10
+        },
+        {
+          "startOffsetMs": 50000,
+          "started": 4,
+          "ended": 3,
+          "maxConcurrent": 10
+        },
+        {
+          "startOffsetMs": 51000,
+          "started": 4,
+          "ended": 1,
+          "maxConcurrent": 13
+        },
+        {
+          "startOffsetMs": 52000,
+          "started": 4,
+          "ended": 0,
+          "maxConcurrent": 17
+        },
+        {
+          "startOffsetMs": 53000,
+          "started": 4,
+          "ended": 7,
+          "maxConcurrent": 18
+        },
+        {
+          "startOffsetMs": 54000,
+          "started": 4,
+          "ended": 5,
+          "maxConcurrent": 15
+        },
+        {
+          "startOffsetMs": 55000,
+          "started": 4,
+          "ended": 1,
+          "maxConcurrent": 16
+        },
+        {
+          "startOffsetMs": 56000,
+          "started": 4,
+          "ended": 2,
+          "maxConcurrent": 19
+        },
+        {
+          "startOffsetMs": 57000,
+          "started": 4,
+          "ended": 2,
+          "maxConcurrent": 20
+        },
+        {
+          "startOffsetMs": 58000,
+          "started": 4,
+          "ended": 5,
+          "maxConcurrent": 21
+        },
+        {
+          "startOffsetMs": 59000,
+          "started": 4,
+          "ended": 8,
+          "maxConcurrent": 19
+        },
+        {
+          "startOffsetMs": 60000,
+          "started": 4,
+          "ended": 7,
+          "maxConcurrent": 15
+        },
+        {
+          "startOffsetMs": 61000,
+          "started": 4,
+          "ended": 4,
+          "maxConcurrent": 14
+        },
+        {
+          "startOffsetMs": 62000,
+          "started": 4,
+          "ended": 4,
+          "maxConcurrent": 13
+        },
+        {
+          "startOffsetMs": 63000,
+          "started": 4,
+          "ended": 4,
+          "maxConcurrent": 13
+        },
+        {
+          "startOffsetMs": 64000,
+          "started": 4,
+          "ended": 4,
+          "maxConcurrent": 13
+        },
+        {
+          "startOffsetMs": 65000,
+          "started": 4,
+          "ended": 4,
+          "maxConcurrent": 14
+        },
+        {
+          "startOffsetMs": 66000,
+          "started": 4,
+          "ended": 4,
+          "maxConcurrent": 13
+        },
+        {
+          "startOffsetMs": 67000,
+          "started": 4,
+          "ended": 3,
+          "maxConcurrent": 13
+        },
+        {
+          "startOffsetMs": 68000,
+          "started": 4,
+          "ended": 5,
+          "maxConcurrent": 14
+        },
+        {
+          "startOffsetMs": 69000,
+          "started": 4,
+          "ended": 2,
+          "maxConcurrent": 14
+        },
+        {
+          "startOffsetMs": 70000,
+          "started": 4,
+          "ended": 6,
+          "maxConcurrent": 14
+        },
+        {
+          "startOffsetMs": 71000,
+          "started": 4,
+          "ended": 2,
+          "maxConcurrent": 14
+        },
+        {
+          "startOffsetMs": 72000,
+          "started": 4,
+          "ended": 4,
+          "maxConcurrent": 15
+        },
+        {
+          "startOffsetMs": 73000,
+          "started": 4,
+          "ended": 6,
+          "maxConcurrent": 15
+        },
+        {
+          "startOffsetMs": 74000,
+          "started": 4,
+          "ended": 3,
+          "maxConcurrent": 13
+        },
+        {
+          "startOffsetMs": 75000,
+          "started": 4,
+          "ended": 1,
+          "maxConcurrent": 16
+        },
+        {
+          "startOffsetMs": 76000,
+          "started": 4,
+          "ended": 2,
+          "maxConcurrent": 18
+        },
+        {
+          "startOffsetMs": 77000,
+          "started": 4,
+          "ended": 3,
+          "maxConcurrent": 19
+        },
+        {
+          "startOffsetMs": 78000,
+          "started": 4,
+          "ended": 7,
+          "maxConcurrent": 20
+        },
+        {
+          "startOffsetMs": 79000,
+          "started": 4,
+          "ended": 8,
+          "maxConcurrent": 17
+        },
+        {
+          "startOffsetMs": 80000,
+          "started": 4,
+          "ended": 5,
+          "maxConcurrent": 13
+        },
+        {
+          "startOffsetMs": 81000,
+          "started": 4,
+          "ended": 0,
+          "maxConcurrent": 15
+        },
+        {
+          "startOffsetMs": 82000,
+          "started": 4,
+          "ended": 0,
+          "maxConcurrent": 19
+        },
+        {
+          "startOffsetMs": 83000,
+          "started": 4,
+          "ended": 12,
+          "maxConcurrent": 20
+        },
+        {
+          "startOffsetMs": 84000,
+          "started": 4,
+          "ended": 2,
+          "maxConcurrent": 13
+        },
+        {
+          "startOffsetMs": 85000,
+          "started": 4,
+          "ended": 2,
+          "maxConcurrent": 15
+        },
+        {
+          "startOffsetMs": 86000,
+          "started": 4,
+          "ended": 6,
+          "maxConcurrent": 15
+        },
+        {
+          "startOffsetMs": 87000,
+          "started": 4,
+          "ended": 5,
+          "maxConcurrent": 14
+        },
+        {
+          "startOffsetMs": 88000,
+          "started": 4,
+          "ended": 4,
+          "maxConcurrent": 13
+        },
+        {
+          "startOffsetMs": 89000,
+          "started": 4,
+          "ended": 4,
+          "maxConcurrent": 13
+        },
+        {
+          "startOffsetMs": 90000,
+          "started": 4,
+          "ended": 3,
+          "maxConcurrent": 13
+        },
+        {
+          "startOffsetMs": 91000,
+          "started": 0,
+          "ended": 4,
+          "maxConcurrent": 13
+        },
+        {
+          "startOffsetMs": 92000,
+          "started": 0,
+          "ended": 3,
+          "maxConcurrent": 9
+        },
+        {
+          "startOffsetMs": 93000,
+          "started": 0,
+          "ended": 0,
+          "maxConcurrent": 6
+        },
+        {
+          "startOffsetMs": 94000,
+          "started": 0,
+          "ended": 3,
+          "maxConcurrent": 6
+        },
+        {
+          "startOffsetMs": 95000,
+          "started": 0,
+          "ended": 1,
+          "maxConcurrent": 3
+        },
+        {
+          "startOffsetMs": 96000,
+          "started": 0,
+          "ended": 0,
+          "maxConcurrent": 2
+        },
+        {
+          "startOffsetMs": 97000,
+          "started": 0,
+          "ended": 0,
+          "maxConcurrent": 2
+        },
+        {
+          "startOffsetMs": 98000,
+          "started": 0,
+          "ended": 0,
+          "maxConcurrent": 2
+        },
+        {
+          "startOffsetMs": 99000,
+          "started": 0,
+          "ended": 1,
+          "maxConcurrent": 2
+        },
+        {
+          "startOffsetMs": 100000,
+          "started": 0,
+          "ended": 1,
+          "maxConcurrent": 1
+        }
+      ]
+    },
+    {
+      "scenario": "Checkout",
+      "buckets": [
+        {
+          "startOffsetMs": 11000,
+          "started": 1,
+          "ended": 0,
+          "maxConcurrent": 1
+        },
+        {
+          "startOffsetMs": 12000,
+          "started": 1,
+          "ended": 0,
+          "maxConcurrent": 2
+        },
+        {
+          "startOffsetMs": 13000,
+          "started": 1,
+          "ended": 1,
+          "maxConcurrent": 3
+        },
+        {
+          "startOffsetMs": 14000,
+          "started": 1,
+          "ended": 1,
+          "maxConcurrent": 3
+        },
+        {
+          "startOffsetMs": 15000,
+          "started": 1,
+          "ended": 0,
+          "maxConcurrent": 3
+        },
+        {
+          "startOffsetMs": 16000,
+          "started": 1,
+          "ended": 0,
+          "maxConcurrent": 4
+        },
+        {
+          "startOffsetMs": 17000,
+          "started": 1,
+          "ended": 2,
+          "maxConcurrent": 5
+        },
+        {
+          "startOffsetMs": 18000,
+          "started": 1,
+          "ended": 2,
+          "maxConcurrent": 4
+        },
+        {
+          "startOffsetMs": 19000,
+          "started": 1,
+          "ended": 2,
+          "maxConcurrent": 3
+        },
+        {
+          "startOffsetMs": 20000,
+          "started": 1,
+          "ended": 1,
+          "maxConcurrent": 2
+        },
+        {
+          "startOffsetMs": 21000,
+          "started": 1,
+          "ended": 0,
+          "maxConcurrent": 2
+        },
+        {
+          "startOffsetMs": 22000,
+          "started": 1,
+          "ended": 0,
+          "maxConcurrent": 3
+        },
+        {
+          "startOffsetMs": 23000,
+          "started": 1,
+          "ended": 3,
+          "maxConcurrent": 4
+        },
+        {
+          "startOffsetMs": 24000,
+          "started": 1,
+          "ended": 1,
+          "maxConcurrent": 2
+        },
+        {
+          "startOffsetMs": 25000,
+          "started": 1,
+          "ended": 1,
+          "maxConcurrent": 2
+        },
+        {
+          "startOffsetMs": 26000,
+          "started": 1,
+          "ended": 1,
+          "maxConcurrent": 2
+        },
+        {
+          "startOffsetMs": 27000,
+          "started": 1,
+          "ended": 1,
+          "maxConcurrent": 2
+        },
+        {
+          "startOffsetMs": 28000,
+          "started": 1,
+          "ended": 1,
+          "maxConcurrent": 2
+        },
+        {
+          "startOffsetMs": 29000,
+          "started": 1,
+          "ended": 1,
+          "maxConcurrent": 2
+        },
+        {
+          "startOffsetMs": 30000,
+          "started": 1,
+          "ended": 1,
+          "maxConcurrent": 2
+        },
+        {
+          "startOffsetMs": 31000,
+          "started": 1,
+          "ended": 1,
+          "maxConcurrent": 2
+        },
+        {
+          "startOffsetMs": 32000,
+          "started": 1,
+          "ended": 1,
+          "maxConcurrent": 2
+        },
+        {
+          "startOffsetMs": 33000,
+          "started": 1,
+          "ended": 1,
+          "maxConcurrent": 2
+        },
+        {
+          "startOffsetMs": 34000,
+          "started": 1,
+          "ended": 1,
+          "maxConcurrent": 2
+        },
+        {
+          "startOffsetMs": 35000,
+          "started": 1,
+          "ended": 0,
+          "maxConcurrent": 2
+        },
+        {
+          "startOffsetMs": 36000,
+          "started": 1,
+          "ended": 1,
+          "maxConcurrent": 3
+        },
+        {
+          "startOffsetMs": 37000,
+          "started": 1,
+          "ended": 0,
+          "maxConcurrent": 3
+        },
+        {
+          "startOffsetMs": 38000,
+          "started": 1,
+          "ended": 1,
+          "maxConcurrent": 4
+        },
+        {
+          "startOffsetMs": 39000,
+          "started": 1,
+          "ended": 2,
+          "maxConcurrent": 4
+        },
+        {
+          "startOffsetMs": 40000,
+          "started": 1,
+          "ended": 1,
+          "maxConcurrent": 3
+        },
+        {
+          "startOffsetMs": 41000,
+          "started": 3,
+          "ended": 1,
+          "maxConcurrent": 4
+        },
+        {
+          "startOffsetMs": 42000,
+          "started": 3,
+          "ended": 2,
+          "maxConcurrent": 6
+        },
+        {
+          "startOffsetMs": 43000,
+          "started": 3,
+          "ended": 3,
+          "maxConcurrent": 6
+        },
+        {
+          "startOffsetMs": 44000,
+          "started": 3,
+          "ended": 3,
+          "maxConcurrent": 6
+        },
+        {
+          "startOffsetMs": 45000,
+          "started": 3,
+          "ended": 4,
+          "maxConcurrent": 6
+        },
+        {
+          "startOffsetMs": 46000,
+          "started": 3,
+          "ended": 2,
+          "maxConcurrent": 6
+        },
+        {
+          "startOffsetMs": 47000,
+          "started": 3,
+          "ended": 3,
+          "maxConcurrent": 6
+        },
+        {
+          "startOffsetMs": 48000,
+          "started": 3,
+          "ended": 2,
+          "maxConcurrent": 7
+        },
+        {
+          "startOffsetMs": 49000,
+          "started": 3,
+          "ended": 2,
+          "maxConcurrent": 7
+        },
+        {
+          "startOffsetMs": 50000,
+          "started": 3,
+          "ended": 3,
+          "maxConcurrent": 8
+        },
+        {
+          "startOffsetMs": 51000,
+          "started": 3,
+          "ended": 0,
+          "maxConcurrent": 10
+        },
+        {
+          "startOffsetMs": 52000,
+          "started": 3,
+          "ended": 0,
+          "maxConcurrent": 13
+        },
+        {
+          "startOffsetMs": 53000,
+          "started": 3,
+          "ended": 6,
+          "maxConcurrent": 13
+        },
+        {
+          "startOffsetMs": 54000,
+          "started": 3,
+          "ended": 1,
+          "maxConcurrent": 12
+        },
+        {
+          "startOffsetMs": 55000,
+          "started": 3,
+          "ended": 1,
+          "maxConcurrent": 14
+        },
+        {
+          "startOffsetMs": 56000,
+          "started": 3,
+          "ended": 1,
+          "maxConcurrent": 16
+        },
+        {
+          "startOffsetMs": 57000,
+          "started": 3,
+          "ended": 5,
+          "maxConcurrent": 17
+        },
+        {
+          "startOffsetMs": 58000,
+          "started": 3,
+          "ended": 4,
+          "maxConcurrent": 15
+        },
+        {
+          "startOffsetMs": 59000,
+          "started": 3,
+          "ended": 6,
+          "maxConcurrent": 14
+        },
+        {
+          "startOffsetMs": 60000,
+          "started": 3,
+          "ended": 6,
+          "maxConcurrent": 10
+        },
+        {
+          "startOffsetMs": 61000,
+          "started": 3,
+          "ended": 2,
+          "maxConcurrent": 9
+        },
+        {
+          "startOffsetMs": 62000,
+          "started": 3,
+          "ended": 3,
+          "maxConcurrent": 9
+        },
+        {
+          "startOffsetMs": 63000,
+          "started": 3,
+          "ended": 2,
+          "maxConcurrent": 9
+        },
+        {
+          "startOffsetMs": 64000,
+          "started": 3,
+          "ended": 3,
+          "maxConcurrent": 11
+        },
+        {
+          "startOffsetMs": 65000,
+          "started": 3,
+          "ended": 5,
+          "maxConcurrent": 10
+        },
+        {
+          "startOffsetMs": 66000,
+          "started": 3,
+          "ended": 2,
+          "maxConcurrent": 8
+        },
+        {
+          "startOffsetMs": 67000,
+          "started": 3,
+          "ended": 4,
+          "maxConcurrent": 9
+        },
+        {
+          "startOffsetMs": 68000,
+          "started": 3,
+          "ended": 3,
+          "maxConcurrent": 8
+        },
+        {
+          "startOffsetMs": 69000,
+          "started": 3,
+          "ended": 2,
+          "maxConcurrent": 8
+        },
+        {
+          "startOffsetMs": 70000,
+          "started": 3,
+          "ended": 3,
+          "maxConcurrent": 9
+        },
+        {
+          "startOffsetMs": 71000,
+          "started": 3,
+          "ended": 1,
+          "maxConcurrent": 10
+        },
+        {
+          "startOffsetMs": 72000,
+          "started": 3,
+          "ended": 3,
+          "maxConcurrent": 11
+        },
+        {
+          "startOffsetMs": 73000,
+          "started": 3,
+          "ended": 5,
+          "maxConcurrent": 10
+        },
+        {
+          "startOffsetMs": 74000,
+          "started": 3,
+          "ended": 3,
+          "maxConcurrent": 8
+        },
+        {
+          "startOffsetMs": 75000,
+          "started": 3,
+          "ended": 1,
+          "maxConcurrent": 10
+        },
+        {
+          "startOffsetMs": 76000,
+          "started": 3,
+          "ended": 2,
+          "maxConcurrent": 12
+        },
+        {
+          "startOffsetMs": 77000,
+          "started": 3,
+          "ended": 0,
+          "maxConcurrent": 14
+        },
+        {
+          "startOffsetMs": 78000,
+          "started": 3,
+          "ended": 6,
+          "maxConcurrent": 15
+        },
+        {
+          "startOffsetMs": 79000,
+          "started": 3,
+          "ended": 6,
+          "maxConcurrent": 12
+        },
+        {
+          "startOffsetMs": 80000,
+          "started": 3,
+          "ended": 3,
+          "maxConcurrent": 8
+        },
+        {
+          "startOffsetMs": 81000,
+          "started": 3,
+          "ended": 0,
+          "maxConcurrent": 11
+        },
+        {
+          "startOffsetMs": 82000,
+          "started": 3,
+          "ended": 2,
+          "maxConcurrent": 14
+        },
+        {
+          "startOffsetMs": 83000,
+          "started": 3,
+          "ended": 8,
+          "maxConcurrent": 12
+        },
+        {
+          "startOffsetMs": 84000,
+          "started": 3,
+          "ended": 1,
+          "maxConcurrent": 9
+        },
+        {
+          "startOffsetMs": 85000,
+          "started": 3,
+          "ended": 3,
+          "maxConcurrent": 10
+        },
+        {
+          "startOffsetMs": 86000,
+          "started": 3,
+          "ended": 3,
+          "maxConcurrent": 9
+        },
+        {
+          "startOffsetMs": 87000,
+          "started": 3,
+          "ended": 4,
+          "maxConcurrent": 9
+        },
+        {
+          "startOffsetMs": 88000,
+          "started": 3,
+          "ended": 4,
+          "maxConcurrent": 8
+        },
+        {
+          "startOffsetMs": 89000,
+          "started": 3,
+          "ended": 4,
+          "maxConcurrent": 8
+        },
+        {
+          "startOffsetMs": 90000,
+          "started": 3,
+          "ended": 2,
+          "maxConcurrent": 7
+        },
+        {
+          "startOffsetMs": 91000,
+          "started": 0,
+          "ended": 3,
+          "maxConcurrent": 7
+        },
+        {
+          "startOffsetMs": 92000,
+          "started": 0,
+          "ended": 2,
+          "maxConcurrent": 4
+        },
+        {
+          "startOffsetMs": 93000,
+          "started": 0,
+          "ended": 0,
+          "maxConcurrent": 2
+        },
+        {
+          "startOffsetMs": 94000,
+          "started": 0,
+          "ended": 0,
+          "maxConcurrent": 2
+        },
+        {
+          "startOffsetMs": 95000,
+          "started": 0,
+          "ended": 0,
+          "maxConcurrent": 2
+        },
+        {
+          "startOffsetMs": 96000,
+          "started": 0,
+          "ended": 0,
+          "maxConcurrent": 2
+        },
+        {
+          "startOffsetMs": 97000,
+          "started": 0,
+          "ended": 0,
+          "maxConcurrent": 2
+        },
+        {
+          "startOffsetMs": 98000,
+          "started": 0,
+          "ended": 0,
+          "maxConcurrent": 2
+        },
+        {
+          "startOffsetMs": 99000,
+          "started": 0,
+          "ended": 1,
+          "maxConcurrent": 2
+        },
+        {
+          "startOffsetMs": 100000,
+          "started": 0,
+          "ended": 0,
+          "maxConcurrent": 1
+        },
+        {
+          "startOffsetMs": 101000,
+          "started": 0,
+          "ended": 0,
+          "maxConcurrent": 1
+        },
+        {
+          "startOffsetMs": 102000,
+          "started": 0,
+          "ended": 0,
+          "maxConcurrent": 1
+        },
+        {
+          "startOffsetMs": 103000,
+          "started": 0,
+          "ended": 0,
+          "maxConcurrent": 1
+        },
+        {
+          "startOffsetMs": 104000,
+          "started": 0,
+          "ended": 0,
+          "maxConcurrent": 1
+        },
+        {
+          "startOffsetMs": 105000,
+          "started": 0,
+          "ended": 0,
+          "maxConcurrent": 1
+        },
+        {
+          "startOffsetMs": 106000,
+          "started": 0,
+          "ended": 0,
+          "maxConcurrent": 1
+        },
+        {
+          "startOffsetMs": 107000,
+          "started": 0,
+          "ended": 0,
+          "maxConcurrent": 1
+        },
+        {
+          "startOffsetMs": 108000,
+          "started": 0,
+          "ended": 0,
+          "maxConcurrent": 1
+        },
+        {
+          "startOffsetMs": 109000,
+          "started": 0,
+          "ended": 0,
+          "maxConcurrent": 1
+        },
+        {
+          "startOffsetMs": 110000,
+          "started": 0,
+          "ended": 0,
+          "maxConcurrent": 1
+        },
+        {
+          "startOffsetMs": 111000,
+          "started": 0,
+          "ended": 0,
+          "maxConcurrent": 1
+        },
+        {
+          "startOffsetMs": 112000,
+          "started": 0,
+          "ended": 1,
+          "maxConcurrent": 1
+        }
+      ]
+    }
+  ],
+  "total": [
+    {
+      "startOffsetMs": 1000,
+      "started": 2,
+      "ended": 0,
+      "maxConcurrent": 2
+    },
+    {
+      "startOffsetMs": 2000,
+      "started": 2,
+      "ended": 0,
+      "maxConcurrent": 4
+    },
+    {
+      "startOffsetMs": 3000,
+      "started": 2,
+      "ended": 0,
+      "maxConcurrent": 6
+    },
+    {
+      "startOffsetMs": 4000,
+      "started": 2,
+      "ended": 1,
+      "maxConcurrent": 8
+    },
+    {
+      "startOffsetMs": 5000,
+      "started": 2,
+      "ended": 4,
+      "maxConcurrent": 8
+    },
+    {
+      "startOffsetMs": 6000,
+      "started": 2,
+      "ended": 3,
+      "maxConcurrent": 7
+    },
+    {
+      "startOffsetMs": 7000,
+      "started": 2,
+      "ended": 3,
+      "maxConcurrent": 5
+    },
+    {
+      "startOffsetMs": 8000,
+      "started": 2,
+      "ended": 1,
+      "maxConcurrent": 4
+    },
+    {
+      "startOffsetMs": 9000,
+      "started": 2,
+      "ended": 3,
+      "maxConcurrent": 5
+    },
+    {
+      "startOffsetMs": 10000,
+      "started": 2,
+      "ended": 2,
+      "maxConcurrent": 4
+    },
+    {
+      "startOffsetMs": 11000,
+      "started": 3,
+      "ended": 2,
+      "maxConcurrent": 5
+    },
+    {
+      "startOffsetMs": 12000,
+      "started": 3,
+      "ended": 2,
+      "maxConcurrent": 6
+    },
+    {
+      "startOffsetMs": 13000,
+      "started": 3,
+      "ended": 3,
+      "maxConcurrent": 7
+    },
+    {
+      "startOffsetMs": 14000,
+      "started": 3,
+      "ended": 2,
+      "maxConcurrent": 7
+    },
+    {
+      "startOffsetMs": 15000,
+      "started": 3,
+      "ended": 1,
+      "maxConcurrent": 8
+    },
+    {
+      "startOffsetMs": 16000,
+      "started": 3,
+      "ended": 1,
+      "maxConcurrent": 10
+    },
+    {
+      "startOffsetMs": 17000,
+      "started": 3,
+      "ended": 3,
+      "maxConcurrent": 13
+    },
+    {
+      "startOffsetMs": 18000,
+      "started": 3,
+      "ended": 5,
+      "maxConcurrent": 12
+    },
+    {
+      "startOffsetMs": 19000,
+      "started": 3,
+      "ended": 5,
+      "maxConcurrent": 9
+    },
+    {
+      "startOffsetMs": 20000,
+      "started": 3,
+      "ended": 3,
+      "maxConcurrent": 8
+    },
+    {
+      "startOffsetMs": 21000,
+      "started": 3,
+      "ended": 0,
+      "maxConcurrent": 9
+    },
+    {
+      "startOffsetMs": 22000,
+      "started": 3,
+      "ended": 1,
+      "maxConcurrent": 11
+    },
+    {
+      "startOffsetMs": 23000,
+      "started": 3,
+      "ended": 8,
+      "maxConcurrent": 13
+    },
+    {
+      "startOffsetMs": 24000,
+      "started": 3,
+      "ended": 2,
+      "maxConcurrent": 9
+    },
+    {
+      "startOffsetMs": 25000,
+      "started": 3,
+      "ended": 4,
+      "maxConcurrent": 9
+    },
+    {
+      "startOffsetMs": 26000,
+      "started": 3,
+      "ended": 3,
+      "maxConcurrent": 9
+    },
+    {
+      "startOffsetMs": 27000,
+      "started": 3,
+      "ended": 3,
+      "maxConcurrent": 8
+    },
+    {
+      "startOffsetMs": 28000,
+      "started": 3,
+      "ended": 3,
+      "maxConcurrent": 8
+    },
+    {
+      "startOffsetMs": 29000,
+      "started": 3,
+      "ended": 2,
+      "maxConcurrent": 8
+    },
+    {
+      "startOffsetMs": 30000,
+      "started": 3,
+      "ended": 4,
+      "maxConcurrent": 9
+    },
+    {
+      "startOffsetMs": 31000,
+      "started": 5,
+      "ended": 3,
+      "maxConcurrent": 10
+    },
+    {
+      "startOffsetMs": 32000,
+      "started": 5,
+      "ended": 4,
+      "maxConcurrent": 11
+    },
+    {
+      "startOffsetMs": 33000,
+      "started": 5,
+      "ended": 4,
+      "maxConcurrent": 11
+    },
+    {
+      "startOffsetMs": 34000,
+      "started": 5,
+      "ended": 6,
+      "maxConcurrent": 12
+    },
+    {
+      "startOffsetMs": 35000,
+      "started": 5,
+      "ended": 2,
+      "maxConcurrent": 13
+    },
+    {
+      "startOffsetMs": 36000,
+      "started": 5,
+      "ended": 1,
+      "maxConcurrent": 17
+    },
+    {
+      "startOffsetMs": 37000,
+      "started": 5,
+      "ended": 3,
+      "maxConcurrent": 20
+    },
+    {
+      "startOffsetMs": 38000,
+      "started": 5,
+      "ended": 4,
+      "maxConcurrent": 21
+    },
+    {
+      "startOffsetMs": 39000,
+      "started": 5,
+      "ended": 7,
+      "maxConcurrent": 21
+    },
+    {
+      "startOffsetMs": 40000,
+      "started": 5,
+      "ended": 9,
+      "maxConcurrent": 18
+    },
+    {
+      "startOffsetMs": 41000,
+      "started": 7,
+      "ended": 5,
+      "maxConcurrent": 16
+    },
+    {
+      "startOffsetMs": 42000,
+      "started": 7,
+      "ended": 6,
+      "maxConcurrent": 18
+    },
+    {
+      "startOffsetMs": 43000,
+      "started": 7,
+      "ended": 10,
+      "maxConcurrent": 17
+    },
+    {
+      "startOffsetMs": 44000,
+      "started": 7,
+      "ended": 7,
+      "maxConcurrent": 15
+    },
+    {
+      "startOffsetMs": 45000,
+      "started": 7,
+      "ended": 8,
+      "maxConcurrent": 15
+    },
+    {
+      "startOffsetMs": 46000,
+      "started": 7,
+      "ended": 6,
+      "maxConcurrent": 15
+    },
+    {
+      "startOffsetMs": 47000,
+      "started": 7,
+      "ended": 6,
+      "maxConcurrent": 16
+    },
+    {
+      "startOffsetMs": 48000,
+      "started": 7,
+      "ended": 6,
+      "maxConcurrent": 18
+    },
+    {
+      "startOffsetMs": 49000,
+      "started": 7,
+      "ended": 6,
+      "maxConcurrent": 17
+    },
+    {
+      "startOffsetMs": 50000,
+      "started": 7,
+      "ended": 6,
+      "maxConcurrent": 18
+    },
+    {
+      "startOffsetMs": 51000,
+      "started": 7,
+      "ended": 1,
+      "maxConcurrent": 23
+    },
+    {
+      "startOffsetMs": 52000,
+      "started": 7,
+      "ended": 0,
+      "maxConcurrent": 30
+    },
+    {
+      "startOffsetMs": 53000,
+      "started": 7,
+      "ended": 13,
+      "maxConcurrent": 31
+    },
+    {
+      "startOffsetMs": 54000,
+      "started": 7,
+      "ended": 6,
+      "maxConcurrent": 27
+    },
+    {
+      "startOffsetMs": 55000,
+      "started": 7,
+      "ended": 2,
+      "maxConcurrent": 30
+    },
+    {
+      "startOffsetMs": 56000,
+      "started": 7,
+      "ended": 3,
+      "maxConcurrent": 35
+    },
+    {
+      "startOffsetMs": 57000,
+      "started": 7,
+      "ended": 7,
+      "maxConcurrent": 37
+    },
+    {
+      "startOffsetMs": 58000,
+      "started": 7,
+      "ended": 9,
+      "maxConcurrent": 36
+    },
+    {
+      "startOffsetMs": 59000,
+      "started": 7,
+      "ended": 14,
+      "maxConcurrent": 33
+    },
+    {
+      "startOffsetMs": 60000,
+      "started": 7,
+      "ended": 13,
+      "maxConcurrent": 25
+    },
+    {
+      "startOffsetMs": 61000,
+      "started": 7,
+      "ended": 6,
+      "maxConcurrent": 23
+    },
+    {
+      "startOffsetMs": 62000,
+      "started": 7,
+      "ended": 7,
+      "maxConcurrent": 22
+    },
+    {
+      "startOffsetMs": 63000,
+      "started": 7,
+      "ended": 6,
+      "maxConcurrent": 22
+    },
+    {
+      "startOffsetMs": 64000,
+      "started": 7,
+      "ended": 7,
+      "maxConcurrent": 24
+    },
+    {
+      "startOffsetMs": 65000,
+      "started": 7,
+      "ended": 9,
+      "maxConcurrent": 24
+    },
+    {
+      "startOffsetMs": 66000,
+      "started": 7,
+      "ended": 6,
+      "maxConcurrent": 21
+    },
+    {
+      "startOffsetMs": 67000,
+      "started": 7,
+      "ended": 7,
+      "maxConcurrent": 22
+    },
+    {
+      "startOffsetMs": 68000,
+      "started": 7,
+      "ended": 8,
+      "maxConcurrent": 22
+    },
+    {
+      "startOffsetMs": 69000,
+      "started": 7,
+      "ended": 4,
+      "maxConcurrent": 22
+    },
+    {
+      "startOffsetMs": 70000,
+      "started": 7,
+      "ended": 9,
+      "maxConcurrent": 23
+    },
+    {
+      "startOffsetMs": 71000,
+      "started": 7,
+      "ended": 3,
+      "maxConcurrent": 24
+    },
+    {
+      "startOffsetMs": 72000,
+      "started": 7,
+      "ended": 7,
+      "maxConcurrent": 26
+    },
+    {
+      "startOffsetMs": 73000,
+      "started": 7,
+      "ended": 11,
+      "maxConcurrent": 25
+    },
+    {
+      "startOffsetMs": 74000,
+      "started": 7,
+      "ended": 6,
+      "maxConcurrent": 21
+    },
+    {
+      "startOffsetMs": 75000,
+      "started": 7,
+      "ended": 2,
+      "maxConcurrent": 26
+    },
+    {
+      "startOffsetMs": 76000,
+      "started": 7,
+      "ended": 4,
+      "maxConcurrent": 30
+    },
+    {
+      "startOffsetMs": 77000,
+      "started": 7,
+      "ended": 3,
+      "maxConcurrent": 33
+    },
+    {
+      "startOffsetMs": 78000,
+      "started": 7,
+      "ended": 13,
+      "maxConcurrent": 35
+    },
+    {
+      "startOffsetMs": 79000,
+      "started": 7,
+      "ended": 14,
+      "maxConcurrent": 29
+    },
+    {
+      "startOffsetMs": 80000,
+      "started": 7,
+      "ended": 8,
+      "maxConcurrent": 21
+    },
+    {
+      "startOffsetMs": 81000,
+      "started": 7,
+      "ended": 0,
+      "maxConcurrent": 26
+    },
+    {
+      "startOffsetMs": 82000,
+      "started": 7,
+      "ended": 2,
+      "maxConcurrent": 33
+    },
+    {
+      "startOffsetMs": 83000,
+      "started": 7,
+      "ended": 20,
+      "maxConcurrent": 32
+    },
+    {
+      "startOffsetMs": 84000,
+      "started": 7,
+      "ended": 3,
+      "maxConcurrent": 22
+    },
+    {
+      "startOffsetMs": 85000,
+      "started": 7,
+      "ended": 5,
+      "maxConcurrent": 25
+    },
+    {
+      "startOffsetMs": 86000,
+      "started": 7,
+      "ended": 9,
+      "maxConcurrent": 24
+    },
+    {
+      "startOffsetMs": 87000,
+      "started": 7,
+      "ended": 9,
+      "maxConcurrent": 23
+    },
+    {
+      "startOffsetMs": 88000,
+      "started": 7,
+      "ended": 8,
+      "maxConcurrent": 21
+    },
+    {
+      "startOffsetMs": 89000,
+      "started": 7,
+      "ended": 8,
+      "maxConcurrent": 21
+    },
+    {
+      "startOffsetMs": 90000,
+      "started": 7,
+      "ended": 5,
+      "maxConcurrent": 20
+    },
+    {
+      "startOffsetMs": 91000,
+      "started": 0,
+      "ended": 7,
+      "maxConcurrent": 20
+    },
+    {
+      "startOffsetMs": 92000,
+      "started": 0,
+      "ended": 5,
+      "maxConcurrent": 13
+    },
+    {
+      "startOffsetMs": 93000,
+      "started": 0,
+      "ended": 0,
+      "maxConcurrent": 8
+    },
+    {
+      "startOffsetMs": 94000,
+      "started": 0,
+      "ended": 3,
+      "maxConcurrent": 8
+    },
+    {
+      "startOffsetMs": 95000,
+      "started": 0,
+      "ended": 1,
+      "maxConcurrent": 5
+    },
+    {
+      "startOffsetMs": 96000,
+      "started": 0,
+      "ended": 0,
+      "maxConcurrent": 4
+    },
+    {
+      "startOffsetMs": 97000,
+      "started": 0,
+      "ended": 0,
+      "maxConcurrent": 4
+    },
+    {
+      "startOffsetMs": 98000,
+      "started": 0,
+      "ended": 0,
+      "maxConcurrent": 4
+    },
+    {
+      "startOffsetMs": 99000,
+      "started": 0,
+      "ended": 2,
+      "maxConcurrent": 4
+    },
+    {
+      "startOffsetMs": 100000,
+      "started": 0,
+      "ended": 1,
+      "maxConcurrent": 2
+    },
+    {
+      "startOffsetMs": 101000,
+      "started": 0,
+      "ended": 0,
+      "maxConcurrent": 1
+    },
+    {
+      "startOffsetMs": 102000,
+      "started": 0,
+      "ended": 0,
+      "maxConcurrent": 1
+    },
+    {
+      "startOffsetMs": 103000,
+      "started": 0,
+      "ended": 0,
+      "maxConcurrent": 1
+    },
+    {
+      "startOffsetMs": 104000,
+      "started": 0,
+      "ended": 0,
+      "maxConcurrent": 1
+    },
+    {
+      "startOffsetMs": 105000,
+      "started": 0,
+      "ended": 0,
+      "maxConcurrent": 1
+    },
+    {
+      "startOffsetMs": 106000,
+      "started": 0,
+      "ended": 0,
+      "maxConcurrent": 1
+    },
+    {
+      "startOffsetMs": 107000,
+      "started": 0,
+      "ended": 0,
+      "maxConcurrent": 1
+    },
+    {
+      "startOffsetMs": 108000,
+      "started": 0,
+      "ended": 0,
+      "maxConcurrent": 1
+    },
+    {
+      "startOffsetMs": 109000,
+      "started": 0,
+      "ended": 0,
+      "maxConcurrent": 1
+    },
+    {
+      "startOffsetMs": 110000,
+      "started": 0,
+      "ended": 0,
+      "maxConcurrent": 1
+    },
+    {
+      "startOffsetMs": 111000,
+      "started": 0,
+      "ended": 0,
+      "maxConcurrent": 1
+    },
+    {
+      "startOffsetMs": 112000,
+      "started": 0,
+      "ended": 1,
+      "maxConcurrent": 1
+    }
+  ]
+}
