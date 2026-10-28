@@ -130,7 +130,7 @@ read exactly as they always did.
 
 `nvm use` first, and if a run reports fewer than **279 files / 4589 tests**, it
 did not run everything — nor did an integration run reporting fewer than
-**258 files / 4088 tests**, an e2e run fewer than **214**, or a
+**259 files / 4089 tests**, an e2e run fewer than **214**, or a
 `pnpm test:e2e:cross` run fewer than **642** (214 on each of three engines).
 (Update those numbers when a sub-project adds suites, or the next reader
 calibrates against a stale floor and a silently-skipped run looks like a
@@ -275,6 +275,103 @@ removed afterwards — both sessions' suites default to `perfportal`) and failed
 ONE, `error-series.integration`'s five-series case on a P1001 "Can't reach
 database server", which then passed **7 of 7** three times alone. CI's `build`
 job is the arbiter for that suite.
+
+**MERGED AFTER THE WORKER-SIGTERM BRANCH, SO THE FLOORS ARE BOTH BRANCHES'.**
+That branch added one integration file and no unit or e2e case; this one adds
+a `.tsx` unit file (which integration never runs) and an e2e spec. On the
+merged tree: unit **279 / 4589**, integration **259 / 4089**, e2e **214**,
+`test:e2e:cross` **642**. CI's `build` job on the merge commit measures them.
+
+The worker-sigterm branch (`fix/worker-sigterm`). Unit **stays 278 / 4587**
+(the new file is an `.integration.test.ts`, which that config excludes),
+integration **258 / 4088 to 259 / 4089**
+(`apps/worker/test/shutdown-exit.integration.test.ts`, 1), **e2e stays 213**.
+Each predicted first and each collected exactly that, Node v22.19.0,
+`perfportal_worker`, Redis db 11 flushed before integration and before e2e,
+port 3820, every `.tsbuildinfo` deleted before typecheck: `pnpm build`,
+`typecheck` and `lint` exit 0 by their own exit codes; `test:unit`
+**278 / 4587**, exit 0, zero `Errors` lines; `test:integration` COLLECTED
+**259 / 4089** and exited 1 on TWO cases, both a P1001 "Can't reach database
+server" from the API (`read.integration`'s verdictChanges case and
+`live.integration`'s streamed-equals-uploaded case, the latter failing on an
+undefined `durationMs` read back through that 500); nothing under `apps/api`
+differs from base, and the two files then passed **103 of 103 twice** alone;
+`pnpm test:e2e --workers=2` read back `Running 213 tests using 2 workers`,
+**213 passed, exit 0**, on the final tree. The review's hardening (the
+`disconnect()` fallback, the child `error` listener, comments) landed after the
+integration run: build, typecheck and lint exit 0 again, and the shutdown case
+alone **3 of 3**; the full integration suite was not re-run on it.
+
+**THE WORKER NEVER EXITED ON SIGTERM. "30 TO 60 SECONDS" WAS THE CAP, NOT THE
+BEHAVIOUR.** This file records it eight times — 20 s, 25 s, 30 s, 31 s, 35 s,
+60.3 s — and every one of those ended in a SIGKILL by PID, so each number is
+how long the person stopping it was willing to wait. Measured on an idle
+worker (`perfportal_worker`, Redis db 11) with a preloaded probe that dumps
+`process.getActiveResourcesInfo()` and `process._getActiveHandles()` every 3 s
+after SIGTERM: still alive at **+69 s**, with exactly ONE live resource from
++3 s onward:
+
+```
+  [probe] +3s  resources: ["TCPSocketWrap"]
+  [probe]   handle: Socket ::1:6380 local=49202 destroyed=false
+  ...
+  [probe] +69s resources: ["TCPSocketWrap"]   (unchanged)
+```
+
+Every teardown step had run; `shutdown()` never calls `process.exit`, so it
+relies on the loop draining, and one ref'd socket keeps it from ever draining.
+`lsof` put that socket at `[::1]:49202 -> 6380`, and Redis's own `CLIENT LIST`
+for db 11 showed ONE connection left, `cmd=info idle=104` — ioredis's ready
+check and nothing since. That is the sweeper's `live:closed` publisher, the
+only connection that sends nothing on an idle worker:
+`new Sweeper(config, pool, chunks, blobs, new Redis(config.redisUrl))`, inline,
+with no name anything could quit. `Sweeper.close()` closes only the BullMQ
+queue it builds itself, correctly — every test hands it a connection the test
+quits on its own. **main.ts lent it a connection and never took it back.**
+
+**THE FIX IS ONE SHUTDOWN STEP, AND THE OWNER IS main.ts.** `sweeperRedis` is
+named and quit after `sweeper.close()`; a sweep still in flight publishes with
+`.catch()`, so a quit connection costs it a dropped ping and nothing else.
+A quit that FAILS (Redis unreachable, a publish stuck in ioredis's offline
+queue) falls back to `disconnect()` and rethrows, so `runShutdown` logs it and
+the reconnect timers do not hold the loop the way the socket did. That path is
+argued from ioredis, not measured: stopping Redis here would stop it for the
+other sessions on this machine. `LiveFoldOwner.close()` quits its two
+connections with no such fallback, which predates this branch and is left.
+After it: **0.41 s, 0.25 s, 0.26 s, exit 0** with the probe attached, and
+**0.19 s, 0.18 s, 0.18 s, exit 0** on the final tree without it, three runs
+each, the probe showing nothing left. The fold owner's two Redis connections, BullMQ's, the pool and
+Prisma were all being closed already — the probe is what says so, rather than
+a reading of `shutdown()`.
+
+**NO IN-PROCESS TEST CAN SEE THIS, SO THE CASE SPAWNS `dist/main.js`.** A
+vitest worker keeps its own loop alive whatever the code under test leaks.
+`shutdown-exit.integration.test.ts` starts the real entry point, waits for
+both scan lines (by then every connection main.ts opens exists), sends SIGTERM
+and requires exit code 0, no signal, no `shutdown: … failed` line, inside
+10 s. A spawn `error` and a child killed during start-up each fail it by name
+rather than as a hang or a 30 s "did not start". It truncates `run` and obliterates the three queues first, because a
+worker started on a shared Redis consumes whatever an earlier file left there.
+And it refuses to run over a stale build: every `src/**/*.ts` must have a
+`dist` twin at least as new — the "a mutation of the source does not reach the
+suite until it is rebuilt" trap this file records three times, closed for this
+case — for `apps/worker` only; the workspace packages run from their own
+`dist`, which `tsc -b` builds and the guard does not check.
+
+**RED-VERIFIED BOTH WAYS**, from a committed checkpoint, the quit step
+removed:
+
+```
+  source mutated, dist not rebuilt   the staleness guard: expected [ 'src/main.ts' ] to deeply equal []
+  mutation built                     "still running 10000 ms after SIGTERM", 10.83 s
+  restored and rebuilt               1 passed
+```
+
+**`process.on('SIGTERM')` IN A PROBE DOES NOT CHANGE WHAT IT MEASURES**:
+main.ts installs its own listener, so the default "terminate on SIGTERM" was
+already gone. The timer the probe adds is `unref()`ed so it cannot keep the
+process alive itself. Kept outside the repo; the shape is worth reusing for
+the next "why does this not exit".
 
 The GE report parity Gradle-plugin branch (`feat/ge-report-gradle`, PR 4 of
 `docs/superpowers/specs/2026-10-22-ge-report-parity-design.md`, plan
@@ -1755,6 +1852,8 @@ scratch database and Redis db 13, SIGTERM by PID, a 60 s cap then SIGKILL:
 All four outlive the cap identically, so the recompute queue neither causes
 nor worsens it — this file already records the worker ignoring SIGTERM for
 20–30 s and taking a SIGKILL by PID. Cause not traced; it is its own branch.
+**[Traced and fixed later: it never exited at all — the sweeper's Redis
+publisher was never quit. See the worker-sigterm entry.]**
 
 **WHAT WAS RUN**, on Node v22.19.0, against `perfportal_backfill` (dropped,
 recreated and migrated before the shutdown timing), Redis db 13 and e2e port
