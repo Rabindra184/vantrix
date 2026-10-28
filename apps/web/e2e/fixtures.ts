@@ -444,6 +444,34 @@ export async function seedRunWithData(orgId: string): Promise<string> {
 }
 
 /**
+ * A real run of a project that configures a warm-up window (AC-STAT-4), so its
+ * elapsed-time charts draw the warm-up band.
+ *
+ * `warmupMs` is a project setting the pipeline FREEZES onto the run at ingest
+ * (`engineOptionsFrom`), and `GET /v1/runs/:id` reports it back from there —
+ * so the project has to carry it BEFORE the run is ingested, and in its own
+ * project: the org's shared 'checkout' project must not change what every
+ * other seed in the org parses with. Same order-independence argument as
+ * `seedRunWithNaAssertion` below.
+ *
+ * Post-condition on the frozen value, because a run that silently lost it
+ * would draw no band and make the browser case read as a rendering defect.
+ */
+export async function seedRunWithWarmup(orgId: string, warmupMs: number): Promise<string> {
+  const project = await prisma.project.create({
+    data: { orgId, slug: unique('warmup'), name: 'Warm-up', settings: { warmupMs } },
+  });
+  const token = await mintIngestToken(orgId, project.id);
+  const runId = await ingestAndProcess(token);
+  const row = await prisma.run.findUnique({ where: { id: runId } });
+  const frozen = (row?.engineOptions as { warmupMs?: unknown } | null)?.warmupMs;
+  if (frozen !== warmupMs) {
+    throw new Error(`seedRunWithWarmup: run ${runId} froze warmupMs ${String(frozen)}, not ${warmupMs}.`);
+  }
+  return runId;
+}
+
+/**
  * A real run WITH an agent file: the paired fixture's `simulation.log` and its
  * agent file, uploaded together and parsed through the same path
  * `seedRunWithData` takes, so the worker finds the agent file beside the log

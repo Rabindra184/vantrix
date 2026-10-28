@@ -16,6 +16,7 @@ import {
   DataZoomSliderComponent,
   GridComponent,
   LegendComponent,
+  MarkAreaComponent,
   TooltipComponent,
 } from 'echarts/components';
 import * as echarts from 'echarts/core';
@@ -62,6 +63,19 @@ echarts.use([
   // nothing in the console at the point of use. The probe that found it counted
   // `<rect>` elements in the drawn SVG and got 1.
   DataZoomSliderComponent,
+
+  // AC-STAT-4's warm-up band (`Chart`'s `xAxis.warmupMs`): a `markArea` on the
+  // first drawn series of every elapsed-time chart. It shipped WITHOUT this
+  // line, through the same silent discard as the slider above: `Chart` built
+  // the band, `Chart.test.tsx` (which mocks ECharts) asserted the option, and
+  // ECharts threw the `markArea` away, so no run ever showed its warm-up. A
+  // marker is a COMPONENT, not part of the series type that carries it.
+  //
+  // `echarts-registration.test.tsx` now renders `Chart` against THIS module's
+  // real registry and fails on any component or series type it emits that is
+  // not registered here; `warmup-band.spec.ts` reads the band out of the
+  // drawn SVG.
+  MarkAreaComponent,
 
   // SVG, NOT canvas. Marks become real DOM nodes, which is what lets a
   // Playwright spec assert on what was actually drawn (Task 10's crosshair
