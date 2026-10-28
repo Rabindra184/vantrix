@@ -128,10 +128,10 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **278 files / 4587 tests**, it
+`nvm use` first, and if a run reports fewer than **279 files / 4589 tests**, it
 did not run everything — nor did an integration run reporting fewer than
-**259 files / 4089 tests**, an e2e run fewer than **213**, or a
-`pnpm test:e2e:cross` run fewer than **639** (213 on each of three engines).
+**259 files / 4089 tests**, an e2e run fewer than **214**, or a
+`pnpm test:e2e:cross` run fewer than **642** (214 on each of three engines).
 (Update those numbers when a sub-project adds suites, or the next reader
 calibrates against a stale floor and a silently-skipped run looks like a
 pass.)
@@ -150,6 +150,137 @@ still Chromium and still 102; `pnpm test:e2e:cross` was 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The warmup-band-renders branch (`fix/warmup-band-renders`) added ONE unit
+file — `apps/web/test/echarts-registration.test.tsx` (2) — and ONE e2e file,
+`apps/web/e2e/warmup-band.spec.ts` (1): unit **278 / 4587 to 279 / 4589**,
+**e2e 213 to 214** (642 on three engines), and integration **stays
+258 / 4088** — both new files are a `.tsx` and a spec, which that config never
+collects. Each was predicted first and each collected exactly that. It takes
+the first item of GE report parity PR 3's KNOWN AND LEFT list.
+
+**AC-STAT-4's WARM-UP BAND HAD NEVER BEEN DRAWN, ON ANY RUN.** The
+demarcate-the-warmup-window branch made `Chart` emit a `markArea` over a run's
+warm-up window on the first drawn series of every elapsed-time chart, and
+`charts/echarts.ts` never passed `MarkAreaComponent` to `echarts.use`. ECharts
+DISCARDS an option whose component is unregistered, with no throw and nothing
+logged at the point of use, so every run whose project configures `warmupMs`
+drew its charts with no band. `Chart.test.tsx`'s four warm-up cases were green
+throughout, because that file mocks `echarts.ts` and can only see the option
+`Chart` hands over. **A marker is a COMPONENT**, not part of the series type
+that carries it — registering `LineChart` registers no `markArea`.
+
+**THIRD TIME FOR ONE SILENT DISCARD, SO THE FIX IS A GUARD AT THE SEAM.** The
+scatter series (an empty frame over a full data table) and the time-window
+slider (a chart with no slider under it) each shipped the same way, and
+`echarts.ts`' own comments record both. `echarts-registration.test.tsx`
+renders the real `Chart` across the props that add a component (a brush, a
+warm-up band, a legend, scatter, bar and pie) with `vi.mock` keeping the REAL
+`echarts.ts` and replacing only `init`/`connect` — so `echarts.use` runs
+against the real `echarts/core` while the emitted options are captured. Every
+top-level and per-series key ECharts knows as a component must then answer
+`ComponentModel.hasClass`, every series `type` `ComponentModel.getClass`, and
+every component that names a SUBTYPE (`legend: { type: 'scroll' }`, an axis's
+`type`, `dataZoom: [{ type: 'slider' }]`) `getClass(main, sub)` as well —
+`hasClass('dataZoom')` is true once the slider is registered, so a main-type
+check alone would pass an `inside` dataZoom that ECharts then drops. That
+half came from the Opus review; red-verified by emitting `type: 'inside'`.
+
+**THE UNIVERSE OF COMPONENT KEYS IS ECHARTS' OWN, READ IN A SEPARATE
+PROCESS.** A hand-written list of "keys that need a component" goes stale the
+day `Chart` reaches for one nobody wrote down, and importing the full
+`echarts` barrel in the test would register EVERYTHING globally and make every
+assertion vacuously true. So a child `node` imports the barrel and prints
+`ComponentModel.getAllClassMainTypes()`. A source scan was measured first and
+refused: it found `title:` in `Chart.tsx` — the `readonly title: string` PROP
+— which is a type, not an option. **`getClass` is real at runtime and absent
+from ECharts' typings**; `hasClass` and `getAllClassMainTypes` are typed. The
+floor (`grid`, `xAxis.value`, `xAxis.category`, `yAxis.value`, `tooltip`,
+`legend.scroll`, `dataZoom.slider`, `markArea` collected) is what keeps a
+rendering that stops reaching a branch from passing over less; red-verified by
+dropping `warmupMs` from the render. It is asserted AFTER the registration
+check, so a missing registration reports as one rather than as the floor. The
+child runs from the test file's own directory (`expect.getState().testPath`),
+not `process.cwd()`, which differs between `pnpm test:unit` and an editor.
+
+**THE BROWSER CASE READS GEOMETRY, NOT PRESENCE.** `seedRunWithWarmup` gives
+the reference run its own project with `settings: { warmupMs: 10000 }`
+(frozen at ingest, checked after) — 10 000 on purpose, because the x axis
+then draws a `00:00:10` tick to compare the band's edge against. The Summary's
+percentile chart must carry exactly one translucent filled path (ECharts
+writes `itemStyle.opacity` as `fill-opacity`, here 0.55) whose left edge is
+the gridlines' left edge, whose right edge is that tick's centre (both within
+1.5 px), and whose height spans the gridlines, plus the `warm-up` label; the
+same chart for `seedRunWithData`'s run must carry neither. The whole geometry
+is retried with `toPass`, not just the band's existence, because a second
+`setOption` animates the band's points while tick labels jump at once.
+
+**`getBoundingClientRect` ON A STROKED SVG PATH IS ENGINE-SPECIFIC, AND THE
+FIRST VERSION PASSED ON CHROMIUM ONLY.** Run on all three engines it failed on
+Firefox with "the warm-up band was never drawn" over a band Firefox had drawn
+perfectly: Firefox inflates the client rect of any stroked path, so a 1 px
+gridline read **4 px tall** (no zero-height gridline found, so `bandOf`
+answered null) and the band — `stroke-width: 0`, still stroked — sat **2 px**
+right of the gridlines' edge. The Opus review had predicted the first half.
+Geometry is `getBBox()` mapped through `getScreenCTM()` now, which excludes the
+stroke in every engine, and the case passes on chromium, firefox and webkit,
+twice each. **`pnpm test:e2e` is Chromium alone**, so measure any new SVG
+geometry assertion with `PERFPORTAL_E2E_BROWSERS=all` before trusting it. Measured on the
+probe: band x 56.7 to 188.0, the 10 s tick at 187.98, the plot 56.7 to 886.0.
+
+**RED-VERIFIED**, each from a committed checkpoint, the replacement count
+asserted:
+
+```
+  MarkAreaComponent out of echarts.use     unit: expected [ 'markArea' ] to deeply equal []
+                                           e2e: "the warm-up band was never drawn", Received null
+  DataZoomSliderComponent out              unit: expected [ 'dataZoom' ] to deeply equal []
+  ScatterChart out                         unit: series types … expected [ 'scatter' ]
+  the slider emitted as type 'inside'      unit: expected [ 'dataZoom.inside' ] to deeply equal []
+  warmupMs dropped from the guard's render unit: the vacuity floor
+  the band's end at warmupMs / 2           e2e: "ends at the warm-up boundary", 65.65 px off
+```
+
+**AND AN UNUSED IMPORT IS NOT A REGISTRATION.** Every name above appears TWICE
+in `echarts.ts` — in the `import` from `echarts/components` and in the
+`echarts.use([...])` list — so the first attempt at each mutation refused
+itself on a replacement count of 2. Only the `use` entry registers anything,
+so each mutation removes that one and leaves the import — measured: `eslint`
+then fails on `no-unused-vars` and `tsc --noEmit` exits 0, so a half-reverted
+registration is caught by `lint` and by nothing that typechecks.
+
+**WHAT WAS RUN**, Node v22.19.0, `perfportal_charts`, Redis db 14, port
+3810, every `.tsbuildinfo` outside `node_modules` deleted first. **The "flush
+db 14" before each suite went to the WRONG Redis**: it was
+`docker exec $(docker ps … | grep -i redis | head -1)`, and the first match on
+this machine is another project's `furan-test-redis`, not `infra-redis-1`
+(the one on 6380). So this session's db 14 was never flushed, and a foreign
+project's was. Name the container (`infra-redis-1`), or flush through the port
+the suite uses (`redis-cli -p 6380 -n 14 FLUSHDB`), never by `head -1`. `pnpm build`, `typecheck` and `lint` exit 0 by
+their own exit codes (typecheck only after `getClass` was named: vitest passed
+the guard while `tsc` answered TS2339 — the gate's first command is still the
+only one that typechecks a test); `test:unit` **279 / 4589**, exit 0, on the
+final tree; `pnpm test:e2e --workers=2` read back `Running 214 tests using 2
+workers`, **214 passed, exit 0**, on the final tree; the warm-up spec alone on
+three engines `--repeat-each=2`, **6 of 6**. `test:integration` COLLECTED
+**258 / 4088** twice and passed neither cleanly, on failures this diff cannot
+reach (`git diff --name-only origin/main` is `apps/web` and `CLAUDE.md`
+alone). The first run, on the shared `perfportal` bucket, failed three: two
+`BUNDLE_CHECKSUM_MISMATCH` in `apps/worker`'s pipeline files — the object at a
+run's key no longer matching its recorded hash, the shape of another suite
+writing the same bucket — and a `RangeError: Invalid time value` in
+`telemetry.integration`; those three files then passed **50 of 50** alone.
+The second ran with `S3_BUCKET=perfportal-charts` (a bucket of its own,
+removed afterwards — both sessions' suites default to `perfportal`) and failed
+ONE, `error-series.integration`'s five-series case on a P1001 "Can't reach
+database server", which then passed **7 of 7** three times alone. CI's `build`
+job is the arbiter for that suite.
+
+**MERGED AFTER THE WORKER-SIGTERM BRANCH, SO THE FLOORS ARE BOTH BRANCHES'.**
+That branch added one integration file and no unit or e2e case; this one adds
+a `.tsx` unit file (which integration never runs) and an e2e spec. On the
+merged tree: unit **279 / 4589**, integration **259 / 4089**, e2e **214**,
+`test:e2e:cross` **642**. CI's `build` job on the merge commit measures them.
 
 The worker-sigterm branch (`fix/worker-sigterm`). Unit **stays 278 / 4587**
 (the new file is an `.integration.test.ts`, which that config excludes),
@@ -700,6 +831,9 @@ started under the 8 / 10 gate.
     registered in `charts/echarts.ts`, so the `markArea` `Chart` emits is
     discarded; `Chart.test` mocks ECharts, which is why no suite saw it. Its
     own branch, with a browser check.
+    **[Done by the warmup-band-renders branch, the entry at the top: the
+    component is registered, a guard renders the real `Chart` against the
+    real registry, and `warmup-band.spec.ts` reads the band out of the SVG.]**
   - `RunTelemetry`'s `!terminal` branch is unreachable from the product now —
     the Report withholds every section's charts while a run streams.
   - `PercentilesChart`'s bands and outcome still reset on a window change; the
@@ -12062,6 +12196,10 @@ and every entry after it inherited the error. Corrected against a measured run
 what exposed it. **e2e stays 149.** It is a FEATURE rather than a
 correction — AC-STAT-4's second half — and it is the first work in this file
 taken from an acceptance criterion the product half-implemented.
+**[Corrected later: half-implemented twice. The band this branch built was
+never drawn — `charts/echarts.ts` did not register `MarkAreaComponent`, so
+ECharts discarded the `markArea` on every run, and every case below asserted
+the option rather than the drawing. See the warmup-band-renders entry.]**
 
 **THE ENGINE KEPT THE RAMP SO THE CHARTS COULD SHOW IT, AND NOTHING SHOWED
 IT.** `LiveEngine.add` accumulates every time SERIES before its warm-up guard
