@@ -209,7 +209,27 @@ if (config.recomputeEnabled) {
   timer.unref();
   recompute = { queue, consumer, timer };
 }
-const sweeper = new Sweeper(config, pool, chunks, blobs, new Redis(config.redisUrl));
+/**
+ * The sweeper's `live:closed` publisher is created HERE and quit HERE, in a
+ * shutdown step of its own -- `Sweeper.close()` closes only the BullMQ queue
+ * it constructed itself, because every test hands the sweeper a connection it
+ * goes on to quit on its own.
+ *
+ * ═══ THIS ONE LINE WAS WHY SIGTERM NEVER ENDED THE WORKER ═══
+ * It used to be `new Sweeper(..., new Redis(config.redisUrl))`, inline, with
+ * no name anything could quit later. `shutdown()` below never calls
+ * `process.exit` -- it relies on the event loop draining -- and an open ioredis
+ * socket is a ref'd handle, so every teardown step ran and the process then sat
+ * idle on that one socket FOR EVER. Measured on an idle worker with a handle
+ * dump after SIGTERM: exactly one live resource, a `TCPSocketWrap` to Redis,
+ * still there at +69 s, and Redis's own `CLIENT LIST` showing that connection
+ * had sent nothing but ioredis's `info` ready check since it was opened. The
+ * "30 to 60 seconds" recorded elsewhere was whatever cap the person stopping
+ * it chose before sending SIGKILL. `shutdown-exit.integration.test.ts` holds
+ * the process to exiting on its own.
+ */
+const sweeperRedis = new Redis(config.redisUrl);
+const sweeper = new Sweeper(config, pool, chunks, blobs, sweeperRedis);
 // This owner's Redis connection is its own -- not the one BullMQ's
 // `startConsumer`/`Sweeper` open via `{ connection: { url } }` -- because
 // `LiveFoldOwner.close()` calls `.quit()` on it directly (see that method's
@@ -296,6 +316,17 @@ function shutdown(): Promise<void> {
       await verifyQueue?.close();
     } },
     { name: 'sweeper.close', run: () => sweeper.close() },
+    // After sweeper.close(). A sweep still in flight publishes with `.catch()`, so a connection
+    // already quit costs it a dropped `live:closed` ping and nothing else. See `sweeperRedis` above.
+    // A quit that fails (Redis unreachable, a publish stuck in the offline queue) still has to let
+    // go: `disconnect()` stops the reconnect timers, which would otherwise hold the loop exactly as
+    // the unquit socket did. Rethrown so `runShutdown` logs the failure.
+    { name: 'sweeperRedis.quit', run: async () => {
+      await sweeperRedis.quit().catch((err: unknown) => {
+        sweeperRedis.disconnect();
+        throw err;
+      });
+    } },
     // Before pool.end(): each owned run holds a dedicated pooled client for
     // its advisory lock's whole lifetime, and close() releases every one of
     // them (plus this owner's own Redis connection) -- see its own doc
