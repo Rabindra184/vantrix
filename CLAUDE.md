@@ -151,6 +151,49 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The runner-boringssl branch (`fix/runner-boringssl`) added no unit FILE and 3
+cases to `apps/runner/test/artifact.test.ts`: unit **279 / 4589 to
+279 / 4592**, and integration **259 / 4089 to 259 / 4092** (that file is a
+`.ts`, which integration runs too); **e2e stays 214**. It is the first defect
+the GE side-by-side proof found.
+
+**EVERY ON-PREM RUNNER JOB RAN GATLING ON THE JDK's TLS, AND NOTHING SAID
+SO.** netty-tcnative unpacks BoringSSL into `java.io.tmpdir` and `dlopen`s
+it; the compose runner's `/tmp` is a tmpfs, which Docker mounts `noexec`, so
+the load failed and Netty fell back in silence. `runnerChildEnv` already set
+`TMPDIR` to the work directory — and Java ignores `TMPDIR`, so
+`java.io.tmpdir` was `/tmp` all along. Each JVM now gets
+`-Djava.io.tmpdir=<work dir>/tmp`, after the `--add-opens` defaults and BEFORE
+the operator's `javaOptions` (the JVM keeps the last `-D`). Measured in the
+container as uid 20001: `OpenSsl.isAvailable()` false with `/tmp`, true with
+the job's directory, which Netty leaves empty after loading.
+
+**THE REAL RUN IS THE PROOF, AND IT MATCHED GE TO THE DIGIT.** The fixed
+`apps/runner/dist` mounted into the `infra/Dockerfile` image, with compose's
+user, caps, `no-new-privileges` and `/tmp` tmpfs, and a job carrying NO
+`javaOptions`: the Gatling JVM's own command line carried the per-job
+`-Djava.io.tmpdir`, and bits sent/received read **9.6 / 24.1 Mb against GE's
+9.6 / 24.1** (6.0 before). The image was not rebuilt — the host had 7.4 GiB
+free and the last build there died read-only — and the change is
+`apps/runner/dist` alone. Red-verified twice: no `mkdir` fails all three new
+cases; ours after the operator's option fails the override case alone. A
+comment by the compose `tmpfs` now says why `/tmp` stays `noexec`.
+
+**WHAT WAS RUN**, Node v22.19.0, `perfportal_tmpdir`, Redis db 10 flushed
+before integration and e2e, port 3810, every `.tsbuildinfo` deleted first:
+`pnpm build`, `typecheck` and `lint` exit 0 by their own exit codes;
+`test:unit` **279 / 4592**, exit 0, zero `Errors` lines; `test:integration`
+COLLECTED **259 / 4092** and failed two cases on a P1001 "Can't reach database
+server" at load ~21 (`verdict.integration`'s rule-passes case and
+`visibility.integration`'s bearer case, each ~5.8 s); alone, the verdict file
+passed and `visibility.integration` passed **12 of 12** twice; `pnpm test:e2e
+--workers=2` read back `Running 214 tests using 2 workers`, **214 passed, exit
+0**.
+
+**AND A PROCESS SCAN MATCHES ITSELF.** Looking for `-Djava.io.tmpdir=` across
+`/proc/*/cmdline` with `grep -o` found the grep's own argument first. Match
+the process (`java*io.gatling.app.Gatling*`) before the flag.
+
 The GE side-by-side proof branch (`docs/ge-side-by-side-proof`, PR 5 of
 `docs/superpowers/specs/2026-10-22-ge-report-parity-design.md`, check 3 of its
 section 9) added no test and moves no floor: unit stays **279 / 4589**,

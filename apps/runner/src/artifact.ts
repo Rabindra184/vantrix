@@ -53,12 +53,14 @@ export async function prepareGatlingRun(
 
   const workDir = path.resolve(config.workDir, job.id);
   const resultsDir = path.join(workDir, 'results');
+  const tmpDir = path.join(workDir, 'tmp');
   const agentLogPath = agent === null ? null : path.join(workDir, AGENT_LOG_FILENAME);
   const agentOptions = agent === null || agentLogPath === null
     ? []
     : [agentArg(agent.jar, agentLogPath, config.maxAgentLogBytes - AGENT_CAP_HEADROOM_BYTES)];
   await rm(workDir, { recursive: true, force: true });
   await mkdir(resultsDir, { recursive: true });
+  await mkdir(tmpDir, { recursive: true });
 
   if (artifact.kind === 'gatling_jar') {
     await makeChildWritable(workDir);
@@ -71,7 +73,7 @@ export async function prepareGatlingRun(
         cwd: workDir,
         args: [
           ...agentOptions,
-          ...jvmArgs(job),
+          ...jvmArgs(job, tmpDir),
           '-cp',
           await jarClasspath(config, artifactPath),
           'io.gatling.app.Gatling',
@@ -91,7 +93,7 @@ export async function prepareGatlingRun(
     await assertSafeExtractedTree(bundleDir, Date.now() + EXTRACT_TIMEOUT_MS);
     await makeChildWritable(workDir);
     const gatlingHome = await findGatlingHome(bundleDir);
-    const javaArgs = jvmArgs(job);
+    const javaArgs = jvmArgs(job, tmpDir);
     return {
       resultsDir,
       workDir,
@@ -213,9 +215,29 @@ function agentArg(jar: string, out: string, maxBytes: number): string {
   return `-javaagent:${jar}=out=${out},max=${maxBytes}`;
 }
 
-function jvmArgs(job: RunnerJobRecord): string[] {
+/**
+ * ═══ `java.io.tmpdir` IS THE JOB's OWN DIRECTORY, NOT `/tmp` ═══
+ *
+ * netty-tcnative unpacks its BoringSSL library into `java.io.tmpdir` and
+ * `dlopen`s it from there, and Java takes that property from neither `TMPDIR`
+ * nor anything else this runner sets — it is `/tmp` unless it is told. The
+ * compose runner's `/tmp` is a tmpfs, which Docker mounts `noexec`, so the
+ * load failed and Netty fell back to the JDK's TLS WITHOUT A WORD: every
+ * on-prem job ran a different TLS stack from the same simulation under
+ * `gatlingRun` or on Gatling Enterprise. Found by the GE side-by-side proof
+ * as bits sent reading 6.0 Mb against 9.6 — Java 21's TLS sends no
+ * post-quantum key share — and measured in the running container:
+ * `OpenSsl.isAvailable()` false with `/tmp`, true with this directory.
+ *
+ * The directory sits in the job's work directory, so `makeChildWritable` opens
+ * it to the simulation's uid and the executor's `finally` removes it with
+ * everything else. It comes BEFORE the operator's `javaOptions`, because the
+ * JVM keeps the last `-D` for a property and an operator's choice should win.
+ */
+function jvmArgs(job: RunnerJobRecord, tmpDir: string): string[] {
   return [
     ...DEFAULT_JVM_OPTIONS,
+    `-Djava.io.tmpdir=${tmpDir}`,
     ...splitArgs(job.javaOptions),
     ...systemPropertyArgs(job.systemProperties),
   ];
