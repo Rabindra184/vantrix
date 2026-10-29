@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { access, chmod, lstat, mkdir, readdir, rm } from 'node:fs/promises';
+import { access, chmod, lstat, mkdir, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import type { GatlingJarFacts } from '@perfportal/core';
@@ -10,6 +10,7 @@ import { RunnerExecutionError } from './errors.js';
 import type { ProcessCommand } from './process.js';
 import { spawnAndWait } from './process.js';
 import { splitArgs, systemPropertyArgs } from './args.js';
+import { removeWorkDir } from './work-dir.js';
 
 const execFileAsync = promisify(execFile);
 const EXTRACT_TIMEOUT_MS = 2 * 60 * 1000;
@@ -58,7 +59,7 @@ export async function prepareGatlingRun(
   const agentOptions = agent === null || agentLogPath === null
     ? []
     : [agentArg(agent.jar, agentLogPath, config.maxAgentLogBytes - AGENT_CAP_HEADROOM_BYTES)];
-  await rm(workDir, { recursive: true, force: true });
+  await removeWorkDir(workDir, { uid: config.childUid ?? undefined, gid: config.childGid ?? undefined });
   await mkdir(resultsDir, { recursive: true });
   await mkdir(tmpDir, { recursive: true });
 

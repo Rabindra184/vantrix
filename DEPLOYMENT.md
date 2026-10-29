@@ -522,6 +522,24 @@ docker compose -f infra/docker-compose.yml --profile onprem up -d --build
 Migrations run automatically; `bootstrap` re-runs and changes nothing that
 exists. Your data lives in named volumes and is not touched by a rebuild.
 
+**Upgrading past the runner-cleanup fix: clear the old job directories once.**
+Before it, the on-prem runner could not delete what Gatling wrote, so every
+job it ran left its `results/` directory, with the run's whole
+`simulation.log`, in the `runner-work` volume (the runner logged `failed to
+clean work dir: EACCES`). The new runner cleans up after every job, but it
+does not touch directories left by earlier ones. `runner-work` holds nothing
+but per-job scratch, and every run's log is already stored in the object
+store, so removing the volume loses no data:
+
+```bash
+docker compose -f infra/docker-compose.yml --profile onprem stop runner
+docker volume rm <project>_runner-work
+docker compose -f infra/docker-compose.yml --profile onprem up -d runner
+```
+
+Do it while no runner job is running; `docker volume ls` shows the
+`<project>` prefix.
+
 **The project-access release cannot be rolled back by image alone.** Its
 migration promotes every existing org member to admin and drops
 `org_member.role`, which older images read. Under Compose an older image will

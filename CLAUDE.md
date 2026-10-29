@@ -151,6 +151,55 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The runner-cleanup branch (`fix/runner-cleanup`) added ONE unit file —
+`apps/runner/test/work-dir.test.ts` (4) — so unit **279 / 4592 to
+280 / 4596** and integration **259 / 4092 to 260 / 4096** (it is a `.ts`);
+**e2e stays 214**. The second defect the GE side-by-side proof found.
+
+**EVERY RUNNER JOB LEFT ITS WHOLE `simulation.log` ON THE VOLUME.** Gatling,
+as uid 20001, creates `results/<simulation>/` 755; the compose runner is root
+with `cap_drop: ALL`, so with no `CAP_DAC_OVERRIDE` it is "other" there and
+the work directory's `rm` failed `EACCES` on every job — four of four in the
+proof's volume, each a full log. Everything the runner made itself went, since
+`makeChildWritable` opens it 777; only the child's own directory stuck.
+
+**THE FIX DELETES AS THE OWNER, BECAUSE THE RUNNER CAN BECOME IT.**
+`removeWorkDir` (`apps/runner/src/work-dir.ts`) spawns `rm -rf --` over the
+directory's entries as the child uid — `CAP_SETUID` is what starts Gatling
+that way at all — then the runner's own `rm` takes the directory, whose parent
+is root's. Both the executor's `finally` and `prepareGatlingRun`'s pre-run wipe
+use it. Not `CAP_DAC_OVERRIDE` (the point of dropping it), not a `umask` wrap
+of the java command (it changes the spawned argv every runner test reads), and
+not a startup sweep of the volume (it could delete a live job of a second
+runner sharing it). `DEPLOYMENT.md` says to remove `runner-work` once on
+upgrade, because the fix does not touch directories left by earlier jobs.
+
+**A HELPER THE EXECUTOR IMPORTS CANNOT LIVE IN `artifact.ts`.**
+`executor-events.test.ts` mocks that whole module with `prepareGatlingRun`
+alone, so anything else exported from it is `undefined` there and would throw
+from the executor's `finally`. Hence its own module.
+
+**THE UNIT CASES PIN ORDER AND ARGUMENTS; ONLY THE CONTAINER PROVES THE FILES
+GO.** The suite cannot change uid. Red-verified: the root `rm` first fails the
+main case at "existed during the child pass", the uid ignored at "spawned
+once". The executor's wiring of `childUid` is seen by no unit case (its
+harness runs with `childUid: null`); the real job is its evidence: the fixed
+`dist` mounted into the image under compose's user and caps, a
+`BasicSimulation` job writing `-rf …/<job>/results`, run complete with 13
+statistics rows, and afterwards no work directory and no `failed to clean`
+line. **A `test -f` on a glob through `docker exec` never matches** — no shell
+expands it — which is why that check is absent here rather than green.
+
+**WHAT WAS RUN**, Node v22.19.0, `perfportal_tmpdir`, Redis db 10 flushed
+before integration and before e2e, port 3810, every `.tsbuildinfo` deleted
+first: `pnpm build`, `typecheck` and `lint` exit 0 by their own exit codes;
+`test:unit` **280 / 4596**, exit 0, zero `Errors` lines; `test:integration`
+**260 / 4096, exit 0, zero failures**; `pnpm test:e2e --workers=2` read back
+`Running 214 tests using 2 workers` and failed ONE, `acceptance.spec.ts`'
+keyboard-and-chart-table `toBeFocused` ("Received: inactive"), the intermittent
+this file records before, in a chart menu this branch cannot reach. That whole
+file then passed **21 of 21** at `--repeat-each=3`.
+
 The runner-boringssl branch (`fix/runner-boringssl`) added no unit FILE and 3
 cases to `apps/runner/test/artifact.test.ts`: unit **279 / 4589 to
 279 / 4592**, and integration **259 / 4089 to 259 / 4092** (that file is a
