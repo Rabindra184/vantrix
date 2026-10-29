@@ -1,0 +1,29 @@
+{
+  "runId": "6108dcb3-c3bc-4e11-bc05-7717309f9dfa",
+  "errors": [
+    {
+      "message": "status.find.is(200), found 401",
+      "count": 160
+    },
+    {
+      "message": "status.find.in([200, 209], 304), found 403",
+      "count": 72
+    },
+    {
+      "message": "status.find.is(200), found 404",
+      "count": 66
+    },
+    {
+      "message": "status.find.is(200), found 403",
+      "count": 64
+    },
+    {
+      "message": "Add To Cart: No attribute named 'sessionId' is defined ",
+      "count": 18
+    },
+    {
+      "message": "Place Order: No attribute named 'sessionId' is defined ",
+      "count": 18
+    }
+  ]
+}

@@ -1,0 +1,102 @@
+{
+  "id": "6108dcb3-c3bc-4e11-bc05-7717309f9dfa",
+  "project": {
+    "id": "05915108-f28b-47d0-b4c0-dac9edaf4699",
+    "slug": "ge-proof",
+    "name": "GE proof"
+  },
+  "status": "complete",
+  "verdict": "not_evaluated",
+  "tool": "gatling",
+  "toolVersion": "3.15.1",
+  "environment": null,
+  "branch": null,
+  "commitSha": null,
+  "warmupMs": null,
+  "test": {
+    "id": "03667687-54db-4339-ab4a-5246e4436d14",
+    "slug": "basic-simulation-runner",
+    "name": "basic-simulation-runner"
+  },
+  "runNumber": 2,
+  "simulation": "example.BasicSimulation",
+  "description": null,
+  "durationMs": 106547,
+  "activityMs": 105891,
+  "windowable": true,
+  "startedAt": "2026-10-28T22:26:44.160Z",
+  "toolStartedAt": "2026-10-28T22:26:48.169Z",
+  "ingestedAt": "2026-10-28T22:28:37.061Z",
+  "parsingStartedAt": "2026-10-28T22:28:37.003Z",
+  "streamUpdatedAt": "2026-10-28T22:28:35.563Z",
+  "queuedAt": "2026-10-28T22:26:42.212Z",
+  "runnerJobId": "32a11383-2233-4826-b06a-0cfad799fd0d",
+  "statsMethod": "exact-v1",
+  "verdictChanges": [],
+  "verification": {
+    "status": "verified",
+    "reason": null
+  },
+  "note": null,
+  "toolAssertions": [
+    {
+      "expression": "Global: max of response time is less than 30000.0",
+      "actualValue": 20734,
+      "outcome": "passed",
+      "assertion": {
+        "path": {
+          "kind": "global"
+        },
+        "target": {
+          "kind": "responseTime",
+          "stat": "max"
+        },
+        "condition": {
+          "kind": "lt",
+          "value": 30000
+        }
+      }
+    },
+    {
+      "expression": "Global: percentage of successful events is greater than 60.0",
+      "actualValue": 78.75586854460094,
+      "outcome": "passed",
+      "assertion": {
+        "path": {
+          "kind": "global"
+        },
+        "target": {
+          "kind": "percent",
+          "status": "ok"
+        },
+        "condition": {
+          "kind": "gt",
+          "value": 60
+        }
+      }
+    },
+    {
+      "expression": "Place Order: count of failed events is less than 1.0",
+      "actualValue": 162,
+      "outcome": "failed",
+      "assertion": {
+        "path": {
+          "kind": "details",
+          "parts": [
+            "Place Order"
+          ]
+        },
+        "target": {
+          "kind": "count",
+          "status": "ko"
+        },
+        "condition": {
+          "kind": "lt",
+          "value": 1
+        }
+      }
+    }
+  ],
+  "error": null,
+  "assertions": []
+}

@@ -1,0 +1,37 @@
+{
+  "runId": "66bc422b-2a96-45eb-b902-7ec7453c449b",
+  "available": true,
+  "reason": null,
+  "detail": null,
+  "header": {
+    "agentVersion": "0.1.0",
+    "gatlingHttpClient": "3.15.1",
+    "gatlingHttp": "3.15.1",
+    "java": "21.0.11",
+    "os": "Mac OS X",
+    "host": "dev-mac.local",
+    "collects": {
+      "http": true,
+      "machine": false
+    },
+    "reasons": {
+      "machine": "machine figures are collected on Linux only (os.name=Mac OS X)"
+    }
+  },
+  "capped": false,
+  "agentError": null,
+  "malformedLines": 0,
+  "bucketWidthMs": 1000,
+  "remotes": [
+    "api-ecomm.gatling.io/13.39.145.244:443",
+    "api-ecomm.gatling.io/15.236.166.77:443",
+    "api-ecomm.gatling.io/15.236.193.217:443"
+  ],
+  "hostnames": [
+    "api-ecomm.gatling.io"
+  ],
+  "injector": {
+    "host": "dev-mac.local",
+    "sharedWithPerfPortal": false
+  }
+}

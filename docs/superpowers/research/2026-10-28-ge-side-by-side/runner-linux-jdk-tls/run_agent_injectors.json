@@ -1,0 +1,3689 @@
+{
+  "runId": "c5ed901e-0713-411b-a4e9-c44da902a942",
+  "available": true,
+  "reason": null,
+  "detail": null,
+  "bucketWidthMs": 1000,
+  "window": null,
+  "machine": {
+    "available": true,
+    "reason": null
+  },
+  "buckets": [
+    {
+      "startOffsetMs": 0,
+      "gcCount": {
+        "G1 Concurrent GC": 2,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 3
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 6,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 16
+      },
+      "cpuUserPct": 9.63,
+      "cpuSysPct": 2.58,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1674768384,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 73400320,
+      "heapUsedBytes": 27372312,
+      "nettyDirectBytes": null,
+      "nettyHeapBytes": null,
+      "tcpEvents": {
+        "activeOpenings": 0,
+        "failedAttempts": 0,
+        "established": 3,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 0,
+        "sent": 0,
+        "retransmitted": 0,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 1000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 6.39,
+      "cpuSysPct": 3.8,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1696337920,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 78643200,
+      "heapUsedBytes": 70363928,
+      "nettyDirectBytes": 8388608,
+      "nettyHeapBytes": 8388608,
+      "tcpEvents": {
+        "activeOpenings": 3,
+        "failedAttempts": 0,
+        "established": 5,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 32,
+        "sent": 28,
+        "retransmitted": 0,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 2000,
+      "gcCount": {
+        "G1 Concurrent GC": 2,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 2
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 3,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 20
+      },
+      "cpuUserPct": 6.18,
+      "cpuSysPct": 3.44,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1727356928,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 79691776,
+      "heapUsedBytes": 46819536,
+      "nettyDirectBytes": 16777216,
+      "nettyHeapBytes": 16777216,
+      "tcpEvents": {
+        "activeOpenings": 2,
+        "failedAttempts": 0,
+        "established": 6,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 26,
+        "sent": 26,
+        "retransmitted": 0,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 3000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 2.62,
+      "cpuSysPct": 1.01,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1731231744,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 79691776,
+      "heapUsedBytes": 62548176,
+      "nettyDirectBytes": 25165824,
+      "nettyHeapBytes": 25165824,
+      "tcpEvents": {
+        "activeOpenings": 2,
+        "failedAttempts": 0,
+        "established": 8,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 15,
+        "sent": 17,
+        "retransmitted": 0,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 4000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 2.82,
+      "cpuSysPct": 4.03,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1699930112,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 84934656,
+      "heapUsedBytes": 74082512,
+      "nettyDirectBytes": 33554432,
+      "nettyHeapBytes": 33554432,
+      "tcpEvents": {
+        "activeOpenings": 2,
+        "failedAttempts": 0,
+        "established": 9,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 16,
+        "sent": 17,
+        "retransmitted": 0,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 5000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 1.61,
+      "cpuSysPct": 1.61,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1719578624,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 95420416,
+      "heapUsedBytes": 85616848,
+      "nettyDirectBytes": 41943040,
+      "nettyHeapBytes": 41943040,
+      "tcpEvents": {
+        "activeOpenings": 2,
+        "failedAttempts": 0,
+        "established": 10,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 30,
+        "sent": 30,
+        "retransmitted": 0,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 6000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 6.25,
+      "cpuSysPct": 3.63,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1750958080,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 105906176,
+      "heapUsedBytes": 98199760,
+      "nettyDirectBytes": 50331648,
+      "nettyHeapBytes": 50331648,
+      "tcpEvents": {
+        "activeOpenings": 2,
+        "failedAttempts": 0,
+        "established": 10,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 32,
+        "sent": 32,
+        "retransmitted": 0,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 7000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 1.71,
+      "cpuSysPct": 3.02,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1745809408,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 116391936,
+      "heapUsedBytes": 110782672,
+      "nettyDirectBytes": 58720256,
+      "nettyHeapBytes": 58720256,
+      "tcpEvents": {
+        "activeOpenings": 2,
+        "failedAttempts": 0,
+        "established": 11,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 46,
+        "sent": 45,
+        "retransmitted": 0,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 8000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 4,
+      "cpuSysPct": 2.8,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1792864256,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 126877696,
+      "heapUsedBytes": 122317008,
+      "nettyDirectBytes": 67108864,
+      "nettyHeapBytes": 67108864,
+      "tcpEvents": {
+        "activeOpenings": 2,
+        "failedAttempts": 0,
+        "established": 8,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 55,
+        "sent": 51,
+        "retransmitted": 0,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 9000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 1.72,
+      "cpuSysPct": 1.01,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1820192768,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 137363456,
+      "heapUsedBytes": 133851344,
+      "nettyDirectBytes": 75497472,
+      "nettyHeapBytes": 75497472,
+      "tcpEvents": {
+        "activeOpenings": 2,
+        "failedAttempts": 0,
+        "established": 7,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 41,
+        "sent": 40,
+        "retransmitted": 0,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 10000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 3.02,
+      "cpuSysPct": 3.33,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1794482176,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 147849216,
+      "heapUsedBytes": 145385680,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 2,
+        "failedAttempts": 0,
+        "established": 7,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 33,
+        "sent": 33,
+        "retransmitted": 0,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 11000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 2.11,
+      "cpuSysPct": 1.31,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1794027520,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 147849216,
+      "heapUsedBytes": 146434256,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 3,
+        "failedAttempts": 0,
+        "established": 8,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 44,
+        "sent": 45,
+        "retransmitted": 0,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 12000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 1
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 6
+      },
+      "cpuUserPct": 3.01,
+      "cpuSysPct": 2.61,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1806430208,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 154140672,
+      "heapUsedBytes": 133336160,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 3,
+        "failedAttempts": 0,
+        "established": 8,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 42,
+        "sent": 42,
+        "retransmitted": 0,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 13000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 2.01,
+      "cpuSysPct": 1.71,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1805918208,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 154140672,
+      "heapUsedBytes": 135433312,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 3,
+        "failedAttempts": 0,
+        "established": 8,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 44,
+        "sent": 45,
+        "retransmitted": 0,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 14000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 2.61,
+      "cpuSysPct": 2.11,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1825435648,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 154140672,
+      "heapUsedBytes": 136481888,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 3,
+        "failedAttempts": 0,
+        "established": 8,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 52,
+        "sent": 51,
+        "retransmitted": 0,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 15000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 2.11,
+      "cpuSysPct": 1.71,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1824124928,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 154140672,
+      "heapUsedBytes": 136481888,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 3,
+        "failedAttempts": 0,
+        "established": 9,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 48,
+        "sent": 48,
+        "retransmitted": 0,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 16000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 5.59,
+      "cpuSysPct": 4.57,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1809371136,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 154140672,
+      "heapUsedBytes": 137530464,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 3,
+        "failedAttempts": 0,
+        "established": 8,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 50,
+        "sent": 49,
+        "retransmitted": 0,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 17000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 1.91,
+      "cpuSysPct": 1.21,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1808498688,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 154140672,
+      "heapUsedBytes": 138579040,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 3,
+        "failedAttempts": 0,
+        "established": 8,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 48,
+        "sent": 49,
+        "retransmitted": 0,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 18000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 2.23,
+      "cpuSysPct": 2.33,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1811390464,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 154140672,
+      "heapUsedBytes": 139627616,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 3,
+        "failedAttempts": 0,
+        "established": 8,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 44,
+        "sent": 45,
+        "retransmitted": 0,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 19000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 2.4,
+      "cpuSysPct": 1.5,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1810386944,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 154140672,
+      "heapUsedBytes": 139627616,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 3,
+        "failedAttempts": 0,
+        "established": 5,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 27,
+        "sent": 29,
+        "retransmitted": 0,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 20000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 1.53,
+      "cpuSysPct": 2.24,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1820336128,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 154140672,
+      "heapUsedBytes": 140676192,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 3,
+        "failedAttempts": 0,
+        "established": 3,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 17,
+        "sent": 18,
+        "retransmitted": 3,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 21000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 2.32,
+      "cpuSysPct": 1.61,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1819168768,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 154140672,
+      "heapUsedBytes": 142773344,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 3,
+        "failedAttempts": 0,
+        "established": 12,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 38,
+        "sent": 39,
+        "retransmitted": 4,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 22000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 2.62,
+      "cpuSysPct": 1.92,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1823875072,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 154140672,
+      "heapUsedBytes": 143821920,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 3,
+        "failedAttempts": 0,
+        "established": 15,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 60,
+        "sent": 64,
+        "retransmitted": 0,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 23000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 1
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 12
+      },
+      "cpuUserPct": 3.22,
+      "cpuSysPct": 1.61,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1823608832,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 154140672,
+      "heapUsedBytes": 132425304,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 4,
+        "failedAttempts": 0,
+        "established": 11,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 88,
+        "sent": 83,
+        "retransmitted": 0,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 24000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 2.21,
+      "cpuSysPct": 2.41,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1785425920,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 154140672,
+      "heapUsedBytes": 133473880,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 3,
+        "failedAttempts": 0,
+        "established": 11,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 47,
+        "sent": 48,
+        "retransmitted": 0,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 25000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 1.91,
+      "cpuSysPct": 1.01,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1786466304,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 154140672,
+      "heapUsedBytes": 134522456,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 3,
+        "failedAttempts": 0,
+        "established": 10,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 50,
+        "sent": 52,
+        "retransmitted": 0,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 26000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 5.05,
+      "cpuSysPct": 3.84,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1820196864,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 154140672,
+      "heapUsedBytes": 135571032,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 3,
+        "failedAttempts": 0,
+        "established": 10,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 51,
+        "sent": 52,
+        "retransmitted": 0,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 27000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 1.41,
+      "cpuSysPct": 1.41,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1819336704,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 154140672,
+      "heapUsedBytes": 136619608,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 3,
+        "failedAttempts": 0,
+        "established": 11,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 43,
+        "sent": 44,
+        "retransmitted": 0,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 28000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 2.32,
+      "cpuSysPct": 3.63,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1822773248,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 154140672,
+      "heapUsedBytes": 137668184,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 3,
+        "failedAttempts": 0,
+        "established": 11,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 47,
+        "sent": 47,
+        "retransmitted": 0,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 29000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 3.22,
+      "cpuSysPct": 1.41,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1821937664,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 154140672,
+      "heapUsedBytes": 139765336,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 3,
+        "failedAttempts": 0,
+        "established": 9,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 55,
+        "sent": 58,
+        "retransmitted": 0,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 30000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 2.1,
+      "cpuSysPct": 2.8,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1815949312,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 154140672,
+      "heapUsedBytes": 139765336,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 3,
+        "failedAttempts": 0,
+        "established": 10,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 39,
+        "sent": 41,
+        "retransmitted": 0,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 31000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 1.72,
+      "cpuSysPct": 1.21,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1814364160,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 154140672,
+      "heapUsedBytes": 141862488,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 4,
+        "failedAttempts": 0,
+        "established": 10,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 55,
+        "sent": 56,
+        "retransmitted": 0,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 32000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 2.51,
+      "cpuSysPct": 1.81,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1818652672,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 154140672,
+      "heapUsedBytes": 142911064,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 5,
+        "failedAttempts": 0,
+        "established": 12,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 61,
+        "sent": 63,
+        "retransmitted": 0,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 33000,
+      "gcCount": {
+        "G1 Concurrent GC": 2,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 1
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 4,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 3
+      },
+      "cpuUserPct": 3.24,
+      "cpuSysPct": 1.01,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1818578944,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 220200960,
+      "heapUsedBytes": 131132088,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 5,
+        "failedAttempts": 0,
+        "established": 13,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 68,
+        "sent": 72,
+        "retransmitted": 0,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 34000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 2.51,
+      "cpuSysPct": 2.81,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1785249792,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 220200960,
+      "heapUsedBytes": 133229240,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 5,
+        "failedAttempts": 0,
+        "established": 12,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 60,
+        "sent": 63,
+        "retransmitted": 1,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 35000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 1.8,
+      "cpuSysPct": 1.9,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1791901696,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 220200960,
+      "heapUsedBytes": 134277816,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 5,
+        "failedAttempts": 0,
+        "established": 12,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 81,
+        "sent": 81,
+        "retransmitted": 2,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 36000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 4.73,
+      "cpuSysPct": 2.92,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1829494784,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 220200960,
+      "heapUsedBytes": 136374968,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 5,
+        "failedAttempts": 0,
+        "established": 12,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 69,
+        "sent": 70,
+        "retransmitted": 2,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 37000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 1.81,
+      "cpuSysPct": 1.81,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1828700160,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 220200960,
+      "heapUsedBytes": 137423544,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 5,
+        "failedAttempts": 0,
+        "established": 11,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 83,
+        "sent": 81,
+        "retransmitted": 3,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 38000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 2.42,
+      "cpuSysPct": 3.63,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1831956480,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 220200960,
+      "heapUsedBytes": 138472120,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 5,
+        "failedAttempts": 0,
+        "established": 12,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 70,
+        "sent": 72,
+        "retransmitted": 4,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 39000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 1.81,
+      "cpuSysPct": 1.01,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1834340352,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 220200960,
+      "heapUsedBytes": 140569272,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 5,
+        "failedAttempts": 0,
+        "established": 13,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 71,
+        "sent": 74,
+        "retransmitted": 3,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 40000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 1
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 4
+      },
+      "cpuUserPct": 2.43,
+      "cpuSysPct": 1.92,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1836453888,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 132156728,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 5,
+        "failedAttempts": 0,
+        "established": 13,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 75,
+        "sent": 75,
+        "retransmitted": 3,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 41000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 1.61,
+      "cpuSysPct": 1.31,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1835683840,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 133205304,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 6,
+        "failedAttempts": 0,
+        "established": 14,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 52,
+        "sent": 57,
+        "retransmitted": 3,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 42000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 3.32,
+      "cpuSysPct": 2.01,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1858416640,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 135302456,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 7,
+        "failedAttempts": 0,
+        "established": 15,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 102,
+        "sent": 101,
+        "retransmitted": 3,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 43000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 2.22,
+      "cpuSysPct": 1.01,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1857703936,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 137399608,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 8,
+        "failedAttempts": 0,
+        "established": 17,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 110,
+        "sent": 113,
+        "retransmitted": 3,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 44000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 3.8,
+      "cpuSysPct": 3.5,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1842655232,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 140545336,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 8,
+        "failedAttempts": 0,
+        "established": 16,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 126,
+        "sent": 129,
+        "retransmitted": 3,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 45000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 1.91,
+      "cpuSysPct": 1.21,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1843195904,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 142642488,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 7,
+        "failedAttempts": 0,
+        "established": 16,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 110,
+        "sent": 113,
+        "retransmitted": 2,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 46000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 4.44,
+      "cpuSysPct": 3.43,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1857454080,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 144739640,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 8,
+        "failedAttempts": 0,
+        "established": 14,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 120,
+        "sent": 119,
+        "retransmitted": 2,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 47000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 1.61,
+      "cpuSysPct": 1.51,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1855975424,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 146836792,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 8,
+        "failedAttempts": 0,
+        "established": 14,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 92,
+        "sent": 96,
+        "retransmitted": 5,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 48000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 2.62,
+      "cpuSysPct": 2.31,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1881968640,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 148933944,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 7,
+        "failedAttempts": 0,
+        "established": 16,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 92,
+        "sent": 95,
+        "retransmitted": 4,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 49000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 1.5,
+      "cpuSysPct": 1.3,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1861595136,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 149982520,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 7,
+        "failedAttempts": 0,
+        "established": 9,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 79,
+        "sent": 81,
+        "retransmitted": 5,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 50000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 2.04,
+      "cpuSysPct": 2.34,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1880182784,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 149982520,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 7,
+        "failedAttempts": 0,
+        "established": 4,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 35,
+        "sent": 39,
+        "retransmitted": 12,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 51000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 2.11,
+      "cpuSysPct": 2.11,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1869594624,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 153128248,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 7,
+        "failedAttempts": 0,
+        "established": 20,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 67,
+        "sent": 72,
+        "retransmitted": 12,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 52000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 2.83,
+      "cpuSysPct": 2.02,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1876099072,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 156273976,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 9,
+        "failedAttempts": 0,
+        "established": 27,
+        "receivedResets": 0,
+        "sentResets": 1
+      },
+      "tcpSegments": {
+        "received": 126,
+        "sent": 134,
+        "retransmitted": 6,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 53000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 1.91,
+      "cpuSysPct": 2.01,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1879363584,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 159419704,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 7,
+        "failedAttempts": 0,
+        "established": 21,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 163,
+        "sent": 159,
+        "retransmitted": 6,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 54000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 2.51,
+      "cpuSysPct": 2.01,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1898991616,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 161516856,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 7,
+        "failedAttempts": 0,
+        "established": 18,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 117,
+        "sent": 119,
+        "retransmitted": 6,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 55000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 2.42,
+      "cpuSysPct": 2.42,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1879859200,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 163614008,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 7,
+        "failedAttempts": 0,
+        "established": 17,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 118,
+        "sent": 119,
+        "retransmitted": 4,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 56000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 4.83,
+      "cpuSysPct": 2.52,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1888055296,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 166759736,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 10,
+        "failedAttempts": 0,
+        "established": 18,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 121,
+        "sent": 128,
+        "retransmitted": 3,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 57000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 3.02,
+      "cpuSysPct": 1.41,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1877450752,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 168856888,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 8,
+        "failedAttempts": 0,
+        "established": 19,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 143,
+        "sent": 143,
+        "retransmitted": 5,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 58000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 1.92,
+      "cpuSysPct": 1.01,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1877594112,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 172002616,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 7,
+        "failedAttempts": 0,
+        "established": 16,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 124,
+        "sent": 127,
+        "retransmitted": 2,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 59000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 2.2,
+      "cpuSysPct": 2,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1880891392,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 174099768,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 9,
+        "failedAttempts": 0,
+        "established": 16,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 121,
+        "sent": 126,
+        "retransmitted": 1,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 60000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 2.73,
+      "cpuSysPct": 1.32,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1883361280,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 177245496,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 9,
+        "failedAttempts": 0,
+        "established": 18,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 132,
+        "sent": 136,
+        "retransmitted": 2,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 61000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 2.22,
+      "cpuSysPct": 1.72,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1910095872,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 179342648,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 7,
+        "failedAttempts": 0,
+        "established": 16,
+        "receivedResets": 0,
+        "sentResets": 1
+      },
+      "tcpSegments": {
+        "received": 124,
+        "sent": 126,
+        "retransmitted": 0,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 62000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 1.91,
+      "cpuSysPct": 1.21,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1910128640,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 181439800,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 7,
+        "failedAttempts": 0,
+        "established": 14,
+        "receivedResets": 0,
+        "sentResets": 1
+      },
+      "tcpSegments": {
+        "received": 120,
+        "sent": 122,
+        "retransmitted": 1,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 63000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 1.91,
+      "cpuSysPct": 1.81,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1901232128,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 184585528,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 8,
+        "failedAttempts": 0,
+        "established": 15,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 108,
+        "sent": 109,
+        "retransmitted": 1,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 64000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 1.82,
+      "cpuSysPct": 1.21,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1899913216,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 186682680,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 7,
+        "failedAttempts": 0,
+        "established": 16,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 98,
+        "sent": 102,
+        "retransmitted": 1,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 65000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 3.73,
+      "cpuSysPct": 2.82,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1884745728,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 188779832,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 8,
+        "failedAttempts": 0,
+        "established": 15,
+        "receivedResets": 0,
+        "sentResets": 2
+      },
+      "tcpSegments": {
+        "received": 130,
+        "sent": 131,
+        "retransmitted": 1,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 66000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 3.32,
+      "cpuSysPct": 2.42,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1892413440,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 190876984,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 7,
+        "failedAttempts": 0,
+        "established": 13,
+        "receivedResets": 0,
+        "sentResets": 2
+      },
+      "tcpSegments": {
+        "received": 105,
+        "sent": 107,
+        "retransmitted": 1,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 67000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 1.9,
+      "cpuSysPct": 2.1,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1888595968,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 192974136,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 7,
+        "failedAttempts": 0,
+        "established": 14,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 92,
+        "sent": 94,
+        "retransmitted": 3,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 68000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 2.42,
+      "cpuSysPct": 1.41,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1887977472,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 195071288,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 7,
+        "failedAttempts": 0,
+        "established": 15,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 105,
+        "sent": 106,
+        "retransmitted": 2,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 69000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 1.81,
+      "cpuSysPct": 3.12,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1923579904,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 197168440,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 7,
+        "failedAttempts": 0,
+        "established": 14,
+        "receivedResets": 0,
+        "sentResets": 1
+      },
+      "tcpSegments": {
+        "received": 98,
+        "sent": 100,
+        "retransmitted": 3,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 70000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 2.12,
+      "cpuSysPct": 1.51,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1924784128,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 199265592,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 7,
+        "failedAttempts": 0,
+        "established": 15,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 111,
+        "sent": 112,
+        "retransmitted": 3,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 71000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 1.81,
+      "cpuSysPct": 2.11,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1938567168,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 201362744,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 7,
+        "failedAttempts": 0,
+        "established": 12,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 93,
+        "sent": 97,
+        "retransmitted": 4,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 72000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 1.92,
+      "cpuSysPct": 1.31,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1938309120,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 203459896,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 8,
+        "failedAttempts": 0,
+        "established": 15,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 88,
+        "sent": 93,
+        "retransmitted": 3,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 73000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 2.31,
+      "cpuSysPct": 2.51,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1935904768,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 205557048,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 7,
+        "failedAttempts": 0,
+        "established": 15,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 106,
+        "sent": 110,
+        "retransmitted": 6,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 74000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 1.92,
+      "cpuSysPct": 1.31,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1934602240,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 207654200,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 7,
+        "failedAttempts": 0,
+        "established": 14,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 95,
+        "sent": 99,
+        "retransmitted": 5,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 75000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 3.23,
+      "cpuSysPct": 2.12,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1934012416,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 209751352,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 7,
+        "failedAttempts": 0,
+        "established": 13,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 99,
+        "sent": 101,
+        "retransmitted": 3,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 76000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 3.54,
+      "cpuSysPct": 2.53,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1932292096,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 211848504,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 9,
+        "failedAttempts": 0,
+        "established": 14,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 87,
+        "sent": 91,
+        "retransmitted": 6,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 77000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 2.71,
+      "cpuSysPct": 2.1,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1934737408,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 212897080,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 7,
+        "failedAttempts": 0,
+        "established": 16,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 100,
+        "sent": 104,
+        "retransmitted": 5,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 78000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 1.62,
+      "cpuSysPct": 1.11,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1933418496,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 214994232,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 7,
+        "failedAttempts": 0,
+        "established": 14,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 95,
+        "sent": 95,
+        "retransmitted": 5,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 79000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 2.02,
+      "cpuSysPct": 1.72,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1930059776,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 214994232,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 8,
+        "failedAttempts": 0,
+        "established": 10,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 64,
+        "sent": 70,
+        "retransmitted": 7,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 80000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 1.11,
+      "cpuSysPct": 1.31,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1926479872,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 216042808,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 8,
+        "failedAttempts": 0,
+        "established": 4,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 45,
+        "sent": 49,
+        "retransmitted": 13,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 81000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 2.42,
+      "cpuSysPct": 2.42,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1930088448,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 218139960,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 8,
+        "failedAttempts": 0,
+        "established": 18,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 45,
+        "sent": 53,
+        "retransmitted": 19,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 82000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 2.13,
+      "cpuSysPct": 0.81,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1932316672,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 223382840,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 8,
+        "failedAttempts": 0,
+        "established": 33,
+        "receivedResets": 0,
+        "sentResets": 1
+      },
+      "tcpSegments": {
+        "received": 158,
+        "sent": 164,
+        "retransmitted": 5,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 83000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 3.22,
+      "cpuSysPct": 2.11,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1956540416,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 226528568,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 8,
+        "failedAttempts": 0,
+        "established": 28,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 162,
+        "sent": 161,
+        "retransmitted": 4,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 84000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 2.81,
+      "cpuSysPct": 1.21,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1957666816,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 228625720,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 7,
+        "failedAttempts": 0,
+        "established": 25,
+        "receivedResets": 0,
+        "sentResets": 1
+      },
+      "tcpSegments": {
+        "received": 120,
+        "sent": 123,
+        "retransmitted": 3,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 85000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 1.82,
+      "cpuSysPct": 4.04,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1950130176,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 229674296,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 8,
+        "failedAttempts": 0,
+        "established": 23,
+        "receivedResets": 0,
+        "sentResets": 3
+      },
+      "tcpSegments": {
+        "received": 80,
+        "sent": 87,
+        "retransmitted": 3,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 86000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 3.54,
+      "cpuSysPct": 1.82,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1943515136,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 233868600,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 8,
+        "failedAttempts": 0,
+        "established": 24,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 174,
+        "sent": 174,
+        "retransmitted": 6,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 87000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 2.22,
+      "cpuSysPct": 2.12,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1953431552,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 235965752,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 8,
+        "failedAttempts": 0,
+        "established": 20,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 157,
+        "sent": 158,
+        "retransmitted": 1,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 88000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 1.9,
+      "cpuSysPct": 1.4,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1952137216,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 238062904,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 8,
+        "failedAttempts": 0,
+        "established": 15,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 133,
+        "sent": 135,
+        "retransmitted": 3,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 89000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 2.32,
+      "cpuSysPct": 3.53,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1947668480,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 241208632,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 8,
+        "failedAttempts": 0,
+        "established": 17,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 109,
+        "sent": 113,
+        "retransmitted": 3,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 90000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 1.81,
+      "cpuSysPct": 1,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1948168192,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 243305784,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 7,
+        "failedAttempts": 0,
+        "established": 16,
+        "receivedResets": 0,
+        "sentResets": 2
+      },
+      "tcpSegments": {
+        "received": 109,
+        "sent": 113,
+        "retransmitted": 2,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 91000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 1
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 21
+      },
+      "cpuUserPct": 3.33,
+      "cpuSysPct": 1.82,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1943416832,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 135529480,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 4,
+        "failedAttempts": 0,
+        "established": 15,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 88,
+        "sent": 89,
+        "retransmitted": 3,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 92000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 1.21,
+      "cpuSysPct": 1.01,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1944043520,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 135529480,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 0,
+        "failedAttempts": 0,
+        "established": 7,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 69,
+        "sent": 68,
+        "retransmitted": 2,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 93000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 1.62,
+      "cpuSysPct": 2.43,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1956163584,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 135529480,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 0,
+        "failedAttempts": 0,
+        "established": 4,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 12,
+        "sent": 12,
+        "retransmitted": 1,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 94000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 0.7,
+      "cpuSysPct": 1.41,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1955201024,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 135529480,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 1,
+        "failedAttempts": 0,
+        "established": 4,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 1,
+        "sent": 2,
+        "retransmitted": 1,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 95000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 1.62,
+      "cpuSysPct": 2.73,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1958424576,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 136578056,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 0,
+        "failedAttempts": 0,
+        "established": 4,
+        "receivedResets": 0,
+        "sentResets": 1
+      },
+      "tcpSegments": {
+        "received": 8,
+        "sent": 7,
+        "retransmitted": 2,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 96000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 2.22,
+      "cpuSysPct": 1.72,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1957806080,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 136578056,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 0,
+        "failedAttempts": 0,
+        "established": 4,
+        "receivedResets": 0,
+        "sentResets": 1
+      },
+      "tcpSegments": {
+        "received": 2,
+        "sent": 2,
+        "retransmitted": 1,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 97000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 1.92,
+      "cpuSysPct": 2.42,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1962958848,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 136578056,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 1,
+        "failedAttempts": 0,
+        "established": 5,
+        "receivedResets": 0,
+        "sentResets": 1
+      },
+      "tcpSegments": {
+        "received": 4,
+        "sent": 5,
+        "retransmitted": 1,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 98000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 1.11,
+      "cpuSysPct": 1.31,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1905078272,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 136578056,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 1,
+        "failedAttempts": 0,
+        "established": 4,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 12,
+        "sent": 13,
+        "retransmitted": 1,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 99000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 1.52,
+      "cpuSysPct": 2.53,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1931587584,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 136578056,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 0,
+        "failedAttempts": 0,
+        "established": 5,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 8,
+        "sent": 7,
+        "retransmitted": 1,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 100000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 0.61,
+      "cpuSysPct": 0.91,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1930448896,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 137626632,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 0,
+        "failedAttempts": 0,
+        "established": 4,
+        "receivedResets": 0,
+        "sentResets": 1
+      },
+      "tcpSegments": {
+        "received": 8,
+        "sent": 8,
+        "retransmitted": 0,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 101000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 1.52,
+      "cpuSysPct": 1.72,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1946488832,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 137626632,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 0,
+        "failedAttempts": 0,
+        "established": 4,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 6,
+        "sent": 6,
+        "retransmitted": 1,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 102000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 0.91,
+      "cpuSysPct": 1.42,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1948319744,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 137626632,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 0,
+        "failedAttempts": 0,
+        "established": 4,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 1,
+        "sent": 1,
+        "retransmitted": 0,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 103000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 1.02,
+      "cpuSysPct": 1.63,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1949839360,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 137626632,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 0,
+        "failedAttempts": 0,
+        "established": 4,
+        "receivedResets": 0,
+        "sentResets": 0
+      },
+      "tcpSegments": {
+        "received": 1,
+        "sent": 1,
+        "retransmitted": 0,
+        "receivedBad": 0
+      }
+    },
+    {
+      "startOffsetMs": 104000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": 3.09,
+      "cpuSysPct": 2.09,
+      "ramTotalBytes": 8214851584,
+      "ramUsedBytes": 1953828864,
+      "heapMaxBytes": 2055208960,
+      "heapCommittedBytes": 264241152,
+      "heapUsedBytes": 149160968,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 83886080,
+      "tcpEvents": {
+        "activeOpenings": 1,
+        "failedAttempts": 0,
+        "established": 5,
+        "receivedResets": 0,
+        "sentResets": 1
+      },
+      "tcpSegments": {
+        "received": 21,
+        "sent": 20,
+        "retransmitted": 0,
+        "receivedBad": 0
+      }
+    }
+  ]
+}

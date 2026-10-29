@@ -1,0 +1,355 @@
+{
+  "runId": "14c7ce2d-89e9-4e4b-a588-2d1d8cb7aba8",
+  "stats": [
+    {
+      "scope": "group",
+      "name": "Cart",
+      "family": "group_cumulated",
+      "count": 180,
+      "okCount": 172,
+      "koCount": 8,
+      "errorRate": 0.044444444444444446,
+      "minMs": 0,
+      "maxMs": 4638,
+      "meanMs": 543.8388888888888,
+      "stddevMs": 638.8867328224488,
+      "throughputRps": 1.6626025271558413,
+      "percentiles": {
+        "p50": 437,
+        "p75": 471,
+        "p95": 753,
+        "p99": 4194
+      },
+      "indicators": {
+        "under": 165,
+        "between": 2,
+        "over": 5,
+        "failed": 8
+      }
+    },
+    {
+      "scope": "group",
+      "name": "Cart",
+      "family": "group_duration",
+      "count": 180,
+      "okCount": 172,
+      "koCount": 8,
+      "errorRate": 0.044444444444444446,
+      "minMs": 120,
+      "maxMs": 4762,
+      "meanMs": 665.4222222222222,
+      "stddevMs": 639.357098581202,
+      "throughputRps": 1.6626025271558413,
+      "percentiles": {
+        "p50": 558,
+        "p75": 592,
+        "p95": 875,
+        "p99": 4316
+      },
+      "indicators": {
+        "under": 161,
+        "between": 4,
+        "over": 7,
+        "failed": 8
+      }
+    },
+    {
+      "scope": "group",
+      "name": "Catalog",
+      "family": "group_cumulated",
+      "count": 300,
+      "okCount": 220,
+      "koCount": 80,
+      "errorRate": 0.26666666666666666,
+      "minMs": 554,
+      "maxMs": 3499,
+      "meanMs": 777.6333333333333,
+      "stddevMs": 376.7808720669821,
+      "throughputRps": 2.7710042119264022,
+      "percentiles": {
+        "p50": 694,
+        "p75": 731,
+        "p95": 1170,
+        "p99": 3230
+      },
+      "indicators": {
+        "under": 200,
+        "between": 10,
+        "over": 10,
+        "failed": 80
+      }
+    },
+    {
+      "scope": "group",
+      "name": "Catalog",
+      "family": "group_duration",
+      "count": 300,
+      "okCount": 220,
+      "koCount": 80,
+      "errorRate": 0.26666666666666666,
+      "minMs": 707,
+      "maxMs": 3658,
+      "meanMs": 931.1266666666667,
+      "stddevMs": 377.24717443901716,
+      "throughputRps": 2.7710042119264022,
+      "percentiles": {
+        "p50": 847,
+        "p75": 885,
+        "p95": 1322,
+        "p99": 3385
+      },
+      "indicators": {
+        "under": 16,
+        "between": 191,
+        "over": 13,
+        "failed": 80
+      }
+    },
+    {
+      "scope": "group",
+      "name": "Catalog/Recommendations",
+      "family": "group_cumulated",
+      "count": 300,
+      "okCount": 250,
+      "koCount": 50,
+      "errorRate": 0.16666666666666666,
+      "minMs": 178,
+      "maxMs": 1465,
+      "meanMs": 244.15666666666667,
+      "stddevMs": 116.4470070699782,
+      "throughputRps": 2.7710042119264022,
+      "percentiles": {
+        "p50": 226,
+        "p75": 242,
+        "p95": 289,
+        "p99": 572
+      },
+      "indicators": {
+        "under": 247,
+        "between": 0,
+        "over": 3,
+        "failed": 50
+      }
+    },
+    {
+      "scope": "group",
+      "name": "Catalog/Recommendations",
+      "family": "group_duration",
+      "count": 300,
+      "okCount": 250,
+      "koCount": 50,
+      "errorRate": 0.16666666666666666,
+      "minMs": 178,
+      "maxMs": 1466,
+      "meanMs": 245.01666666666668,
+      "stddevMs": 116.46285411618972,
+      "throughputRps": 2.7710042119264022,
+      "percentiles": {
+        "p50": 227,
+        "p75": 243,
+        "p95": 298,
+        "p99": 573
+      },
+      "indicators": {
+        "under": 247,
+        "between": 0,
+        "over": 3,
+        "failed": 50
+      }
+    },
+    {
+      "scope": "request",
+      "name": "Cart/Add To Cart",
+      "family": "response_time",
+      "count": 172,
+      "okCount": 172,
+      "koCount": 0,
+      "errorRate": 0,
+      "minMs": 365,
+      "maxMs": 4638,
+      "meanMs": 569.1337209302326,
+      "stddevMs": 642.4679429357609,
+      "throughputRps": 1.5887090815044704,
+      "percentiles": {
+        "p50": 439,
+        "p75": 472,
+        "p95": 755,
+        "p99": 4194
+      },
+      "indicators": {
+        "under": 165,
+        "between": 2,
+        "over": 5,
+        "failed": 0
+      }
+    },
+    {
+      "scope": "request",
+      "name": "Catalog/List Products",
+      "family": "response_time",
+      "count": 300,
+      "okCount": 283,
+      "koCount": 17,
+      "errorRate": 0.056666666666666664,
+      "minMs": 174,
+      "maxMs": 1523,
+      "meanMs": 255.57,
+      "stddevMs": 151.24928132060663,
+      "throughputRps": 2.7710042119264022,
+      "percentiles": {
+        "p50": 233,
+        "p75": 249,
+        "p95": 288,
+        "p99": 1363
+      },
+      "indicators": {
+        "under": 279,
+        "between": 0,
+        "over": 4,
+        "failed": 17
+      }
+    },
+    {
+      "scope": "request",
+      "name": "Catalog/Product Detail",
+      "family": "response_time",
+      "count": 300,
+      "okCount": 246,
+      "koCount": 54,
+      "errorRate": 0.18,
+      "minMs": 188,
+      "maxMs": 1517,
+      "meanMs": 277.9066666666667,
+      "stddevMs": 221.7806527981094,
+      "throughputRps": 2.7710042119264022,
+      "percentiles": {
+        "p50": 230,
+        "p75": 245,
+        "p95": 316,
+        "p99": 1428
+      },
+      "indicators": {
+        "under": 236,
+        "between": 1,
+        "over": 9,
+        "failed": 54
+      }
+    },
+    {
+      "scope": "request",
+      "name": "Catalog/Recommendations/Related Items",
+      "family": "response_time",
+      "count": 300,
+      "okCount": 250,
+      "koCount": 50,
+      "errorRate": 0.16666666666666666,
+      "minMs": 178,
+      "maxMs": 1465,
+      "meanMs": 244.15666666666667,
+      "stddevMs": 116.4470070699782,
+      "throughputRps": 2.7710042119264022,
+      "percentiles": {
+        "p50": 226,
+        "p75": 242,
+        "p95": 289,
+        "p99": 572
+      },
+      "indicators": {
+        "under": 247,
+        "between": 0,
+        "over": 3,
+        "failed": 50
+      }
+    },
+    {
+      "scope": "request",
+      "name": "Place Order",
+      "family": "response_time",
+      "count": 172,
+      "okCount": 0,
+      "koCount": 172,
+      "errorRate": 1,
+      "minMs": 191,
+      "maxMs": 2359,
+      "meanMs": 307.1337209302326,
+      "stddevMs": 358.02926283887103,
+      "throughputRps": 1.5887090815044704,
+      "percentiles": {
+        "p50": 232,
+        "p75": 248,
+        "p95": 427,
+        "p99": 2277
+      },
+      "indicators": {
+        "under": 0,
+        "between": 0,
+        "over": 0,
+        "failed": 172
+      }
+    },
+    {
+      "scope": "request",
+      "name": "Session",
+      "family": "response_time",
+      "count": 480,
+      "okCount": 457,
+      "koCount": 23,
+      "errorRate": 0.04791666666666667,
+      "minMs": 561,
+      "maxMs": 20815,
+      "meanMs": 1641.8166666666666,
+      "stddevMs": 3263.6172460766425,
+      "throughputRps": 4.433606739082243,
+      "percentiles": {
+        "p50": 740,
+        "p75": 782,
+        "p95": 10720,
+        "p99": 20646
+      },
+      "indicators": {
+        "under": 372,
+        "between": 48,
+        "over": 37,
+        "failed": 23
+      }
+    },
+    {
+      "scope": "run",
+      "name": "",
+      "family": "response_time",
+      "count": 1724,
+      "okCount": 1408,
+      "koCount": 316,
+      "errorRate": 0.18329466357308585,
+      "minMs": 174,
+      "maxMs": 20815,
+      "meanMs": 679.8607888631091,
+      "stddevMs": 1843.8003296979512,
+      "throughputRps": 15.924037537870392,
+      "percentiles": {
+        "p50": 252,
+        "p75": 698,
+        "p95": 899,
+        "p99": 10789
+      },
+      "indicators": {
+        "under": 1299,
+        "between": 51,
+        "over": 58,
+        "failed": 316
+      }
+    }
+  ],
+  "indicators": {
+    "under": 1299,
+    "between": 51,
+    "over": 58,
+    "failed": 316
+  },
+  "configurable": true,
+  "bounds": {
+    "lowerMs": 800,
+    "higherMs": 1200
+  },
+  "window": null
+}

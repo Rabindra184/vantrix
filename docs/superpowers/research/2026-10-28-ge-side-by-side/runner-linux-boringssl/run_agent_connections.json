@@ -1,0 +1,10528 @@
+{
+  "runId": "6108dcb3-c3bc-4e11-bc05-7717309f9dfa",
+  "available": true,
+  "reason": null,
+  "detail": null,
+  "bucketWidthMs": 1000,
+  "window": null,
+  "remote": "*",
+  "buckets": [
+    {
+      "startOffsetMs": 0,
+      "opened": 1,
+      "closed": 0,
+      "bitsOut": 0,
+      "bitsIn": 0,
+      "states": {
+        "synSent": 0,
+        "established": 0,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 0,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 1000,
+      "opened": 2,
+      "closed": 0,
+      "bitsOut": 40376,
+      "bitsIn": 60008,
+      "states": {
+        "synSent": 0,
+        "established": 3,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 0,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 2000,
+      "opened": 2,
+      "closed": 0,
+      "bitsOut": 24104,
+      "bitsIn": 83712,
+      "states": {
+        "synSent": 0,
+        "established": 4,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 0,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 3000,
+      "opened": 2,
+      "closed": 3,
+      "bitsOut": 55752,
+      "bitsIn": 137960,
+      "states": {
+        "synSent": 0,
+        "established": 5,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 2,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 4000,
+      "opened": 2,
+      "closed": 3,
+      "bitsOut": 42208,
+      "bitsIn": 138768,
+      "states": {
+        "synSent": 0,
+        "established": 4,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 5,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 5000,
+      "opened": 2,
+      "closed": 2,
+      "bitsOut": 40128,
+      "bitsIn": 118960,
+      "states": {
+        "synSent": 0,
+        "established": 4,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 7,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 6000,
+      "opened": 2,
+      "closed": 2,
+      "bitsOut": 40136,
+      "bitsIn": 114360,
+      "states": {
+        "synSent": 0,
+        "established": 4,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 9,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 7000,
+      "opened": 2,
+      "closed": 2,
+      "bitsOut": 40128,
+      "bitsIn": 116248,
+      "states": {
+        "synSent": 0,
+        "established": 4,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 11,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 8000,
+      "opened": 2,
+      "closed": 2,
+      "bitsOut": 28256,
+      "bitsIn": 94648,
+      "states": {
+        "synSent": 0,
+        "established": 4,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 13,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 9000,
+      "opened": 2,
+      "closed": 2,
+      "bitsOut": 52008,
+      "bitsIn": 133040,
+      "states": {
+        "synSent": 0,
+        "established": 4,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 15,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 10000,
+      "opened": 3,
+      "closed": 2,
+      "bitsOut": 52008,
+      "bitsIn": 99352,
+      "states": {
+        "synSent": 0,
+        "established": 5,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 17,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 11000,
+      "opened": 2,
+      "closed": 2,
+      "bitsOut": 45296,
+      "bitsIn": 148024,
+      "states": {
+        "synSent": 0,
+        "established": 5,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 19,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 12000,
+      "opened": 3,
+      "closed": 1,
+      "bitsOut": 52008,
+      "bitsIn": 137208,
+      "states": {
+        "synSent": 0,
+        "established": 6,
+        "finWait1": 0,
+        "finWait2": 1,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 20,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 13000,
+      "opened": 3,
+      "closed": 4,
+      "bitsOut": 60216,
+      "bitsIn": 133256,
+      "states": {
+        "synSent": 0,
+        "established": 6,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 24,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 14000,
+      "opened": 3,
+      "closed": 2,
+      "bitsOut": 33432,
+      "bitsIn": 163544,
+      "states": {
+        "synSent": 0,
+        "established": 5,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 26,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 15000,
+      "opened": 3,
+      "closed": 3,
+      "bitsOut": 80440,
+      "bitsIn": 137344,
+      "states": {
+        "synSent": 0,
+        "established": 6,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 30,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 16000,
+      "opened": 3,
+      "closed": 2,
+      "bitsOut": 39984,
+      "bitsIn": 156912,
+      "states": {
+        "synSent": 0,
+        "established": 5,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 32,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 17000,
+      "opened": 3,
+      "closed": 5,
+      "bitsOut": 85136,
+      "bitsIn": 162320,
+      "states": {
+        "synSent": 0,
+        "established": 6,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 36,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 18000,
+      "opened": 3,
+      "closed": 3,
+      "bitsOut": 62064,
+      "bitsIn": 157160,
+      "states": {
+        "synSent": 0,
+        "established": 6,
+        "finWait1": 0,
+        "finWait2": 1,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 38,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 19000,
+      "opened": 3,
+      "closed": 3,
+      "bitsOut": 60208,
+      "bitsIn": 155632,
+      "states": {
+        "synSent": 0,
+        "established": 6,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 42,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 20000,
+      "opened": 3,
+      "closed": 3,
+      "bitsOut": 60224,
+      "bitsIn": 171872,
+      "states": {
+        "synSent": 0,
+        "established": 6,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 45,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 21000,
+      "opened": 4,
+      "closed": 2,
+      "bitsOut": 72096,
+      "bitsIn": 133536,
+      "states": {
+        "synSent": 0,
+        "established": 7,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 48,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 22000,
+      "opened": 3,
+      "closed": 4,
+      "bitsOut": 65400,
+      "bitsIn": 185488,
+      "states": {
+        "synSent": 0,
+        "established": 7,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 51,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 23000,
+      "opened": 3,
+      "closed": 3,
+      "bitsOut": 63248,
+      "bitsIn": 178800,
+      "states": {
+        "synSent": 0,
+        "established": 6,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 55,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 24000,
+      "opened": 3,
+      "closed": 4,
+      "bitsOut": 60224,
+      "bitsIn": 158392,
+      "states": {
+        "synSent": 0,
+        "established": 6,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 58,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 25000,
+      "opened": 3,
+      "closed": 3,
+      "bitsOut": 60200,
+      "bitsIn": 157608,
+      "states": {
+        "synSent": 0,
+        "established": 6,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 61,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 26000,
+      "opened": 3,
+      "closed": 3,
+      "bitsOut": 60208,
+      "bitsIn": 146888,
+      "states": {
+        "synSent": 0,
+        "established": 6,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 64,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 27000,
+      "opened": 3,
+      "closed": 3,
+      "bitsOut": 60224,
+      "bitsIn": 157224,
+      "states": {
+        "synSent": 0,
+        "established": 6,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 67,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 28000,
+      "opened": 3,
+      "closed": 3,
+      "bitsOut": 63072,
+      "bitsIn": 156440,
+      "states": {
+        "synSent": 0,
+        "established": 6,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 70,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 29000,
+      "opened": 3,
+      "closed": 3,
+      "bitsOut": 57376,
+      "bitsIn": 149768,
+      "states": {
+        "synSent": 0,
+        "established": 6,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 73,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 30000,
+      "opened": 4,
+      "closed": 3,
+      "bitsOut": 36448,
+      "bitsIn": 154856,
+      "states": {
+        "synSent": 0,
+        "established": 4,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 76,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 31000,
+      "opened": 3,
+      "closed": 3,
+      "bitsOut": 100088,
+      "bitsIn": 185592,
+      "states": {
+        "synSent": 0,
+        "established": 7,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 79,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 32000,
+      "opened": 5,
+      "closed": 3,
+      "bitsOut": 74640,
+      "bitsIn": 187120,
+      "states": {
+        "synSent": 0,
+        "established": 7,
+        "finWait1": 0,
+        "finWait2": 1,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 82,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 33000,
+      "opened": 5,
+      "closed": 1,
+      "bitsOut": 86888,
+      "bitsIn": 180272,
+      "states": {
+        "synSent": 0,
+        "established": 11,
+        "finWait1": 0,
+        "finWait2": 1,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 83,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 34000,
+      "opened": 5,
+      "closed": 7,
+      "bitsOut": 105720,
+      "bitsIn": 316752,
+      "states": {
+        "synSent": 0,
+        "established": 10,
+        "finWait1": 0,
+        "finWait2": 1,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 89,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 35000,
+      "opened": 5,
+      "closed": 5,
+      "bitsOut": 104088,
+      "bitsIn": 290928,
+      "states": {
+        "synSent": 0,
+        "established": 10,
+        "finWait1": 0,
+        "finWait2": 1,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 94,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 36000,
+      "opened": 5,
+      "closed": 6,
+      "bitsOut": 100568,
+      "bitsIn": 261904,
+      "states": {
+        "synSent": 0,
+        "established": 9,
+        "finWait1": 0,
+        "finWait2": 1,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 100,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 37000,
+      "opened": 5,
+      "closed": 4,
+      "bitsOut": 102224,
+      "bitsIn": 263528,
+      "states": {
+        "synSent": 0,
+        "established": 9,
+        "finWait1": 0,
+        "finWait2": 2,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 104,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 38000,
+      "opened": 4,
+      "closed": 6,
+      "bitsOut": 76576,
+      "bitsIn": 286440,
+      "states": {
+        "synSent": 0,
+        "established": 7,
+        "finWait1": 0,
+        "finWait2": 1,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 110,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 39000,
+      "opened": 5,
+      "closed": 5,
+      "bitsOut": 107048,
+      "bitsIn": 241240,
+      "states": {
+        "synSent": 0,
+        "established": 8,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 116,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 40000,
+      "opened": 6,
+      "closed": 4,
+      "bitsOut": 97320,
+      "bitsIn": 238832,
+      "states": {
+        "synSent": 0,
+        "established": 9,
+        "finWait1": 0,
+        "finWait2": 1,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 119,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 41000,
+      "opened": 9,
+      "closed": 5,
+      "bitsOut": 125008,
+      "bitsIn": 272984,
+      "states": {
+        "synSent": 0,
+        "established": 11,
+        "finWait1": 0,
+        "finWait2": 1,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 124,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 42000,
+      "opened": 7,
+      "closed": 6,
+      "bitsOut": 163240,
+      "bitsIn": 427584,
+      "states": {
+        "synSent": 0,
+        "established": 14,
+        "finWait1": 0,
+        "finWait2": 1,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 130,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 43000,
+      "opened": 7,
+      "closed": 6,
+      "bitsOut": 145720,
+      "bitsIn": 395384,
+      "states": {
+        "synSent": 0,
+        "established": 16,
+        "finWait1": 0,
+        "finWait2": 2,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 134,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 44000,
+      "opened": 7,
+      "closed": 9,
+      "bitsOut": 145600,
+      "bitsIn": 366880,
+      "states": {
+        "synSent": 0,
+        "established": 14,
+        "finWait1": 0,
+        "finWait2": 1,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 144,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 45000,
+      "opened": 6,
+      "closed": 7,
+      "bitsOut": 133344,
+      "bitsIn": 346928,
+      "states": {
+        "synSent": 0,
+        "established": 13,
+        "finWait1": 0,
+        "finWait2": 1,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 151,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 46000,
+      "opened": 6,
+      "closed": 8,
+      "bitsOut": 124288,
+      "bitsIn": 305144,
+      "states": {
+        "synSent": 0,
+        "established": 10,
+        "finWait1": 0,
+        "finWait2": 3,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 158,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 47000,
+      "opened": 7,
+      "closed": 6,
+      "bitsOut": 137280,
+      "bitsIn": 331976,
+      "states": {
+        "synSent": 0,
+        "established": 12,
+        "finWait1": 0,
+        "finWait2": 1,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 165,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 48000,
+      "opened": 7,
+      "closed": 7,
+      "bitsOut": 152368,
+      "bitsIn": 351496,
+      "states": {
+        "synSent": 0,
+        "established": 13,
+        "finWait1": 0,
+        "finWait2": 1,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 172,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 49000,
+      "opened": 5,
+      "closed": 7,
+      "bitsOut": 114368,
+      "bitsIn": 329064,
+      "states": {
+        "synSent": 0,
+        "established": 11,
+        "finWait1": 0,
+        "finWait2": 1,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 179,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 50000,
+      "opened": 6,
+      "closed": 6,
+      "bitsOut": 115968,
+      "bitsIn": 287288,
+      "states": {
+        "synSent": 0,
+        "established": 10,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 187,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 51000,
+      "opened": 7,
+      "closed": 6,
+      "bitsOut": 122104,
+      "bitsIn": 318648,
+      "states": {
+        "synSent": 0,
+        "established": 11,
+        "finWait1": 0,
+        "finWait2": 1,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 191,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 52000,
+      "opened": 7,
+      "closed": 6,
+      "bitsOut": 122784,
+      "bitsIn": 332112,
+      "states": {
+        "synSent": 0,
+        "established": 11,
+        "finWait1": 0,
+        "finWait2": 1,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 197,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 53000,
+      "opened": 7,
+      "closed": 7,
+      "bitsOut": 153104,
+      "bitsIn": 335744,
+      "states": {
+        "synSent": 0,
+        "established": 13,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 204,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 54000,
+      "opened": 5,
+      "closed": 7,
+      "bitsOut": 140888,
+      "bitsIn": 360096,
+      "states": {
+        "synSent": 0,
+        "established": 11,
+        "finWait1": 0,
+        "finWait2": 2,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 211,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 55000,
+      "opened": 8,
+      "closed": 7,
+      "bitsOut": 120736,
+      "bitsIn": 287712,
+      "states": {
+        "synSent": 0,
+        "established": 12,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 218,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 56000,
+      "opened": 8,
+      "closed": 5,
+      "bitsOut": 152408,
+      "bitsIn": 394392,
+      "states": {
+        "synSent": 0,
+        "established": 13,
+        "finWait1": 0,
+        "finWait2": 1,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 224,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 57000,
+      "opened": 7,
+      "closed": 8,
+      "bitsOut": 147056,
+      "bitsIn": 364688,
+      "states": {
+        "synSent": 0,
+        "established": 13,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 232,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 58000,
+      "opened": 8,
+      "closed": 7,
+      "bitsOut": 140904,
+      "bitsIn": 350576,
+      "states": {
+        "synSent": 0,
+        "established": 11,
+        "finWait1": 0,
+        "finWait2": 2,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 239,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 59000,
+      "opened": 9,
+      "closed": 7,
+      "bitsOut": 171400,
+      "bitsIn": 400104,
+      "states": {
+        "synSent": 0,
+        "established": 15,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 246,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 60000,
+      "opened": 7,
+      "closed": 10,
+      "bitsOut": 155384,
+      "bitsIn": 384984,
+      "states": {
+        "synSent": 0,
+        "established": 11,
+        "finWait1": 0,
+        "finWait2": 3,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 254,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 61000,
+      "opened": 7,
+      "closed": 7,
+      "bitsOut": 154928,
+      "bitsIn": 366856,
+      "states": {
+        "synSent": 0,
+        "established": 11,
+        "finWait1": 0,
+        "finWait2": 1,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 264,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 62000,
+      "opened": 7,
+      "closed": 8,
+      "bitsOut": 143352,
+      "bitsIn": 345880,
+      "states": {
+        "synSent": 0,
+        "established": 11,
+        "finWait1": 0,
+        "finWait2": 2,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 270,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 63000,
+      "opened": 7,
+      "closed": 7,
+      "bitsOut": 140296,
+      "bitsIn": 341688,
+      "states": {
+        "synSent": 0,
+        "established": 12,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 278,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 64000,
+      "opened": 9,
+      "closed": 5,
+      "bitsOut": 73904,
+      "bitsIn": 135600,
+      "states": {
+        "synSent": 0,
+        "established": 11,
+        "finWait1": 0,
+        "finWait2": 1,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 282,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 65000,
+      "opened": 7,
+      "closed": 3,
+      "bitsOut": 180304,
+      "bitsIn": 454096,
+      "states": {
+        "synSent": 0,
+        "established": 17,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 287,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 66000,
+      "opened": 5,
+      "closed": 11,
+      "bitsOut": 177736,
+      "bitsIn": 448120,
+      "states": {
+        "synSent": 0,
+        "established": 13,
+        "finWait1": 0,
+        "finWait2": 4,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 295,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 67000,
+      "opened": 7,
+      "closed": 9,
+      "bitsOut": 125328,
+      "bitsIn": 373912,
+      "states": {
+        "synSent": 0,
+        "established": 12,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 296,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 68000,
+      "opened": 6,
+      "closed": 6,
+      "bitsOut": 140448,
+      "bitsIn": 353192,
+      "states": {
+        "synSent": 0,
+        "established": 12,
+        "finWait1": 0,
+        "finWait2": 2,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 301,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 69000,
+      "opened": 7,
+      "closed": 8,
+      "bitsOut": 129264,
+      "bitsIn": 326936,
+      "states": {
+        "synSent": 0,
+        "established": 10,
+        "finWait1": 0,
+        "finWait2": 2,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 309,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 70000,
+      "opened": 8,
+      "closed": 6,
+      "bitsOut": 150800,
+      "bitsIn": 349392,
+      "states": {
+        "synSent": 0,
+        "established": 12,
+        "finWait1": 0,
+        "finWait2": 1,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 316,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 71000,
+      "opened": 7,
+      "closed": 8,
+      "bitsOut": 146320,
+      "bitsIn": 376936,
+      "states": {
+        "synSent": 0,
+        "established": 11,
+        "finWait1": 0,
+        "finWait2": 3,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 314,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 72000,
+      "opened": 7,
+      "closed": 7,
+      "bitsOut": 140488,
+      "bitsIn": 342032,
+      "states": {
+        "synSent": 0,
+        "established": 11,
+        "finWait1": 0,
+        "finWait2": 2,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 322,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 73000,
+      "opened": 6,
+      "closed": 7,
+      "bitsOut": 124376,
+      "bitsIn": 326552,
+      "states": {
+        "synSent": 0,
+        "established": 10,
+        "finWait1": 0,
+        "finWait2": 1,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 330,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 74000,
+      "opened": 7,
+      "closed": 6,
+      "bitsOut": 136576,
+      "bitsIn": 322808,
+      "states": {
+        "synSent": 0,
+        "established": 11,
+        "finWait1": 0,
+        "finWait2": 1,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 336,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 75000,
+      "opened": 6,
+      "closed": 6,
+      "bitsOut": 123920,
+      "bitsIn": 339816,
+      "states": {
+        "synSent": 0,
+        "established": 10,
+        "finWait1": 0,
+        "finWait2": 1,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 334,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 76000,
+      "opened": 8,
+      "closed": 7,
+      "bitsOut": 140616,
+      "bitsIn": 290096,
+      "states": {
+        "synSent": 0,
+        "established": 12,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 340,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 77000,
+      "opened": 7,
+      "closed": 7,
+      "bitsOut": 154208,
+      "bitsIn": 352312,
+      "states": {
+        "synSent": 0,
+        "established": 11,
+        "finWait1": 0,
+        "finWait2": 3,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 346,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 78000,
+      "opened": 7,
+      "closed": 8,
+      "bitsOut": 110056,
+      "bitsIn": 343512,
+      "states": {
+        "synSent": 0,
+        "established": 8,
+        "finWait1": 0,
+        "finWait2": 1,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 355,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 79000,
+      "opened": 6,
+      "closed": 7,
+      "bitsOut": 172088,
+      "bitsIn": 339192,
+      "states": {
+        "synSent": 0,
+        "established": 10,
+        "finWait1": 0,
+        "finWait2": 2,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 348,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 80000,
+      "opened": 6,
+      "closed": 7,
+      "bitsOut": 128920,
+      "bitsIn": 350048,
+      "states": {
+        "synSent": 0,
+        "established": 10,
+        "finWait1": 0,
+        "finWait2": 1,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 355,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 81000,
+      "opened": 7,
+      "closed": 6,
+      "bitsOut": 114800,
+      "bitsIn": 276464,
+      "states": {
+        "synSent": 0,
+        "established": 10,
+        "finWait1": 0,
+        "finWait2": 1,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 361,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 82000,
+      "opened": 6,
+      "closed": 6,
+      "bitsOut": 139184,
+      "bitsIn": 346360,
+      "states": {
+        "synSent": 0,
+        "established": 12,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 367,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 83000,
+      "opened": 7,
+      "closed": 7,
+      "bitsOut": 129760,
+      "bitsIn": 343472,
+      "states": {
+        "synSent": 0,
+        "established": 10,
+        "finWait1": 0,
+        "finWait2": 1,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 361,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 84000,
+      "opened": 6,
+      "closed": 6,
+      "bitsOut": 118536,
+      "bitsIn": 308088,
+      "states": {
+        "synSent": 0,
+        "established": 10,
+        "finWait1": 0,
+        "finWait2": 1,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 367,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 85000,
+      "opened": 6,
+      "closed": 7,
+      "bitsOut": 133880,
+      "bitsIn": 293936,
+      "states": {
+        "synSent": 0,
+        "established": 10,
+        "finWait1": 0,
+        "finWait2": 2,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 373,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 86000,
+      "opened": 7,
+      "closed": 7,
+      "bitsOut": 122240,
+      "bitsIn": 259544,
+      "states": {
+        "synSent": 0,
+        "established": 8,
+        "finWait1": 0,
+        "finWait2": 1,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 382,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 87000,
+      "opened": 4,
+      "closed": 8,
+      "bitsOut": 87648,
+      "bitsIn": 215200,
+      "states": {
+        "synSent": 0,
+        "established": 4,
+        "finWait1": 0,
+        "finWait2": 2,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 376,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 88000,
+      "opened": 7,
+      "closed": 5,
+      "bitsOut": 108912,
+      "bitsIn": 167000,
+      "states": {
+        "synSent": 0,
+        "established": 7,
+        "finWait1": 0,
+        "finWait2": 1,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 381,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 89000,
+      "opened": 7,
+      "closed": 7,
+      "bitsOut": 121312,
+      "bitsIn": 241224,
+      "states": {
+        "synSent": 0,
+        "established": 9,
+        "finWait1": 0,
+        "finWait2": 1,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 386,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 90000,
+      "opened": 4,
+      "closed": 5,
+      "bitsOut": 99816,
+      "bitsIn": 244800,
+      "states": {
+        "synSent": 0,
+        "established": 7,
+        "finWait1": 0,
+        "finWait2": 1,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 393,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 91000,
+      "opened": 0,
+      "closed": 7,
+      "bitsOut": 38120,
+      "bitsIn": 76120,
+      "states": {
+        "synSent": 0,
+        "established": 1,
+        "finWait1": 0,
+        "finWait2": 2,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 387,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 92000,
+      "opened": 1,
+      "closed": 0,
+      "bitsOut": 192,
+      "bitsIn": 2504,
+      "states": {
+        "synSent": 0,
+        "established": 0,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 390,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 93000,
+      "opened": 0,
+      "closed": 0,
+      "bitsOut": 16112,
+      "bitsIn": 30688,
+      "states": {
+        "synSent": 0,
+        "established": 1,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 390,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 94000,
+      "opened": 1,
+      "closed": 1,
+      "bitsOut": 3952,
+      "bitsIn": 7512,
+      "states": {
+        "synSent": 0,
+        "established": 0,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 391,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 95000,
+      "opened": 1,
+      "closed": 1,
+      "bitsOut": 28688,
+      "bitsIn": 57416,
+      "states": {
+        "synSent": 0,
+        "established": 1,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 392,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 96000,
+      "opened": 1,
+      "closed": 1,
+      "bitsOut": 19872,
+      "bitsIn": 35688,
+      "states": {
+        "synSent": 0,
+        "established": 2,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 376,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 97000,
+      "opened": 3,
+      "closed": 1,
+      "bitsOut": 20064,
+      "bitsIn": 38200,
+      "states": {
+        "synSent": 0,
+        "established": 2,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 377,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 98000,
+      "opened": 1,
+      "closed": 2,
+      "bitsOut": 50816,
+      "bitsIn": 108472,
+      "states": {
+        "synSent": 0,
+        "established": 2,
+        "finWait1": 0,
+        "finWait2": 1,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 379,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 99000,
+      "opened": 1,
+      "closed": 2,
+      "bitsOut": 9768,
+      "bitsIn": 12520,
+      "states": {
+        "synSent": 0,
+        "established": 0,
+        "finWait1": 0,
+        "finWait2": 1,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 381,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 100000,
+      "opened": 0,
+      "closed": 1,
+      "bitsOut": 14440,
+      "bitsIn": 30680,
+      "states": {
+        "synSent": 0,
+        "established": 0,
+        "finWait1": 0,
+        "finWait2": 1,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 361,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 101000,
+      "opened": 0,
+      "closed": 0,
+      "bitsOut": 0,
+      "bitsIn": 0,
+      "states": {
+        "synSent": 0,
+        "established": 0,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 362,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 102000,
+      "opened": 0,
+      "closed": 0,
+      "bitsOut": 0,
+      "bitsIn": 0,
+      "states": {
+        "synSent": 0,
+        "established": 0,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 362,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 103000,
+      "opened": 1,
+      "closed": 0,
+      "bitsOut": 0,
+      "bitsIn": 0,
+      "states": {
+        "synSent": 0,
+        "established": 0,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 362,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 104000,
+      "opened": 0,
+      "closed": 1,
+      "bitsOut": 14440,
+      "bitsIn": 30688,
+      "states": {
+        "synSent": 0,
+        "established": 0,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 341,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 105000,
+      "opened": 1,
+      "closed": 0,
+      "bitsOut": 0,
+      "bitsIn": 0,
+      "states": {
+        "synSent": 0,
+        "established": 0,
+        "finWait1": 0,
+        "finWait2": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 341,
+        "close": 0
+      }
+    },
+    {
+      "startOffsetMs": 106000,
+      "opened": 0,
+      "closed": 1,
+      "bitsOut": 14440,
+      "bitsIn": 30672,
+      "states": {
+        "synSent": 0,
+        "established": 0,
+        "finWait1": 0,
+        "finWait2": 1,
+        "closeWait": 0,
+        "closing": 0,
+        "lastAck": 0,
+        "timeWait": 342,
+        "close": 0
+      }
+    }
+  ],
+  "tcpConnect": {
+    "overTime": [
+      {
+        "startOffsetMs": 0,
+        "ok": [
+          235,
+          235,
+          235,
+          235,
+          235,
+          235,
+          235,
+          235,
+          235,
+          235,
+          235,
+          235,
+          235
+        ],
+        "ko": null,
+        "all": [
+          235,
+          235,
+          235,
+          235,
+          235,
+          235,
+          235,
+          235,
+          235,
+          235,
+          235,
+          235,
+          235
+        ]
+      },
+      {
+        "startOffsetMs": 1000,
+        "ok": [
+          178,
+          178,
+          178,
+          187,
+          187,
+          187,
+          187,
+          187,
+          187,
+          187,
+          187,
+          187,
+          182.5
+        ],
+        "ko": null,
+        "all": [
+          178,
+          178,
+          178,
+          187,
+          187,
+          187,
+          187,
+          187,
+          187,
+          187,
+          187,
+          187,
+          182.5
+        ]
+      },
+      {
+        "startOffsetMs": 2000,
+        "ok": [
+          202,
+          202,
+          202,
+          231,
+          231,
+          231,
+          231,
+          231,
+          231,
+          231,
+          231,
+          231,
+          216.5
+        ],
+        "ko": null,
+        "all": [
+          202,
+          202,
+          202,
+          231,
+          231,
+          231,
+          231,
+          231,
+          231,
+          231,
+          231,
+          231,
+          216.5
+        ]
+      },
+      {
+        "startOffsetMs": 3000,
+        "ok": [
+          181,
+          181,
+          181,
+          196,
+          196,
+          196,
+          196,
+          196,
+          196,
+          196,
+          196,
+          196,
+          188.5
+        ],
+        "ko": null,
+        "all": [
+          181,
+          181,
+          181,
+          196,
+          196,
+          196,
+          196,
+          196,
+          196,
+          196,
+          196,
+          196,
+          188.5
+        ]
+      },
+      {
+        "startOffsetMs": 4000,
+        "ok": [
+          175,
+          175,
+          175,
+          195,
+          195,
+          195,
+          195,
+          195,
+          195,
+          195,
+          195,
+          195,
+          185
+        ],
+        "ko": null,
+        "all": [
+          175,
+          175,
+          175,
+          195,
+          195,
+          195,
+          195,
+          195,
+          195,
+          195,
+          195,
+          195,
+          185
+        ]
+      },
+      {
+        "startOffsetMs": 5000,
+        "ok": [
+          168,
+          168,
+          168,
+          186,
+          186,
+          186,
+          186,
+          186,
+          186,
+          186,
+          186,
+          186,
+          177
+        ],
+        "ko": null,
+        "all": [
+          168,
+          168,
+          168,
+          186,
+          186,
+          186,
+          186,
+          186,
+          186,
+          186,
+          186,
+          186,
+          177
+        ]
+      },
+      {
+        "startOffsetMs": 6000,
+        "ok": [
+          182,
+          182,
+          182,
+          193,
+          193,
+          193,
+          193,
+          193,
+          193,
+          193,
+          193,
+          193,
+          187.5
+        ],
+        "ko": null,
+        "all": [
+          182,
+          182,
+          182,
+          193,
+          193,
+          193,
+          193,
+          193,
+          193,
+          193,
+          193,
+          193,
+          187.5
+        ]
+      },
+      {
+        "startOffsetMs": 7000,
+        "ok": [
+          171,
+          171,
+          171,
+          191,
+          191,
+          191,
+          191,
+          191,
+          191,
+          191,
+          191,
+          191,
+          181
+        ],
+        "ko": null,
+        "all": [
+          171,
+          171,
+          171,
+          191,
+          191,
+          191,
+          191,
+          191,
+          191,
+          191,
+          191,
+          191,
+          181
+        ]
+      },
+      {
+        "startOffsetMs": 8000,
+        "ok": [
+          187,
+          187,
+          187,
+          232,
+          232,
+          232,
+          232,
+          232,
+          232,
+          232,
+          232,
+          232,
+          209.5
+        ],
+        "ko": null,
+        "all": [
+          187,
+          187,
+          187,
+          232,
+          232,
+          232,
+          232,
+          232,
+          232,
+          232,
+          232,
+          232,
+          209.5
+        ]
+      },
+      {
+        "startOffsetMs": 9000,
+        "ok": [
+          186,
+          186,
+          186,
+          197,
+          197,
+          197,
+          197,
+          197,
+          197,
+          197,
+          197,
+          197,
+          191.5
+        ],
+        "ko": null,
+        "all": [
+          186,
+          186,
+          186,
+          197,
+          197,
+          197,
+          197,
+          197,
+          197,
+          197,
+          197,
+          197,
+          191.5
+        ]
+      },
+      {
+        "startOffsetMs": 10000,
+        "ok": [
+          205,
+          205,
+          207,
+          211,
+          211,
+          211,
+          211,
+          211,
+          211,
+          211,
+          211,
+          211,
+          207.66666666666666
+        ],
+        "ko": null,
+        "all": [
+          205,
+          205,
+          207,
+          211,
+          211,
+          211,
+          211,
+          211,
+          211,
+          211,
+          211,
+          211,
+          207.66666666666666
+        ]
+      },
+      {
+        "startOffsetMs": 11000,
+        "ok": [
+          172,
+          172,
+          172,
+          186,
+          186,
+          186,
+          186,
+          186,
+          186,
+          186,
+          186,
+          186,
+          179
+        ],
+        "ko": [
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002
+        ],
+        "all": [
+          172,
+          172,
+          186,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          3453.3333333333335
+        ]
+      },
+      {
+        "startOffsetMs": 12000,
+        "ok": [
+          192,
+          192,
+          200,
+          206,
+          206,
+          206,
+          206,
+          206,
+          206,
+          206,
+          206,
+          206,
+          199.33333333333334
+        ],
+        "ko": null,
+        "all": [
+          192,
+          192,
+          200,
+          206,
+          206,
+          206,
+          206,
+          206,
+          206,
+          206,
+          206,
+          206,
+          199.33333333333334
+        ]
+      },
+      {
+        "startOffsetMs": 13000,
+        "ok": [
+          191,
+          191,
+          214,
+          214,
+          214,
+          214,
+          214,
+          214,
+          214,
+          214,
+          214,
+          214,
+          206.33333333333334
+        ],
+        "ko": null,
+        "all": [
+          191,
+          191,
+          214,
+          214,
+          214,
+          214,
+          214,
+          214,
+          214,
+          214,
+          214,
+          214,
+          206.33333333333334
+        ]
+      },
+      {
+        "startOffsetMs": 14000,
+        "ok": [
+          225,
+          225,
+          226,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          226.33333333333334
+        ],
+        "ko": null,
+        "all": [
+          225,
+          225,
+          226,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          226.33333333333334
+        ]
+      },
+      {
+        "startOffsetMs": 15000,
+        "ok": [
+          185,
+          185,
+          196,
+          197,
+          197,
+          197,
+          197,
+          197,
+          197,
+          197,
+          197,
+          197,
+          192.66666666666666
+        ],
+        "ko": null,
+        "all": [
+          185,
+          185,
+          196,
+          197,
+          197,
+          197,
+          197,
+          197,
+          197,
+          197,
+          197,
+          197,
+          192.66666666666666
+        ]
+      },
+      {
+        "startOffsetMs": 16000,
+        "ok": [
+          171,
+          171,
+          246,
+          246,
+          246,
+          246,
+          246,
+          246,
+          246,
+          246,
+          246,
+          246,
+          221
+        ],
+        "ko": null,
+        "all": [
+          171,
+          171,
+          246,
+          246,
+          246,
+          246,
+          246,
+          246,
+          246,
+          246,
+          246,
+          246,
+          221
+        ]
+      },
+      {
+        "startOffsetMs": 17000,
+        "ok": [
+          190,
+          190,
+          206,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          204.66666666666666
+        ],
+        "ko": null,
+        "all": [
+          190,
+          190,
+          206,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          204.66666666666666
+        ]
+      },
+      {
+        "startOffsetMs": 18000,
+        "ok": [
+          197,
+          197,
+          201,
+          230,
+          230,
+          230,
+          230,
+          230,
+          230,
+          230,
+          230,
+          230,
+          209.33333333333334
+        ],
+        "ko": null,
+        "all": [
+          197,
+          197,
+          201,
+          230,
+          230,
+          230,
+          230,
+          230,
+          230,
+          230,
+          230,
+          230,
+          209.33333333333334
+        ]
+      },
+      {
+        "startOffsetMs": 19000,
+        "ok": [
+          177,
+          177,
+          191,
+          205,
+          205,
+          205,
+          205,
+          205,
+          205,
+          205,
+          205,
+          205,
+          191
+        ],
+        "ko": null,
+        "all": [
+          177,
+          177,
+          191,
+          205,
+          205,
+          205,
+          205,
+          205,
+          205,
+          205,
+          205,
+          205,
+          191
+        ]
+      },
+      {
+        "startOffsetMs": 20000,
+        "ok": [
+          170,
+          170,
+          209,
+          209,
+          209,
+          209,
+          209,
+          209,
+          209,
+          209,
+          209,
+          209,
+          196
+        ],
+        "ko": null,
+        "all": [
+          170,
+          170,
+          209,
+          209,
+          209,
+          209,
+          209,
+          209,
+          209,
+          209,
+          209,
+          209,
+          196
+        ]
+      },
+      {
+        "startOffsetMs": 21000,
+        "ok": [
+          175,
+          175,
+          207,
+          212,
+          214,
+          214,
+          214,
+          214,
+          214,
+          214,
+          214,
+          214,
+          202
+        ],
+        "ko": null,
+        "all": [
+          175,
+          175,
+          207,
+          212,
+          214,
+          214,
+          214,
+          214,
+          214,
+          214,
+          214,
+          214,
+          202
+        ]
+      },
+      {
+        "startOffsetMs": 22000,
+        "ok": [
+          189,
+          189,
+          190,
+          224,
+          224,
+          224,
+          224,
+          224,
+          224,
+          224,
+          224,
+          224,
+          201
+        ],
+        "ko": null,
+        "all": [
+          189,
+          189,
+          190,
+          224,
+          224,
+          224,
+          224,
+          224,
+          224,
+          224,
+          224,
+          224,
+          201
+        ]
+      },
+      {
+        "startOffsetMs": 23000,
+        "ok": [
+          175,
+          175,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          191.66666666666666
+        ],
+        "ko": null,
+        "all": [
+          175,
+          175,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          191.66666666666666
+        ]
+      },
+      {
+        "startOffsetMs": 24000,
+        "ok": [
+          207,
+          207,
+          210,
+          211,
+          211,
+          211,
+          211,
+          211,
+          211,
+          211,
+          211,
+          211,
+          209.33333333333334
+        ],
+        "ko": null,
+        "all": [
+          207,
+          207,
+          210,
+          211,
+          211,
+          211,
+          211,
+          211,
+          211,
+          211,
+          211,
+          211,
+          209.33333333333334
+        ]
+      },
+      {
+        "startOffsetMs": 25000,
+        "ok": [
+          168,
+          168,
+          182,
+          188,
+          188,
+          188,
+          188,
+          188,
+          188,
+          188,
+          188,
+          188,
+          179.33333333333334
+        ],
+        "ko": null,
+        "all": [
+          168,
+          168,
+          182,
+          188,
+          188,
+          188,
+          188,
+          188,
+          188,
+          188,
+          188,
+          188,
+          179.33333333333334
+        ]
+      },
+      {
+        "startOffsetMs": 26000,
+        "ok": [
+          195,
+          195,
+          204,
+          204,
+          204,
+          204,
+          204,
+          204,
+          204,
+          204,
+          204,
+          204,
+          201
+        ],
+        "ko": null,
+        "all": [
+          195,
+          195,
+          204,
+          204,
+          204,
+          204,
+          204,
+          204,
+          204,
+          204,
+          204,
+          204,
+          201
+        ]
+      },
+      {
+        "startOffsetMs": 27000,
+        "ok": [
+          167,
+          167,
+          168,
+          182,
+          182,
+          182,
+          182,
+          182,
+          182,
+          182,
+          182,
+          182,
+          172.33333333333334
+        ],
+        "ko": null,
+        "all": [
+          167,
+          167,
+          168,
+          182,
+          182,
+          182,
+          182,
+          182,
+          182,
+          182,
+          182,
+          182,
+          172.33333333333334
+        ]
+      },
+      {
+        "startOffsetMs": 28000,
+        "ok": [
+          187,
+          187,
+          210,
+          214,
+          214,
+          214,
+          214,
+          214,
+          214,
+          214,
+          214,
+          214,
+          203.66666666666666
+        ],
+        "ko": null,
+        "all": [
+          187,
+          187,
+          210,
+          214,
+          214,
+          214,
+          214,
+          214,
+          214,
+          214,
+          214,
+          214,
+          203.66666666666666
+        ]
+      },
+      {
+        "startOffsetMs": 29000,
+        "ok": [
+          171,
+          171,
+          187,
+          190,
+          190,
+          190,
+          190,
+          190,
+          190,
+          190,
+          190,
+          190,
+          182.66666666666666
+        ],
+        "ko": null,
+        "all": [
+          171,
+          171,
+          187,
+          190,
+          190,
+          190,
+          190,
+          190,
+          190,
+          190,
+          190,
+          190,
+          182.66666666666666
+        ]
+      },
+      {
+        "startOffsetMs": 30000,
+        "ok": [
+          191,
+          191,
+          196,
+          267,
+          275,
+          275,
+          275,
+          275,
+          275,
+          275,
+          275,
+          275,
+          232.25
+        ],
+        "ko": null,
+        "all": [
+          191,
+          191,
+          196,
+          267,
+          275,
+          275,
+          275,
+          275,
+          275,
+          275,
+          275,
+          275,
+          232.25
+        ]
+      },
+      {
+        "startOffsetMs": 31000,
+        "ok": [
+          171,
+          171,
+          186,
+          196,
+          196,
+          196,
+          196,
+          196,
+          196,
+          196,
+          196,
+          196,
+          184.33333333333334
+        ],
+        "ko": [
+          10001,
+          10001,
+          10001,
+          10006,
+          10006,
+          10006,
+          10006,
+          10006,
+          10006,
+          10006,
+          10006,
+          10006,
+          10003.5
+        ],
+        "all": [
+          171,
+          186,
+          196,
+          10001,
+          10001,
+          10006,
+          10006,
+          10006,
+          10006,
+          10006,
+          10006,
+          10006,
+          4112
+        ]
+      },
+      {
+        "startOffsetMs": 32000,
+        "ok": [
+          204,
+          204,
+          211,
+          220,
+          220,
+          242,
+          242,
+          242,
+          242,
+          242,
+          242,
+          242,
+          216.2
+        ],
+        "ko": null,
+        "all": [
+          204,
+          204,
+          211,
+          220,
+          220,
+          242,
+          242,
+          242,
+          242,
+          242,
+          242,
+          242,
+          216.2
+        ]
+      },
+      {
+        "startOffsetMs": 33000,
+        "ok": [
+          171,
+          173,
+          194,
+          194,
+          194,
+          210,
+          210,
+          210,
+          210,
+          210,
+          210,
+          210,
+          188.4
+        ],
+        "ko": null,
+        "all": [
+          171,
+          173,
+          194,
+          194,
+          194,
+          210,
+          210,
+          210,
+          210,
+          210,
+          210,
+          210,
+          188.4
+        ]
+      },
+      {
+        "startOffsetMs": 34000,
+        "ok": [
+          173,
+          185,
+          208,
+          208,
+          208,
+          224,
+          224,
+          224,
+          224,
+          224,
+          224,
+          224,
+          199.6
+        ],
+        "ko": null,
+        "all": [
+          173,
+          185,
+          208,
+          208,
+          208,
+          224,
+          224,
+          224,
+          224,
+          224,
+          224,
+          224,
+          199.6
+        ]
+      },
+      {
+        "startOffsetMs": 35000,
+        "ok": [
+          173,
+          187,
+          187,
+          187,
+          187,
+          208,
+          208,
+          208,
+          208,
+          208,
+          208,
+          208,
+          188.4
+        ],
+        "ko": null,
+        "all": [
+          173,
+          187,
+          187,
+          187,
+          187,
+          208,
+          208,
+          208,
+          208,
+          208,
+          208,
+          208,
+          188.4
+        ]
+      },
+      {
+        "startOffsetMs": 36000,
+        "ok": [
+          177,
+          198,
+          198,
+          204,
+          204,
+          209,
+          209,
+          209,
+          209,
+          209,
+          209,
+          209,
+          197.2
+        ],
+        "ko": null,
+        "all": [
+          177,
+          198,
+          198,
+          204,
+          204,
+          209,
+          209,
+          209,
+          209,
+          209,
+          209,
+          209,
+          197.2
+        ]
+      },
+      {
+        "startOffsetMs": 37000,
+        "ok": [
+          172,
+          178,
+          188,
+          188,
+          188,
+          191,
+          191,
+          191,
+          191,
+          191,
+          191,
+          191,
+          183.4
+        ],
+        "ko": null,
+        "all": [
+          172,
+          178,
+          188,
+          188,
+          188,
+          191,
+          191,
+          191,
+          191,
+          191,
+          191,
+          191,
+          183.4
+        ]
+      },
+      {
+        "startOffsetMs": 38000,
+        "ok": [
+          175,
+          175,
+          178,
+          189,
+          247,
+          247,
+          247,
+          247,
+          247,
+          247,
+          247,
+          247,
+          197.25
+        ],
+        "ko": [
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001
+        ],
+        "all": [
+          175,
+          178,
+          189,
+          247,
+          247,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          2158
+        ]
+      },
+      {
+        "startOffsetMs": 39000,
+        "ok": [
+          180,
+          185,
+          196,
+          213,
+          213,
+          214,
+          214,
+          214,
+          214,
+          214,
+          214,
+          214,
+          197.6
+        ],
+        "ko": null,
+        "all": [
+          180,
+          185,
+          196,
+          213,
+          213,
+          214,
+          214,
+          214,
+          214,
+          214,
+          214,
+          214,
+          197.6
+        ]
+      },
+      {
+        "startOffsetMs": 40000,
+        "ok": [
+          172,
+          188,
+          191,
+          195,
+          195,
+          221,
+          221,
+          221,
+          221,
+          221,
+          221,
+          221,
+          193.66666666666666
+        ],
+        "ko": null,
+        "all": [
+          172,
+          188,
+          191,
+          195,
+          195,
+          221,
+          221,
+          221,
+          221,
+          221,
+          221,
+          221,
+          193.66666666666666
+        ]
+      },
+      {
+        "startOffsetMs": 41000,
+        "ok": [
+          185,
+          198,
+          201,
+          212,
+          218,
+          218,
+          1184,
+          1184,
+          1184,
+          1184,
+          1184,
+          1184,
+          310.77777777777777
+        ],
+        "ko": null,
+        "all": [
+          185,
+          198,
+          201,
+          212,
+          218,
+          218,
+          1184,
+          1184,
+          1184,
+          1184,
+          1184,
+          1184,
+          310.77777777777777
+        ]
+      },
+      {
+        "startOffsetMs": 42000,
+        "ok": [
+          167,
+          167,
+          188,
+          197,
+          197,
+          197,
+          198,
+          198,
+          198,
+          198,
+          198,
+          198,
+          184.42857142857142
+        ],
+        "ko": null,
+        "all": [
+          167,
+          167,
+          188,
+          197,
+          197,
+          197,
+          198,
+          198,
+          198,
+          198,
+          198,
+          198,
+          184.42857142857142
+        ]
+      },
+      {
+        "startOffsetMs": 43000,
+        "ok": [
+          169,
+          171,
+          182,
+          193,
+          193,
+          193,
+          239,
+          239,
+          239,
+          239,
+          239,
+          239,
+          187.85714285714286
+        ],
+        "ko": null,
+        "all": [
+          169,
+          171,
+          182,
+          193,
+          193,
+          193,
+          239,
+          239,
+          239,
+          239,
+          239,
+          239,
+          187.85714285714286
+        ]
+      },
+      {
+        "startOffsetMs": 44000,
+        "ok": [
+          181,
+          186,
+          188,
+          194,
+          194,
+          194,
+          225,
+          225,
+          225,
+          225,
+          225,
+          225,
+          193.28571428571428
+        ],
+        "ko": null,
+        "all": [
+          181,
+          186,
+          188,
+          194,
+          194,
+          194,
+          225,
+          225,
+          225,
+          225,
+          225,
+          225,
+          193.28571428571428
+        ]
+      },
+      {
+        "startOffsetMs": 45000,
+        "ok": [
+          174,
+          184,
+          186,
+          215,
+          215,
+          216,
+          216,
+          216,
+          216,
+          216,
+          216,
+          216,
+          197.16666666666666
+        ],
+        "ko": [
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002
+        ],
+        "all": [
+          174,
+          184,
+          208,
+          216,
+          216,
+          216,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          1597.857142857143
+        ]
+      },
+      {
+        "startOffsetMs": 46000,
+        "ok": [
+          174,
+          179,
+          182,
+          201,
+          201,
+          210,
+          210,
+          210,
+          210,
+          210,
+          210,
+          210,
+          189.5
+        ],
+        "ko": [
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001
+        ],
+        "all": [
+          174,
+          179,
+          191,
+          210,
+          210,
+          210,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          1591.142857142857
+        ]
+      },
+      {
+        "startOffsetMs": 47000,
+        "ok": [
+          169,
+          170,
+          190,
+          199,
+          199,
+          199,
+          230,
+          230,
+          230,
+          230,
+          230,
+          230,
+          190.42857142857142
+        ],
+        "ko": null,
+        "all": [
+          169,
+          170,
+          190,
+          199,
+          199,
+          199,
+          230,
+          230,
+          230,
+          230,
+          230,
+          230,
+          190.42857142857142
+        ]
+      },
+      {
+        "startOffsetMs": 48000,
+        "ok": [
+          172,
+          187,
+          192,
+          206,
+          206,
+          206,
+          212,
+          212,
+          212,
+          212,
+          212,
+          212,
+          193.85714285714286
+        ],
+        "ko": [
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001
+        ],
+        "all": [
+          172,
+          187,
+          192,
+          206,
+          212,
+          212,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          1419.75
+        ]
+      },
+      {
+        "startOffsetMs": 49000,
+        "ok": [
+          180,
+          180,
+          184,
+          185,
+          185,
+          206,
+          206,
+          206,
+          206,
+          206,
+          206,
+          206,
+          187
+        ],
+        "ko": [
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001
+        ],
+        "all": [
+          180,
+          180,
+          185,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          2991
+        ]
+      },
+      {
+        "startOffsetMs": 50000,
+        "ok": [
+          184,
+          193,
+          193,
+          214,
+          214,
+          235,
+          235,
+          235,
+          235,
+          235,
+          235,
+          235,
+          202.5
+        ],
+        "ko": [
+          10003,
+          10003,
+          10003,
+          10003,
+          10003,
+          10003,
+          10003,
+          10003,
+          10003,
+          10003,
+          10003,
+          10003,
+          10003
+        ],
+        "all": [
+          184,
+          193,
+          196,
+          235,
+          235,
+          235,
+          10003,
+          10003,
+          10003,
+          10003,
+          10003,
+          10003,
+          1602.5714285714287
+        ]
+      },
+      {
+        "startOffsetMs": 51000,
+        "ok": [
+          171,
+          173,
+          187,
+          202,
+          202,
+          202,
+          207,
+          207,
+          207,
+          207,
+          207,
+          207,
+          186
+        ],
+        "ko": null,
+        "all": [
+          171,
+          173,
+          187,
+          202,
+          202,
+          202,
+          207,
+          207,
+          207,
+          207,
+          207,
+          207,
+          186
+        ]
+      },
+      {
+        "startOffsetMs": 52000,
+        "ok": [
+          173,
+          184,
+          185,
+          218,
+          218,
+          218,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          196.28571428571428
+        ],
+        "ko": null,
+        "all": [
+          173,
+          184,
+          185,
+          218,
+          218,
+          218,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          196.28571428571428
+        ]
+      },
+      {
+        "startOffsetMs": 53000,
+        "ok": [
+          180,
+          188,
+          193,
+          199,
+          199,
+          199,
+          203,
+          203,
+          203,
+          203,
+          203,
+          203,
+          192.57142857142858
+        ],
+        "ko": null,
+        "all": [
+          180,
+          188,
+          193,
+          199,
+          199,
+          199,
+          203,
+          203,
+          203,
+          203,
+          203,
+          203,
+          192.57142857142858
+        ]
+      },
+      {
+        "startOffsetMs": 54000,
+        "ok": [
+          167,
+          174,
+          183,
+          187,
+          187,
+          192,
+          192,
+          192,
+          192,
+          192,
+          192,
+          192,
+          180.6
+        ],
+        "ko": [
+          10001,
+          10001,
+          10001,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          10001.5
+        ],
+        "all": [
+          167,
+          174,
+          187,
+          10001,
+          10001,
+          10001,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          2986.5714285714284
+        ]
+      },
+      {
+        "startOffsetMs": 55000,
+        "ok": [
+          176,
+          181,
+          200,
+          204,
+          210,
+          210,
+          223,
+          223,
+          223,
+          223,
+          223,
+          223,
+          199.25
+        ],
+        "ko": null,
+        "all": [
+          176,
+          181,
+          200,
+          204,
+          210,
+          210,
+          223,
+          223,
+          223,
+          223,
+          223,
+          223,
+          199.25
+        ]
+      },
+      {
+        "startOffsetMs": 56000,
+        "ok": [
+          168,
+          188,
+          206,
+          210,
+          217,
+          217,
+          217,
+          217,
+          217,
+          217,
+          217,
+          217,
+          202.25
+        ],
+        "ko": null,
+        "all": [
+          168,
+          188,
+          206,
+          210,
+          217,
+          217,
+          217,
+          217,
+          217,
+          217,
+          217,
+          217,
+          202.25
+        ]
+      },
+      {
+        "startOffsetMs": 57000,
+        "ok": [
+          170,
+          175,
+          180,
+          204,
+          204,
+          204,
+          207,
+          207,
+          207,
+          207,
+          207,
+          207,
+          187.28571428571428
+        ],
+        "ko": null,
+        "all": [
+          170,
+          175,
+          180,
+          204,
+          204,
+          204,
+          207,
+          207,
+          207,
+          207,
+          207,
+          207,
+          187.28571428571428
+        ]
+      },
+      {
+        "startOffsetMs": 58000,
+        "ok": [
+          177,
+          184,
+          188,
+          214,
+          219,
+          219,
+          281,
+          281,
+          281,
+          281,
+          281,
+          281,
+          205.75
+        ],
+        "ko": null,
+        "all": [
+          177,
+          184,
+          188,
+          214,
+          219,
+          219,
+          281,
+          281,
+          281,
+          281,
+          281,
+          281,
+          205.75
+        ]
+      },
+      {
+        "startOffsetMs": 59000,
+        "ok": [
+          171,
+          181,
+          205,
+          212,
+          219,
+          219,
+          224,
+          224,
+          224,
+          224,
+          224,
+          224,
+          199.33333333333334
+        ],
+        "ko": null,
+        "all": [
+          171,
+          181,
+          205,
+          212,
+          219,
+          219,
+          224,
+          224,
+          224,
+          224,
+          224,
+          224,
+          199.33333333333334
+        ]
+      },
+      {
+        "startOffsetMs": 60000,
+        "ok": [
+          168,
+          173,
+          178,
+          199,
+          199,
+          199,
+          202,
+          202,
+          202,
+          202,
+          202,
+          202,
+          184.28571428571428
+        ],
+        "ko": [
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001
+        ],
+        "all": [
+          168,
+          173,
+          178,
+          199,
+          202,
+          202,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          1411.375
+        ]
+      },
+      {
+        "startOffsetMs": 61000,
+        "ok": [
+          177,
+          178,
+          180,
+          202,
+          202,
+          202,
+          210,
+          210,
+          210,
+          210,
+          210,
+          210,
+          186.42857142857142
+        ],
+        "ko": null,
+        "all": [
+          177,
+          178,
+          180,
+          202,
+          202,
+          202,
+          210,
+          210,
+          210,
+          210,
+          210,
+          210,
+          186.42857142857142
+        ]
+      },
+      {
+        "startOffsetMs": 62000,
+        "ok": [
+          181,
+          192,
+          199,
+          207,
+          207,
+          207,
+          215,
+          215,
+          215,
+          215,
+          215,
+          215,
+          198.42857142857142
+        ],
+        "ko": null,
+        "all": [
+          181,
+          192,
+          199,
+          207,
+          207,
+          207,
+          215,
+          215,
+          215,
+          215,
+          215,
+          215,
+          198.42857142857142
+        ]
+      },
+      {
+        "startOffsetMs": 63000,
+        "ok": [
+          183,
+          184,
+          196,
+          1184,
+          1184,
+          1184,
+          1190,
+          1190,
+          1190,
+          1190,
+          1190,
+          1190,
+          478.14285714285717
+        ],
+        "ko": null,
+        "all": [
+          183,
+          184,
+          196,
+          1184,
+          1184,
+          1184,
+          1190,
+          1190,
+          1190,
+          1190,
+          1190,
+          1190,
+          478.14285714285717
+        ]
+      },
+      {
+        "startOffsetMs": 64000,
+        "ok": [
+          182,
+          189,
+          204,
+          217,
+          229,
+          229,
+          1198,
+          1198,
+          1198,
+          1198,
+          1198,
+          1198,
+          311.3333333333333
+        ],
+        "ko": null,
+        "all": [
+          182,
+          189,
+          204,
+          217,
+          229,
+          229,
+          1198,
+          1198,
+          1198,
+          1198,
+          1198,
+          1198,
+          311.3333333333333
+        ]
+      },
+      {
+        "startOffsetMs": 65000,
+        "ok": [
+          178,
+          181,
+          193,
+          223,
+          223,
+          223,
+          1169,
+          1169,
+          1169,
+          1169,
+          1169,
+          1169,
+          333.14285714285717
+        ],
+        "ko": null,
+        "all": [
+          178,
+          181,
+          193,
+          223,
+          223,
+          223,
+          1169,
+          1169,
+          1169,
+          1169,
+          1169,
+          1169,
+          333.14285714285717
+        ]
+      },
+      {
+        "startOffsetMs": 66000,
+        "ok": [
+          169,
+          171,
+          191,
+          205,
+          205,
+          223,
+          223,
+          223,
+          223,
+          223,
+          223,
+          223,
+          191.8
+        ],
+        "ko": [
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001
+        ],
+        "all": [
+          169,
+          171,
+          205,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          2994.4285714285716
+        ]
+      },
+      {
+        "startOffsetMs": 67000,
+        "ok": [
+          177,
+          180,
+          181,
+          198,
+          198,
+          198,
+          199,
+          199,
+          199,
+          199,
+          199,
+          199,
+          186
+        ],
+        "ko": null,
+        "all": [
+          177,
+          180,
+          181,
+          198,
+          198,
+          198,
+          199,
+          199,
+          199,
+          199,
+          199,
+          199,
+          186
+        ]
+      },
+      {
+        "startOffsetMs": 68000,
+        "ok": [
+          170,
+          171,
+          171,
+          194,
+          194,
+          217,
+          217,
+          217,
+          217,
+          217,
+          217,
+          217,
+          183.16666666666666
+        ],
+        "ko": [
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001
+        ],
+        "all": [
+          170,
+          171,
+          176,
+          217,
+          217,
+          217,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          1585.7142857142858
+        ]
+      },
+      {
+        "startOffsetMs": 69000,
+        "ok": [
+          174,
+          177,
+          184,
+          191,
+          191,
+          191,
+          194,
+          194,
+          194,
+          194,
+          194,
+          194,
+          184.42857142857142
+        ],
+        "ko": null,
+        "all": [
+          174,
+          177,
+          184,
+          191,
+          191,
+          191,
+          194,
+          194,
+          194,
+          194,
+          194,
+          194,
+          184.42857142857142
+        ]
+      },
+      {
+        "startOffsetMs": 70000,
+        "ok": [
+          180,
+          181,
+          185,
+          186,
+          187,
+          187,
+          198,
+          198,
+          198,
+          198,
+          198,
+          198,
+          185.875
+        ],
+        "ko": null,
+        "all": [
+          180,
+          181,
+          185,
+          186,
+          187,
+          187,
+          198,
+          198,
+          198,
+          198,
+          198,
+          198,
+          185.875
+        ]
+      },
+      {
+        "startOffsetMs": 71000,
+        "ok": [
+          168,
+          169,
+          191,
+          193,
+          193,
+          193,
+          196,
+          196,
+          196,
+          196,
+          196,
+          196,
+          182.42857142857142
+        ],
+        "ko": null,
+        "all": [
+          168,
+          169,
+          191,
+          193,
+          193,
+          193,
+          196,
+          196,
+          196,
+          196,
+          196,
+          196,
+          182.42857142857142
+        ]
+      },
+      {
+        "startOffsetMs": 72000,
+        "ok": [
+          171,
+          179,
+          190,
+          196,
+          196,
+          196,
+          201,
+          201,
+          201,
+          201,
+          201,
+          201,
+          188.28571428571428
+        ],
+        "ko": null,
+        "all": [
+          171,
+          179,
+          190,
+          196,
+          196,
+          196,
+          201,
+          201,
+          201,
+          201,
+          201,
+          201,
+          188.28571428571428
+        ]
+      },
+      {
+        "startOffsetMs": 73000,
+        "ok": [
+          176,
+          179,
+          190,
+          199,
+          199,
+          217,
+          217,
+          217,
+          217,
+          217,
+          217,
+          217,
+          193.16666666666666
+        ],
+        "ko": [
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001
+        ],
+        "all": [
+          176,
+          179,
+          198,
+          217,
+          217,
+          217,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          1594.2857142857142
+        ]
+      },
+      {
+        "startOffsetMs": 74000,
+        "ok": [
+          169,
+          176,
+          181,
+          189,
+          189,
+          189,
+          190,
+          190,
+          190,
+          190,
+          190,
+          190,
+          181
+        ],
+        "ko": null,
+        "all": [
+          169,
+          176,
+          181,
+          189,
+          189,
+          189,
+          190,
+          190,
+          190,
+          190,
+          190,
+          190,
+          181
+        ]
+      },
+      {
+        "startOffsetMs": 75000,
+        "ok": [
+          180,
+          185,
+          186,
+          197,
+          197,
+          216,
+          216,
+          216,
+          216,
+          216,
+          216,
+          216,
+          191.83333333333334
+        ],
+        "ko": [
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001
+        ],
+        "all": [
+          180,
+          185,
+          187,
+          216,
+          216,
+          216,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          1593.142857142857
+        ]
+      },
+      {
+        "startOffsetMs": 76000,
+        "ok": [
+          164,
+          182,
+          190,
+          198,
+          211,
+          211,
+          211,
+          211,
+          211,
+          211,
+          211,
+          211,
+          192.625
+        ],
+        "ko": [
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001
+        ],
+        "all": [
+          164,
+          189,
+          196,
+          211,
+          211,
+          211,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          1282.4444444444443
+        ]
+      },
+      {
+        "startOffsetMs": 77000,
+        "ok": [
+          167,
+          171,
+          187,
+          202,
+          202,
+          202,
+          220,
+          220,
+          220,
+          220,
+          220,
+          220,
+          187.85714285714286
+        ],
+        "ko": null,
+        "all": [
+          167,
+          171,
+          187,
+          202,
+          202,
+          202,
+          220,
+          220,
+          220,
+          220,
+          220,
+          220,
+          187.85714285714286
+        ]
+      },
+      {
+        "startOffsetMs": 78000,
+        "ok": [
+          176,
+          179,
+          181,
+          227,
+          227,
+          227,
+          227,
+          227,
+          227,
+          227,
+          227,
+          227,
+          195.57142857142858
+        ],
+        "ko": [
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001
+        ],
+        "all": [
+          176,
+          179,
+          181,
+          227,
+          227,
+          227,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          1421.25
+        ]
+      },
+      {
+        "startOffsetMs": 79000,
+        "ok": [
+          171,
+          172,
+          176,
+          191,
+          191,
+          201,
+          201,
+          201,
+          201,
+          201,
+          201,
+          201,
+          181.66666666666666
+        ],
+        "ko": [
+          10003,
+          10003,
+          10003,
+          10003,
+          10003,
+          10003,
+          10003,
+          10003,
+          10003,
+          10003,
+          10003,
+          10003,
+          10003
+        ],
+        "all": [
+          171,
+          172,
+          179,
+          201,
+          201,
+          201,
+          10003,
+          10003,
+          10003,
+          10003,
+          10003,
+          10003,
+          1584.7142857142858
+        ]
+      },
+      {
+        "startOffsetMs": 80000,
+        "ok": [
+          177,
+          189,
+          198,
+          206,
+          206,
+          209,
+          209,
+          209,
+          209,
+          209,
+          209,
+          209,
+          196.66666666666666
+        ],
+        "ko": [
+          10007,
+          10007,
+          10007,
+          10007,
+          10007,
+          10007,
+          10007,
+          10007,
+          10007,
+          10007,
+          10007,
+          10007,
+          10007
+        ],
+        "all": [
+          177,
+          189,
+          201,
+          209,
+          209,
+          209,
+          10007,
+          10007,
+          10007,
+          10007,
+          10007,
+          10007,
+          1598.142857142857
+        ]
+      },
+      {
+        "startOffsetMs": 81000,
+        "ok": [
+          171,
+          183,
+          187,
+          192,
+          192,
+          192,
+          220,
+          220,
+          220,
+          220,
+          220,
+          220,
+          189.57142857142858
+        ],
+        "ko": null,
+        "all": [
+          171,
+          183,
+          187,
+          192,
+          192,
+          192,
+          220,
+          220,
+          220,
+          220,
+          220,
+          220,
+          189.57142857142858
+        ]
+      },
+      {
+        "startOffsetMs": 82000,
+        "ok": [
+          173,
+          174,
+          181,
+          187,
+          187,
+          197,
+          197,
+          197,
+          197,
+          197,
+          197,
+          197,
+          182.83333333333334
+        ],
+        "ko": [
+          10005,
+          10005,
+          10005,
+          10005,
+          10005,
+          10005,
+          10005,
+          10005,
+          10005,
+          10005,
+          10005,
+          10005,
+          10005
+        ],
+        "all": [
+          173,
+          174,
+          185,
+          197,
+          197,
+          197,
+          10005,
+          10005,
+          10005,
+          10005,
+          10005,
+          10005,
+          1586
+        ]
+      },
+      {
+        "startOffsetMs": 83000,
+        "ok": [
+          171,
+          181,
+          202,
+          230,
+          230,
+          230,
+          231,
+          231,
+          231,
+          231,
+          231,
+          231,
+          201.14285714285714
+        ],
+        "ko": [
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002
+        ],
+        "all": [
+          171,
+          181,
+          202,
+          230,
+          231,
+          231,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          1426.25
+        ]
+      },
+      {
+        "startOffsetMs": 84000,
+        "ok": [
+          168,
+          180,
+          196,
+          210,
+          210,
+          210,
+          210,
+          210,
+          210,
+          210,
+          210,
+          210,
+          195
+        ],
+        "ko": [
+          10009,
+          10009,
+          10009,
+          10009,
+          10009,
+          10009,
+          10009,
+          10009,
+          10009,
+          10009,
+          10009,
+          10009,
+          10009
+        ],
+        "all": [
+          168,
+          180,
+          206,
+          210,
+          210,
+          210,
+          10009,
+          10009,
+          10009,
+          10009,
+          10009,
+          10009,
+          1597
+        ]
+      },
+      {
+        "startOffsetMs": 85000,
+        "ok": [
+          180,
+          186,
+          192,
+          195,
+          195,
+          211,
+          211,
+          211,
+          211,
+          211,
+          211,
+          211,
+          192.83333333333334
+        ],
+        "ko": [
+          10003,
+          10003,
+          10003,
+          10005,
+          10005,
+          10005,
+          10005,
+          10005,
+          10005,
+          10005,
+          10005,
+          10005,
+          10004
+        ],
+        "all": [
+          180,
+          186,
+          193,
+          211,
+          10003,
+          10003,
+          10005,
+          10005,
+          10005,
+          10005,
+          10005,
+          10005,
+          2645.625
+        ]
+      },
+      {
+        "startOffsetMs": 86000,
+        "ok": [
+          189,
+          190,
+          192,
+          207,
+          207,
+          207,
+          241,
+          241,
+          241,
+          241,
+          241,
+          241,
+          201.57142857142858
+        ],
+        "ko": [
+          10003,
+          10003,
+          10003,
+          10003,
+          10003,
+          10003,
+          10003,
+          10003,
+          10003,
+          10003,
+          10003,
+          10003,
+          10003
+        ],
+        "all": [
+          189,
+          190,
+          192,
+          207,
+          241,
+          241,
+          10003,
+          10003,
+          10003,
+          10003,
+          10003,
+          10003,
+          1426.75
+        ]
+      },
+      {
+        "startOffsetMs": 87000,
+        "ok": [
+          180,
+          180,
+          197,
+          204,
+          214,
+          214,
+          214,
+          214,
+          214,
+          214,
+          214,
+          214,
+          198.75
+        ],
+        "ko": [
+          10002,
+          10002,
+          10002,
+          10009,
+          10009,
+          10009,
+          10009,
+          10009,
+          10009,
+          10009,
+          10009,
+          10009,
+          10004.333333333334
+        ],
+        "all": [
+          180,
+          197,
+          214,
+          10002,
+          10002,
+          10002,
+          10009,
+          10009,
+          10009,
+          10009,
+          10009,
+          10009,
+          4401.142857142857
+        ]
+      },
+      {
+        "startOffsetMs": 88000,
+        "ok": [
+          168,
+          170,
+          174,
+          189,
+          189,
+          189,
+          312,
+          312,
+          312,
+          312,
+          312,
+          312,
+          194
+        ],
+        "ko": [
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002
+        ],
+        "all": [
+          168,
+          170,
+          174,
+          189,
+          312,
+          312,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          10002,
+          1420
+        ]
+      },
+      {
+        "startOffsetMs": 89000,
+        "ok": [
+          169,
+          184,
+          191,
+          199,
+          199,
+          199,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          188.85714285714286
+        ],
+        "ko": [
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001
+        ],
+        "all": [
+          169,
+          184,
+          191,
+          199,
+          200,
+          200,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          10001,
+          1415.375
+        ]
+      },
+      {
+        "startOffsetMs": 90000,
+        "ok": [
+          174,
+          174,
+          181,
+          187,
+          205,
+          205,
+          205,
+          205,
+          205,
+          205,
+          205,
+          205,
+          186.75
+        ],
+        "ko": null,
+        "all": [
+          174,
+          174,
+          181,
+          187,
+          205,
+          205,
+          205,
+          205,
+          205,
+          205,
+          205,
+          205,
+          186.75
+        ]
+      },
+      {
+        "startOffsetMs": 92000,
+        "ok": [
+          186,
+          186,
+          186,
+          186,
+          186,
+          186,
+          186,
+          186,
+          186,
+          186,
+          186,
+          186,
+          186
+        ],
+        "ko": null,
+        "all": [
+          186,
+          186,
+          186,
+          186,
+          186,
+          186,
+          186,
+          186,
+          186,
+          186,
+          186,
+          186,
+          186
+        ]
+      },
+      {
+        "startOffsetMs": 93000,
+        "ok": null,
+        "ko": [
+          10010,
+          10010,
+          10010,
+          10010,
+          10010,
+          10010,
+          10010,
+          10010,
+          10010,
+          10010,
+          10010,
+          10010,
+          10010
+        ],
+        "all": [
+          10010,
+          10010,
+          10010,
+          10010,
+          10010,
+          10010,
+          10010,
+          10010,
+          10010,
+          10010,
+          10010,
+          10010,
+          10010
+        ]
+      },
+      {
+        "startOffsetMs": 94000,
+        "ok": [
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218
+        ],
+        "ko": null,
+        "all": [
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218
+        ]
+      },
+      {
+        "startOffsetMs": 95000,
+        "ok": [
+          177,
+          177,
+          177,
+          177,
+          177,
+          177,
+          177,
+          177,
+          177,
+          177,
+          177,
+          177,
+          177
+        ],
+        "ko": [
+          10005,
+          10005,
+          10005,
+          10005,
+          10005,
+          10005,
+          10005,
+          10005,
+          10005,
+          10005,
+          10005,
+          10005,
+          10005
+        ],
+        "all": [
+          177,
+          177,
+          177,
+          10005,
+          10005,
+          10005,
+          10005,
+          10005,
+          10005,
+          10005,
+          10005,
+          10005,
+          5091
+        ]
+      },
+      {
+        "startOffsetMs": 96000,
+        "ok": [
+          190,
+          190,
+          190,
+          190,
+          190,
+          190,
+          190,
+          190,
+          190,
+          190,
+          190,
+          190,
+          190
+        ],
+        "ko": null,
+        "all": [
+          190,
+          190,
+          190,
+          190,
+          190,
+          190,
+          190,
+          190,
+          190,
+          190,
+          190,
+          190,
+          190
+        ]
+      },
+      {
+        "startOffsetMs": 97000,
+        "ok": [
+          235,
+          235,
+          250,
+          275,
+          275,
+          275,
+          275,
+          275,
+          275,
+          275,
+          275,
+          275,
+          253.33333333333334
+        ],
+        "ko": null,
+        "all": [
+          235,
+          235,
+          250,
+          275,
+          275,
+          275,
+          275,
+          275,
+          275,
+          275,
+          275,
+          275,
+          253.33333333333334
+        ]
+      },
+      {
+        "startOffsetMs": 98000,
+        "ok": [
+          171,
+          171,
+          171,
+          171,
+          171,
+          171,
+          171,
+          171,
+          171,
+          171,
+          171,
+          171,
+          171
+        ],
+        "ko": null,
+        "all": [
+          171,
+          171,
+          171,
+          171,
+          171,
+          171,
+          171,
+          171,
+          171,
+          171,
+          171,
+          171,
+          171
+        ]
+      },
+      {
+        "startOffsetMs": 99000,
+        "ok": [
+          177,
+          177,
+          177,
+          177,
+          177,
+          177,
+          177,
+          177,
+          177,
+          177,
+          177,
+          177,
+          177
+        ],
+        "ko": null,
+        "all": [
+          177,
+          177,
+          177,
+          177,
+          177,
+          177,
+          177,
+          177,
+          177,
+          177,
+          177,
+          177,
+          177
+        ]
+      },
+      {
+        "startOffsetMs": 103000,
+        "ok": [
+          278,
+          278,
+          278,
+          278,
+          278,
+          278,
+          278,
+          278,
+          278,
+          278,
+          278,
+          278,
+          278
+        ],
+        "ko": null,
+        "all": [
+          278,
+          278,
+          278,
+          278,
+          278,
+          278,
+          278,
+          278,
+          278,
+          278,
+          278,
+          278,
+          278
+        ]
+      },
+      {
+        "startOffsetMs": 105000,
+        "ok": [
+          183,
+          183,
+          183,
+          183,
+          183,
+          183,
+          183,
+          183,
+          183,
+          183,
+          183,
+          183,
+          183
+        ],
+        "ko": null,
+        "all": [
+          183,
+          183,
+          183,
+          183,
+          183,
+          183,
+          183,
+          183,
+          183,
+          183,
+          183,
+          183,
+          183
+        ]
+      }
+    ],
+    "distribution": {
+      "offsetMs": 213,
+      "stepMs": 98.46,
+      "ok": [
+        469,
+        6,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        5,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "ko": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        35
+      ],
+      "meanMs": 870.326213592233
+    },
+    "percentiles": {
+      "ok": [
+        [
+          0,
+          164
+        ],
+        [
+          2.5,
+          168
+        ],
+        [
+          5,
+          170
+        ],
+        [
+          7.5,
+          171
+        ],
+        [
+          10,
+          172
+        ],
+        [
+          12.5,
+          174
+        ],
+        [
+          15,
+          175
+        ],
+        [
+          17.5,
+          177
+        ],
+        [
+          20,
+          178
+        ],
+        [
+          22.5,
+          180
+        ],
+        [
+          25,
+          181
+        ],
+        [
+          27.5,
+          182
+        ],
+        [
+          30,
+          183
+        ],
+        [
+          32.5,
+          184
+        ],
+        [
+          35,
+          185
+        ],
+        [
+          37.5,
+          186
+        ],
+        [
+          40,
+          187
+        ],
+        [
+          42.5,
+          188
+        ],
+        [
+          45,
+          189
+        ],
+        [
+          47.5,
+          190
+        ],
+        [
+          50,
+          191
+        ],
+        [
+          52.5,
+          191
+        ],
+        [
+          55,
+          193
+        ],
+        [
+          57.5,
+          194
+        ],
+        [
+          60,
+          196
+        ],
+        [
+          62.5,
+          197
+        ],
+        [
+          65,
+          198
+        ],
+        [
+          67.5,
+          199
+        ],
+        [
+          70,
+          201
+        ],
+        [
+          72.5,
+          204
+        ],
+        [
+          75,
+          205
+        ],
+        [
+          77.5,
+          206
+        ],
+        [
+          80,
+          208
+        ],
+        [
+          82.5,
+          210
+        ],
+        [
+          85,
+          212
+        ],
+        [
+          87.5,
+          215
+        ],
+        [
+          90,
+          218
+        ],
+        [
+          92.5,
+          224
+        ],
+        [
+          95,
+          230
+        ],
+        [
+          97.5,
+          247
+        ],
+        [
+          99,
+          1169
+        ],
+        [
+          99.9,
+          1198
+        ],
+        [
+          99.99,
+          1198
+        ],
+        [
+          100,
+          1198
+        ]
+      ],
+      "ko": [
+        [
+          0,
+          10001
+        ],
+        [
+          2.5,
+          10001
+        ],
+        [
+          5,
+          10001
+        ],
+        [
+          7.5,
+          10001
+        ],
+        [
+          10,
+          10001
+        ],
+        [
+          12.5,
+          10001
+        ],
+        [
+          15,
+          10001
+        ],
+        [
+          17.5,
+          10001
+        ],
+        [
+          20,
+          10001
+        ],
+        [
+          22.5,
+          10001
+        ],
+        [
+          25,
+          10001
+        ],
+        [
+          27.5,
+          10001
+        ],
+        [
+          30,
+          10001
+        ],
+        [
+          32.5,
+          10001
+        ],
+        [
+          35,
+          10001
+        ],
+        [
+          37.5,
+          10001
+        ],
+        [
+          40,
+          10001
+        ],
+        [
+          42.5,
+          10001
+        ],
+        [
+          45,
+          10001
+        ],
+        [
+          47.5,
+          10002
+        ],
+        [
+          50,
+          10002
+        ],
+        [
+          52.5,
+          10002
+        ],
+        [
+          55,
+          10002
+        ],
+        [
+          57.5,
+          10002
+        ],
+        [
+          60,
+          10002
+        ],
+        [
+          62.5,
+          10002
+        ],
+        [
+          65,
+          10002
+        ],
+        [
+          67.5,
+          10003
+        ],
+        [
+          70,
+          10003
+        ],
+        [
+          72.5,
+          10003
+        ],
+        [
+          75,
+          10003
+        ],
+        [
+          77.5,
+          10005
+        ],
+        [
+          80,
+          10005
+        ],
+        [
+          82.5,
+          10005
+        ],
+        [
+          85,
+          10005
+        ],
+        [
+          87.5,
+          10006
+        ],
+        [
+          90,
+          10007
+        ],
+        [
+          92.5,
+          10009
+        ],
+        [
+          95,
+          10009
+        ],
+        [
+          97.5,
+          10010
+        ],
+        [
+          99,
+          10010
+        ],
+        [
+          99.9,
+          10010
+        ],
+        [
+          99.99,
+          10010
+        ],
+        [
+          100,
+          10010
+        ]
+      ],
+      "all": [
+        [
+          0,
+          164
+        ],
+        [
+          2.5,
+          168
+        ],
+        [
+          5,
+          170
+        ],
+        [
+          7.5,
+          171
+        ],
+        [
+          10,
+          173
+        ],
+        [
+          12.5,
+          174
+        ],
+        [
+          15,
+          176
+        ],
+        [
+          17.5,
+          178
+        ],
+        [
+          20,
+          180
+        ],
+        [
+          22.5,
+          180
+        ],
+        [
+          25,
+          181
+        ],
+        [
+          27.5,
+          182
+        ],
+        [
+          30,
+          184
+        ],
+        [
+          32.5,
+          185
+        ],
+        [
+          35,
+          186
+        ],
+        [
+          37.5,
+          187
+        ],
+        [
+          40,
+          188
+        ],
+        [
+          42.5,
+          189
+        ],
+        [
+          45,
+          190
+        ],
+        [
+          47.5,
+          191
+        ],
+        [
+          50,
+          192
+        ],
+        [
+          52.5,
+          193
+        ],
+        [
+          55,
+          196
+        ],
+        [
+          57.5,
+          196
+        ],
+        [
+          60,
+          198
+        ],
+        [
+          62.5,
+          199
+        ],
+        [
+          65,
+          201
+        ],
+        [
+          67.5,
+          204
+        ],
+        [
+          70,
+          205
+        ],
+        [
+          72.5,
+          207
+        ],
+        [
+          75,
+          209
+        ],
+        [
+          77.5,
+          210
+        ],
+        [
+          80,
+          214
+        ],
+        [
+          82.5,
+          217
+        ],
+        [
+          85,
+          221
+        ],
+        [
+          87.5,
+          228
+        ],
+        [
+          90,
+          241
+        ],
+        [
+          92.5,
+          1184
+        ],
+        [
+          95,
+          10001
+        ],
+        [
+          97.5,
+          10002
+        ],
+        [
+          99,
+          10005
+        ],
+        [
+          99.9,
+          10010
+        ],
+        [
+          99.99,
+          10010
+        ],
+        [
+          100,
+          10010
+        ]
+      ],
+      "meanMs": {
+        "ok": 204.41666666666666,
+        "ko": 10002.8,
+        "all": 870.326213592233
+      }
+    },
+    "totals": {
+      "ok": 480,
+      "ko": 35
+    }
+  },
+  "tlsHandshake": {
+    "overTime": [
+      {
+        "startOffsetMs": 0,
+        "ok": [
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228
+        ],
+        "ko": null,
+        "all": [
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228
+        ]
+      },
+      {
+        "startOffsetMs": 1000,
+        "ok": [
+          200,
+          200,
+          200,
+          320,
+          320,
+          320,
+          320,
+          320,
+          320,
+          320,
+          320,
+          320,
+          260
+        ],
+        "ko": null,
+        "all": [
+          200,
+          200,
+          200,
+          320,
+          320,
+          320,
+          320,
+          320,
+          320,
+          320,
+          320,
+          320,
+          260
+        ]
+      },
+      {
+        "startOffsetMs": 2000,
+        "ok": [
+          241,
+          241,
+          241,
+          344,
+          344,
+          344,
+          344,
+          344,
+          344,
+          344,
+          344,
+          344,
+          292.5
+        ],
+        "ko": null,
+        "all": [
+          241,
+          241,
+          241,
+          344,
+          344,
+          344,
+          344,
+          344,
+          344,
+          344,
+          344,
+          344,
+          292.5
+        ]
+      },
+      {
+        "startOffsetMs": 3000,
+        "ok": [
+          195,
+          195,
+          195,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          197.5
+        ],
+        "ko": null,
+        "all": [
+          195,
+          195,
+          195,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          197.5
+        ]
+      },
+      {
+        "startOffsetMs": 4000,
+        "ok": [
+          207,
+          207,
+          207,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          212.5
+        ],
+        "ko": null,
+        "all": [
+          207,
+          207,
+          207,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          212.5
+        ]
+      },
+      {
+        "startOffsetMs": 5000,
+        "ok": [
+          194,
+          194,
+          194,
+          199,
+          199,
+          199,
+          199,
+          199,
+          199,
+          199,
+          199,
+          199,
+          196.5
+        ],
+        "ko": null,
+        "all": [
+          194,
+          194,
+          194,
+          199,
+          199,
+          199,
+          199,
+          199,
+          199,
+          199,
+          199,
+          199,
+          196.5
+        ]
+      },
+      {
+        "startOffsetMs": 6000,
+        "ok": [
+          195,
+          195,
+          195,
+          199,
+          199,
+          199,
+          199,
+          199,
+          199,
+          199,
+          199,
+          199,
+          197
+        ],
+        "ko": null,
+        "all": [
+          195,
+          195,
+          195,
+          199,
+          199,
+          199,
+          199,
+          199,
+          199,
+          199,
+          199,
+          199,
+          197
+        ]
+      },
+      {
+        "startOffsetMs": 7000,
+        "ok": [
+          203,
+          203,
+          203,
+          217,
+          217,
+          217,
+          217,
+          217,
+          217,
+          217,
+          217,
+          217,
+          210
+        ],
+        "ko": null,
+        "all": [
+          203,
+          203,
+          203,
+          217,
+          217,
+          217,
+          217,
+          217,
+          217,
+          217,
+          217,
+          217,
+          210
+        ]
+      },
+      {
+        "startOffsetMs": 8000,
+        "ok": [
+          199,
+          199,
+          199,
+          206,
+          206,
+          206,
+          206,
+          206,
+          206,
+          206,
+          206,
+          206,
+          202.5
+        ],
+        "ko": null,
+        "all": [
+          199,
+          199,
+          199,
+          206,
+          206,
+          206,
+          206,
+          206,
+          206,
+          206,
+          206,
+          206,
+          202.5
+        ]
+      },
+      {
+        "startOffsetMs": 9000,
+        "ok": [
+          194,
+          194,
+          194,
+          220,
+          220,
+          220,
+          220,
+          220,
+          220,
+          220,
+          220,
+          220,
+          207
+        ],
+        "ko": null,
+        "all": [
+          194,
+          194,
+          194,
+          220,
+          220,
+          220,
+          220,
+          220,
+          220,
+          220,
+          220,
+          220,
+          207
+        ]
+      },
+      {
+        "startOffsetMs": 10000,
+        "ok": [
+          195,
+          195,
+          197,
+          212,
+          212,
+          212,
+          212,
+          212,
+          212,
+          212,
+          212,
+          212,
+          201.33333333333334
+        ],
+        "ko": null,
+        "all": [
+          195,
+          195,
+          197,
+          212,
+          212,
+          212,
+          212,
+          212,
+          212,
+          212,
+          212,
+          212,
+          201.33333333333334
+        ]
+      },
+      {
+        "startOffsetMs": 11000,
+        "ok": [
+          191,
+          191,
+          191,
+          269,
+          269,
+          269,
+          269,
+          269,
+          269,
+          269,
+          269,
+          269,
+          230
+        ],
+        "ko": null,
+        "all": [
+          191,
+          191,
+          191,
+          269,
+          269,
+          269,
+          269,
+          269,
+          269,
+          269,
+          269,
+          269,
+          230
+        ]
+      },
+      {
+        "startOffsetMs": 12000,
+        "ok": [
+          204,
+          204,
+          205,
+          216,
+          216,
+          216,
+          216,
+          216,
+          216,
+          216,
+          216,
+          216,
+          208.33333333333334
+        ],
+        "ko": null,
+        "all": [
+          204,
+          204,
+          205,
+          216,
+          216,
+          216,
+          216,
+          216,
+          216,
+          216,
+          216,
+          216,
+          208.33333333333334
+        ]
+      },
+      {
+        "startOffsetMs": 13000,
+        "ok": [
+          193,
+          193,
+          212,
+          215,
+          215,
+          215,
+          215,
+          215,
+          215,
+          215,
+          215,
+          215,
+          206.66666666666666
+        ],
+        "ko": null,
+        "all": [
+          193,
+          193,
+          212,
+          215,
+          215,
+          215,
+          215,
+          215,
+          215,
+          215,
+          215,
+          215,
+          206.66666666666666
+        ]
+      },
+      {
+        "startOffsetMs": 14000,
+        "ok": [
+          191,
+          191,
+          204,
+          252,
+          252,
+          252,
+          252,
+          252,
+          252,
+          252,
+          252,
+          252,
+          215.66666666666666
+        ],
+        "ko": null,
+        "all": [
+          191,
+          191,
+          204,
+          252,
+          252,
+          252,
+          252,
+          252,
+          252,
+          252,
+          252,
+          252,
+          215.66666666666666
+        ]
+      },
+      {
+        "startOffsetMs": 15000,
+        "ok": [
+          195,
+          195,
+          199,
+          202,
+          202,
+          202,
+          202,
+          202,
+          202,
+          202,
+          202,
+          202,
+          198.66666666666666
+        ],
+        "ko": null,
+        "all": [
+          195,
+          195,
+          199,
+          202,
+          202,
+          202,
+          202,
+          202,
+          202,
+          202,
+          202,
+          202,
+          198.66666666666666
+        ]
+      },
+      {
+        "startOffsetMs": 16000,
+        "ok": [
+          191,
+          191,
+          191,
+          205,
+          205,
+          205,
+          205,
+          205,
+          205,
+          205,
+          205,
+          205,
+          195.66666666666666
+        ],
+        "ko": null,
+        "all": [
+          191,
+          191,
+          191,
+          205,
+          205,
+          205,
+          205,
+          205,
+          205,
+          205,
+          205,
+          205,
+          195.66666666666666
+        ]
+      },
+      {
+        "startOffsetMs": 17000,
+        "ok": [
+          185,
+          185,
+          226,
+          231,
+          231,
+          231,
+          231,
+          231,
+          231,
+          231,
+          231,
+          231,
+          214
+        ],
+        "ko": null,
+        "all": [
+          185,
+          185,
+          226,
+          231,
+          231,
+          231,
+          231,
+          231,
+          231,
+          231,
+          231,
+          231,
+          214
+        ]
+      },
+      {
+        "startOffsetMs": 18000,
+        "ok": [
+          210,
+          210,
+          240,
+          244,
+          244,
+          244,
+          244,
+          244,
+          244,
+          244,
+          244,
+          244,
+          231.33333333333334
+        ],
+        "ko": null,
+        "all": [
+          210,
+          210,
+          240,
+          244,
+          244,
+          244,
+          244,
+          244,
+          244,
+          244,
+          244,
+          244,
+          231.33333333333334
+        ]
+      },
+      {
+        "startOffsetMs": 19000,
+        "ok": [
+          204,
+          204,
+          213,
+          227,
+          227,
+          227,
+          227,
+          227,
+          227,
+          227,
+          227,
+          227,
+          214.66666666666666
+        ],
+        "ko": null,
+        "all": [
+          204,
+          204,
+          213,
+          227,
+          227,
+          227,
+          227,
+          227,
+          227,
+          227,
+          227,
+          227,
+          214.66666666666666
+        ]
+      },
+      {
+        "startOffsetMs": 20000,
+        "ok": [
+          194,
+          194,
+          214,
+          220,
+          220,
+          220,
+          220,
+          220,
+          220,
+          220,
+          220,
+          220,
+          209.33333333333334
+        ],
+        "ko": null,
+        "all": [
+          194,
+          194,
+          214,
+          220,
+          220,
+          220,
+          220,
+          220,
+          220,
+          220,
+          220,
+          220,
+          209.33333333333334
+        ]
+      },
+      {
+        "startOffsetMs": 21000,
+        "ok": [
+          209,
+          209,
+          220,
+          226,
+          229,
+          229,
+          229,
+          229,
+          229,
+          229,
+          229,
+          229,
+          221
+        ],
+        "ko": null,
+        "all": [
+          209,
+          209,
+          220,
+          226,
+          229,
+          229,
+          229,
+          229,
+          229,
+          229,
+          229,
+          229,
+          221
+        ]
+      },
+      {
+        "startOffsetMs": 22000,
+        "ok": [
+          222,
+          222,
+          297,
+          298,
+          298,
+          298,
+          298,
+          298,
+          298,
+          298,
+          298,
+          298,
+          272.3333333333333
+        ],
+        "ko": null,
+        "all": [
+          222,
+          222,
+          297,
+          298,
+          298,
+          298,
+          298,
+          298,
+          298,
+          298,
+          298,
+          298,
+          272.3333333333333
+        ]
+      },
+      {
+        "startOffsetMs": 23000,
+        "ok": [
+          205,
+          205,
+          208,
+          208,
+          208,
+          208,
+          208,
+          208,
+          208,
+          208,
+          208,
+          208,
+          207
+        ],
+        "ko": null,
+        "all": [
+          205,
+          205,
+          208,
+          208,
+          208,
+          208,
+          208,
+          208,
+          208,
+          208,
+          208,
+          208,
+          207
+        ]
+      },
+      {
+        "startOffsetMs": 24000,
+        "ok": [
+          199,
+          199,
+          202,
+          221,
+          221,
+          221,
+          221,
+          221,
+          221,
+          221,
+          221,
+          221,
+          207.33333333333334
+        ],
+        "ko": null,
+        "all": [
+          199,
+          199,
+          202,
+          221,
+          221,
+          221,
+          221,
+          221,
+          221,
+          221,
+          221,
+          221,
+          207.33333333333334
+        ]
+      },
+      {
+        "startOffsetMs": 25000,
+        "ok": [
+          202,
+          202,
+          206,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          212
+        ],
+        "ko": null,
+        "all": [
+          202,
+          202,
+          206,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          212
+        ]
+      },
+      {
+        "startOffsetMs": 26000,
+        "ok": [
+          187,
+          187,
+          207,
+          207,
+          207,
+          207,
+          207,
+          207,
+          207,
+          207,
+          207,
+          207,
+          200.33333333333334
+        ],
+        "ko": null,
+        "all": [
+          187,
+          187,
+          207,
+          207,
+          207,
+          207,
+          207,
+          207,
+          207,
+          207,
+          207,
+          207,
+          200.33333333333334
+        ]
+      },
+      {
+        "startOffsetMs": 27000,
+        "ok": [
+          206,
+          206,
+          234,
+          234,
+          234,
+          234,
+          234,
+          234,
+          234,
+          234,
+          234,
+          234,
+          224.66666666666666
+        ],
+        "ko": null,
+        "all": [
+          206,
+          206,
+          234,
+          234,
+          234,
+          234,
+          234,
+          234,
+          234,
+          234,
+          234,
+          234,
+          224.66666666666666
+        ]
+      },
+      {
+        "startOffsetMs": 28000,
+        "ok": [
+          199,
+          199,
+          207,
+          222,
+          222,
+          222,
+          222,
+          222,
+          222,
+          222,
+          222,
+          222,
+          209.33333333333334
+        ],
+        "ko": null,
+        "all": [
+          199,
+          199,
+          207,
+          222,
+          222,
+          222,
+          222,
+          222,
+          222,
+          222,
+          222,
+          222,
+          209.33333333333334
+        ]
+      },
+      {
+        "startOffsetMs": 29000,
+        "ok": [
+          200,
+          200,
+          201,
+          206,
+          206,
+          206,
+          206,
+          206,
+          206,
+          206,
+          206,
+          206,
+          202.33333333333334
+        ],
+        "ko": null,
+        "all": [
+          200,
+          200,
+          201,
+          206,
+          206,
+          206,
+          206,
+          206,
+          206,
+          206,
+          206,
+          206,
+          202.33333333333334
+        ]
+      },
+      {
+        "startOffsetMs": 30000,
+        "ok": [
+          202,
+          202,
+          208,
+          271,
+          271,
+          271,
+          271,
+          271,
+          271,
+          271,
+          271,
+          271,
+          227
+        ],
+        "ko": null,
+        "all": [
+          202,
+          202,
+          208,
+          271,
+          271,
+          271,
+          271,
+          271,
+          271,
+          271,
+          271,
+          271,
+          227
+        ]
+      },
+      {
+        "startOffsetMs": 31000,
+        "ok": [
+          187,
+          187,
+          227,
+          230,
+          233,
+          233,
+          233,
+          233,
+          233,
+          233,
+          233,
+          233,
+          219.25
+        ],
+        "ko": null,
+        "all": [
+          187,
+          187,
+          227,
+          230,
+          233,
+          233,
+          233,
+          233,
+          233,
+          233,
+          233,
+          233,
+          219.25
+        ]
+      },
+      {
+        "startOffsetMs": 32000,
+        "ok": [
+          213,
+          213,
+          260,
+          260,
+          265,
+          265,
+          265,
+          265,
+          265,
+          265,
+          265,
+          265,
+          249.5
+        ],
+        "ko": null,
+        "all": [
+          213,
+          213,
+          260,
+          260,
+          265,
+          265,
+          265,
+          265,
+          265,
+          265,
+          265,
+          265,
+          249.5
+        ]
+      },
+      {
+        "startOffsetMs": 33000,
+        "ok": [
+          198,
+          212,
+          215,
+          232,
+          232,
+          1425,
+          1425,
+          1425,
+          1425,
+          1425,
+          1425,
+          1425,
+          456.4
+        ],
+        "ko": null,
+        "all": [
+          198,
+          212,
+          215,
+          232,
+          232,
+          1425,
+          1425,
+          1425,
+          1425,
+          1425,
+          1425,
+          1425,
+          456.4
+        ]
+      },
+      {
+        "startOffsetMs": 34000,
+        "ok": [
+          190,
+          193,
+          202,
+          204,
+          204,
+          209,
+          209,
+          209,
+          209,
+          209,
+          209,
+          209,
+          199.6
+        ],
+        "ko": null,
+        "all": [
+          190,
+          193,
+          202,
+          204,
+          204,
+          209,
+          209,
+          209,
+          209,
+          209,
+          209,
+          209,
+          199.6
+        ]
+      },
+      {
+        "startOffsetMs": 35000,
+        "ok": [
+          187,
+          201,
+          219,
+          219,
+          219,
+          224,
+          224,
+          224,
+          224,
+          224,
+          224,
+          224,
+          210
+        ],
+        "ko": null,
+        "all": [
+          187,
+          201,
+          219,
+          219,
+          219,
+          224,
+          224,
+          224,
+          224,
+          224,
+          224,
+          224,
+          210
+        ]
+      },
+      {
+        "startOffsetMs": 36000,
+        "ok": [
+          210,
+          218,
+          222,
+          257,
+          257,
+          258,
+          258,
+          258,
+          258,
+          258,
+          258,
+          258,
+          233
+        ],
+        "ko": null,
+        "all": [
+          210,
+          218,
+          222,
+          257,
+          257,
+          258,
+          258,
+          258,
+          258,
+          258,
+          258,
+          258,
+          233
+        ]
+      },
+      {
+        "startOffsetMs": 37000,
+        "ok": [
+          187,
+          197,
+          206,
+          213,
+          213,
+          267,
+          267,
+          267,
+          267,
+          267,
+          267,
+          267,
+          214
+        ],
+        "ko": null,
+        "all": [
+          187,
+          197,
+          206,
+          213,
+          213,
+          267,
+          267,
+          267,
+          267,
+          267,
+          267,
+          267,
+          214
+        ]
+      },
+      {
+        "startOffsetMs": 38000,
+        "ok": [
+          193,
+          193,
+          205,
+          220,
+          225,
+          225,
+          225,
+          225,
+          225,
+          225,
+          225,
+          225,
+          210.75
+        ],
+        "ko": null,
+        "all": [
+          193,
+          193,
+          205,
+          220,
+          225,
+          225,
+          225,
+          225,
+          225,
+          225,
+          225,
+          225,
+          210.75
+        ]
+      },
+      {
+        "startOffsetMs": 39000,
+        "ok": [
+          183,
+          196,
+          197,
+          225,
+          225,
+          232,
+          232,
+          232,
+          232,
+          232,
+          232,
+          232,
+          206.6
+        ],
+        "ko": null,
+        "all": [
+          183,
+          196,
+          197,
+          225,
+          225,
+          232,
+          232,
+          232,
+          232,
+          232,
+          232,
+          232,
+          206.6
+        ]
+      },
+      {
+        "startOffsetMs": 40000,
+        "ok": [
+          180,
+          195,
+          198,
+          201,
+          201,
+          221,
+          221,
+          221,
+          221,
+          221,
+          221,
+          221,
+          199
+        ],
+        "ko": null,
+        "all": [
+          180,
+          195,
+          198,
+          201,
+          201,
+          221,
+          221,
+          221,
+          221,
+          221,
+          221,
+          221,
+          199
+        ]
+      },
+      {
+        "startOffsetMs": 41000,
+        "ok": [
+          196,
+          201,
+          228,
+          1315,
+          1315,
+          1315,
+          1415,
+          1415,
+          1415,
+          1415,
+          1415,
+          1415,
+          540.8571428571429
+        ],
+        "ko": null,
+        "all": [
+          196,
+          201,
+          228,
+          1315,
+          1315,
+          1315,
+          1415,
+          1415,
+          1415,
+          1415,
+          1415,
+          1415,
+          540.8571428571429
+        ]
+      },
+      {
+        "startOffsetMs": 42000,
+        "ok": [
+          189,
+          195,
+          217,
+          220,
+          231,
+          231,
+          231,
+          231,
+          231,
+          231,
+          231,
+          231,
+          211.44444444444446
+        ],
+        "ko": null,
+        "all": [
+          189,
+          195,
+          217,
+          220,
+          231,
+          231,
+          231,
+          231,
+          231,
+          231,
+          231,
+          231,
+          211.44444444444446
+        ]
+      },
+      {
+        "startOffsetMs": 43000,
+        "ok": [
+          182,
+          184,
+          189,
+          233,
+          233,
+          233,
+          237,
+          237,
+          237,
+          237,
+          237,
+          237,
+          203.14285714285714
+        ],
+        "ko": null,
+        "all": [
+          182,
+          184,
+          189,
+          233,
+          233,
+          233,
+          237,
+          237,
+          237,
+          237,
+          237,
+          237,
+          203.14285714285714
+        ]
+      },
+      {
+        "startOffsetMs": 44000,
+        "ok": [
+          199,
+          200,
+          206,
+          207,
+          207,
+          207,
+          213,
+          213,
+          213,
+          213,
+          213,
+          213,
+          204.85714285714286
+        ],
+        "ko": null,
+        "all": [
+          199,
+          200,
+          206,
+          207,
+          207,
+          207,
+          213,
+          213,
+          213,
+          213,
+          213,
+          213,
+          204.85714285714286
+        ]
+      },
+      {
+        "startOffsetMs": 45000,
+        "ok": [
+          185,
+          204,
+          209,
+          219,
+          219,
+          229,
+          229,
+          229,
+          229,
+          229,
+          229,
+          229,
+          210.16666666666666
+        ],
+        "ko": null,
+        "all": [
+          185,
+          204,
+          209,
+          219,
+          219,
+          229,
+          229,
+          229,
+          229,
+          229,
+          229,
+          229,
+          210.16666666666666
+        ]
+      },
+      {
+        "startOffsetMs": 46000,
+        "ok": [
+          192,
+          192,
+          196,
+          210,
+          210,
+          229,
+          229,
+          229,
+          229,
+          229,
+          229,
+          229,
+          202.83333333333334
+        ],
+        "ko": null,
+        "all": [
+          192,
+          192,
+          196,
+          210,
+          210,
+          229,
+          229,
+          229,
+          229,
+          229,
+          229,
+          229,
+          202.83333333333334
+        ]
+      },
+      {
+        "startOffsetMs": 47000,
+        "ok": [
+          181,
+          196,
+          208,
+          214,
+          214,
+          214,
+          230,
+          230,
+          230,
+          230,
+          230,
+          230,
+          204.85714285714286
+        ],
+        "ko": null,
+        "all": [
+          181,
+          196,
+          208,
+          214,
+          214,
+          214,
+          230,
+          230,
+          230,
+          230,
+          230,
+          230,
+          204.85714285714286
+        ]
+      },
+      {
+        "startOffsetMs": 48000,
+        "ok": [
+          183,
+          197,
+          201,
+          204,
+          205,
+          205,
+          209,
+          209,
+          209,
+          209,
+          209,
+          209,
+          200.25
+        ],
+        "ko": null,
+        "all": [
+          183,
+          197,
+          201,
+          204,
+          205,
+          205,
+          209,
+          209,
+          209,
+          209,
+          209,
+          209,
+          200.25
+        ]
+      },
+      {
+        "startOffsetMs": 49000,
+        "ok": [
+          181,
+          192,
+          195,
+          198,
+          198,
+          201,
+          201,
+          201,
+          201,
+          201,
+          201,
+          201,
+          193.4
+        ],
+        "ko": null,
+        "all": [
+          181,
+          192,
+          195,
+          198,
+          198,
+          201,
+          201,
+          201,
+          201,
+          201,
+          201,
+          201,
+          193.4
+        ]
+      },
+      {
+        "startOffsetMs": 50000,
+        "ok": [
+          189,
+          195,
+          217,
+          243,
+          243,
+          267,
+          267,
+          267,
+          267,
+          267,
+          267,
+          267,
+          225.66666666666666
+        ],
+        "ko": null,
+        "all": [
+          189,
+          195,
+          217,
+          243,
+          243,
+          267,
+          267,
+          267,
+          267,
+          267,
+          267,
+          267,
+          225.66666666666666
+        ]
+      },
+      {
+        "startOffsetMs": 51000,
+        "ok": [
+          194,
+          196,
+          200,
+          221,
+          221,
+          256,
+          256,
+          256,
+          256,
+          256,
+          256,
+          256,
+          211.66666666666666
+        ],
+        "ko": null,
+        "all": [
+          194,
+          196,
+          200,
+          221,
+          221,
+          256,
+          256,
+          256,
+          256,
+          256,
+          256,
+          256,
+          211.66666666666666
+        ]
+      },
+      {
+        "startOffsetMs": 52000,
+        "ok": [
+          186,
+          198,
+          206,
+          208,
+          208,
+          208,
+          236,
+          236,
+          236,
+          236,
+          236,
+          236,
+          205.71428571428572
+        ],
+        "ko": null,
+        "all": [
+          186,
+          198,
+          206,
+          208,
+          208,
+          208,
+          236,
+          236,
+          236,
+          236,
+          236,
+          236,
+          205.71428571428572
+        ]
+      },
+      {
+        "startOffsetMs": 53000,
+        "ok": [
+          182,
+          183,
+          203,
+          210,
+          210,
+          210,
+          217,
+          217,
+          217,
+          217,
+          217,
+          217,
+          199.71428571428572
+        ],
+        "ko": null,
+        "all": [
+          182,
+          183,
+          203,
+          210,
+          210,
+          210,
+          217,
+          217,
+          217,
+          217,
+          217,
+          217,
+          199.71428571428572
+        ]
+      },
+      {
+        "startOffsetMs": 54000,
+        "ok": [
+          190,
+          197,
+          203,
+          231,
+          231,
+          231,
+          234,
+          234,
+          234,
+          234,
+          234,
+          234,
+          209.14285714285714
+        ],
+        "ko": null,
+        "all": [
+          190,
+          197,
+          203,
+          231,
+          231,
+          231,
+          234,
+          234,
+          234,
+          234,
+          234,
+          234,
+          209.14285714285714
+        ]
+      },
+      {
+        "startOffsetMs": 55000,
+        "ok": [
+          202,
+          202,
+          205,
+          206,
+          206,
+          234,
+          234,
+          234,
+          234,
+          234,
+          234,
+          234,
+          209
+        ],
+        "ko": null,
+        "all": [
+          202,
+          202,
+          205,
+          206,
+          206,
+          234,
+          234,
+          234,
+          234,
+          234,
+          234,
+          234,
+          209
+        ]
+      },
+      {
+        "startOffsetMs": 56000,
+        "ok": [
+          205,
+          208,
+          210,
+          214,
+          215,
+          215,
+          215,
+          215,
+          215,
+          215,
+          215,
+          215,
+          211
+        ],
+        "ko": null,
+        "all": [
+          205,
+          208,
+          210,
+          214,
+          215,
+          215,
+          215,
+          215,
+          215,
+          215,
+          215,
+          215,
+          211
+        ]
+      },
+      {
+        "startOffsetMs": 57000,
+        "ok": [
+          192,
+          192,
+          203,
+          205,
+          205,
+          205,
+          210,
+          210,
+          210,
+          210,
+          210,
+          210,
+          201
+        ],
+        "ko": null,
+        "all": [
+          192,
+          192,
+          203,
+          205,
+          205,
+          205,
+          210,
+          210,
+          210,
+          210,
+          210,
+          210,
+          201
+        ]
+      },
+      {
+        "startOffsetMs": 58000,
+        "ok": [
+          183,
+          190,
+          212,
+          225,
+          225,
+          225,
+          266,
+          266,
+          266,
+          266,
+          266,
+          266,
+          214
+        ],
+        "ko": null,
+        "all": [
+          183,
+          190,
+          212,
+          225,
+          225,
+          225,
+          266,
+          266,
+          266,
+          266,
+          266,
+          266,
+          214
+        ]
+      },
+      {
+        "startOffsetMs": 59000,
+        "ok": [
+          194,
+          198,
+          203,
+          204,
+          206,
+          206,
+          238,
+          238,
+          238,
+          238,
+          238,
+          238,
+          204.88888888888889
+        ],
+        "ko": null,
+        "all": [
+          194,
+          198,
+          203,
+          204,
+          206,
+          206,
+          238,
+          238,
+          238,
+          238,
+          238,
+          238,
+          204.88888888888889
+        ]
+      },
+      {
+        "startOffsetMs": 60000,
+        "ok": [
+          181,
+          184,
+          195,
+          226,
+          226,
+          226,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          203.28571428571428
+        ],
+        "ko": null,
+        "all": [
+          181,
+          184,
+          195,
+          226,
+          226,
+          226,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          203.28571428571428
+        ]
+      },
+      {
+        "startOffsetMs": 61000,
+        "ok": [
+          186,
+          191,
+          198,
+          205,
+          219,
+          219,
+          219,
+          219,
+          219,
+          219,
+          219,
+          219,
+          201.5
+        ],
+        "ko": null,
+        "all": [
+          186,
+          191,
+          198,
+          205,
+          219,
+          219,
+          219,
+          219,
+          219,
+          219,
+          219,
+          219,
+          201.5
+        ]
+      },
+      {
+        "startOffsetMs": 62000,
+        "ok": [
+          177,
+          182,
+          197,
+          218,
+          218,
+          218,
+          251,
+          251,
+          251,
+          251,
+          251,
+          251,
+          203.28571428571428
+        ],
+        "ko": null,
+        "all": [
+          177,
+          182,
+          197,
+          218,
+          218,
+          218,
+          251,
+          251,
+          251,
+          251,
+          251,
+          251,
+          203.28571428571428
+        ]
+      },
+      {
+        "startOffsetMs": 63000,
+        "ok": [
+          184,
+          189,
+          233,
+          1498,
+          1498,
+          1498,
+          1545,
+          1545,
+          1545,
+          1545,
+          1545,
+          1545,
+          583.7142857142857
+        ],
+        "ko": null,
+        "all": [
+          184,
+          189,
+          233,
+          1498,
+          1498,
+          1498,
+          1545,
+          1545,
+          1545,
+          1545,
+          1545,
+          1545,
+          583.7142857142857
+        ]
+      },
+      {
+        "startOffsetMs": 64000,
+        "ok": [
+          203,
+          203,
+          216,
+          216,
+          229,
+          229,
+          229,
+          229,
+          229,
+          229,
+          229,
+          229,
+          216
+        ],
+        "ko": null,
+        "all": [
+          203,
+          203,
+          216,
+          216,
+          229,
+          229,
+          229,
+          229,
+          229,
+          229,
+          229,
+          229,
+          216
+        ]
+      },
+      {
+        "startOffsetMs": 65000,
+        "ok": [
+          202,
+          209,
+          218,
+          225,
+          225,
+          237,
+          237,
+          244,
+          244,
+          244,
+          244,
+          244,
+          219.8181818181818
+        ],
+        "ko": null,
+        "all": [
+          202,
+          209,
+          218,
+          225,
+          225,
+          237,
+          237,
+          244,
+          244,
+          244,
+          244,
+          244,
+          219.8181818181818
+        ]
+      },
+      {
+        "startOffsetMs": 66000,
+        "ok": [
+          183,
+          196,
+          200,
+          205,
+          205,
+          205,
+          207,
+          207,
+          207,
+          207,
+          207,
+          207,
+          199
+        ],
+        "ko": null,
+        "all": [
+          183,
+          196,
+          200,
+          205,
+          205,
+          205,
+          207,
+          207,
+          207,
+          207,
+          207,
+          207,
+          199
+        ]
+      },
+      {
+        "startOffsetMs": 67000,
+        "ok": [
+          188,
+          194,
+          201,
+          240,
+          240,
+          242,
+          242,
+          242,
+          242,
+          242,
+          242,
+          242,
+          214.83333333333334
+        ],
+        "ko": null,
+        "all": [
+          188,
+          194,
+          201,
+          240,
+          240,
+          242,
+          242,
+          242,
+          242,
+          242,
+          242,
+          242,
+          214.83333333333334
+        ]
+      },
+      {
+        "startOffsetMs": 68000,
+        "ok": [
+          193,
+          195,
+          199,
+          220,
+          220,
+          220,
+          225,
+          225,
+          225,
+          225,
+          225,
+          225,
+          204.57142857142858
+        ],
+        "ko": null,
+        "all": [
+          193,
+          195,
+          199,
+          220,
+          220,
+          220,
+          225,
+          225,
+          225,
+          225,
+          225,
+          225,
+          204.57142857142858
+        ]
+      },
+      {
+        "startOffsetMs": 69000,
+        "ok": [
+          181,
+          183,
+          184,
+          193,
+          193,
+          201,
+          201,
+          201,
+          201,
+          201,
+          201,
+          201,
+          188.66666666666666
+        ],
+        "ko": null,
+        "all": [
+          181,
+          183,
+          184,
+          193,
+          193,
+          201,
+          201,
+          201,
+          201,
+          201,
+          201,
+          201,
+          188.66666666666666
+        ]
+      },
+      {
+        "startOffsetMs": 70000,
+        "ok": [
+          183,
+          193,
+          195,
+          201,
+          203,
+          203,
+          215,
+          215,
+          215,
+          215,
+          215,
+          215,
+          197.875
+        ],
+        "ko": null,
+        "all": [
+          183,
+          193,
+          195,
+          201,
+          203,
+          203,
+          215,
+          215,
+          215,
+          215,
+          215,
+          215,
+          197.875
+        ]
+      },
+      {
+        "startOffsetMs": 71000,
+        "ok": [
+          187,
+          196,
+          201,
+          216,
+          216,
+          216,
+          240,
+          240,
+          240,
+          240,
+          240,
+          240,
+          207.42857142857142
+        ],
+        "ko": null,
+        "all": [
+          187,
+          196,
+          201,
+          216,
+          216,
+          216,
+          240,
+          240,
+          240,
+          240,
+          240,
+          240,
+          207.42857142857142
+        ]
+      },
+      {
+        "startOffsetMs": 72000,
+        "ok": [
+          184,
+          196,
+          200,
+          206,
+          206,
+          206,
+          236,
+          236,
+          236,
+          236,
+          236,
+          236,
+          203.14285714285714
+        ],
+        "ko": null,
+        "all": [
+          184,
+          196,
+          200,
+          206,
+          206,
+          206,
+          236,
+          236,
+          236,
+          236,
+          236,
+          236,
+          203.14285714285714
+        ]
+      },
+      {
+        "startOffsetMs": 73000,
+        "ok": [
+          185,
+          198,
+          205,
+          237,
+          237,
+          259,
+          259,
+          259,
+          259,
+          259,
+          259,
+          259,
+          216.5
+        ],
+        "ko": null,
+        "all": [
+          185,
+          198,
+          205,
+          237,
+          237,
+          259,
+          259,
+          259,
+          259,
+          259,
+          259,
+          259,
+          216.5
+        ]
+      },
+      {
+        "startOffsetMs": 74000,
+        "ok": [
+          201,
+          203,
+          203,
+          220,
+          220,
+          220,
+          222,
+          222,
+          222,
+          222,
+          222,
+          222,
+          208
+        ],
+        "ko": null,
+        "all": [
+          201,
+          203,
+          203,
+          220,
+          220,
+          220,
+          222,
+          222,
+          222,
+          222,
+          222,
+          222,
+          208
+        ]
+      },
+      {
+        "startOffsetMs": 75000,
+        "ok": [
+          184,
+          192,
+          219,
+          235,
+          235,
+          242,
+          242,
+          242,
+          242,
+          242,
+          242,
+          242,
+          216.83333333333334
+        ],
+        "ko": null,
+        "all": [
+          184,
+          192,
+          219,
+          235,
+          235,
+          242,
+          242,
+          242,
+          242,
+          242,
+          242,
+          242,
+          216.83333333333334
+        ]
+      },
+      {
+        "startOffsetMs": 76000,
+        "ok": [
+          191,
+          197,
+          198,
+          207,
+          207,
+          207,
+          239,
+          239,
+          239,
+          239,
+          239,
+          239,
+          204.57142857142858
+        ],
+        "ko": null,
+        "all": [
+          191,
+          197,
+          198,
+          207,
+          207,
+          207,
+          239,
+          239,
+          239,
+          239,
+          239,
+          239,
+          204.57142857142858
+        ]
+      },
+      {
+        "startOffsetMs": 77000,
+        "ok": [
+          193,
+          193,
+          198,
+          204,
+          205,
+          205,
+          209,
+          209,
+          209,
+          209,
+          209,
+          209,
+          199.5
+        ],
+        "ko": null,
+        "all": [
+          193,
+          193,
+          198,
+          204,
+          205,
+          205,
+          209,
+          209,
+          209,
+          209,
+          209,
+          209,
+          199.5
+        ]
+      },
+      {
+        "startOffsetMs": 78000,
+        "ok": [
+          185,
+          185,
+          198,
+          206,
+          206,
+          210,
+          210,
+          210,
+          210,
+          210,
+          210,
+          210,
+          197.5
+        ],
+        "ko": null,
+        "all": [
+          185,
+          185,
+          198,
+          206,
+          206,
+          210,
+          210,
+          210,
+          210,
+          210,
+          210,
+          210,
+          197.5
+        ]
+      },
+      {
+        "startOffsetMs": 79000,
+        "ok": [
+          189,
+          189,
+          195,
+          221,
+          232,
+          232,
+          233,
+          233,
+          233,
+          233,
+          233,
+          233,
+          208.5
+        ],
+        "ko": null,
+        "all": [
+          189,
+          189,
+          195,
+          221,
+          232,
+          232,
+          233,
+          233,
+          233,
+          233,
+          233,
+          233,
+          208.5
+        ]
+      },
+      {
+        "startOffsetMs": 80000,
+        "ok": [
+          178,
+          180,
+          201,
+          214,
+          214,
+          241,
+          241,
+          241,
+          241,
+          241,
+          241,
+          241,
+          203.66666666666666
+        ],
+        "ko": null,
+        "all": [
+          178,
+          180,
+          201,
+          214,
+          214,
+          241,
+          241,
+          241,
+          241,
+          241,
+          241,
+          241,
+          203.66666666666666
+        ]
+      },
+      {
+        "startOffsetMs": 81000,
+        "ok": [
+          186,
+          196,
+          197,
+          207,
+          207,
+          207,
+          207,
+          207,
+          207,
+          207,
+          207,
+          207,
+          199
+        ],
+        "ko": null,
+        "all": [
+          186,
+          196,
+          197,
+          207,
+          207,
+          207,
+          207,
+          207,
+          207,
+          207,
+          207,
+          207,
+          199
+        ]
+      },
+      {
+        "startOffsetMs": 82000,
+        "ok": [
+          186,
+          187,
+          198,
+          211,
+          211,
+          211,
+          235,
+          235,
+          235,
+          235,
+          235,
+          235,
+          202.42857142857142
+        ],
+        "ko": null,
+        "all": [
+          186,
+          187,
+          198,
+          211,
+          211,
+          211,
+          235,
+          235,
+          235,
+          235,
+          235,
+          235,
+          202.42857142857142
+        ]
+      },
+      {
+        "startOffsetMs": 83000,
+        "ok": [
+          182,
+          182,
+          188,
+          199,
+          199,
+          265,
+          265,
+          265,
+          265,
+          265,
+          265,
+          265,
+          202.16666666666666
+        ],
+        "ko": null,
+        "all": [
+          182,
+          182,
+          188,
+          199,
+          199,
+          265,
+          265,
+          265,
+          265,
+          265,
+          265,
+          265,
+          202.16666666666666
+        ]
+      },
+      {
+        "startOffsetMs": 84000,
+        "ok": [
+          191,
+          196,
+          201,
+          241,
+          241,
+          265,
+          265,
+          265,
+          265,
+          265,
+          265,
+          265,
+          216.16666666666666
+        ],
+        "ko": null,
+        "all": [
+          191,
+          196,
+          201,
+          241,
+          241,
+          265,
+          265,
+          265,
+          265,
+          265,
+          265,
+          265,
+          216.16666666666666
+        ]
+      },
+      {
+        "startOffsetMs": 85000,
+        "ok": [
+          200,
+          202,
+          212,
+          215,
+          215,
+          215,
+          230,
+          230,
+          230,
+          230,
+          230,
+          230,
+          211
+        ],
+        "ko": null,
+        "all": [
+          200,
+          202,
+          212,
+          215,
+          215,
+          215,
+          230,
+          230,
+          230,
+          230,
+          230,
+          230,
+          211
+        ]
+      },
+      {
+        "startOffsetMs": 86000,
+        "ok": [
+          209,
+          220,
+          230,
+          234,
+          234,
+          242,
+          242,
+          242,
+          242,
+          242,
+          242,
+          242,
+          227.66666666666666
+        ],
+        "ko": null,
+        "all": [
+          209,
+          220,
+          230,
+          234,
+          234,
+          242,
+          242,
+          242,
+          242,
+          242,
+          242,
+          242,
+          227.66666666666666
+        ]
+      },
+      {
+        "startOffsetMs": 87000,
+        "ok": [
+          188,
+          188,
+          197,
+          203,
+          209,
+          209,
+          209,
+          209,
+          209,
+          209,
+          209,
+          209,
+          199.25
+        ],
+        "ko": null,
+        "all": [
+          188,
+          188,
+          197,
+          203,
+          209,
+          209,
+          209,
+          209,
+          209,
+          209,
+          209,
+          209,
+          199.25
+        ]
+      },
+      {
+        "startOffsetMs": 88000,
+        "ok": [
+          193,
+          195,
+          202,
+          213,
+          213,
+          213,
+          224,
+          224,
+          224,
+          224,
+          224,
+          224,
+          204
+        ],
+        "ko": null,
+        "all": [
+          193,
+          195,
+          202,
+          213,
+          213,
+          213,
+          224,
+          224,
+          224,
+          224,
+          224,
+          224,
+          204
+        ]
+      },
+      {
+        "startOffsetMs": 89000,
+        "ok": [
+          181,
+          196,
+          201,
+          211,
+          211,
+          211,
+          252,
+          252,
+          252,
+          252,
+          252,
+          252,
+          207
+        ],
+        "ko": null,
+        "all": [
+          181,
+          196,
+          201,
+          211,
+          211,
+          211,
+          252,
+          252,
+          252,
+          252,
+          252,
+          252,
+          207
+        ]
+      },
+      {
+        "startOffsetMs": 90000,
+        "ok": [
+          185,
+          188,
+          201,
+          203,
+          203,
+          217,
+          217,
+          217,
+          217,
+          217,
+          217,
+          217,
+          198.8
+        ],
+        "ko": null,
+        "all": [
+          185,
+          188,
+          201,
+          203,
+          203,
+          217,
+          217,
+          217,
+          217,
+          217,
+          217,
+          217,
+          198.8
+        ]
+      },
+      {
+        "startOffsetMs": 91000,
+        "ok": [
+          219,
+          219,
+          219,
+          219,
+          219,
+          219,
+          219,
+          219,
+          219,
+          219,
+          219,
+          219,
+          219
+        ],
+        "ko": null,
+        "all": [
+          219,
+          219,
+          219,
+          219,
+          219,
+          219,
+          219,
+          219,
+          219,
+          219,
+          219,
+          219,
+          219
+        ]
+      },
+      {
+        "startOffsetMs": 93000,
+        "ok": [
+          237,
+          237,
+          237,
+          237,
+          237,
+          237,
+          237,
+          237,
+          237,
+          237,
+          237,
+          237,
+          237
+        ],
+        "ko": null,
+        "all": [
+          237,
+          237,
+          237,
+          237,
+          237,
+          237,
+          237,
+          237,
+          237,
+          237,
+          237,
+          237,
+          237
+        ]
+      },
+      {
+        "startOffsetMs": 94000,
+        "ok": [
+          229,
+          229,
+          229,
+          229,
+          229,
+          229,
+          229,
+          229,
+          229,
+          229,
+          229,
+          229,
+          229
+        ],
+        "ko": null,
+        "all": [
+          229,
+          229,
+          229,
+          229,
+          229,
+          229,
+          229,
+          229,
+          229,
+          229,
+          229,
+          229,
+          229
+        ]
+      },
+      {
+        "startOffsetMs": 95000,
+        "ok": [
+          198,
+          198,
+          198,
+          198,
+          198,
+          198,
+          198,
+          198,
+          198,
+          198,
+          198,
+          198,
+          198
+        ],
+        "ko": null,
+        "all": [
+          198,
+          198,
+          198,
+          198,
+          198,
+          198,
+          198,
+          198,
+          198,
+          198,
+          198,
+          198,
+          198
+        ]
+      },
+      {
+        "startOffsetMs": 96000,
+        "ok": [
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218
+        ],
+        "ko": null,
+        "all": [
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218
+        ]
+      },
+      {
+        "startOffsetMs": 97000,
+        "ok": [
+          194,
+          194,
+          214,
+          214,
+          214,
+          214,
+          214,
+          214,
+          214,
+          214,
+          214,
+          214,
+          207.33333333333334
+        ],
+        "ko": null,
+        "all": [
+          194,
+          194,
+          214,
+          214,
+          214,
+          214,
+          214,
+          214,
+          214,
+          214,
+          214,
+          214,
+          207.33333333333334
+        ]
+      },
+      {
+        "startOffsetMs": 98000,
+        "ok": [
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218
+        ],
+        "ko": null,
+        "all": [
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218,
+          218
+        ]
+      },
+      {
+        "startOffsetMs": 100000,
+        "ok": [
+          189,
+          189,
+          189,
+          189,
+          189,
+          189,
+          189,
+          189,
+          189,
+          189,
+          189,
+          189,
+          189
+        ],
+        "ko": null,
+        "all": [
+          189,
+          189,
+          189,
+          189,
+          189,
+          189,
+          189,
+          189,
+          189,
+          189,
+          189,
+          189,
+          189
+        ]
+      },
+      {
+        "startOffsetMs": 103000,
+        "ok": [
+          238,
+          238,
+          238,
+          238,
+          238,
+          238,
+          238,
+          238,
+          238,
+          238,
+          238,
+          238,
+          238
+        ],
+        "ko": null,
+        "all": [
+          238,
+          238,
+          238,
+          238,
+          238,
+          238,
+          238,
+          238,
+          238,
+          238,
+          238,
+          238,
+          238
+        ]
+      },
+      {
+        "startOffsetMs": 106000,
+        "ok": [
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228
+        ],
+        "ko": null,
+        "all": [
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228,
+          228
+        ]
+      }
+    ],
+    "distribution": {
+      "offsetMs": 184,
+      "stepMs": 13.68,
+      "ok": [
+        60,
+        181,
+        117,
+        59,
+        37,
+        7,
+        10,
+        0,
+        2,
+        0,
+        1,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        1
+      ],
+      "ko": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "meanMs": 222.01458333333332
+    },
+    "percentiles": {
+      "ok": [
+        [
+          0,
+          177
+        ],
+        [
+          2.5,
+          182
+        ],
+        [
+          5,
+          184
+        ],
+        [
+          7.5,
+          186
+        ],
+        [
+          10,
+          188
+        ],
+        [
+          12.5,
+          190
+        ],
+        [
+          15,
+          192
+        ],
+        [
+          17.5,
+          193
+        ],
+        [
+          20,
+          195
+        ],
+        [
+          22.5,
+          195
+        ],
+        [
+          25,
+          196
+        ],
+        [
+          27.5,
+          197
+        ],
+        [
+          30,
+          198
+        ],
+        [
+          32.5,
+          199
+        ],
+        [
+          35,
+          200
+        ],
+        [
+          37.5,
+          201
+        ],
+        [
+          40,
+          201
+        ],
+        [
+          42.5,
+          202
+        ],
+        [
+          45,
+          203
+        ],
+        [
+          47.5,
+          203
+        ],
+        [
+          50,
+          204
+        ],
+        [
+          52.5,
+          205
+        ],
+        [
+          55,
+          206
+        ],
+        [
+          57.5,
+          207
+        ],
+        [
+          60,
+          209
+        ],
+        [
+          62.5,
+          210
+        ],
+        [
+          65,
+          212
+        ],
+        [
+          67.5,
+          214
+        ],
+        [
+          70,
+          215
+        ],
+        [
+          72.5,
+          217
+        ],
+        [
+          75,
+          219
+        ],
+        [
+          77.5,
+          220
+        ],
+        [
+          80,
+          224
+        ],
+        [
+          82.5,
+          227
+        ],
+        [
+          85,
+          229
+        ],
+        [
+          87.5,
+          232
+        ],
+        [
+          90,
+          236
+        ],
+        [
+          92.5,
+          240
+        ],
+        [
+          95,
+          252
+        ],
+        [
+          97.5,
+          267
+        ],
+        [
+          99,
+          1315
+        ],
+        [
+          99.9,
+          1545
+        ],
+        [
+          99.99,
+          1545
+        ],
+        [
+          100,
+          1545
+        ]
+      ],
+      "ko": [],
+      "all": [
+        [
+          0,
+          177
+        ],
+        [
+          2.5,
+          182
+        ],
+        [
+          5,
+          184
+        ],
+        [
+          7.5,
+          186
+        ],
+        [
+          10,
+          188
+        ],
+        [
+          12.5,
+          190
+        ],
+        [
+          15,
+          192
+        ],
+        [
+          17.5,
+          193
+        ],
+        [
+          20,
+          195
+        ],
+        [
+          22.5,
+          195
+        ],
+        [
+          25,
+          196
+        ],
+        [
+          27.5,
+          197
+        ],
+        [
+          30,
+          198
+        ],
+        [
+          32.5,
+          199
+        ],
+        [
+          35,
+          200
+        ],
+        [
+          37.5,
+          201
+        ],
+        [
+          40,
+          201
+        ],
+        [
+          42.5,
+          202
+        ],
+        [
+          45,
+          203
+        ],
+        [
+          47.5,
+          203
+        ],
+        [
+          50,
+          204
+        ],
+        [
+          52.5,
+          205
+        ],
+        [
+          55,
+          206
+        ],
+        [
+          57.5,
+          207
+        ],
+        [
+          60,
+          209
+        ],
+        [
+          62.5,
+          210
+        ],
+        [
+          65,
+          212
+        ],
+        [
+          67.5,
+          214
+        ],
+        [
+          70,
+          215
+        ],
+        [
+          72.5,
+          217
+        ],
+        [
+          75,
+          219
+        ],
+        [
+          77.5,
+          220
+        ],
+        [
+          80,
+          224
+        ],
+        [
+          82.5,
+          227
+        ],
+        [
+          85,
+          229
+        ],
+        [
+          87.5,
+          232
+        ],
+        [
+          90,
+          236
+        ],
+        [
+          92.5,
+          240
+        ],
+        [
+          95,
+          252
+        ],
+        [
+          97.5,
+          267
+        ],
+        [
+          99,
+          1315
+        ],
+        [
+          99.9,
+          1545
+        ],
+        [
+          99.99,
+          1545
+        ],
+        [
+          100,
+          1545
+        ]
+      ],
+      "meanMs": {
+        "ok": 222.01458333333332,
+        "ko": null,
+        "all": 222.01458333333332
+      }
+    },
+    "totals": {
+      "ok": 480,
+      "ko": 0
+    }
+  },
+  "sums": {
+    "opened": 480,
+    "closed": 480,
+    "bitsOut": 9532640,
+    "bitsIn": 23631944
+  }
+}

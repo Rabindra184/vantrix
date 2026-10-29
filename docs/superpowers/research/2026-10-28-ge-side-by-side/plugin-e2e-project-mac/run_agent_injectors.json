@@ -1,0 +1,2726 @@
+{
+  "runId": "66bc422b-2a96-45eb-b902-7ec7453c449b",
+  "available": true,
+  "reason": null,
+  "detail": null,
+  "bucketWidthMs": 1000,
+  "window": null,
+  "machine": {
+    "available": false,
+    "reason": "machine figures are collected on Linux only (os.name=Mac OS X)"
+  },
+  "buckets": [
+    {
+      "startOffsetMs": 0,
+      "gcCount": {
+        "G1 Concurrent GC": 2,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 5
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 4,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 17
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 54525952,
+      "heapUsedBytes": 35337224,
+      "nettyDirectBytes": null,
+      "nettyHeapBytes": null,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 1000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 1
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 1
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 48376376,
+      "nettyDirectBytes": 8388608,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 2000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 51522104,
+      "nettyDirectBytes": 20971520,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 3000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 56764984,
+      "nettyDirectBytes": 29360128,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 4000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 57813560,
+      "nettyDirectBytes": 33554432,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 5000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 58862136,
+      "nettyDirectBytes": 46137344,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 6000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 62007864,
+      "nettyDirectBytes": 54525952,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 7000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 63056440,
+      "nettyDirectBytes": 62914560,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 8000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 64105016,
+      "nettyDirectBytes": 71303168,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 9000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 65153592,
+      "nettyDirectBytes": 79691776,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 10000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 65153592,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 11000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 65153592,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 12000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 65153592,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 13000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 65153592,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 14000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 66202168,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 15000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 67250744,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 16000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 68299320,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 17000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 69347896,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 18000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 71445048,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 19000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 73542200,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 20000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 73542200,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 21000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 73542200,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 22000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 74590776,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 23000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 74590776,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 24000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 74590776,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 25000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 74590776,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 26000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 75639352,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 27000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 75639352,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 28000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 75639352,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 29000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 75639352,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 30000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 75639352,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 31000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 76687928,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 32000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 77736504,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 33000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 79833656,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 34000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 81930808,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 35000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 85076536,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 36000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 85076536,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 37000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 85076536,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 38000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 85076536,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 39000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 86125112,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 40000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 86125112,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 41000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 86125112,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 42000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 88222264,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 43000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 90319416,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 44000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 93465144,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 45000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 95562296,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 46000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 96610872,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 47000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 97659448,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 48000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 97659448,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 49000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 97659448,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 50000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 98708024,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 51000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 100805176,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 52000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 100805176,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 53000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 104999480,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 54000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 106048056,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 55000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 106048056,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 56000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 107096632,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 57000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 108145208,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 58000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 109193784,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 59000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 110242360,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 60000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 113388088,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 61000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 116533816,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 62000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 117582392,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 63000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 119679544,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 64000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 119679544,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 65000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 119679544,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 66000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 1
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 37
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 32423720,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 67000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 38715176,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 68000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 39763752,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 69000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 39763752,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 70000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 40812328,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 71000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 41860904,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 72000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 43958056,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 73000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 46055208,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 74000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 48152360,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 75000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 49200936,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 76000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 50249512,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 77000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 50249512,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 78000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 52346664,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 79000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 54443816,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 80000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 55492392,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 81000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 56540968,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 82000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 57589544,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 83000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 59686696,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 84000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 60735272,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 85000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 61783848,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 86000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 62832424,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 87000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 65978152,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 88000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 67026728,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 89000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 68075304,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 90000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 69123880,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 91000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 70172456,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 92000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 71221032,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 93000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 71221032,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 94000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 72269608,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 95000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 72269608,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 96000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 72269608,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 97000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 72269608,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 98000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 72269608,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 99000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 73318184,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 100000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 73318184,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 101000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 73318184,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 102000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 73318184,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 103000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 73318184,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 104000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 73318184,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 105000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 73318184,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 106000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 73318184,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 107000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 73318184,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 108000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 73318184,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 109000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 73318184,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 110000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 73318184,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 111000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 73318184,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    },
+    {
+      "startOffsetMs": 112000,
+      "gcCount": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "gcTimeMs": {
+        "G1 Concurrent GC": 0,
+        "G1 Old Generation": 0,
+        "G1 Young Generation": 0
+      },
+      "cpuUserPct": null,
+      "cpuSysPct": null,
+      "ramTotalBytes": null,
+      "ramUsedBytes": null,
+      "heapMaxBytes": 1073741824,
+      "heapCommittedBytes": 161480704,
+      "heapUsedBytes": 110018344,
+      "nettyDirectBytes": 83886080,
+      "nettyHeapBytes": 4194304,
+      "tcpEvents": null,
+      "tcpSegments": null
+    }
+  ]
+}

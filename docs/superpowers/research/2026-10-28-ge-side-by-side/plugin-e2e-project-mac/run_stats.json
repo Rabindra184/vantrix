@@ -1,0 +1,355 @@
+{
+  "runId": "66bc422b-2a96-45eb-b902-7ec7453c449b",
+  "stats": [
+    {
+      "scope": "group",
+      "name": "Cart",
+      "family": "group_cumulated",
+      "count": 180,
+      "okCount": 178,
+      "koCount": 2,
+      "errorRate": 0.011111111111111112,
+      "minMs": 0,
+      "maxMs": 4442,
+      "meanMs": 618.25,
+      "stddevMs": 579.75727559998,
+      "throughputRps": 1.6122098022355977,
+      "percentiles": {
+        "p50": 465,
+        "p75": 559,
+        "p95": 1212,
+        "p99": 4360
+      },
+      "indicators": {
+        "under": 157,
+        "between": 11,
+        "over": 10,
+        "failed": 2
+      }
+    },
+    {
+      "scope": "group",
+      "name": "Cart",
+      "family": "group_duration",
+      "count": 180,
+      "okCount": 178,
+      "koCount": 2,
+      "errorRate": 0.011111111111111112,
+      "minMs": 121,
+      "maxMs": 4564,
+      "meanMs": 740.5611111111111,
+      "stddevMs": 579.9151965195609,
+      "throughputRps": 1.6122098022355977,
+      "percentiles": {
+        "p50": 587,
+        "p75": 681,
+        "p95": 1336,
+        "p99": 4484
+      },
+      "indicators": {
+        "under": 149,
+        "between": 17,
+        "over": 12,
+        "failed": 2
+      }
+    },
+    {
+      "scope": "group",
+      "name": "Catalog",
+      "family": "group_cumulated",
+      "count": 300,
+      "okCount": 237,
+      "koCount": 63,
+      "errorRate": 0.21,
+      "minMs": 650,
+      "maxMs": 2737,
+      "meanMs": 877.5066666666667,
+      "stddevMs": 364.2037936223192,
+      "throughputRps": 2.687016337059329,
+      "percentiles": {
+        "p50": 738,
+        "p75": 795,
+        "p95": 1797,
+        "p99": 2235
+      },
+      "indicators": {
+        "under": 184,
+        "between": 21,
+        "over": 32,
+        "failed": 63
+      }
+    },
+    {
+      "scope": "group",
+      "name": "Catalog",
+      "family": "group_duration",
+      "count": 300,
+      "okCount": 237,
+      "koCount": 63,
+      "errorRate": 0.21,
+      "minMs": 804,
+      "maxMs": 2892,
+      "meanMs": 1033.3566666666666,
+      "stddevMs": 364.3965460715687,
+      "throughputRps": 2.687016337059329,
+      "percentiles": {
+        "p50": 894,
+        "p75": 950,
+        "p95": 1951,
+        "p99": 2391
+      },
+      "indicators": {
+        "under": 0,
+        "between": 202,
+        "over": 35,
+        "failed": 63
+      }
+    },
+    {
+      "scope": "group",
+      "name": "Catalog/Recommendations",
+      "family": "group_cumulated",
+      "count": 300,
+      "okCount": 263,
+      "koCount": 37,
+      "errorRate": 0.12333333333333334,
+      "minMs": 206,
+      "maxMs": 1164,
+      "meanMs": 281.30333333333334,
+      "stddevMs": 134.17959850720806,
+      "throughputRps": 2.687016337059329,
+      "percentiles": {
+        "p50": 241,
+        "p75": 259,
+        "p95": 613,
+        "p99": 957
+      },
+      "indicators": {
+        "under": 258,
+        "between": 5,
+        "over": 0,
+        "failed": 37
+      }
+    },
+    {
+      "scope": "group",
+      "name": "Catalog/Recommendations",
+      "family": "group_duration",
+      "count": 300,
+      "okCount": 263,
+      "koCount": 37,
+      "errorRate": 0.12333333333333334,
+      "minMs": 206,
+      "maxMs": 1167,
+      "meanMs": 282.83,
+      "stddevMs": 134.0828391952776,
+      "throughputRps": 2.687016337059329,
+      "percentiles": {
+        "p50": 243,
+        "p75": 260,
+        "p95": 614,
+        "p99": 958
+      },
+      "indicators": {
+        "under": 258,
+        "between": 5,
+        "over": 0,
+        "failed": 37
+      }
+    },
+    {
+      "scope": "request",
+      "name": "Cart/Add To Cart",
+      "family": "response_time",
+      "count": 178,
+      "okCount": 178,
+      "koCount": 0,
+      "errorRate": 0,
+      "minMs": 387,
+      "maxMs": 4442,
+      "meanMs": 625.1966292134831,
+      "stddevMs": 579.2685920938495,
+      "throughputRps": 1.5942963599885354,
+      "percentiles": {
+        "p50": 467,
+        "p75": 564,
+        "p95": 1220,
+        "p99": 4360
+      },
+      "indicators": {
+        "under": 157,
+        "between": 11,
+        "over": 10,
+        "failed": 0
+      }
+    },
+    {
+      "scope": "request",
+      "name": "Catalog/List Products",
+      "family": "response_time",
+      "count": 300,
+      "okCount": 294,
+      "koCount": 6,
+      "errorRate": 0.02,
+      "minMs": 202,
+      "maxMs": 1360,
+      "meanMs": 307.66333333333336,
+      "stddevMs": 184.325680944234,
+      "throughputRps": 2.687016337059329,
+      "percentiles": {
+        "p50": 247,
+        "p75": 269,
+        "p95": 742,
+        "p99": 1056
+      },
+      "indicators": {
+        "under": 284,
+        "between": 8,
+        "over": 2,
+        "failed": 6
+      }
+    },
+    {
+      "scope": "request",
+      "name": "Catalog/Product Detail",
+      "family": "response_time",
+      "count": 300,
+      "okCount": 262,
+      "koCount": 38,
+      "errorRate": 0.12666666666666668,
+      "minMs": 204,
+      "maxMs": 1211,
+      "meanMs": 288.54,
+      "stddevMs": 156.5877445183158,
+      "throughputRps": 2.687016337059329,
+      "percentiles": {
+        "p50": 245,
+        "p75": 263,
+        "p95": 687,
+        "p99": 1098
+      },
+      "indicators": {
+        "under": 252,
+        "between": 9,
+        "over": 1,
+        "failed": 38
+      }
+    },
+    {
+      "scope": "request",
+      "name": "Catalog/Recommendations/Related Items",
+      "family": "response_time",
+      "count": 300,
+      "okCount": 263,
+      "koCount": 37,
+      "errorRate": 0.12333333333333334,
+      "minMs": 206,
+      "maxMs": 1164,
+      "meanMs": 281.30333333333334,
+      "stddevMs": 134.17959850720806,
+      "throughputRps": 2.687016337059329,
+      "percentiles": {
+        "p50": 241,
+        "p75": 259,
+        "p95": 613,
+        "p99": 957
+      },
+      "indicators": {
+        "under": 258,
+        "between": 5,
+        "over": 0,
+        "failed": 37
+      }
+    },
+    {
+      "scope": "request",
+      "name": "Place Order",
+      "family": "response_time",
+      "count": 178,
+      "okCount": 0,
+      "koCount": 178,
+      "errorRate": 1,
+      "minMs": 212,
+      "maxMs": 2438,
+      "meanMs": 294.03932584269666,
+      "stddevMs": 194.93520566725314,
+      "throughputRps": 1.5942963599885354,
+      "percentiles": {
+        "p50": 249,
+        "p75": 270,
+        "p95": 546,
+        "p99": 820
+      },
+      "indicators": {
+        "under": 0,
+        "between": 0,
+        "over": 0,
+        "failed": 178
+      }
+    },
+    {
+      "scope": "request",
+      "name": "Session",
+      "family": "response_time",
+      "count": 480,
+      "okCount": 472,
+      "koCount": 8,
+      "errorRate": 0.016666666666666666,
+      "minMs": 713,
+      "maxMs": 30009,
+      "meanMs": 2003.5770833333333,
+      "stddevMs": 3348.2141493476033,
+      "throughputRps": 4.299226139294927,
+      "percentiles": {
+        "p50": 827,
+        "p75": 1486,
+        "p95": 10798,
+        "p99": 20649
+      },
+      "indicators": {
+        "under": 185,
+        "between": 144,
+        "over": 143,
+        "failed": 8
+      }
+    },
+    {
+      "scope": "run",
+      "name": "",
+      "family": "response_time",
+      "count": 1736,
+      "okCount": 1469,
+      "koCount": 267,
+      "errorRate": 0.15380184331797234,
+      "minMs": 202,
+      "maxMs": 30009,
+      "meanMs": 799.8807603686636,
+      "stddevMs": 1927.3593403100854,
+      "throughputRps": 15.548867870449985,
+      "percentiles": {
+        "p50": 272,
+        "p75": 771,
+        "p95": 1933,
+        "p99": 10870
+      },
+      "indicators": {
+        "under": 1136,
+        "between": 177,
+        "over": 156,
+        "failed": 267
+      }
+    }
+  ],
+  "indicators": {
+    "under": 1136,
+    "between": 177,
+    "over": 156,
+    "failed": 267
+  },
+  "configurable": true,
+  "bounds": {
+    "lowerMs": 800,
+    "higherMs": 1200
+  },
+  "window": null
+}
