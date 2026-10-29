@@ -326,6 +326,9 @@ services:
     cap_add: ['SETUID', 'SETGID']
     security_opt:
       - no-new-privileges:true
+    # Docker mounts this noexec, so nothing may load native code from /tmp.
+    # The runner gives each Gatling JVM its own java.io.tmpdir in runner-work,
+    # because netty-tcnative loads BoringSSL from there (apps/runner/src/artifact.ts).
     tmpfs:
       - /tmp
     volumes:

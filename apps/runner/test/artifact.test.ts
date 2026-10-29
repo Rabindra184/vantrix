@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
@@ -297,6 +297,56 @@ describe('prepareGatlingRun, the Gatling agent', () => {
 
     expect(p.command.args.some((arg) => arg.startsWith('-javaagent'))).toBe(false);
     expect(p.agentLogPath).toBeNull();
+  });
+});
+
+/**
+ * ═══ THE JVM's TEMPORARY DIRECTORY IS THE JOB's, NOT `/tmp` ═══
+ *
+ * netty-tcnative unpacks its BoringSSL library into `java.io.tmpdir` and
+ * `dlopen`s it from there. The compose runner's `/tmp` is a tmpfs, which
+ * Docker mounts `noexec`, so the load fails and Netty falls back to the JDK's
+ * TLS without a word — every on-prem job measured as a different load test
+ * from the same simulation run anywhere else (bits sent 6.0 Mb against GE's
+ * 9.6). `TMPDIR` in the child's environment already pointed at the work
+ * directory; Java ignores it, so the property has to say it.
+ */
+describe("prepareGatlingRun, the JVM's temporary directory", () => {
+  async function expectJobTmpdir(p: Awaited<ReturnType<typeof prepare>>): Promise<string> {
+    const dir = path.join(p.workDir, 'tmp');
+    expect(p.command.args).toContain(`-Djava.io.tmpdir=${dir}`);
+    // A JVM option: before the classpath and the main class.
+    expect(p.command.args.indexOf(`-Djava.io.tmpdir=${dir}`)).toBeLessThan(p.command.args.indexOf('-cp'));
+    // It exists, and the simulation's uid can write to it.
+    expect(((await stat(dir)).mode & 0o777).toString(8)).toBe('777');
+    return dir;
+  }
+
+  it('points a jar job at a directory inside its own work directory', async () => {
+    const p = await prepare(config(), await fatJar());
+    await expectJobTmpdir(p);
+  });
+
+  it('points a bundle job there too', async () => {
+    const p = await prepareGatlingRun(
+      config(),
+      job(),
+      { kind: 'gatling_bundle', storagePath: await bundleArchive() } as unknown as RunnerArtifactRecord,
+      async () => false,
+      null,
+    );
+    await expectJobTmpdir(p);
+  });
+
+  it("lets the operator's own java.io.tmpdir win, by coming before it", async () => {
+    const p = await prepare(config(), await fatJar(), {
+      javaOptions: '-Djava.io.tmpdir=/srv/scratch',
+    } as Partial<RunnerJobRecord>);
+    const dir = await expectJobTmpdir(p);
+    // The JVM keeps the LAST -D for a property.
+    expect(p.command.args.indexOf('-Djava.io.tmpdir=/srv/scratch')).toBeGreaterThan(
+      p.command.args.indexOf(`-Djava.io.tmpdir=${dir}`),
+    );
   });
 });
 
