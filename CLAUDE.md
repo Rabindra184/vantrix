@@ -151,6 +151,52 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The transient-name-only-timeout branch (`fix/transient-name-only-timeout`)
+added no unit FILE and 3 cases to `apps/worker/test/retry.test.ts`: unit
+**280 / 4596 to 280 / 4599**, integration **260 / 4096 to 260 / 4099** (a
+`.ts`); **e2e stays 214**. A follow-up the exact-statistics work recorded
+and nobody took.
+
+**A STALLED OBJECT STORE FAILED AN INGEST FOR GOOD, WHILE A COMMENT SAID
+BULLMQ WOULD RETRY IT.** `isTransient` matched `.code` and `.errorCode`, and
+`@smithy/node-http-handler` 4.9.13 rejects a stalled socket — the
+`socketTimeout` `packages/storage/src/blobs.ts` sets precisely so a
+black-holed store fails rather than hangs — and a connect that never
+completes with `Object.assign(new Error(msg), { name: 'TimeoutError' })`: a
+NAME, no code (its `dist-cjs/index.js`, lines 52 and 129; only the request
+timeout at 86 carries `code: 'ETIMEDOUT'`). `'TimeoutError'` sitting in
+`TRANSIENT_CODES` matched neither, so the consumer threw
+`UnrecoverableError` and the agent-file reader recorded a good file as
+`read_failed` — while `blobs.ts` promised retries and `recompute.service.ts`,
+one package over, correctly said the opposite. `isSdkTimeout` matches the
+name, the SDK's deliberate marker, never a message.
+
+**THE EXISTING CASE COULD NOT SEE IT, BECAUSE IT BUILT THE WRONG ERROR.**
+"treats object storage being unreachable as transient" used `code:
+'ETIMEDOUT'`, a shape the configured timeout never produces. The new cases
+are the two SDK errors copied from its source. **Build an error fixture from
+the library's source, not from what a code-based classifier expects** —
+the fixture that agrees with the classifier is the one that cannot catch it.
+
+Red-verified: the name check removed fails both SDK cases; matching the
+message instead (`/time(d)? ?out/i`) fails the name-not-message guard alone.
+
+**WHAT WAS RUN**, Node v22.19.0, `perfportal_followups` (created and
+migrated), Redis db 10 flushed before integration and before e2e, port 3810,
+every `.tsbuildinfo` deleted first: `pnpm build`, `typecheck` and `lint` exit
+0 by their own exit codes; `test:unit` **280 / 4599**, exit 0, zero `Errors`
+lines; `test:integration` **260 / 4099, exit 0, zero failures** (load 22.9 at
+start); `pnpm test:e2e --workers=2` read back `Running 214 tests using 2
+workers`, **214 passed, exit 0**.
+
+**AND "THE SCHEDULER RESCANS FOREVER AFTER AN EMPTY BACKLOG" WAS CHECKED AND
+IS NOT A DEFECT.** Both scans keyset-page `(created_at, id)` with a strictly
+smaller cursor and stop on a short page, so one scan ends; `run.created_at` is
+`timestamptz(3)`, so the `Date` cursor is exact and skips nothing; and
+scanning again every interval is the design — new runs, a verifier-version
+bump, a failed job to re-queue, an older worker's rows mid-deploy. Recorded so
+the note is not re-investigated.
+
 The plugin-configuration-cache branch (`fix/plugin-configuration-cache`)
 moves no `pnpm` floor — every file but this one is under
 `clients/gatling-gradle`, which no `pnpm` suite reads — and takes the plugin's

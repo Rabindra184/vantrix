@@ -56,6 +56,24 @@ function isPoolConnectTimeout(err: Error): boolean {
 }
 
 /**
+ * The AWS SDK's own timeouts, matched by NAME because they carry no code.
+ *
+ * `@smithy/node-http-handler` (4.9.13) rejects a stalled socket — the
+ * `socketTimeout` `packages/storage/src/blobs.ts` configures so a black-holed
+ * object store fails instead of hanging — and a connect that never completes
+ * with `Object.assign(new Error(msg), { name: 'TimeoutError' })`: no `.code`,
+ * no `.errorCode`. `'TimeoutError'` sitting in `TRANSIENT_CODES` never matched
+ * either of them, so a stalled object store failed an ingest for good — the
+ * one outcome that timeout exists to avoid — while `blobs.ts` said BullMQ
+ * would retry it. The name is the SDK's deliberate marker (Node's
+ * `AbortSignal.timeout()` uses the same one), not a message to pattern-match,
+ * which keeps the rule as narrow as the pg-pool match above.
+ */
+function isSdkTimeout(err: Error): boolean {
+  return err.name === 'TimeoutError';
+}
+
+/**
  * Only transient failures are retried. A parse failure, an unsupported bundle,
  * or a cardinality violation is deterministic: retrying burns a worker slot to
  * reach the identical conclusion. An unknown error is treated as deterministic
@@ -69,6 +87,7 @@ export function isTransient(err: unknown): boolean {
   if (!err || typeof err !== 'object') return false;
   if ((err as Error).name === 'IngestError') return false;
   if (isPoolConnectTimeout(err as Error)) return true;
+  if (isSdkTimeout(err as Error)) return true;
   // PrismaClientKnownRequestError puts its code on `.code`.
   // PrismaClientInitializationError — what connection failures actually are —
   // puts it on `.errorCode` instead; `.code` is absent on that class.

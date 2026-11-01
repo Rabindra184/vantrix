@@ -280,10 +280,12 @@ export class RecomputeService {
  * opening the bytes — `BUNDLE_CHECKSUM_MISMATCH`, or an archive refused as
  * not an archive, which is the log failing to parse. `BUNDLE_TOO_LARGE` is
  * NOT one of them: it is the deployment's limit speaking, and is rethrown.
- * Anything else is the object store failing to answer, and is NOT keyed on
- * `isTransient`: the AWS SDK reports a socket timeout as a bare
- * `name: 'TimeoutError'` with no code, which that function does not
- * recognise, and recording it would retire a perfectly good run for good.
+ * Anything else is the object store failing to answer, and is rethrown
+ * whatever it is, NOT keyed on `isTransient`: an error this function cannot
+ * name is one it must not record, because recording it would retire a
+ * perfectly good run for good. (The AWS SDK's socket timeout, a bare
+ * `name: 'TimeoutError'` with no code, is the case that once slipped past
+ * `isTransient` too — see `isSdkTimeout` in `pipeline/retry.ts`.)
  */
 function sourceFailure(err: unknown): RecomputeError | null {
   if (err instanceof RawLogMissingError) return 'raw_log_missing';
