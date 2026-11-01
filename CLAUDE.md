@@ -254,8 +254,19 @@ codes; `test:unit` **282 / 4611**, exit 0, zero `Errors` lines;
 `test:integration` and `test:e2e` were NOT run locally: the load gate (1-min
 < 8 and 5-min < 10) waited its full 40 minutes and never opened — Spotlight's
 `mds_stores` at 92% CPU after the install and build, swap 91% used, loads
-14 to 18. Their floors here (**262 / 4111** and **214**) are PREDICTIONS from
-per-file counts; CI's `build` job is the measurement, read off its log below.
+14 to 18. **CI's `build` job measured both on `d47e9cab`** (run 41361732121),
+read off its own log, each the per-file prediction exactly:
+
+```
+  pnpm audit --prod      No known vulnerabilities found
+  pnpm test:unit         Test Files 282 passed (282)   Tests 4610 passed | 1 skipped (4611)
+  pnpm test:integration  Test Files 262 passed (262)   Tests 4110 passed | 1 skipped (4111)
+  pnpm test:e2e          Running 214 tests using 2 workers -> 214 passed
+```
+
+The skip is `loopback.test.ts`' macOS-only case, on Linux. `e2e-cross-browser`
+was not dispatched: the web diff is four contract messages and the tests
+that read them.
 
 **KNOWN AND LEFT:** API 400 details built from a zod default message
 (`firstIssue`, `describeIssues`) now carry zod 4's wording — `code` and
