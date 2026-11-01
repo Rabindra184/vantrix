@@ -48,7 +48,8 @@ class AgentLauncherTest {
     }
 
     private fun prepare(task: Task, buildDir: Path, logs: MutableList<String> = mutableListOf()) =
-        AgentLauncher.prepare(task, buildDir) { logs += it }
+        // The `gatling` extension's list, read the way the plugin captures it.
+        AgentLauncher.prepare(task, buildDir, { AgentLauncher.jvmArgsOf(task.project.extensions.findByName("gatling")) }) { logs += it }
 
     @Test fun `the task's own list is kept, in order, with ours appended`(@TempDir tmp: Path) {
         val p = project(tmp)

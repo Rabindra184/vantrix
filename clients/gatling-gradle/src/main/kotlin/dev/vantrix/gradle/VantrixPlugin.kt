@@ -2,13 +2,12 @@ package dev.vantrix.gradle
 
 import org.gradle.api.Plugin
 import org.gradle.api.Project
-import java.util.concurrent.atomic.AtomicReference
+import org.gradle.api.logging.Logger
+import org.gradle.api.logging.Logging
 
-/** The `doFirst`-to-finalizer handoff: the tailer plus the resolved config it was opened with,
- *  so the finalizer can read `uploadIfLiveUnavailable` without re-resolving anything, and the
- *  agent run [AgentLauncher] prepared for this `gatlingRun` (`null` when the agent is off or
- *  could not be attached). */
-private data class TailerHandle(val tailer: RunTailer, val config: PluginConfig, val agentRun: AgentRun?)
+/** Task actions log through this, never `project.logger`: a task action that reaches the project
+ *  is what Gradle's configuration cache refuses. */
+private val log: Logger = Logging.getLogger(VantrixPlugin::class.java)
 
 /**
  * Wires [RunTailer] into the `gatlingRun` task lifecycle, whatever plugin (real Gatling, or a
@@ -19,17 +18,23 @@ private data class TailerHandle(val tailer: RunTailer, val config: PluginConfig,
  * A `doFirst` resolves config and, if present, opens a tailer for the run; a `vantrixClose`
  * task -- registered once per project, unconditionally -- is `finalizedBy`'d onto `gatlingRun` so
  * it closes the run EVEN WHEN gatlingRun fails. State crosses from the `doFirst` to the finalizer
- * through a plain [AtomicReference] (holding a [TailerHandle]) captured by both closures: scoped
- * to this one `apply()` call (i.e. per project), which a companion-object holder would not be in
- * a multi-project build. The same finalizer, after closing the run, is also where the opt-in
- * `uploadIfLiveUnavailable` fallback runs -- see [BundleUploader].
+ * through a per-project [VantrixRunHandoff] build service. The same finalizer, after closing the
+ * run, is also where the opt-in `uploadIfLiveUnavailable` fallback runs -- see [BundleUploader].
  *
  * Every action body below is wrapped in `try/catch(Throwable)` that logs and swallows -- this
- * plugin must never be the reason a build fails. Configuration-cache compatibility is explicitly
- * out of scope for v0.1: `resultsRoot` resolution below reads `project.file` / `project.layout`
- * and `System.getenv()` from inside a task action, both of which a CC-safe version would instead
- * plumb in at configuration time (e.g. via `ProviderFactory.environmentVariable` and a captured
- * `Directory`).
+ * plugin must never be the reason a build fails.
+ *
+ * ═══ CONFIGURATION-CACHE SAFE, BECAUSE GATLING's OWN DEMO TURNS THE CACHE ON ═══
+ *
+ * `gatling-gradle-plugin-demo-kotlin` ships `org.gradle.configuration-cache=true`. Under it the
+ * first version failed the build with three problems (`Project` captured by both task actions)
+ * and lost the agent (`AgentLauncher` read `Task.project` during execution) -- breaking the rule
+ * above for the project a Gatling Enterprise user actually starts from. So no task action here
+ * touches the project: what they need is captured at configuration time as values the cache can
+ * store -- a provider of a plain [VantrixExtension.snapshot], the build and project directories,
+ * a provider of the `gatling` extension's `jvmArgs` -- and the run is handed across through a
+ * build service, which survives each task being run from its own deserialized copy. The
+ * environment is still read in `doFirst`, at execution time, where the cache allows it.
  *
  * `apply()` itself is guarded too, ahead of its own top-level `try/catch(Throwable)`: a consumer
  * build that already has its own extension or task literally named `vantrix`/`vantrixClose`
@@ -57,13 +62,23 @@ class VantrixPlugin : Plugin<Project> {
             }
 
             val ext = project.extensions.create("vantrix", VantrixExtension::class.java)
-            val handleRef = AtomicReference<TailerHandle?>(null)
+            val handoff = project.gradle.sharedServices.registerIfAbsent(
+                "vantrix-run-handoff" + project.path,
+                VantrixRunHandoff::class.java,
+            ) {}
+            // Read when first asked for -- after the build script has set them -- and stored by
+            // the configuration cache as plain values.
+            val settings = project.provider { ext.snapshot() }
+            val gatlingJvmArgs = project.provider { AgentLauncher.jvmArgsOf(project.extensions.findByName("gatling")) }
+            val buildDir = project.layout.buildDirectory
+            val projectDir = project.layout.projectDirectory
 
             val closeTask = project.tasks.register("vantrixClose") { task ->
+                task.usesService(handoff)
                 task.doLast {
                     try {
-                        // No-op when doFirst never ran (missing config, task skipped/UP-TO-DATE): nothing in the holder.
-                        val handle = handleRef.get()
+                        // No-op when doFirst never ran (missing config, task skipped/UP-TO-DATE): nothing handed over.
+                        val handle = handoff.get().take()
                         handle?.tailer?.finish()
 
                         // Fallback: strictly opt-in, and only for a simulation whose live open
@@ -71,25 +86,26 @@ class VantrixPlugin : Plugin<Project> {
                         if (handle != null && handle.config.uploadIfLiveUnavailable) {
                             val failures = handle.tailer.openFailures()
                             if (failures.isNotEmpty()) {
-                                val uploader = BundleUploader(logger = { msg -> project.logger.warn("vantrix: $msg") })
+                                val uploader = BundleUploader(logger = { msg -> log.warn("vantrix: $msg") })
                                 failures.forEach { dir -> uploader.upload(handle.config, dir, handle.agentRun) }
                             }
                         }
                     } catch (t: Throwable) {
-                        project.logger.warn("vantrix: close failed: ${t.message}")
+                        log.warn("vantrix: close failed: ${t.message}")
                     }
                 }
             }
 
             project.tasks.matching { it.name == "gatlingRun" }.configureEach { task ->
-                task.doFirst {
+                task.usesService(handoff)
+                task.doFirst { run ->
                     try {
                         // Captured at EXECUTION time, never configuration time -- TestKit's withEnvironment
                         // (and any real CI run) sets env per-invocation, not per-configuration.
-                        val resolved = ResolvedConfig.from(ext, System.getenv())
+                        val resolved = ResolvedConfig.from(settings.get(), System.getenv())
                         when (resolved) {
                             is ResolvedConfig.Missing -> {
-                                project.logger.warn("vantrix: ${resolved.reason}")
+                                log.warn("vantrix: ${resolved.reason}")
                             }
                             is ResolvedConfig.Ok -> {
                                 val config = resolved.config
@@ -98,17 +114,19 @@ class VantrixPlugin : Plugin<Project> {
                                 // the agent and nothing else.
                                 val agentRun = if (config.agentEnabled) {
                                     AgentLauncher.prepare(
-                                        task,
-                                        project.layout.buildDirectory.get().asFile.toPath(),
-                                        logger = { msg -> project.logger.warn("vantrix: $msg") },
+                                        run,
+                                        buildDir.get().asFile.toPath(),
+                                        extensionJvmArgs = { gatlingJvmArgs.getOrElse(emptyList()) },
+                                        logger = { msg -> log.warn("vantrix: $msg") },
                                     )
                                 } else {
                                     null
                                 }
+                                // `project.file` semantics: relative to the project, absolute as given.
                                 val resultsRoot = config.resultsDir
-                                    ?.let { project.file(it).toPath() }
-                                    ?: project.layout.buildDirectory.dir("reports/gatling").get().asFile.toPath()
-                                val client = LiveClient(config, logger = { msg -> project.logger.warn("vantrix: $msg") })
+                                    ?.let { projectDir.asFile.toPath().resolve(it) }
+                                    ?: buildDir.dir("reports/gatling").get().asFile.toPath()
+                                val client = LiveClient(config, logger = { msg -> log.warn("vantrix: $msg") })
                                 // Constructed here, in doFirst -- strictly BEFORE Gatling's own task
                                 // action runs -- so RunTailer's constructor snapshot (see its class
                                 // doc) captures every results directory left over from a previous
@@ -119,14 +137,14 @@ class VantrixPlugin : Plugin<Project> {
                                     config = config,
                                     resultsRoot = resultsRoot,
                                     agent = agentRun,
-                                    logger = { msg -> project.logger.warn(msg) },
+                                    logger = { msg -> log.warn(msg) },
                                 )
-                                handleRef.set(TailerHandle(tailer, config, agentRun))
+                                handoff.get().put(TailerHandle(tailer, config, agentRun))
                                 tailer.start()
                             }
                         }
                     } catch (t: Throwable) {
-                        project.logger.warn("vantrix: setup failed: ${t.message}")
+                        log.warn("vantrix: setup failed: ${t.message}")
                     }
                 }
                 task.finalizedBy(closeTask)

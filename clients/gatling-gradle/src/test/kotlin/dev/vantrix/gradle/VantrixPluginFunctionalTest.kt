@@ -159,11 +159,11 @@ class VantrixPluginFunctionalTest {
         )
     }
 
-    private fun runner(projectDir: File, env: Map<String, String>): GradleRunner =
+    private fun runner(projectDir: File, env: Map<String, String>, vararg extra: String): GradleRunner =
         GradleRunner.create()
             .withProjectDir(projectDir)
             .withPluginClasspath()
-            .withArguments("gatlingRun", "--stacktrace")
+            .withArguments(listOf("gatlingRun", "--stacktrace") + extra)
             .withEnvironment(env)
 
     /** PATH + JAVA_HOME from the real environment (withEnvironment REPLACES, not merges) plus whatever is given. */
@@ -527,5 +527,119 @@ class VantrixPluginFunctionalTest {
         assertEquals(TaskOutcome.SUCCESS, result.task(":gatlingRun")?.outcome)
         assertEquals(listOf("-Xmx1g", "-Dkeep=me"), printedJvmArgs(result.output))
         assertFalse(File(tmp, "build/vantrix/agent").exists(), "nothing should be extracted without config")
+    }
+
+    // ---- the configuration cache ----------------------------------------------------------
+
+    /**
+     * ═══ GATLING's OWN DEMO PROJECT TURNS THE CONFIGURATION CACHE ON ═══
+     *
+     * `gatling-gradle-plugin-demo-kotlin` ships `org.gradle.configuration-cache=true`, so a GE
+     * user's starting point runs this plugin under it. The GE side-by-side proof found the plugin
+     * failing that build (three problems: `Project` captured by `vantrixClose` and by the
+     * `gatlingRun` hook) and losing the agent (`AgentLauncher` read `Task.project` at execution
+     * time). This fake is shaped like the demo: its own `jvmArgs` empty, so the agent falls back to
+     * the `gatling` extension's list -- the path that read the project -- and itself cache-safe,
+     * writing through a provider captured at configuration time, as a real task must.
+     */
+    private fun writeConfigurationCacheBuildFile(projectDir: File) {
+        File(projectDir, "build.gradle.kts").writeText(
+            """
+            |plugins {
+            |    id("dev.vantrix.gatling")
+            |}
+            |
+            |open class FakeGatlingExtension {
+            |    var jvmArgs: List<String>? = null
+            |}
+            |extensions.create("gatling", FakeGatlingExtension::class.java).jvmArgs = listOf("-Xmx1g", "-Dfrom=ext")
+            |
+            |abstract class FakeGatlingRun : DefaultTask() {
+            |    @get:Internal
+            |    var jvmArgs: List<String>? = null
+            |}
+            |
+            |tasks.register<FakeGatlingRun>("gatlingRun") {
+            |    // A local, not a script property: a script property would capture the script itself.
+            |    val reports = layout.buildDirectory.dir("reports/gatling")
+            |    doLast {
+            |        println("FAKE-JVMARGS=" + (this as FakeGatlingRun).jvmArgs.orEmpty().joinToString("|"))
+            |        val dir = reports.get().asFile.resolve("fake-" + System.currentTimeMillis())
+            |        dir.mkdirs()
+            |        val log = java.io.File(dir, "simulation.log")
+            |        log.appendBytes(ByteArray(1000) { 'a'.code.toByte() })
+            |        Thread.sleep(2000)
+            |        log.appendBytes(ByteArray(500) { 'b'.code.toByte() })
+            |    }
+            |}
+            """.trimMargin(),
+        )
+    }
+
+    private fun assertOneRunStreamedAndClosed(events: List<RecordedEvent>) {
+        assertEquals(1, events.count { it.type == "open" }, "expected exactly one open, got: $events")
+        assertEquals(1500, events.filter { it.type == "stream" }.sumOf { it.byteCount }, "got: $events")
+        assertEquals(1, events.count { it.type == "close" }, "expected the run closed exactly once, got: $events")
+        assertTrue(events.indexOfFirst { it.type == "open" } < events.indexOfLast { it.type == "close" }, "got: $events")
+    }
+
+    @Test
+    @Timeout(value = 120, unit = TimeUnit.SECONDS)
+    fun `under the configuration cache the build passes, the agent is on and the run is closed`(@TempDir tmp: File) {
+        val (srv, state) = startServer()
+        writeSettings(tmp)
+        writeConfigurationCacheBuildFile(tmp)
+        val env = envFor(
+            "VANTRIX_URL" to "http://localhost:${srv.address.port}",
+            "VANTRIX_TOKEN" to "tok",
+            "VANTRIX_TICK_SECONDS" to "1",
+        )
+
+        // A configuration-cache problem fails the build, so build() itself is the first assertion.
+        val result = runner(tmp, env, "--configuration-cache").build()
+
+        assertEquals(TaskOutcome.SUCCESS, result.task(":gatlingRun")?.outcome)
+        assertEquals(TaskOutcome.SUCCESS, result.task(":vantrixClose")?.outcome)
+        assertTrue("Configuration cache entry stored" in result.output, result.output)
+        assertFalse("could not start" in result.output, "the agent was not attached:\n${result.output}")
+        val args = printedJvmArgs(result.output)
+        assertEquals(listOf("-Xmx1g", "-Dfrom=ext"), args.dropLast(1), "the gatling extension's flags, first")
+        assertTrue(args.last().startsWith("-javaagent:"), "expected our agent last, got: $args")
+        assertOneRunStreamedAndClosed(pollUntil(condition = { it: List<RecordedEvent> -> it.any { e -> e.type == "close" } }) {
+            state.events.toList()
+        })
+    }
+
+    /**
+     * The run opened in `gatlingRun` is closed by `vantrixClose`, a different task, so the two
+     * share state. Under the configuration cache each task runs from its own deserialized copy --
+     * on the build that REUSES an entry above all -- so a reference both closures captured
+     * becomes two references, and the close would find nothing to close. This is the build that
+     * proves the handoff survives it.
+     */
+    @Test
+    @Timeout(value = 180, unit = TimeUnit.SECONDS)
+    fun `a build that reuses the configuration cache still closes its run`(@TempDir tmp: File) {
+        val (srv, state) = startServer()
+        writeSettings(tmp)
+        writeConfigurationCacheBuildFile(tmp)
+        val env = envFor(
+            "VANTRIX_URL" to "http://localhost:${srv.address.port}",
+            "VANTRIX_TOKEN" to "tok",
+            "VANTRIX_TICK_SECONDS" to "1",
+        )
+
+        runner(tmp, env, "--configuration-cache").build()
+        pollUntil(condition = { it: List<RecordedEvent> -> it.any { e -> e.type == "close" } }) { state.events.toList() }
+        state.events.clear()
+
+        val second = runner(tmp, env, "--configuration-cache").build()
+
+        assertTrue("Reusing configuration cache" in second.output, second.output)
+        assertEquals(TaskOutcome.SUCCESS, second.task(":vantrixClose")?.outcome)
+        assertTrue(printedJvmArgs(second.output).last().startsWith("-javaagent:"), second.output)
+        assertOneRunStreamedAndClosed(pollUntil(condition = { it: List<RecordedEvent> -> it.any { e -> e.type == "close" } }) {
+            state.events.toList()
+        })
     }
 }
