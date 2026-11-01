@@ -1,5 +1,5 @@
 import { constants } from 'node:fs';
-import { access, rm } from 'node:fs/promises';
+import { access } from 'node:fs/promises';
 import os from 'node:os';
 import type { RunnerJobEventInput, RunnerJobRecord, RunnerJobWithArtifact } from '@perfportal/persistence';
 import {
@@ -17,6 +17,7 @@ import { SimulationLogTailer } from './log-tailer.js';
 import type { RunnerLiveNotifier } from './live-notifier.js';
 import { RunnerLiveSink } from './live-sink.js';
 import { spawnAndWait } from './process.js';
+import { removeWorkDir } from './work-dir.js';
 import {
   endedEarly,
   endedEarlyEvent,
@@ -297,7 +298,10 @@ export class RunnerExecutor {
         await record({ message: failureEventMessage(jobError, job.artifact.storagePath) });
       }
     } finally {
-      if (workDir) await rm(workDir, { recursive: true, force: true }).catch((err) => logError(`failed to clean work dir: ${String(err)}`));
+      if (workDir) {
+        await removeWorkDir(workDir, { uid: this.#config.childUid ?? undefined, gid: this.#config.childGid ?? undefined })
+          .catch((err) => logError(`failed to clean work dir: ${String(err)}`));
+      }
       await logger?.close().catch((err) => console.error('failed to close runner job log', err));
     }
   }
