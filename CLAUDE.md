@@ -197,6 +197,20 @@ scanning again every interval is the design — new runs, a verifier-version
 bump, a failed job to re-queue, an older worker's rows mid-deploy. Recorded so
 the note is not re-investigated.
 
+**NOR IS "THE FINAL LIVE DELTA MISSES REQUESTS" (774 of 895), AND THE
+MECHANISM IS CONFIRMED RATHER THAN INFERRED.** On `live:closed` the fold owner
+releases the run at once (`#onClosed`), folding nothing more, while `close()`
+assembles the chunks into the final log and deletes them. The release has to
+be prompt: the parse takes the same advisory lock with about 6 s of BullMQ
+retries to wait it out, and `#onClosed`'s doc comment records a slower release
+stranding the run at `parsing` for the sweeper's 15 minutes. A last fold
+before releasing would spend that budget and race the chunk deletion. And the
+page already says so: the live strip draws `LiveNotice[kind="finalizing"]` —
+"This run has finished streaming. Finalizing the results — this page will
+refresh with the full report once they are ready." — over the last live
+numbers until the finished report replaces them. A signposted trade-off, not
+a defect.
+
 The plugin-configuration-cache branch (`fix/plugin-configuration-cache`)
 moves no `pnpm` floor — every file but this one is under
 `clients/gatling-gradle`, which no `pnpm` suite reads — and takes the plugin's
