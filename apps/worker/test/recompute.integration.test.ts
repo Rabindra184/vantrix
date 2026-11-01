@@ -417,8 +417,8 @@ describe('RecomputeService', () => {
   it('rethrows an object-store failure instead of recording it, so the run stays selectable', async () => {
     const { runId } = await legacyRun();
     // The shape the AWS SDK's node http handler gives a socket timeout: a
-    // name and no code, which isTransient does not recognise. Reading the
-    // object failing is still not a fact about the log.
+    // name and no code. Whatever isTransient makes of it, reading the object
+    // failing is not a fact about the log.
     const timeout = Object.assign(new Error('socket timed out'), { name: 'TimeoutError' });
     vi.spyOn(BlobStore.prototype, 'get').mockRejectedValueOnce(timeout);
 

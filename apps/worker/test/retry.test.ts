@@ -14,6 +14,24 @@ describe('isTransient', () => {
     expect(isTransient(e)).toBe(true);
   });
 
+  // The case above is a shape the SDK does NOT produce for the timeout this
+  // repo configures. `@smithy/node-http-handler` 4.9.13 rejects a stalled
+  // socket (`socketTimeout`, `packages/storage/src/blobs.ts`) and a connect
+  // that never completes with an error carrying a NAME and no code at all —
+  // these two are copied from its source. Read by code alone, a stalled
+  // object store failed an ingest for good.
+  it.each([
+    '@smithy/node-http-handler - the request socket timed out after 10000 ms of inactivity (configured by client requestHandler).',
+    '@smithy/node-http-handler - the request socket did not establish a connection with the server within the configured timeout of 10000 ms.',
+  ])('treats the AWS SDK\'s name-only TimeoutError as transient: %s', (message) => {
+    const e = Object.assign(new Error(message), { name: 'TimeoutError' });
+    expect(isTransient(e)).toBe(true);
+  });
+
+  it('keys the SDK timeout on its name, not on a message that mentions a timeout', () => {
+    expect(isTransient(new Error('the request socket timed out'))).toBe(false);
+  });
+
   it('treats every IngestError as deterministic — retrying reaches the same conclusion', () => {
     for (const code of ['LOG_MALFORMED', 'BUNDLE_EMPTY', 'ENDPOINT_CARDINALITY_EXCEEDED'] as const) {
       expect(isTransient(ingestError(code, { message: 'm', remediation: 'r' }))).toBe(false);
