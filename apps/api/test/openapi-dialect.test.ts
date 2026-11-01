@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildOpenApiDocument } from '../src/openapi/document.js';
-import { REQUEST_BODIES } from '../src/openapi/schemas.js';
+import { REQUEST_BODIES, schemaComponents } from '../src/openapi/schemas.js';
 
 /**
  * THE DEFECT THIS GUARDS. The document declares `openapi: '3.1.0'`, which
@@ -133,5 +133,22 @@ describe('the OpenAPI document is valid for the version it declares', () => {
     }
     expect(named.size, 'no request body names a component — this case compares nothing').toBeGreaterThan(5);
     expect([...REQUEST_BODIES].sort()).toEqual([...named].sort());
+  });
+
+  /**
+   * And what input mode is FOR, because the set above can be right while
+   * nothing reads it: forcing every component to `io: 'output'` left that case
+   * green. A field with a `.default()` is one a client may leave out —
+   * `CreateUserRequest.isAdmin`, the runner's `artifactKind` — and a document
+   * listing it as required tells a generated client it may not.
+   */
+  it('lets a client omit a request field the server defaults', () => {
+    const required = (name: string): unknown[] =>
+      (schemaComponents[name]?.['required'] as unknown[] | undefined) ?? [];
+    expect(required('CreateUserRequest')).toEqual(expect.arrayContaining(['email', 'name', 'password']));
+    expect(required('CreateUserRequest')).not.toContain('isAdmin');
+    expect(required('CreateUserRequest')).not.toContain('projects');
+    expect(required('RunnerStartMetadata')).not.toContain('artifactKind');
+    expect(required('RunnerStartMetadata')).not.toContain('systemProperties');
   });
 });
