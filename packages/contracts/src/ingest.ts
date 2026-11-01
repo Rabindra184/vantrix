@@ -23,8 +23,10 @@ export const TEST_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 export const DeclaredTestSlugSchema = z
   .string()
   .trim()
-  .min(1)
-  .max(200)
+  // Fragments, like the pattern's: New on-prem run capitalises the first and
+  // shows it under the field.
+  .min(1, 'must not be empty')
+  .max(200, 'must be at most 200 characters')
   .regex(TEST_SLUG_PATTERN, {
     message: 'must be lower-case letters, digits and single hyphens, e.g. "checkout-soak"',
   });

@@ -98,7 +98,7 @@ describe('ChangePasswordRequestSchema', () => {
   });
 
   /**
-   * zod 3 runs the refinement even when a field has already failed, so a
+   * zod runs the refinement even when a field has already failed, so a
    * short password typed back reports the length issue FIRST and the
    * unchanged one second. A caller reading the first issue would answer
    * "too short" and miss that it is also the same password; the code is what

@@ -396,7 +396,7 @@ function parseStartMetadata(raw: string): RunnerStartMetadata {
 /** A schema's issues as one sentence; a root-level issue (an unrecognised key,
  *  say) is named after what it was found in rather than printed with no path. */
 function describeIssues(
-  issues: readonly { path: readonly (string | number)[]; message: string }[],
+  issues: readonly { path: readonly PropertyKey[]; message: string }[],
   root: string,
 ): string {
   return issues.map((i) => `${i.path.join('.') || root} ${i.message}`).join('; ');

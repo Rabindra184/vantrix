@@ -15,7 +15,7 @@ import { RunNumberSchema } from './run-number.js';
  * a field the schema does not know is a caller mistake worth naming.
  */
 export const TestSummarySchema = z.object({
-  id: z.string().uuid(),
+  id: z.guid(),
   slug: z.string(),
   name: z.string(),
   /**
@@ -52,7 +52,7 @@ export const TestSummarySchema = z.object({
    */
   latestRun: z
     .object({
-      id: z.string().uuid(),
+      id: z.guid(),
       status: RunStatusSchema,
       verdict: RunVerdictSchema.nullable(),
       /** "Run 12" in the catalogue's last-run cell. Optional: an older pod
@@ -81,7 +81,7 @@ export type TestListResponse = z.infer<typeof TestListResponseSchema>;
  * quietly rewrite what is stored.
  */
 export const OrgTestSummarySchema = z.object({
-  id: z.string().uuid(),
+  id: z.guid(),
   slug: z.string(),
   name: z.string(),
   /** The tool's own class name; see `TestSummarySchema.simulationClass`. */
@@ -98,7 +98,7 @@ export const OrgTestSummarySchema = z.object({
    */
   latestRun: z
     .object({
-      id: z.string().uuid(),
+      id: z.guid(),
       /** "Run 12". Null for a run with no test number; see `RunNumberSchema`. */
       runNumber: RunNumberSchema.nullable(),
       /**
@@ -146,7 +146,7 @@ export const OrgTestSummarySchema = z.object({
   p95History: z
     .array(
       z.object({
-        runId: z.string().uuid(),
+        runId: z.guid(),
         runNumber: RunNumberSchema.nullable(),
         p95Ms: z.number(),
         /** Which engine produced this point; the sparkline's summary says

@@ -31,7 +31,7 @@ export const RunEventSchema = z.object({
 export type RunEvent = z.infer<typeof RunEventSchema>;
 
 export const RunEventsResponseSchema = z.object({
-  runId: z.string().uuid(),
+  runId: z.guid(),
   /** False when PerfPortal holds no on-prem runner job for the run — an
    *  upload, a run the Gradle plugin streamed, or a runner run whose job the
    *  runner's retention sweep has since removed — so there are no events to

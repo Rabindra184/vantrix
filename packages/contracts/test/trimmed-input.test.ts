@@ -112,7 +112,7 @@ describe('every typed input is trimmed before it is stored', () => {
   /**
    * THE DERIVED GUARD, so a field added later joins by EXISTING rather than by
    * somebody remembering. A length bound is the signal that a human types the
-   * value: `z.string().uuid()`, `.datetime()` and the bare record keys carry
+   * value: `z.guid()`, `.datetime()` and the bare record keys carry
    * none and are machine-produced, so they are not swept.
    *
    * COMMENTS ARE STRIPPED FIRST and that is load-bearing — this file and the

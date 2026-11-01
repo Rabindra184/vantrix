@@ -51,7 +51,7 @@ export const ActivityAttentionRowSchema = z.object({
   test: NamedRefSchema.nullable(),
   project: NamedRefSchema,
   run: z.object({
-    id: z.string().uuid(),
+    id: z.guid(),
     /** "Run 12". Null for a run with no test number; see `RunNumberSchema`. */
     runNumber: RunNumberSchema.nullable(),
     /** `status` rides along with `verdict` for the reason `OrgTestSummarySchema`
@@ -125,7 +125,7 @@ export const ActivityResponseSchema = z.object({
   /** The most recent run by arrival, or null for an org that has none. */
   lastRun: z
     .object({
-      id: z.string().uuid(),
+      id: z.guid(),
       runNumber: RunNumberSchema.nullable(),
       test: NamedRefSchema.nullable(),
       project: NamedRefSchema,

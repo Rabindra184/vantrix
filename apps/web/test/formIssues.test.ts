@@ -13,7 +13,7 @@ import { fieldMessages, isPasswordUnchanged, issueMessage, PASSWORD_LENGTH_MESSA
  * ═══ A FORM MUST NOT READ ZOD'S DEFAULT ENGLISH TO A PERSON ═══
  *
  * `PasswordSchema` is a plain `z.string().min(8).max(128)`, so a short password
- * fails with "String must contain at least 8 character(s)" — the library
+ * fails with "Too small: expected string to have >=8 characters" — the library
  * describing its own check. Every form that sets a password (change your own,
  * create a user, reset one) shows the bound as one sentence instead, built
  * from the same two constants the schema is built from.
@@ -72,7 +72,7 @@ describe('issueMessage — a password bound is one sentence', () => {
 
 describe('PASSWORD_UNCHANGED is found by its code', () => {
   /**
-   * zod 3 runs an object's `.refine` after its fields have failed, so an equal
+   * zod runs an object's `.refine` after its fields have failed, so an equal
    * pair that is also too short reports the LENGTH issue first and the
    * unchanged one second. "The first issue" is therefore the wrong way to find
    * it, and so is its message, which may be reworded.

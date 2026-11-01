@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildOpenApiDocument } from '../src/openapi/document.js';
+import { REQUEST_BODIES } from '../src/openapi/schemas.js';
 
 /**
  * THE DEFECT THIS GUARDS. The document declares `openapi: '3.1.0'`, which
@@ -20,11 +21,13 @@ import { buildOpenApiDocument } from '../src/openapi/document.js';
  * is the same shape as the trends 400 this repository already records: a
  * defect in the published CONTRACT rather than in behaviour.
  *
- * WHY A TEST AND NOT JUST THE FIX. `zod-to-json-schema` emits the draft-04
- * form regardless of its `target:`, so the correct spelling is produced by a
- * rewrite in `schemas.ts` rather than by configuration. A library upgrade, a
- * target change, or a new numeric constraint added to any schema can all
- * reintroduce it, and none of them would fail anything else.
+ * WHY A TEST AND NOT JUST THE FIX. `zod-to-json-schema` emitted the draft-04
+ * form regardless of its `target:`, so the correct spelling came from a
+ * rewrite in `schemas.ts`. zod 4's own `z.toJSONSchema` writes the number, so
+ * the rewrite is gone — and this case is what says so, rather than a belief
+ * about a library. A converter change, a target change, or a new numeric
+ * constraint can all reintroduce it, and none of them would fail anything
+ * else.
  */
 
 const walk = (node: unknown, path: string, visit: (n: Record<string, unknown>, p: string) => void): void => {
@@ -104,5 +107,31 @@ describe('the OpenAPI document is valid for the version it declares', () => {
     expect(nullableFields, 'no nullable field anywhere — this case has stopped inspecting anything')
       .toBeGreaterThan(5);
     expect(offenders, offenders.join('; ')).toEqual([]);
+  });
+
+  /**
+   * ═══ A REQUEST BODY IS DESCRIBED BY WHAT IT ACCEPTS, A RESPONSE BY WHAT IT IS ═══
+   *
+   * `schemas.ts` converts `REQUEST_BODIES` with `io: 'input'` — a defaulted
+   * field optional, an object open to keys the server strips — and every
+   * other component with `io: 'output'`. A name missing from the set
+   * documents a request as stricter than the server is; a response wrongly in
+   * it documents a field the server always sends as optional. So the set is
+   * held to the document's own `requestBody` references, both ways.
+   */
+  it('converts exactly the components a request body names as input', () => {
+    const named = new Set<string>();
+    const paths = doc['paths'] as Record<string, Record<string, Record<string, unknown>>>;
+    for (const item of Object.values(paths)) {
+      for (const op of Object.values(item)) {
+        if (op['requestBody'] === undefined) continue;
+        walk(op['requestBody'], '', (node) => {
+          const ref = node['$ref'];
+          if (typeof ref === 'string') named.add(ref.split('/').pop() ?? '');
+        });
+      }
+    }
+    expect(named.size, 'no request body names a component — this case compares nothing').toBeGreaterThan(5);
+    expect([...REQUEST_BODIES].sort()).toEqual([...named].sort());
   });
 });
