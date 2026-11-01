@@ -18,10 +18,12 @@ today. It only ships bytes. See
   `UnsupportedClassVersionError` — before any of the plugin's own error
   handling exists to catch it, so this is the one failure mode that is *not*
   covered by the "never fails the build" guarantee below.
-- **Gradle 8.x.**
-- **Gradle configuration-cache builds are not supported in 0.1.** Running
-  with `--configuration-cache` fails at store time, outside this plugin's
-  control — see Failure semantics below.
+- **Gradle 8.x or 9.x.** The plugin's own suite runs on 8.14; Gatling's demo
+  project, which a real run used, is on 9.6.1.
+- **Configuration-cache builds are supported.** Gatling's own demo project
+  turns the cache on (`org.gradle.configuration-cache=true`), and both a build
+  that stores the cache entry and one that reuses it stream, attach the agent
+  and close their run.
 
 ## Apply it
 
@@ -242,12 +244,7 @@ its own response rather than one blanket catch:
 This guarantee covers the plugin's own code paths only — it does not cover
 the Requirements above. A JDK 17 daemon fails with
 `UnsupportedClassVersionError` before the plugin's `apply()` ever runs, so
-there is no `try/catch` here to catch it, and **Gradle configuration-cache
-builds are not supported in 0.1**: `VantrixPlugin` reads `System.getenv()`
-and resolves `resultsRoot` from inside a task action rather than at
-configuration time (see its class doc), so a build run with
-`--configuration-cache` fails at store time — after the task graph has
-already executed, outside this plugin's own error handling entirely.
+there is no `try/catch` here to catch it.
 
 ## Two things the real end-to-end run found
 

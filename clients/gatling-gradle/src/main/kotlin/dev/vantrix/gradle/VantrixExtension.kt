@@ -29,4 +29,21 @@ open class VantrixExtension {
      * statuses, the JVM's own GC and memory). On unless set to `false` here or `VANTRIX_AGENT=false`.
      */
     var agent: Boolean? = null
+
+    /**
+     * A plain copy of these values. Gradle decorates the extension it creates, and the decorated
+     * object is not something the configuration cache can store; the task actions read this
+     * copy, through a provider, instead.
+     */
+    fun snapshot(): VantrixExtension = VantrixExtension().also {
+        it.url = url
+        it.environment = environment
+        it.branch = branch
+        it.commitSha = commitSha
+        it.test = test
+        it.tickSeconds = tickSeconds
+        it.uploadIfLiveUnavailable = uploadIfLiveUnavailable
+        it.resultsDir = resultsDir
+        it.agent = agent
+    }
 }

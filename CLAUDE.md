@@ -151,6 +151,70 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The plugin-configuration-cache branch (`fix/plugin-configuration-cache`)
+moves no `pnpm` floor — every file but this one is under
+`clients/gatling-gradle`, which no `pnpm` suite reads — and takes the plugin's
+own gate from **8 classes / 93 tests to 8 / 95** (two TestKit cases in
+`VantrixPluginFunctionalTest`). The third defect the GE side-by-side proof
+found.
+
+**GATLING's OWN DEMO PROJECT TURNS THE CONFIGURATION CACHE ON, AND THE PLUGIN
+FAILED ITS BUILD.** `gatling-gradle-plugin-demo-kotlin` ships
+`org.gradle.configuration-cache=true`. Under it the plugin reported three
+problems (`DefaultProject` captured by the `gatlingRun` hook and by
+`vantrixClose`, and `Task.project` read at execution time by `AgentLauncher`),
+failing the build against its own "never the reason a build fails" rule, and
+on that project's Gradle 9.6.1 the `Task.project` read also cost the agent.
+The plugin's docstring had recorded the cache as out of scope; nobody had run
+the plugin from the project a GE user starts from.
+
+**AND FIXING THOSE THREE ALONE WOULD HAVE LEFT EVERY RUN OPEN, SILENTLY.**
+`doFirst` handed the open run to `vantrixClose` through an `AtomicReference`
+both closures captured. Under the cache each task runs from its own
+deserialized copy, so the two tasks hold two references and the close finds
+nothing. Red-verified: with the three problems fixed and the reference put
+back, the build PASSES under the cache and the run is opened and never closed
+("expected the run closed exactly once, got: [open, …]") — on the build that
+stores the entry, not only on a reuse. A loud failure would have become a
+quiet one. The handoff is `VantrixRunHandoff`, a `BuildService` registered per
+project that both tasks `usesService` — Gradle's mechanism for state two tasks
+share in one build.
+
+**WHAT A TASK ACTION CAPTURES IS NOW ONLY WHAT THE CACHE CAN STORE**: a
+provider of `VantrixExtension.snapshot()` (Gradle's decorated extension is not
+storable; a plain copy is), `layout.buildDirectory` and
+`layout.projectDirectory`, a provider of the `gatling` extension's `jvmArgs`
+handed to `AgentLauncher.prepare` in place of `task.project`, and a static
+logger in place of `project.logger`. `System.getenv()` is still read in
+`doFirst`: at execution time the cache allows it. `resultsDir` resolves with
+`Path.resolve` against the project directory, `project.file`'s semantics.
+
+**A KOTLIN-DSL SCRIPT PROPERTY IN A TEST's FAKE CAPTURES THE SCRIPT.** The
+first red run reported a fourth problem, "cannot serialize Gradle script object
+references", from the fake `gatlingRun` reading a top-level `val reports`.
+A local inside the task's configure block is what a real task would capture.
+
+**RED-VERIFIED**, from a committed checkpoint, each against both new cases:
+
+```
+  vantrixClose logs through project.logger    "cannot serialize … DefaultProject" (vantrixClose)
+  the gatling list read off run.project       "invocation of 'Task.project' at execution time"
+  a captured AtomicReference for the handoff  the build passes; the run is never closed
+```
+
+**THE REAL RUNS**: the plugin from `publishToMavenLocal` (the jar checked for
+`VantrixRunHandoff`) into the GE demo project, its
+`org.gradle.configuration-cache=true` left ON, against this proof's stack.
+Run `4a3af8ca` stored the cache entry; run `35573ac7` reused it. Both:
+`complete` (closed by the plugin), `run_agent` `collected`, 13 statistics
+rows, no configuration-cache problem, no "could not start … with the agent"
+line. Each `gatlingRun` exited 1 on Gatling's own error-rate assertion, which
+GE's run of the same simulation fails too.
+
+**WHAT WAS RUN**: the plugin's `./gradlew build --no-daemon` exit 0, **8 / 95**,
+0 skipped, Java 21; the two real demo runs above. No `pnpm` suite, which
+cannot see `clients/`.
+
 The runner-boringssl branch (`fix/runner-boringssl`) added no unit FILE and 3
 cases to `apps/runner/test/artifact.test.ts`: unit **279 / 4589 to
 279 / 4592**, and integration **259 / 4089 to 259 / 4092** (that file is a

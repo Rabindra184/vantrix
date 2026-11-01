@@ -55,7 +55,18 @@ object AgentLauncher {
     /** Characters the `-javaagent:<jar>=out=<path>,max=<n>` argument cannot carry in a path. */
     private val UNSAFE = listOf('=', ',')
 
-    fun prepare(task: Task, buildDir: Path, logger: (String) -> Unit): AgentRun? {
+    /**
+     * [extensionJvmArgs] is the `gatling` extension's list, read only when the task's own is
+     * empty. It is handed in rather than read off `task.project`, which Gradle's configuration
+     * cache forbids during execution -- the plugin captures it at configuration time
+     * ([jvmArgsOf]).
+     */
+    fun prepare(
+        task: Task,
+        buildDir: Path,
+        extensionJvmArgs: () -> List<String>,
+        logger: (String) -> Unit,
+    ): AgentRun? {
         try {
             val notBeforeMs = System.currentTimeMillis()
             val getter = getterOf(task)
@@ -97,7 +108,7 @@ object AgentLauncher {
             emptyDirectory(outDir)
 
             val taskList = readList(getter, task)
-            val base = if (taskList.isNotEmpty()) taskList else extensionList(task)
+            val base = if (taskList.isNotEmpty()) taskList else extensionJvmArgs()
             val already = base.any { arg ->
                 arg.startsWith("-javaagent:") && arg.replace('\\', '/').contains(MARKER)
             }
@@ -113,12 +124,16 @@ object AgentLauncher {
         }
     }
 
-    /** The `gatling` extension's list, or empty: no extension, no accessor, or a null list. */
-    private fun extensionList(task: Task): List<String> {
-        val ext = task.project.extensions.findByName("gatling") ?: return emptyList()
-        val getter = getterOf(ext) ?: return emptyList()
-        return readList(getter, ext)
-    }
+    /**
+     * An extension's `jvmArgs` list, or empty: no extension, no accessor, a null list, or an
+     * accessor that throws. Never throws, because the plugin evaluates it inside a provider.
+     */
+    fun jvmArgsOf(ext: Any?): List<String> =
+        try {
+            ext?.let { target -> getterOf(target)?.let { readList(it, target) } }.orEmpty()
+        } catch (t: Throwable) {
+            emptyList()
+        }
 
     private fun getterOf(target: Any): Method? =
         target.javaClass.methods.firstOrNull {
