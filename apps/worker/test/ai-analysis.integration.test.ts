@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import Anthropic from '@anthropic-ai/sdk';
 import { AI_ANALYSIS_JOB_OPTIONS, AI_ANALYSIS_QUEUE } from '@perfportal/core';
 import type { RunFacts } from '@perfportal/insight';
 import {
@@ -239,6 +240,17 @@ describe('AiAnalysisService', () => {
     await expect(
       new AiAnalysisService(config, pool, new FakeProvider([GOOD])).generate(runId, { lastAttempt: true }),
     ).rejects.toBe(dbDown);
+  });
+
+  it('records provider_error at once for a call it cut off, rather than paying for it again', async () => {
+    const runId = await seedRun();
+    const provider = new FakeProvider([() => { throw new Anthropic.APIConnectionTimeoutError(); }]);
+
+    // Not the last attempt, and still recorded: the queue never sees it.
+    expect(await new AiAnalysisService(config, pool, provider).generate(runId, { lastAttempt: false })).toBe('failed');
+
+    expect(provider.calls).toHaveLength(1);
+    expect(await analyses.find(runId)).toMatchObject({ status: 'failed', failureReason: 'provider_error' });
   });
 
   it('records provider_error at once for a request the provider refused', async () => {

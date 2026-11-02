@@ -302,12 +302,15 @@ services:
       context: ..
       dockerfile: infra/Dockerfile
     environment: *app_env
-    # Long enough for an AI analysis in flight to finish: the worker waits for
-    # it on SIGTERM, and one job can make two provider calls of up to 120 s
-    # each. Docker's default of 10 s would SIGKILL it part-way, and the job,
-    # left stalled, would run again from the start and be paid for twice.
-    # An idle worker still exits in well under a second.
-    stop_grace_period: 5m
+    # Long enough for the AI provider call in flight to finish: the worker
+    # waits for its job on SIGTERM, and one call is cut off at 300 s
+    # (TIMEOUT_MS, apps/worker/src/ai/providers.ts) -- six minutes is that
+    # and a margin. Docker's default of 10 s would SIGKILL it part-way, and
+    # the job, left stalled, would run again from the start and the call be
+    # paid for twice. A job stopped during a SECOND call (made only when the
+    # first answer failed the number check) can outlast this; DEPLOYMENT.md
+    # says so. An idle worker still exits in well under a second.
+    stop_grace_period: 6m
     depends_on:
       postgres:
         condition: service_healthy

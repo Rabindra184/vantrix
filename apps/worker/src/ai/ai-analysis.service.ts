@@ -39,7 +39,9 @@ const FEEDBACK_ISSUE_LIMIT = 1_000;
  * rethrown so BullMQ's attempts and backoff apply, and only on the last
  * attempt is it recorded (`provider_error`). A provider that REFUSED the
  * request (a bad key, an unknown model) is recorded at once: the same request
- * will be refused again. Any other error is rethrown too, and recorded on the
+ * will be refused again. So is a call cut off at its timeout: the provider
+ * has billed it, and a retry would pay for it a second time
+ * (`isTransientProviderError`). Any other error is rethrown too, and recorded on the
  * last attempt as `internal_error` — so a pending row never outlives its last
  * job, whatever ended it. (One exception no service can see: a job BullMQ
  * fails for stalling too often never reaches this code. Its row stays pending,

@@ -1,5 +1,6 @@
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
+import Anthropic from '@anthropic-ai/sdk';
 import type { RunFacts } from '@perfportal/insight';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
@@ -9,6 +10,7 @@ import {
   ProviderHttpError,
   RefusedError,
   strictJsonSchema,
+  TIMEOUT_MS,
 } from '../src/ai/providers.js';
 
 /** One request a stub received: what a provider actually sent. */
@@ -198,5 +200,80 @@ describe('AnthropicProvider', () => {
     const provider = new AnthropicProvider({ provider: 'anthropic', model: 'claude-opus-5-5', apiKey: 'k' }, { baseURL: url });
 
     expect(await provider.generate(REQ)).toBe('not json');
+  });
+});
+
+/** A server that accepts a request and never answers: what a call that outlasts its timeout meets. */
+async function hang(): Promise<string> {
+  server = http.createServer(() => undefined);
+  await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address() as AddressInfo;
+  return `http://127.0.0.1:${String(port)}`;
+}
+
+/** A port nothing listens on: a connection that never reached a provider. */
+async function closedPort(): Promise<string> {
+  const probe = http.createServer();
+  await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', resolve));
+  const { port } = probe.address() as AddressInfo;
+  await new Promise<void>((resolve) => probe.close(() => resolve()));
+  return `http://127.0.0.1:${String(port)}`;
+}
+
+describe('isTransientProviderError', () => {
+  it('gives one call five minutes', () => {
+    expect(TIMEOUT_MS).toBe(300_000);
+  });
+
+  it('never retries a call this client cut off, because the provider may have billed it', async () => {
+    // The errors as the two clients really throw them, from a server that never answers.
+    const url = await hang();
+    const sdk = new Anthropic({ apiKey: 'k', baseURL: url, timeout: 50, maxRetries: 0 });
+    const sdkTimeout = await sdk.messages
+      .create({ model: 'claude-opus-5-5', max_tokens: 1, messages: [{ role: 'user', content: 'hi' }] })
+      .catch((e: unknown) => e);
+    expect(sdkTimeout).toBeInstanceOf(Anthropic.APIConnectionTimeoutError);
+    expect(isTransientProviderError(sdkTimeout)).toBe(false);
+
+    const fetchTimeout = await fetch(url, { signal: AbortSignal.timeout(50) }).catch((e: unknown) => e);
+    expect((fetchTimeout as Error).name).toBe('TimeoutError');
+    expect(isTransientProviderError(fetchTimeout)).toBe(false);
+
+    expect(isTransientProviderError(new DOMException('aborted', 'AbortError'))).toBe(false);
+    expect(isTransientProviderError(new Anthropic.APIUserAbortError())).toBe(false);
+  });
+
+  it('retries a connection that never reached the provider', async () => {
+    const url = await closedPort();
+    const refused = await fetch(url).catch((e: unknown) => e);
+    expect(refused).toBeInstanceOf(TypeError);
+    expect(isTransientProviderError(refused)).toBe(true);
+
+    const sdkRefused = await new Anthropic({ apiKey: 'k', baseURL: url, maxRetries: 0 }).messages
+      .create({ model: 'claude-opus-5-5', max_tokens: 1, messages: [{ role: 'user', content: 'hi' }] })
+      .catch((e: unknown) => e);
+    expect(sdkRefused).toBeInstanceOf(Anthropic.APIConnectionError);
+    expect(sdkRefused).not.toBeInstanceOf(Anthropic.APIConnectionTimeoutError);
+    expect(isTransientProviderError(sdkRefused)).toBe(true);
+  });
+
+  it('retries 408, 429 and 5xx, and nothing else the provider answered', () => {
+    const headers = new Headers();
+    for (const status of [408, 429, 500, 503, 529]) {
+      expect(isTransientProviderError(new ProviderHttpError(status, ''))).toBe(true);
+      expect(isTransientProviderError(new Anthropic.APIError(status, undefined, 'x', headers))).toBe(true);
+    }
+    for (const status of [400, 401, 403, 404, 422]) {
+      expect(isTransientProviderError(new ProviderHttpError(status, ''))).toBe(false);
+      expect(isTransientProviderError(new Anthropic.APIError(status, undefined, 'x', headers))).toBe(false);
+    }
+  });
+
+  it('does not retry a TypeError that is not fetch’s network failure', () => {
+    expect(isTransientProviderError(new TypeError("Cannot read properties of undefined (reading 'choices')"))).toBe(false);
+    // The message alone is not enough: fetch's own failure always carries the socket error as its cause.
+    expect(isTransientProviderError(new TypeError('fetch failed'))).toBe(false);
+    expect(isTransientProviderError(new TypeError('fetch failed', { cause: new Error('ECONNREFUSED') }))).toBe(true);
+    expect(isTransientProviderError(new Error('something else'))).toBe(false);
   });
 });

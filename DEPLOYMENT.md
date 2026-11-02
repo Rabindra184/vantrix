@@ -529,23 +529,32 @@ printed. If your test targets carry data that must not reach a model, use a
 self-hosted model (`openai-compatible`), or leave the feature off.
 
 **What it costs:** one analysis is one or two answered calls to the model (a
-second only when the first answer fails the check; a call the provider could
-not answer at all is retried, up to three attempts), and it is made only when
-a member asks for it on a run. It is written once per run: asking again answers
+second only when the first answer fails the check), and it is made only when
+a member asks for it on a run. A call that never reached the provider (a
+refused or reset connection), or that the provider answered with 408, 429 or
+a 5xx, is retried, up to three attempts. **A call is cut off after 300
+seconds, and a call cut off is billed and NOT retried**: the provider goes on
+generating and bills the tokens whether or not the worker is still waiting,
+so a second attempt would pay for the same analysis twice. It is recorded as
+`provider_error` at once. It is written once per run: asking again answers
 the stored analysis, and only a run whose statistics were recomputed or
 re-ingested since, or whose analysis failed, is analysed again. There is no
 quota; the provider bills the key's account.
 
 Analyses are made by the worker, one at a time, and **the worker waits for the
-one in progress when it is stopped**. Each call is cut off at 120 seconds, and
-one analysis can make two, so give the worker a stop grace period of at least
-five minutes — `infra/docker-compose.yml` sets `stop_grace_period: 5m`. An
+one in progress when it is stopped**. Each call is cut off at 300 seconds, so
+give the worker a stop grace period of at least six minutes — one call and a
+margin; `infra/docker-compose.yml` sets `stop_grace_period: 6m`. An
 orchestrator that kills it sooner (Docker's own default is 10 seconds) leaves
 the job stalled; it then runs again from the start, and the provider is paid
-twice. An idle worker still stops in well under a second.
+twice. An analysis whose first answer failed the check makes a second call,
+and a stop that lands during that one can outlast six minutes; raise the
+grace period to eleven minutes if a repeated call on a restart is not
+acceptable. An idle worker still stops in well under a second.
 
 An analysis the worker could not produce is recorded with its reason
-(`provider_error` when the provider could not be reached after three tries,
+(`provider_error` when the provider could not be reached after three tries
+or a call was cut off at its timeout,
 `refused`, a check failure, and so on) and the card says so, offering a retry.
 The worker's log has the detail; a provider's error message may itself quote
 part of a URL or of a response body.
