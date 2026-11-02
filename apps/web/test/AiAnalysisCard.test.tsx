@@ -309,6 +309,27 @@ describe('AiAnalysisCard', () => {
     expect(fetchMock.mock.calls.length).toBe(calls);
   });
 
+  /** An older API omits `requestedAt`, and a row may carry none: an unknown
+   *  age is not an abandoned row, so the card keeps polling and offers nothing. */
+  it.each([
+    ['absent, from an API that predates the field', undefined],
+    ['null', null],
+  ])('keeps polling a pending analysis whose age is %s, and offers no Try again', async (_label, requestedAt) => {
+    vi.useFakeTimers();
+    const body = available({ state: 'pending' });
+    if (requestedAt === undefined) delete (body as { requestedAt?: unknown }).requestedAt;
+    else (body as { requestedAt: string | null }).requestedAt = requestedAt;
+    fetchMock.mockResolvedValue(body);
+    renderCard('member');
+    await act(async () => { await vi.advanceTimersByTimeAsync(50); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(50); });
+    expect(screen.getByRole('status')).toHaveTextContent('Analysing this run…');
+    const before = fetchMock.mock.calls.length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(AI_PENDING_REQUEUE_AFTER_MS + 9_000); });
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(before + 3);
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
+  });
+
   it('relays the API’s refusal when a request is turned down', async () => {
     const { ProblemError } = await import('../src/api/fetch');
     fetchMock.mockResolvedValue(available({ state: 'none' }));

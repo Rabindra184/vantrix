@@ -142,14 +142,15 @@ describe('AiAnalysisResponseSchema', () => {
 
   /**
    * The card tells an abandoned pending row from a live one by when it was
-   * asked for, so the field is required: a response without it would leave
-   * the page unable to offer the retry the API would honour.
+   * asked for. The field arrived after the GET shipped, so a body from an
+   * older API — no `requestedAt` at all — must still parse, or a page reading
+   * an older pod mid-deploy loses its card.
    */
-  it('carries when the analysis was asked for, null when it never was', () => {
+  it('carries when the analysis was asked for, and parses a body from an API that predates it', () => {
     expect(AiAnalysisResponseSchema.safeParse({ ...READY, requestedAt: null }).success).toBe(true);
-    const without: Record<string, unknown> = { ...READY };
-    delete without.requestedAt;
-    expect(AiAnalysisResponseSchema.safeParse(without).success).toBe(false);
+    const older: Record<string, unknown> = { ...READY };
+    delete older.requestedAt;
+    expect(AiAnalysisResponseSchema.safeParse(older).success).toBe(true);
     expect(AiAnalysisResponseSchema.safeParse({ ...READY, requestedAt: 'yesterday' }).success).toBe(false);
   });
 

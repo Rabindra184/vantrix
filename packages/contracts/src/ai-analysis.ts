@@ -145,8 +145,15 @@ const AiAnalysisAvailableSchema = z
      * with no row. A pending row older than `AI_PENDING_REQUEUE_AFTER_MS` has
      * nothing working on it any more, and this is how the card can tell that
      * apart from one a job is still writing, and offer to ask again.
+     *
+     * `.optional()` as well as `.nullable()`, for the rolling-deploy reason
+     * `live-delta.ts` and `RunIdentity` carry: the GET shipped before this
+     * field did, the browser drops a body that fails the schema, and a page
+     * reading an older pod would lose its card — and read a POST that pod had
+     * accepted as a failure. Absent means "not reported", which the card
+     * treats as an unknown age: it keeps polling and offers no retry.
      */
-    requestedAt: z.string().datetime().nullable(),
+    requestedAt: z.string().datetime().nullable().optional(),
   })
   .superRefine((body, ctx) => {
     if ((body.state === 'ready') !== (body.content !== null)) {

@@ -237,10 +237,11 @@ describe('GET /v1/runs/{id}/ai-analysis — why a run cannot be analysed', () =>
 describe('the OpenAPI document', () => {
   /**
    * The document is derived from the contract, so this proves the field reached
-   * it: a generated client reading `requestedAt` must find it declared, and
-   * required on the available branch like every other field there.
+   * it: a generated client reading `requestedAt` must find it declared and
+   * nullable. Optional in the contract (an older API omits it), and always
+   * sent by this server — the response cases below pin that.
    */
-  it('declares requestedAt on the available response, nullable and required', async () => {
+  it('declares requestedAt on the available response, nullable', async () => {
     ctx = await createTestApp();
     const res = await request(ctx.app.getHttpServer()).get('/v1/openapi.json').expect(200);
     const schema = res.body.components.schemas.AiAnalysisResponse as {
@@ -250,7 +251,7 @@ describe('the OpenAPI document', () => {
     const branches = schema.oneOf ?? schema.anyOf ?? [];
     const available = branches.find((b) => 'state' in b.properties);
     expect(available, JSON.stringify(schema).slice(0, 400)).toBeDefined();
-    expect(available!.required).toContain('requestedAt');
+    expect(available!.properties).toHaveProperty('requestedAt');
     expect(JSON.stringify(available!.properties.requestedAt)).toContain('null');
   });
 });

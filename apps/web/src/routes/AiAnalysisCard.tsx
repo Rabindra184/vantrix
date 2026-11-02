@@ -20,13 +20,19 @@ export const AI_ANALYSIS_POLL_MS = 3_000;
 type Available = Extract<AiAnalysisResponse, { available: true }>;
 
 /**
- * Whether a pending analysis has outlived the longest a job can run, so
- * nothing is working on it any more. The same window the POST applies
+ * When a pending analysis outlives the longest a job can run, so nothing is
+ * working on it any more — the same window the POST applies
  * (`AI_PENDING_REQUEUE_AFTER_MS`), so the card offers "Try again" exactly when
  * the API would queue it again rather than answer the same pending row.
+ *
+ * `null` for anything but a pending row, and for a pending row of UNKNOWN age:
+ * `requestedAt` null, or absent from an API that predates the field. Unknown
+ * is not abandoned — the row is pending, so the card keeps polling and offers
+ * no retry it cannot justify. (`new Date(undefined)` is NaN, which compared
+ * false both ways and once stopped the polling in silence.)
  */
 function abandonedAt(analysis: Available): number | null {
-  if (analysis.state !== 'pending' || analysis.requestedAt === null) return null;
+  if (analysis.state !== 'pending' || analysis.requestedAt == null) return null;
   return new Date(analysis.requestedAt).getTime() + AI_PENDING_REQUEUE_AFTER_MS;
 }
 
@@ -106,13 +112,15 @@ export default function AiAnalysisCard({
     queryKey: aiAnalysisQueryKey(runId),
     queryFn: () => fetchAiAnalysis(runId),
     // Poll only while something can still change on its own: a pending row a
-    // job may be writing. A ready or failed one waits for the reader, and an
-    // abandoned pending one waits for "Try again".
+    // job may be writing, including one whose age the API did not report. A
+    // ready or failed one waits for the reader, and an abandoned pending one
+    // waits for "Try again".
     refetchInterval: (q) => {
       const data = q.state.data;
-      if (data?.available !== true) return false;
+      if (data?.available !== true || data.state !== 'pending') return false;
+      // Pending: poll, unless its age is KNOWN to be past the window.
       const until = abandonedAt(data);
-      return until !== null && Date.now() < until ? AI_ANALYSIS_POLL_MS : false;
+      return until === null || Date.now() < until ? AI_ANALYSIS_POLL_MS : false;
     },
   });
   const generate = useMutation({
