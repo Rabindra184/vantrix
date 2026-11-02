@@ -24,3 +24,4 @@ export {
   formatNumber,
   NOT_A_NUMBER,
 } from './format.js';
+export { checkNumbers } from './check.js';
