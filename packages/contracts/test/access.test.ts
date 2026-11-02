@@ -54,7 +54,7 @@ describe('ACCESS_ACTIONS', () => {
       expect(a.label.length, name).toBeGreaterThan(0);
       if (a.scope !== null) expect(TOKEN_SCOPES, name).toContain(a.scope);
     }
-    expect(Object.keys(ACCESS_ACTIONS)).toHaveLength(14);
+    expect(Object.keys(ACCESS_ACTIONS)).toHaveLength(15);
   });
 
   it('lets no token perform an admin action', () => {

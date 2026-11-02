@@ -212,3 +212,33 @@ export const DataIntegritySchema = z.object({
   rawLogRetentionDays: z.number().int().nonnegative(),
 });
 export type DataIntegrity = z.infer<typeof DataIntegritySchema>;
+
+/**
+ * `GET /v1/admin/settings`: the org's own settings, the first this product
+ * has. `aiEnabled` is the org's switch for AI run analysis (`org.ai_enabled`,
+ * default false), which an admin turns on; the other three are the
+ * DEPLOYMENT's configuration, read-only here, so the Administration section
+ * can say whether there is a provider to switch on and what leaves the
+ * deployment when there is. `aiProvider` and `aiModel` are null exactly when
+ * `aiProviderConfigured` is false.
+ */
+export const OrgSettingsSchema = z.object({
+  aiEnabled: z.boolean(),
+  aiProviderConfigured: z.boolean(),
+  aiProvider: z.enum(['anthropic', 'openai-compatible']).nullable(),
+  aiModel: z.string().nullable(),
+});
+export type OrgSettings = z.infer<typeof OrgSettingsSchema>;
+
+/**
+ * The body of `PUT /v1/admin/settings`: the org's switch and nothing else.
+ * The provider and model belong to the deployment's environment, so `.strict()`
+ * refuses an attempt to set them here rather than ignoring it and answering
+ * as though it had worked.
+ */
+export const UpdateOrgSettingsRequestSchema = z
+  .object({
+    aiEnabled: z.boolean(),
+  })
+  .strict();
+export type UpdateOrgSettingsRequest = z.infer<typeof UpdateOrgSettingsRequestSchema>;

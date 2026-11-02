@@ -21,3 +21,4 @@ export * from './attention.js';
 export * from './activity.js';
 export * from './package.js';
 export * from './agent.js';
+export * from './ai-analysis.js';
