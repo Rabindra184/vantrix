@@ -12,6 +12,7 @@ export * from './window.js';
 export * from './engine.js';
 export * from './engine-async.js';
 export * from './users.js';
+export * from './users-total.js';
 export * from './telemetry.js';
 export * from './tool-assertions.js';
 export * from './stored-percentiles.js';
