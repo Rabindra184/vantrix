@@ -1,6 +1,6 @@
-import { AiAnalysisContentSchema, ToolAssertionSchema, type AiUnavailableReason, type ToolAssertion } from '@perfportal/contracts';
+import { AiAnalysisContentSchema, ToolAssertionSchema, type ToolAssertion } from '@perfportal/contracts';
 import { buildRunFacts, checkNumbers, type RunFacts } from '@perfportal/insight';
-import { AiAnalysisRepository, OrgSettingsRepository, type AiEligibility } from '@perfportal/persistence';
+import { AiAnalysisRepository, aiUnavailableReason, OrgSettingsRepository } from '@perfportal/persistence';
 import type pg from 'pg';
 import { z } from 'zod';
 import type { WorkerConfig } from '../config.js';
@@ -13,35 +13,6 @@ import { isTransientProviderError, RefusedError, type AnalysisProvider } from '.
  * analysis may be written for (`skipped`, its reason recorded on the row).
  */
 export type AiOutcome = 'ready' | 'failed' | 'skipped';
-
-/** A run the pipeline may still be working on: no analysis describes it yet. */
-const IN_PROGRESS = new Set(['pending', 'parsing', 'running']);
-/** The two endings that leave figures to analyse. */
-const ANALYSABLE = new Set(['complete', 'incomplete']);
-
-/**
- * Why this run may not be analysed, in the order the API asks
- * (`AI_UNAVAILABLE_REASONS`), or null when it may. `configured` and
- * `orgEnabled` are passed in: they are the deployment's and the org's, not
- * the run's.
- *
- * TERMINAL is read as the spec's "complete or incomplete with run_stat rows":
- * a run still pending, parsing or running is `not_terminal`; a run that ended
- * any other way (a failed ingest) has nothing measured to analyse and reads
- * `no_statistics`, as a finished run without rows does.
- */
-export function aiUnavailableReason(
-  run: AiEligibility,
-  opts: { configured: boolean; orgEnabled: boolean },
-): AiUnavailableReason | null {
-  if (!opts.configured) return 'not_configured';
-  if (!opts.orgEnabled) return 'org_disabled';
-  if (IN_PROGRESS.has(run.status)) return 'not_terminal';
-  if (!ANALYSABLE.has(run.status) || !run.hasStats) return 'no_statistics';
-  if (run.notExact) return 'estimated';
-  if (run.verificationStatus === 'mismatch') return 'verification_mismatch';
-  return null;
-}
 
 const ToolAssertionsSchema = z.array(ToolAssertionSchema);
 
@@ -66,9 +37,14 @@ const FEEDBACK_ISSUE_LIMIT = 1_000;
  *
  * A provider that could not be reached is the queue's to retry: the error is
  * rethrown so BullMQ's attempts and backoff apply, and only on the last
- * attempt is it recorded (`provider_error`), so a pending row never outlives
- * its last job. A provider that REFUSED the request (a bad key, an unknown
- * model) is recorded at once: the same request will be refused again.
+ * attempt is it recorded (`provider_error`). A provider that REFUSED the
+ * request (a bad key, an unknown model) is recorded at once: the same request
+ * will be refused again. Any other error is rethrown too, and recorded on the
+ * last attempt as `internal_error` — so a pending row never outlives its last
+ * job, whatever ended it. (One exception no service can see: a job BullMQ
+ * fails for stalling too often never reaches this code. Its row stays pending,
+ * and the API's re-queue of a stale pending row is what settles it; the queue
+ * keeps no failed job, so that re-queue is not ignored.)
  */
 export class AiAnalysisService {
   readonly #analyses: AiAnalysisRepository;
@@ -84,6 +60,29 @@ export class AiAnalysisService {
   }
 
   async generate(runId: string, opts: { lastAttempt: boolean }): Promise<AiOutcome> {
+    try {
+      return await this.#generate(runId, opts);
+    } catch (err) {
+      // Anything that reaches here is a failure nothing above classified — the
+      // database refusing a read or a write, a bug — and it is rethrown so the
+      // queue's attempts apply. On the LAST attempt it is also recorded, or
+      // the row would read "Analysing…" for ever: BullMQ gives up on the job
+      // and nothing else would ever settle it. `internal_error`, not
+      // `provider_error`: the provider was never the problem, and an operator
+      // reading the row should look at this worker's log, not at the
+      // provider's status page. Recording it may fail for the same reason the
+      // job did; that is logged, and the ORIGINAL error is the one rethrown.
+      if (opts.lastAttempt) {
+        console.error(`ai analysis: run ${runId}: failed on its last attempt`, err);
+        await this.#analyses.markFailed(runId, 'internal_error').catch((recordErr: unknown) => {
+          console.error(`ai analysis: run ${runId}: could not record the failure`, recordErr);
+        });
+      }
+      throw err;
+    }
+  }
+
+  async #generate(runId: string, opts: { lastAttempt: boolean }): Promise<AiOutcome> {
     const run = await this.#analyses.eligibility(runId);
     // A run deleted after it was queued: there is no row to record a reason
     // on, and nothing left to analyse.

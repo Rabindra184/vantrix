@@ -1,4 +1,9 @@
-import { AssertionRuleSchema, describeSlaRule, formatSlaMeasured } from '@perfportal/contracts';
+import {
+  AssertionRuleSchema,
+  describeSlaRule,
+  formatSlaMeasured,
+  type AiUnavailableReason,
+} from '@perfportal/contracts';
 import type pg from 'pg';
 import { readStoredFigures, type StoredFigures } from '../metrics/stored-figures.js';
 import { NOT_EXACT_RUN_SQL } from './recompute.js';
@@ -36,6 +41,40 @@ export interface AiEligibility {
   verificationStatus: string | null;
   ingestedAt: Date | null;
   recomputedAt: Date | null;
+}
+
+/** A run the pipeline may still be working on: no analysis describes it yet. */
+const IN_PROGRESS = new Set(['pending', 'parsing', 'running']);
+/** The two endings that leave figures to analyse. */
+const ANALYSABLE = new Set(['complete', 'incomplete']);
+
+/**
+ * ═══ THE ONE DEFINITION OF WHETHER A RUN MAY BE ANALYSED ═══
+ *
+ * Why this run may not be analysed, in the order the API reports it
+ * (`AI_UNAVAILABLE_REASONS`), or null when it may. Beside `eligibility()`,
+ * whose row it reads, so the API's GET and POST and the worker's re-check
+ * before calling the provider cannot disagree: a card offered for a run the
+ * worker then skips would be a button that fails. `configured` and
+ * `orgEnabled` are passed in — they are the deployment's and the org's, not
+ * the run's.
+ *
+ * TERMINAL is read as the spec's "complete or incomplete with run_stat rows":
+ * a run still pending, parsing or running is `not_terminal`; a run that ended
+ * any other way (a failed ingest) has nothing measured to analyse and reads
+ * `no_statistics`, as a finished run without rows does.
+ */
+export function aiUnavailableReason(
+  run: AiEligibility,
+  opts: { configured: boolean; orgEnabled: boolean },
+): AiUnavailableReason | null {
+  if (!opts.configured) return 'not_configured';
+  if (!opts.orgEnabled) return 'org_disabled';
+  if (IN_PROGRESS.has(run.status)) return 'not_terminal';
+  if (!ANALYSABLE.has(run.status) || !run.hasStats) return 'no_statistics';
+  if (run.notExact) return 'estimated';
+  if (run.verificationStatus === 'mismatch') return 'verification_mismatch';
+  return null;
 }
 
 /*

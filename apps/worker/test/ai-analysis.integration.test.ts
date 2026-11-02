@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { AI_ANALYSIS_QUEUE } from '@perfportal/core';
+import { AI_ANALYSIS_JOB_OPTIONS, AI_ANALYSIS_QUEUE } from '@perfportal/core';
 import type { RunFacts } from '@perfportal/insight';
 import {
   AiAnalysisRepository,
@@ -9,7 +9,7 @@ import {
   SCHEMA_TABLES,
 } from '@perfportal/persistence';
 import { Queue, QueueEvents, type Worker } from 'bullmq';
-import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AiAnalysisService } from '../src/ai/ai-analysis.service.js';
 import { startAiAnalysisConsumer } from '../src/ai/ai-queue.js';
 import { ProviderHttpError, RefusedError, type AnalysisProvider } from '../src/ai/providers.js';
@@ -72,6 +72,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await consumer?.close();
   consumer = undefined;
   await queue.obliterate({ force: true });
@@ -216,6 +217,30 @@ describe('AiAnalysisService', () => {
     expect(await analyses.find(runId)).toMatchObject({ status: 'failed', failureReason: 'provider_error' });
   });
 
+  it('records internal_error on the last attempt for an error it does not classify, and rethrows it', async () => {
+    const runId = await seedRun();
+    const dbDown = new Error('the database went away');
+    vi.spyOn(AiAnalysisRepository.prototype, 'readInput').mockRejectedValue(dbDown);
+    const service = new AiAnalysisService(config, pool, new FakeProvider([GOOD]));
+
+    await expect(service.generate(runId, { lastAttempt: false })).rejects.toBe(dbDown);
+    expect(await analyses.find(runId)).toMatchObject({ status: 'pending' });
+
+    await expect(service.generate(runId, { lastAttempt: true })).rejects.toBe(dbDown);
+    expect(await analyses.find(runId)).toMatchObject({ status: 'failed', failureReason: 'internal_error' });
+  });
+
+  it('rethrows the original error when recording the failure fails too', async () => {
+    const runId = await seedRun();
+    const dbDown = new Error('the database went away');
+    vi.spyOn(AiAnalysisRepository.prototype, 'readInput').mockRejectedValue(dbDown);
+    vi.spyOn(AiAnalysisRepository.prototype, 'markFailed').mockRejectedValue(new Error('and stayed away'));
+
+    await expect(
+      new AiAnalysisService(config, pool, new FakeProvider([GOOD])).generate(runId, { lastAttempt: true }),
+    ).rejects.toBe(dbDown);
+  });
+
   it('records provider_error at once for a request the provider refused', async () => {
     const runId = await seedRun();
     const provider = new FakeProvider([() => { throw new ProviderHttpError(401, 'bad key'); }]);
@@ -233,16 +258,21 @@ describe('startAiAnalysisConsumer', () => {
     await events.waitUntilReady();
     try {
       consumer = startAiAnalysisConsumer(config, new AiAnalysisService(config, pool, provider));
-      const job = await queue.add(
-        'analyse',
-        { runId },
-        { jobId: runId, attempts, backoff: { type: 'fixed', delay: 50 }, removeOnComplete: true },
-      );
-      await job.waitUntilFinished(events, 30_000).catch(() => undefined);
+      await add(runId, attempts, events);
     } finally {
       await events.close();
     }
     return runId;
+  }
+
+  /** The shipped options, but `attempts` of them, 50 ms apart, so a case need not wait out the backoff. */
+  async function add(runId: string, attempts: number, events: QueueEvents): Promise<void> {
+    const job = await queue.add(
+      'analyse',
+      { runId },
+      { ...AI_ANALYSIS_JOB_OPTIONS, jobId: runId, attempts, backoff: { type: 'fixed', delay: 50 } },
+    );
+    await job.waitUntilFinished(events, 30_000).catch(() => undefined);
   }
 
   it('lets the queue retry an unreachable provider, and records nothing until the attempt that works', async () => {
@@ -261,5 +291,28 @@ describe('startAiAnalysisConsumer', () => {
 
     expect(provider.calls).toHaveLength(1);
     expect(await analyses.find(runId)).toMatchObject({ status: 'failed', failureReason: 'provider_error' });
+  });
+
+  it('takes a new job for a run whose last job failed for good', async () => {
+    const dbDown = new Error('the database went away');
+    const readInput = vi.spyOn(AiAnalysisRepository.prototype, 'readInput').mockRejectedValueOnce(dbDown);
+    const provider = new FakeProvider([GOOD]);
+    const runId = await run(provider, 1);
+    expect(await analyses.find(runId)).toMatchObject({ status: 'failed', failureReason: 'internal_error' });
+
+    // The API's retry: the row pending again, the job queued under the same id.
+    readInput.mockRestore();
+    const user = await prisma.user.findFirstOrThrow();
+    await analyses.markPending(runId, user.id);
+    const events = new QueueEvents(AI_ANALYSIS_QUEUE, connection);
+    await events.waitUntilReady();
+    try {
+      await add(runId, 1, events);
+    } finally {
+      await events.close();
+    }
+
+    expect(provider.calls).toHaveLength(1);
+    expect(await analyses.find(runId)).toMatchObject({ status: 'ready', content: GOOD });
   });
 });
