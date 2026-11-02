@@ -5,6 +5,7 @@ export {
   ERROR_FACT_LIMIT,
   KO_PART_LIMIT,
   NAME_LIST_LIMIT,
+  ASSERTION_FACT_LIMIT,
   type Fact,
   type RunFacts,
   type FactsInput,

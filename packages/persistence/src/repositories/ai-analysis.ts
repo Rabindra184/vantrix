@@ -1,7 +1,10 @@
 import {
   AssertionRuleSchema,
   describeSlaRule,
+  formatSlaBound,
   formatSlaMeasured,
+  fractionToPercent,
+  slaMetricUnit,
   type AiUnavailableReason,
 } from '@perfportal/contracts';
 import type pg from 'pg';
@@ -100,9 +103,23 @@ export interface AiPlatformAssertion {
   outcome: string;
   /** The measured value in the rule's own unit; null when nothing was measured. */
   actualDisplay: string | null;
+  /**
+   * The rule's bound as the run page writes it (`formatSlaBound`), and the
+   * number in front of its unit (a percentage for a fraction metric: 1, not
+   * 0.01); null when the frozen rule could not be read.
+   */
+  threshold: { display: string; value: number } | null;
 }
 
 export interface AiAnalysisInput {
+  /**
+   * The database's clock as the read began, before any figure was read: the
+   * instant the facts describe. `record` stamps it as `generated_at`, so a
+   * recompute landing while the model is writing makes the stored analysis
+   * stale. The database's clock, not the worker's, because `ingested_at` and
+   * `recomputed_at` — what staleness compares it with — are the database's.
+   */
+  readAt: Date;
   run: AiAnalysisRun;
   figures: StoredFigures;
   platformAssertions: AiPlatformAssertion[];
@@ -305,12 +322,17 @@ function platformAssertion(
       description: a.message,
       outcome: a.outcome,
       actualDisplay: a.actual_value === null ? null : String(a.actual_value),
+      threshold: null,
     };
   }
+  const { metric, threshold } = rule.data;
   return {
     description: describeSlaRule(rule.data),
     outcome: a.outcome,
-    actualDisplay:
-      a.actual_value === null ? null : formatSlaMeasured(rule.data.metric, a.actual_value, rule.data.threshold),
+    actualDisplay: a.actual_value === null ? null : formatSlaMeasured(metric, a.actual_value, threshold),
+    threshold: {
+      display: formatSlaBound(metric, threshold),
+      value: slaMetricUnit(metric) === 'fraction' ? fractionToPercent(threshold) : threshold,
+    },
   };
 }

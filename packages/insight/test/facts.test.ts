@@ -2,6 +2,7 @@ import type { ToolAssertion } from '@perfportal/contracts';
 import type { AiAnalysisInput, StoredFigures } from '@perfportal/persistence';
 import { describe, expect, it } from 'vitest';
 import {
+  ASSERTION_FACT_LIMIT,
   buildRunFacts,
   FACTS_VERSION,
   type Fact,
@@ -244,6 +245,35 @@ describe('buildRunFacts', () => {
     expect(fact(facts, 'derived.okZero')).toMatchObject({ text: 'during the run', value: 95_000 });
   });
 
+  it('finds where arrivals ended per scenario, when two scenarios coalesced at different widths', () => {
+    // Shop is 1 s wide and stopped arriving after 80 s; Browse is 2 s wide and
+    // its last arrivals bucket starts at 84 s, so it covers arrivals up to
+    // 86 s. Summed, Shop's 85 s bucket follows Browse's 84 s one and reads as
+    // where arrivals ended — inside Browse's bucket, while it still arrived.
+    const shop = [];
+    for (let t = 0; t <= 90_000; t += 1000) shop.push({ scenario: 'Shop', startOffsetMs: t, started: t <= 80_000 ? 1 : 0, ended: 0, maxConcurrent: 5 });
+    const browse = [];
+    for (let t = 0; t <= 90_000; t += 2000) browse.push({ scenario: 'Browse', startOffsetMs: t, started: t <= 84_000 ? 1 : 0, ended: 0, maxConcurrent: 5 });
+    const userBuckets = [...shop, ...browse];
+
+    const during = buildRunFacts(input({ figures: figures({ userBuckets, seriesBuckets: [bucket(0, 19, 2), bucket(85_000, 0, 19)] }) }));
+    expect(fact(during, 'derived.okZero')).toMatchObject({ text: 'during the run', value: 85_000 });
+
+    const drain = buildRunFacts(input({ figures: figures({ userBuckets, seriesBuckets: [bucket(0, 19, 2), bucket(86_000, 0, 19)] }) }));
+    expect(fact(drain, 'derived.okZero')).toMatchObject({ text: 'only in the final drain', value: 86_000 });
+  });
+
+  it('reads an unknown end in ANY scenario as during the run', () => {
+    // Browse's last bucket still had arrivals, so where it stopped is unknown,
+    // even though Shop's end is known and long past.
+    const shop = [0, 1000, 2000].map((t) => ({ scenario: 'Shop', startOffsetMs: t, started: t === 0 ? 1 : 0, ended: 0, maxConcurrent: 5 }));
+    const browse = [0, 2000].map((t) => ({ scenario: 'Browse', startOffsetMs: t, started: 1, ended: 0, maxConcurrent: 5 }));
+    const facts = buildRunFacts(
+      input({ figures: figures({ userBuckets: [...shop, ...browse], seriesBuckets: [bucket(0, 19, 2), bucket(50_000, 0, 19)] }) }),
+    );
+    expect(fact(facts, 'derived.okZero')).toMatchObject({ text: 'during the run' });
+  });
+
   it('emits no okZero fact when OK never fell to zero', () => {
     // A bucket with no responses at all is not OK falling to zero: nothing
     // was answered, so nothing failed.
@@ -370,7 +400,9 @@ describe('buildRunFacts', () => {
       },
       { expression: 'Nowhere: max of response time is less than 1.0', actualValue: null, outcome: 'not_applicable' },
     ];
-    const platform = [{ description: 'Whole-run p95 response time', outcome: 'passed', actualDisplay: '321 ms' }];
+    const platform = [
+      { description: 'Whole-run p95 response time', outcome: 'passed', actualDisplay: '321 ms', threshold: { display: '800 ms', value: 800 } },
+    ];
     const facts = buildRunFacts(input({ toolAssertions: tool, platformAssertions: platform }));
 
     expect(fact(facts, 'assertion.platform.0')).toMatchObject({
@@ -386,6 +418,81 @@ describe('buildRunFacts', () => {
       value: 172,
     });
     expect(fact(facts, 'assertion.tool.3')).toMatchObject({ display: 'not applicable', value: null });
+
+    // Each bound is a fact of its own, in its own unit, so "its 800 ms limit" can be cited.
+    expect(fact(facts, 'assertion.platform.0.threshold')).toMatchObject({ display: '800 ms', value: 800 });
+    expect(fact(facts, 'assertion.tool.0.threshold')).toMatchObject({ display: '30,000 ms', value: 30000 });
+    expect(fact(facts, 'assertion.tool.1.threshold')).toMatchObject({ display: '60.00%', value: 60 });
+    expect(fact(facts, 'assertion.tool.2.threshold')).toMatchObject({ display: '1', value: 1 });
+    // No condition decoded, no bound.
+    expect(byId(facts).has('assertion.tool.3.threshold')).toBe(false);
+    // And how many there were, by outcome.
+    expect(fact(facts, 'assertions.tool.total').value).toBe(4);
+    expect(fact(facts, 'assertions.tool.failed').value).toBe(1);
+    expect(fact(facts, 'assertions.tool.passed').value).toBe(2);
+    expect(fact(facts, 'assertions.tool.notApplicable').value).toBe(1);
+    expect(fact(facts, 'assertions.platform.total').value).toBe(1);
+  });
+
+  it('states both bounds of a between, and none for a platform rule it could not read', () => {
+    const between: ToolAssertion = {
+      expression: 'Global: mean of response time is between 100.0 and 500.0',
+      assertion: { path: { kind: 'global' }, target: { kind: 'responseTime', stat: 'mean' }, condition: { kind: 'between', lo: 100, hi: 500 } },
+      actualValue: 150,
+      outcome: 'passed',
+    };
+    const facts = buildRunFacts(
+      input({
+        toolAssertions: [between],
+        platformAssertions: [{ description: 'an unreadable rule', outcome: 'failed', actualDisplay: '9', threshold: null }],
+      }),
+    );
+    expect(fact(facts, 'assertion.tool.0.thresholdLow')).toMatchObject({ display: '100 ms', value: 100 });
+    expect(fact(facts, 'assertion.tool.0.thresholdHigh')).toMatchObject({ display: '500 ms', value: 500 });
+    expect(byId(facts).has('assertion.platform.0.threshold')).toBe(false);
+  });
+
+  it('bounds the assertion facts on a wide run, keeping every failure up to the cap and counting the rest', () => {
+    // forAll expands to a row per request: 200 rows, 30 of them failed, the
+    // failures spread through the list rather than first.
+    const tool: ToolAssertion[] = Array.from({ length: 200 }, (_, i) => ({
+      expression: `Request ${String(i)}: max of response time is less than 500.0`,
+      assertion: {
+        path: { kind: 'details', parts: [`Request ${String(i)}`] },
+        target: { kind: 'responseTime', stat: 'max' },
+        condition: { kind: 'lt', value: 500 },
+      },
+      actualValue: i % 7 === 0 ? 900 : 120,
+      outcome: i % 7 === 0 ? ('failed' as const) : ('passed' as const),
+    }));
+    const failedCount = tool.filter((a) => a.outcome === 'failed').length;
+    expect(failedCount).toBeGreaterThan(ASSERTION_FACT_LIMIT);
+    const platform = Array.from({ length: 50 }, (_, i) => ({
+      description: `Rule ${String(i)}`,
+      outcome: i < 5 ? 'failed' : 'passed',
+      actualDisplay: '1 ms',
+      threshold: { display: '2 ms', value: 2 },
+    }));
+    const facts = buildRunFacts(input({ toolAssertions: tool, platformAssertions: platform }));
+
+    const shownTool = facts.facts.filter((f) => /^assertion\.tool\.\d+$/.test(f.id));
+    expect(shownTool).toHaveLength(ASSERTION_FACT_LIMIT);
+    // Every one stated is a failure: there were more failures than room.
+    expect(shownTool.every((f) => f.display.startsWith('failed'))).toBe(true);
+    // Ids keep the run's own index, so the same assertion has the same id however many are shown.
+    expect(shownTool.map((f) => f.id).slice(0, 3)).toEqual(['assertion.tool.0', 'assertion.tool.7', 'assertion.tool.14']);
+    expect(fact(facts, 'assertions.tool.total').display).toBe('200');
+    expect(fact(facts, 'assertions.tool.failed').value).toBe(failedCount);
+
+    // Five platform failures leave room for fifteen passes.
+    const shownPlatform = facts.facts.filter((f) => /^assertion\.platform\.\d+$/.test(f.id));
+    expect(shownPlatform).toHaveLength(ASSERTION_FACT_LIMIT);
+    expect(shownPlatform.filter((f) => f.display.startsWith('failed'))).toHaveLength(5);
+    expect(fact(facts, 'assertions.platform.total').value).toBe(50);
+
+    // The whole assertion section is bounded: per-assertion facts and their bounds, plus the counts.
+    const assertionFactCount = facts.facts.filter((f) => f.id.startsWith('assertion')).length;
+    expect(assertionFactCount).toBeLessThanOrEqual(2 * ASSERTION_FACT_LIMIT * 2 + 2 * 4);
   });
 
   it('takes a group’s figures from its cumulated row, as the statistics table does', () => {

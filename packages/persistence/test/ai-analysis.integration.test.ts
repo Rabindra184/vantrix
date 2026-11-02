@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { describeSlaRule, formatSlaMeasured } from '@perfportal/contracts';
+import { describeSlaRule, formatSlaBound, formatSlaMeasured } from '@perfportal/contracts';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   AiAnalysisRepository,
@@ -231,8 +231,15 @@ describe('AiAnalysisRepository', () => {
         description: describeSlaRule(failing),
         outcome: 'failed',
         actualDisplay: formatSlaMeasured('error_rate', 0.3333333333333333, 0.01),
+        // A fraction's bound is written, and valued, as the percentage in front of its unit.
+        threshold: { display: formatSlaBound('error_rate', 0.01), value: 1 },
       },
-      { description: describeSlaRule(unjudged), outcome: 'not_applicable', actualDisplay: null },
+      {
+        description: describeSlaRule(unjudged),
+        outcome: 'not_applicable',
+        actualDisplay: null,
+        threshold: { display: formatSlaBound('p95', 800), value: 800 },
+      },
     ]);
 
     expect(await new AiAnalysisRepository(pool).readInput(randomUUID())).toBeNull();

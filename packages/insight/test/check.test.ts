@@ -206,7 +206,7 @@ describe('checkNumbers', () => {
     });
 
     it('refuses an invented elapsed clock', () => {
-      expect(check('OK fell to zero at 00:01:00.')).toEqual(['00:01:00']);
+      expect(check('OK reached 0 at 00:01:00.')).toEqual(['00:01:00']);
       expect(check('Errors began at 0:28.')).toEqual(['0:28']);
     });
 
@@ -240,13 +240,17 @@ describe('checkNumbers', () => {
         value: 88_000,
         text: 'only in the final drain',
       });
-      expect(check('OK fell to zero at 00:01:28, only in the final drain.', zero)).toEqual([]);
-      expect(check('OK fell to zero at 00:01:29.', zero)).toEqual(['00:01:29']);
+      expect(check('OK responses fell to zero at 00:01:28, only in the final drain.', zero)).toEqual([]);
+      expect(check('OK responses fell to zero at 00:01:29.', zero)).toEqual(['00:01:29']);
     });
 
     it('passes a platform assertion’s actual, which has no value', () => {
       const withGate = buildRunFacts(
-        input({ platformAssertions: [{ description: 'Cart mean response time', outcome: 'failed', actualDisplay: '812 ms' }] }),
+        input({
+          platformAssertions: [
+            { description: 'Cart mean response time', outcome: 'failed', actualDisplay: '812 ms', threshold: null },
+          ],
+        }),
       );
       const gate = withGate.facts.find((f) => f.id === 'assertion.platform.0');
       expect(gate).toMatchObject({ value: null, display: 'failed · 812 ms' });
@@ -262,6 +266,57 @@ describe('checkNumbers', () => {
       const labelled = facts({ id: 'request.16.name', label: 'Request 17', display: 'Search', value: null, text: 'Search' });
       expect(check('Request 17 is Search.', labelled)).toEqual([]);
       expect(check('Request 18 is Search.', labelled)).toEqual(['18']);
+    });
+  });
+
+  describe('a number written as a word is still a number', () => {
+    it('refuses cardinal number words, naming the word as written', () => {
+      expect(check('Nearly three hundred requests failed.')).toEqual(['three', 'hundred']);
+      expect(check('One request failed every time.')).toEqual(['One']);
+      expect(check('Dozens of requests failed, then thousands.')).toEqual(['Dozens', 'thousands']);
+      expect(check('Twenty of them failed.')).toEqual(['Twenty']);
+      // The fact's own label carries the word, so citing the label whole passes and a paraphrase does not.
+      const zero = buildRunFacts(input({ figures: { ...input().figures, seriesBuckets: [{ scope: 'run', name: '', family: 'response_time', startOffsetMs: 88_000, okCount: 0, koCount: 4 }] } }));
+      expect(check('OK responses fell to zero at 00:01:28.', zero)).toEqual([]);
+      expect(check('OK fell to zero at 00:01:28.', zero)).toEqual(['zero']);
+    });
+
+    it('refuses multipliers and fractions', () => {
+      expect(check('Add To Cart was twice as slow as Search.')).toEqual(['twice']);
+      expect(check('Half the requests to Session failed.')).toEqual(['Half']);
+      expect(check('Its p99 doubled, and a third of them failed.')).toEqual(['doubled', 'a third']);
+      expect(check('A quarter failed.')).toEqual(['quarter']);
+    });
+
+    it('passes ordinals, and words that only contain a number word', () => {
+      expect(check('The first request and the second request both passed; the third did too.')).toEqual([]);
+      expect(check('Someone should double-check everyone’s setup, and none of it is done.')).toEqual([]);
+    });
+
+    it('lists the words after the digits of the same sentence', () => {
+      expect(check('Two requests made 999 errors.')).toEqual(['999', 'Two']);
+    });
+
+    it('passes a number word inside a fact’s verbatim words, as it passes digits there', () => {
+      const named = facts(
+        { id: 'request.0.name', label: 'Request 1', display: 'Add one item', value: null, text: 'Add one item' },
+        { id: 'error.0.message', label: 'Error 1', display: 'only half the body arrived', value: null, text: 'only half the body arrived' },
+      );
+      expect(check('Add one item failed with "only half the body arrived".', named)).toEqual([]);
+      // Out of its span, the same word is a number nobody stated.
+      expect(check('Only one item failed.', named)).toEqual(['one']);
+    });
+  });
+
+  describe('a percentile rank may be written as an ordinal', () => {
+    it('passes "95th percentile" for a run percentile the facts state', () => {
+      expect(check('The 95th percentile was 321 ms and the 99th percentile 2,383 ms.')).toEqual([]);
+      expect(check('The 50th Percentile was 97 ms.')).toEqual([]);
+    });
+
+    it('refuses an ordinal rank the facts do not state, and an ordinal that is not a percentile', () => {
+      expect(check('The 90th percentile was fine.')).toEqual(['90']);
+      expect(check('The 95th request was slow.')).toEqual(['95']);
     });
   });
 });

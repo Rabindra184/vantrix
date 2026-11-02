@@ -163,8 +163,9 @@ function judge(raw: unknown, facts: RunFacts): Verdict {
     ok: false,
     reason: `numbers_not_in_facts: ${list}`,
     feedback:
-      `Your previous answer used numbers that are not in the facts: ${list}. ` +
+      `Your previous answer used numbers that are not in the facts, or numbers written as words: ${list}. ` +
       "Write the analysis again, using only numbers copied exactly from a fact's display string, " +
+      'writing every number in digits (never as a word, a multiple or a fraction), ' +
       'and quoting an error message whole or not at all.',
   };
 }

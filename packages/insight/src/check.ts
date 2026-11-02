@@ -27,8 +27,24 @@ import type { Fact, RunFacts } from './facts.js';
  *     (`found 401`), an assertion expression, a duration (`1h 2m 3s`) and an
  *     elapsed clock (`00:01:28`); the same digits outside that span trace to
  *     nothing and are refused.
- * (c) AS A PERCENTILE RANK — `p95` / `P95`, not glued to a word, whose rank
- *     names a `run.p*` fact.
+ * (c) AS A PERCENTILE RANK — `p95` / `P95`, not glued to a word, or the
+ *     ordinal `95th percentile` (`1st`, `2nd`, `3rd` as English writes them),
+ *     whose rank names a `run.p*` fact.
+ *
+ * ═══ A NUMBER WRITTEN AS A WORD IS STILL A NUMBER ═══
+ *
+ * "nearly three hundred failures", "twice as slow" and "half the requests" are
+ * claims a fact must carry, and no digit in them is there to check. So a
+ * cardinal number word (zero to twenty, the tens, hundred, thousand, million,
+ * dozen, and their plurals) and a multiplier or fraction word (twice, thrice,
+ * double, triple, half, quarter, "a third") are refused, each by the word
+ * as written, so the retry names it. The model is told to write every number
+ * in digits. An ORDINAL ("the second request", "first") is not a quantity and
+ * passes, and so does a bare "third"; "a third" or "two thirds" is a fraction
+ * and does not. A word that sits inside a fact's verbatim words (rule b) — a
+ * request called "Add one item", an error message saying "half" — passes,
+ * exactly as digits there do. "double-" before another word ("double-check")
+ * is a verb, not a multiplier.
  *
  * ═══ AN ASSERTION'S DISPLAY IS TWO PARTS ═══
  *
@@ -74,6 +90,30 @@ const NUMBER = String.raw`\d[\d,]*(?:\.\d+)?`;
  */
 const TOKEN = new RegExp(`${CLOCK}|${DURATION}|${NUMBER}`, 'g');
 
+/**
+ * A number written as a word: cardinals, the tens, the large units and their
+ * plurals, and the multipliers and fractions. Matched as whole words, case
+ * folded; `double` followed by a hyphen is the verb "double-check".
+ */
+const NUMBER_WORD = new RegExp(
+  String.raw`\b(?:` +
+    [
+      // First, so "one third" is refused whole rather than as "one".
+      String.raw`(?:a|one)\s+third`,
+      'zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten',
+      'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen',
+      'nineteen', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety',
+      'tens', 'hundreds?', 'thousands?', 'millions?', 'billions?', 'dozens?',
+      'twice', 'thrice', 'double(?!-)', 'doubled', 'triple', 'tripled', 'quadruple', 'quadrupled',
+      'half', 'halves', 'halved', 'quarters?', 'thirds',
+    ].join('|') +
+    String.raw`)\b`,
+  'gi',
+);
+
+/** The same words, unanchored and stateless, for asking whether a string holds one. */
+const HAS_NUMBER_WORD = new RegExp(NUMBER_WORD.source, 'i');
+
 /** How many decimals a fact's value may be rounded to and still be that fact. */
 const ROUNDINGS = [0, 1, 2] as const;
 
@@ -104,15 +144,15 @@ function valueForms(facts: Fact[]): Set<number> {
 }
 
 /**
- * The strings a token may sit inside; only one carrying a digit can matter. A
- * display with no ` · ` splits into itself, and no token can straddle the
- * separator, so the parts cover the whole display too.
+ * The strings a token may sit inside; only one carrying a digit or a number
+ * word can matter. A display with no ` · ` splits into itself, and no token
+ * can straddle the separator, so the parts cover the whole display too.
  */
 function spanStrings(facts: Fact[]): string[] {
   const out = new Set<string>();
   for (const f of facts) {
     for (const s of [...f.display.split(DISPLAY_PART), f.text, f.label]) {
-      if (s !== null && /\d/.test(s)) out.add(s);
+      if (s !== null && (/\d/.test(s) || HAS_NUMBER_WORD.test(s))) out.add(s);
     }
   }
   return [...out];
@@ -137,8 +177,13 @@ function percentileRanks(facts: Fact[]): Set<string> {
   return ranks;
 }
 
-/** Whether the token at `start` is written as a rank: `p` or `P` right before it, and no letter or digit before that. */
-function isRankPrefixed(line: string, start: number): boolean {
+/**
+ * Whether the token at [start, end) is written as a rank: `p` or `P` right
+ * before it with no letter or digit before that (`p95`), or an ordinal suffix
+ * and the word "percentile" right after it (`95th percentile`).
+ */
+function isRank(line: string, start: number, end: number): boolean {
+  if (/^(?:st|nd|rd|th)\s+percentile\b/i.test(line.slice(end))) return true;
   const p = line[start - 1];
   if (p !== 'p' && p !== 'P') return false;
   const before = line[start - 2];
@@ -146,8 +191,10 @@ function isRankPrefixed(line: string, start: number): boolean {
 }
 
 /**
- * The numeric tokens in `content`, as written, that trace to none of `facts`:
- * each once, in the order it first appears. Empty means every number is a fact.
+ * The numeric tokens in `content`, as written, that trace to none of `facts`,
+ * and every number written as a word outside a fact's own words: each once,
+ * digits in the order they first appear in a string and then that string's
+ * words. Empty means every number is a fact.
  */
 export function checkNumbers(content: AiAnalysisContent, facts: RunFacts): string[] {
   const values = valueForms(facts.facts);
@@ -165,8 +212,14 @@ export function checkNumbers(content: AiAnalysisContent, facts: RunFacts): strin
       if (ranges.some(([s, e]) => s <= start && end <= e)) continue;
       const bare = token.replaceAll(',', '');
       if (!/^0\d/.test(bare) && values.has(Number(bare))) continue;
-      if (isRankPrefixed(line, start) && ranks.has(token)) continue;
+      if (isRank(line, start, end) && ranks.has(token)) continue;
       refused.add(token);
+    }
+    for (const m of line.matchAll(NUMBER_WORD)) {
+      const start = m.index;
+      const end = start + m[0].length;
+      if (ranges.some(([s, e]) => s <= start && end <= e)) continue;
+      refused.add(m[0]);
     }
   }
   return [...refused];

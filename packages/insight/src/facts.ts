@@ -29,8 +29,11 @@ import {
  */
 
 /**
- * Bumped whenever a fact's id, meaning or rendering changes, so an analysis
- * stored against older facts reads as stale rather than as checked.
+ * Bumped whenever a fact's id, meaning or rendering changes. Stored beside the
+ * analysis as a RECORD of which facts it was checked against — never as a
+ * staleness signal: a bump does not make a stored analysis stale (the spec's
+ * section 4, and `isStale` in the API), because an upgrade must not invite
+ * paid regeneration across an install.
  */
 export const FACTS_VERSION = 1;
 
@@ -117,8 +120,18 @@ export interface FactsFigures {
 export interface FactsInput {
   run: { simulation: string | null; status: string; durationMs: number | null; activityMs: number | null };
   figures: FactsFigures;
-  /** The platform's SLA assertions, already described and rendered by the caller. */
-  platformAssertions: { description: string; outcome: string; actualDisplay: string | null }[];
+  /**
+   * The platform's SLA assertions, already described and rendered by the
+   * caller. `threshold` is the rule's bound as the run page writes it
+   * (`formatSlaBound`) and the number in front of its unit; null when the
+   * frozen rule could not be read.
+   */
+  platformAssertions: {
+    description: string;
+    outcome: string;
+    actualDisplay: string | null;
+    threshold: { display: string; value: number } | null;
+  }[];
   toolAssertions: ToolAssertion[];
 }
 
@@ -140,6 +153,13 @@ export const ERROR_FACT_LIMIT = 20;
 export const KO_PART_LIMIT = 20;
 /** How many names `derived.alwaysFailed` lists before "and N more". */
 export const NAME_LIST_LIMIT = 20;
+/**
+ * How many assertions of each kind (platform, simulation) are stated one by
+ * one. A simulation's `forAll` assertion expands to a row per request, so a
+ * wide run can carry hundreds; every kind also carries its outcome counts, so
+ * what is left out is still counted.
+ */
+export const ASSERTION_FACT_LIMIT = 20;
 
 /**
  * The scope and family a row is read from, as the statistics table reads
@@ -196,8 +216,11 @@ const outcomeWord = (outcome: string): string => OUTCOME_WORD[outcome] ?? outcom
  * as a count. GE printed "83.23665893271462%"; this never does.
  */
 function formatToolActual(a: ToolAssertion): string | null {
-  if (a.actualValue === null) return null;
-  const v = a.actualValue;
+  return a.actualValue === null ? null : formatInTargetUnit(a, a.actualValue);
+}
+
+/** A number in the unit an assertion's target implies: its actual, or a bound of its condition. */
+function formatInTargetUnit(a: ToolAssertion, v: number): string {
   switch (a.assertion?.target.kind) {
     case 'responseTime':
       return formatMs(v);
@@ -303,9 +326,51 @@ function errorFacts(errors: FactsFigureError[]): Fact[] {
   return out;
 }
 
+/** Each outcome's count, for one kind of assertion, so a bounded list still says how many there were. */
+function outcomeCountFacts(kind: 'platform' | 'tool', noun: string, outcomes: string[]): Fact[] {
+  const count = (o: string): number => outcomes.filter((x) => x === o).length;
+  const p = `assertions.${kind}`;
+  return [
+    numeric(`${p}.total`, `${noun}s`, formatCount(outcomes.length), outcomes.length),
+    numeric(`${p}.failed`, `${noun}s failed`, formatCount(count('failed')), count('failed')),
+    numeric(`${p}.passed`, `${noun}s passed`, formatCount(count('passed')), count('passed')),
+    numeric(`${p}.notApplicable`, `${noun}s not applicable`, formatCount(count('not_applicable')), count('not_applicable')),
+  ];
+}
+
+/**
+ * The indices of the assertions stated one by one: every failure first, then
+ * the rest in their own order, up to `ASSERTION_FACT_LIMIT`, returned in index
+ * order. A failure is what an analysis has to be able to cite; the passes fill
+ * whatever room is left, so a run with a handful keeps all of them.
+ */
+function shownAssertions(outcomes: string[]): number[] {
+  const indices = outcomes.map((_, i) => i);
+  const failed = indices.filter((i) => outcomes[i] === 'failed');
+  const rest = indices.filter((i) => outcomes[i] !== 'failed');
+  return [...failed, ...rest].slice(0, ASSERTION_FACT_LIMIT).sort((a, b) => a - b);
+}
+
+/**
+ * ═══ AN ASSERTION'S ID IS ITS POSITION IN THE RUN'S OWN LIST ═══
+ *
+ * `assertion.platform.<i>` and `assertion.tool.<i>` keep the index the run
+ * stores the assertion at, not its place among the ones shown, so the same
+ * assertion has the same id whether or not the cap left others out.
+ *
+ * A bound gets a fact of its own — "its 800 ms limit" is a number the model
+ * needs and the description carries only inside a whole sentence. A platform
+ * bound is the run page's own rendering (`formatSlaBound`); a simulation
+ * assertion's is its condition's number in its target's unit, where the
+ * condition has one (`between` has two).
+ */
 function assertionFacts(input: FactsInput): Fact[] {
   const out: Fact[] = [];
-  input.platformAssertions.forEach((a, i) => {
+  const platform = input.platformAssertions;
+  if (platform.length > 0) out.push(...outcomeCountFacts('platform', 'Platform assertion', platform.map((a) => a.outcome)));
+  for (const i of shownAssertions(platform.map((a) => a.outcome))) {
+    const a = platform[i];
+    if (a === undefined) continue;
     const actual = a.actualDisplay === null ? '' : ` · ${a.actualDisplay}`;
     out.push({
       id: `assertion.platform.${i}`,
@@ -314,8 +379,16 @@ function assertionFacts(input: FactsInput): Fact[] {
       value: null,
       text: a.description,
     });
-  });
-  input.toolAssertions.forEach((a, i) => {
+    if (a.threshold !== null) {
+      out.push(numeric(`assertion.platform.${i}.threshold`, `Platform assertion ${i + 1}: limit`, a.threshold.display, a.threshold.value));
+    }
+  }
+
+  const tool = input.toolAssertions;
+  if (tool.length > 0) out.push(...outcomeCountFacts('tool', 'Simulation assertion', tool.map((a) => a.outcome)));
+  for (const i of shownAssertions(tool.map((a) => a.outcome))) {
+    const a = tool[i];
+    if (a === undefined) continue;
     const actual = formatToolActual(a);
     out.push({
       id: `assertion.tool.${i}`,
@@ -324,8 +397,25 @@ function assertionFacts(input: FactsInput): Fact[] {
       value: a.actualValue,
       text: a.expression,
     });
-  });
+    out.push(...toolBoundFacts(a, i));
+  }
   return out;
+}
+
+/** A simulation assertion's bound: its condition's number, or a `between`'s two. */
+function toolBoundFacts(a: ToolAssertion, i: number): Fact[] {
+  const condition = a.assertion?.condition;
+  if (condition === undefined) return [];
+  const label = `Simulation assertion ${i + 1}`;
+  const bound = (suffix: string, what: string, v: number | undefined): Fact[] =>
+    typeof v === 'number' && Number.isFinite(v)
+      ? [numeric(`assertion.tool.${i}.${suffix}`, `${label}: ${what}`, formatInTargetUnit(a, v), v)]
+      : [];
+  return [
+    ...bound('threshold', 'limit', condition.value),
+    ...bound('thresholdLow', 'lower limit', condition.lo),
+    ...bound('thresholdHigh', 'upper limit', condition.hi),
+  ];
 }
 
 /** The first request (in count order) with the strictly largest percentile `key`. */
@@ -350,22 +440,54 @@ function largestBy(requests: FactsFigureStat[], key: string): { row: FactsFigure
  * last users bucket in which a user started — nothing new was arriving, only
  * stragglers finishing. One zero-OK bucket before that is "during the run".
  *
- * ═══ THE END OF THAT BUCKET, NOT ITS START ═══
+ * ═══ THE END OF THAT BUCKET, NOT ITS START — AND PER SCENARIO ═══
  *
  * Users and response-time buckets coalesce on independent caps ("two series,
  * two widths"), so on a long run a users bucket can be wider than a series
  * bucket. Users 2 s wide whose last arrivals bucket starts at 84 s cover
  * arrivals up to 86 s, and a zero-OK series bucket at 85 s starts after 84 s
- * while users are still arriving. A users bucket's end is the next users
- * bucket's start; when no bucket follows it, where arrivals ended is unknown.
+ * while users are still arriving. A users bucket's end is the next bucket's
+ * start; when no bucket follows it, where arrivals ended is unknown.
+ *
+ * Each SCENARIO coalesces on its own schedule too, so two scenarios can hold
+ * two widths at once. Read off the summed "All users" series, a narrow
+ * scenario's buckets interleave with a wide one's, and the "next" offset after
+ * the wide scenario's last arrivals is the narrow one's — inside the bucket the
+ * wide scenario was still arriving in. So the end is found per scenario (the
+ * start of the bucket that follows its last one with arrivals, in its OWN
+ * series), and arrivals ended at the LATEST of those ends.
  *
  * Every missing piece of evidence reads "during the run" — no users series, or
- * no bucket after the last arrivals: the fact never claims the reassuring
- * reading on missing evidence.
+ * any scenario with arrivals whose last arrivals bucket has none after it:
+ * the fact never claims the reassuring reading on missing evidence.
  *
  * A bucket with no responses at all is not OK falling to zero — nothing was
  * answered, so nothing failed. Run scope only.
  */
+/**
+ * When the last user arrived, as the latest of each scenario's own end of
+ * arrivals; undefined when no scenario started anyone, or when any scenario's
+ * last arrivals bucket is its last bucket (its end is unknown).
+ */
+function latestArrivalsEnd(rows: FactsFigureUserBucket[]): number | undefined {
+  const byScenario = new Map<string, FactsFigureUserBucket[]>();
+  for (const r of rows) byScenario.set(r.scenario, [...(byScenario.get(r.scenario) ?? []), r]);
+
+  let latest: number | undefined;
+  for (const buckets of byScenario.values()) {
+    const sorted = [...buckets].sort((a, b) => a.startOffsetMs - b.startOffsetMs);
+    let last = -1;
+    sorted.forEach((b, i) => {
+      if (b.started > 0) last = i;
+    });
+    if (last === -1) continue; // nobody arrived in this scenario: it bounds nothing
+    const end = sorted[last + 1]?.startOffsetMs;
+    if (end === undefined) return undefined;
+    if (latest === undefined || end > latest) latest = end;
+  }
+  return latest;
+}
+
 function okZeroFact(figures: FactsFigures): Fact | null {
   const zeros = figures.seriesBuckets
     .filter((b) => b.scope === 'run' && b.family === RUN_FAMILY && b.okCount === 0 && b.koCount > 0)
@@ -373,13 +495,7 @@ function okZeroFact(figures: FactsFigures): Fact | null {
   const first = zeros[0];
   if (first === undefined) return null;
 
-  // Ascending by offset, so the bucket after the last arrivals is its end.
-  const users = sumUsersByOffset(figures.userBuckets);
-  let lastArrivals = -1;
-  users.forEach((u, i) => {
-    if (u.started > 0) lastArrivals = i;
-  });
-  const arrivalsEnd = lastArrivals === -1 ? undefined : users[lastArrivals + 1]?.startOffsetMs;
+  const arrivalsEnd = latestArrivalsEnd(figures.userBuckets);
   const drain = arrivalsEnd !== undefined && zeros.every((b) => b.startOffsetMs >= arrivalsEnd);
   return {
     id: 'derived.okZero',

@@ -56,7 +56,7 @@ class FakeProvider implements AnalysisProvider {
 function content(requests: string): unknown {
   return {
     health: { headline: `The run made ${requests} requests.`, bullets: [`It made ${requests} requests in all.`] },
-    insights: { headline: 'One request failed.', errors: [], assertions: [], injectionProfile: [], responseTimes: [] },
+    insights: { headline: 'A request failed.', errors: [], assertions: [], injectionProfile: [], responseTimes: [] },
     recommendations: { headline: 'Look at the failure.', bullets: ['Read the failed request before the next run.'] },
   };
 }
