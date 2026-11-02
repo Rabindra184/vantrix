@@ -128,10 +128,10 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **290 files / 4714 tests**, it
+`nvm use` first, and if a run reports fewer than **292 files / 4766 tests**, it
 did not run everything — nor did an integration run reporting fewer than
-**273 files / 4258 tests**, an e2e run fewer than **214**, or a
-`pnpm test:e2e:cross` run fewer than **642** (214 on each of three engines).
+**273 files / 4277 tests**, an e2e run fewer than **217**, or a
+`pnpm test:e2e:cross` run fewer than **651** (217 on each of three engines).
 (Update those numbers when a sub-project adds suites, or the next reader
 calibrates against a stale floor and a silently-skipped run looks like a
 pass.)
@@ -150,6 +150,146 @@ still Chromium and still 102; `pnpm test:e2e:cross` was 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The AI run analysis UI branch (`feat/ai-run-analysis-ui`, PR 2 of
+`docs/superpowers/specs/2026-11-02-ai-run-analysis-design.md`, ledger
+`.superpowers/sdd/2026-11-02-ai-run-analysis/progress.md`) added TWO unit
+files — `apps/web/test/AdminSettings.test.tsx` (13) and `AiAnalysisCard.test.tsx`
+(21) — plus `ai-providers` 3, `check` 3, `facts` 3, `lint-rules-compose` 6,
+contracts `ai-analysis` 2 and `RunSummary` 1: unit **290 / 4714 to 292 / 4766**.
+Integration gains the 17 `.ts` cases and 2 in the API's
+`ai-analysis.integration`: **273 / 4258 to 273 / 4277**, by arithmetic — the
+last full run was Task 11's 273 / 4276 at `ad53a6b5`, and the final fix wave
+added the one host case; CI's `build` job measures the total. **e2e 214 to 217**
+(`apps/web/e2e/ai-analysis.spec.ts`, 3); `test:e2e:cross` **651** by arithmetic,
+not run whole — the AI spec alone ran on three engines.
+
+**IT OPENED WITH THE BACKEND FOLLOW-UPS, AND ONE OF THEM WAS THE CONTROLLER'S
+OWN BRIEF BEING WRONG.** Undici's 300 s `UND_ERR_HEADERS_TIMEOUT` /
+`UND_ERR_BODY_TIMEOUT` are not transient now (a billed call, like the client's
+own timeout): `isUndiciCutOff` walks `err.cause` up to 8 links, because SDK
+1.3.0 already maps the headers timeout to `APIConnectionTimeoutError` by its
+`/timed? ?out/i` and the fetch path is the one left unguarded. The brief said
+put `(?!-)` on every number word so "one-off" stops being refused; the
+implementer flagged that it let "a five-minute ramp" and "a two-fold rise"
+PASS. A hyphenated number-word compound is one token now, refused whole unless
+it is in `NON_COUNT_COMPOUNDS` (one-off, one-time, one-way, one-sided,
+one-shot, third-party, double-check). **A missing entry costs one retry; a
+wrong blanket rule lets an invented count through** — the check's guarantee
+outranks the retry. Also: grace 11m in compose and `DEPLOYMENT.md`; an
+OpenAI-compatible `message.refusal` is `RefusedError(null)`, not a paid retry;
+a non-last transient failure logs one `console.warn` with the class and HTTP
+status and NEVER the message (a `ProviderHttpError` quotes the body); the pure
+packages' `src` may not import `@perfportal/persistence`, a type included —
+the verifier keeps the I/O list only, or it was told twice; and the facts'
+three remainder paths are tested.
+
+**ADMINISTRATION › SETTINGS SHOWS THE CONSENT SENTENCE, BECAUSE IT IS
+CONSENT.** The UI direction puts a caveat behind an ⓘ; the first version did
+that to "what leaves the deployment", and review put it back on screen — the
+consequence of acting stays visible. The final wave made it name every
+category the facts carry (figures, simulation, requests, groups, assertions,
+error messages) and, for openai-compatible, WHERE: `aiBaseUrlHost` is
+`new URL(baseUrl).host`, so `https://svc-user:svc-secret@llm.internal.example:8443/openai/v1?tenant=acme`
+answers `llm.internal.example:8443` and none of the rest. An org left ENABLED
+with no provider still draws the switch, pressed, so an admin can turn it off —
+otherwise a later provider resumes sending to a destination nobody agreed to.
+The PUT's answer is `setQueryData`'d before the re-read, so a failed re-read
+cannot show OFF while sending is ON.
+
+**`requestedAt` IS `.nullable().optional()`, AND THE FIRST VERSION BROKE A
+#296-ERA POD.** The card offers Try again on a pending row older than
+`AI_PENDING_REQUEUE_AFTER_MS` (one constant in contracts, used by API and
+card). Required, a new bundle read an old pod's GET as a failed parse: no card,
+and a POST that pod had queued read "could not be sent". An unknown age keeps
+polling and never offers Try again.
+
+**ONE STATUS REGION PER CARD, AND ITS TEXT CHANGES.** A `role="status"`
+mounted already holding "Analysing this run…" is inserted, not announced (the
+`ProjectRail` lesson again); it is mounted for the card's lifetime and reads
+"Analysis ready." on the transition. The button the reader pressed unmounts
+with the POST's answer, so focus moves to the heading (`SectionHeading`'s new
+`focusTarget`, `tabIndex={-1}`). The three inner sections are `div`s: as
+`<section aria-labelledby>` each card was four region landmarks.
+
+**THE BROWSER PROOF RUNS THE REAL CHECK AGAINST A STUB BUILT FROM THE
+REQUEST'S OWN FACTS.** `ai-stub.ts` is an OpenAI-compatible server on
+`PERFPORTAL_E2E_PORT + 1` (Playwright's `globalSetup`) that copies the facts'
+`display` strings and uses no number word ("one" is refused). No worker
+process runs here, so `processAiAnalysis` builds the real provider and
+`AiAnalysisService` from `apps/worker/dist` in-process — `parseUploadedRun`'s
+precedent. The AI env sits INLINE in the webServer command beside `PORT=`, so
+a developer's exported `AI_PROVIDER` cannot reach the suite, and the stub is
+the fifth thing the port moves. An invented "4242" in the stub fails with
+`numbers_not_in_facts: 4242`: `checkNumbers` ran for real.
+
+**RED-VERIFIED** from committed checkpoints, anchor counts asserted (the
+reports beside the ledger) — among them the blanket `(?!-)` restored, the
+consent `hidden`, `setQueryData` dropped, the status region mounted only while
+pending, and in the browser the card mounted above the totals (`Received 628`
+against `>= 856`). Two survivors were fixed: the viewer and unavailable
+"renders nothing" cases asserted before the read had settled.
+
+**WHAT WAS RUN**, Node v22.19.0, `perfportal_ai`, Redis db 10 flushed through
+`infra-redis-1`, bucket `perfportal-ai`, e2e port 3820 (3821 free): on
+`9f6ea317`, `pnpm build`, `typecheck` and `lint` exit 0 by their own exit
+codes; `test:unit` **292 / 4766**, exit 0, zero `Errors` lines; `ai-analysis`,
+`admin` and `openapi` integration alone **3 / 96**, exit 0; `pnpm test:e2e
+--workers=2` read back `Running 217 tests using 2 workers`, **217 passed**,
+exit 0; `ai-analysis.spec.ts` on all three engines **9 passed**. On
+`ad53a6b5`, `test:integration` COLLECTED **273 / 4276** and exited 1 on THREE
+cases in files it cannot reach — `recompute-queue`'s `expected 2 to be 3` and
+two P1001s (`project-ingest`, `verdict`) — the three alone **31 / 31**, load
+8.20 / 5.73 / 5.13 at start, swap 11,228 of 12,288 MB (91%).
+
+**THE REAL CHECK**, Claude itself, on `9f6ea317`, Redis db 11, API :3830, the
+key loaded by command substitution from `infra/.env` and never printed (`grep
+sk-ant` over every scratch file: 0): `ParitySimulation` through the on-prem
+runner, run `13a77612` — **895 / 871 / 24**, p95 651 ms, 63 s. **Ready on the
+first `claude-opus-5-5` call** (11.5 s, 5,569 in / 1,003 out), no number-check
+retry. **50 numbers outside quotes, all 50 traced** to the run's own figures,
+no unit error, no wrong-subject attribution; 12 inside quoted fact text,
+verbatim. One claim the facts do not license: 500 paired with `Cart/Add To
+Cart` and 503 with `Place Order` by matching counts (14, 10) — true per
+`/errors?scope=request`, and uncatchable by the check when the same guess is
+wrong. **The worker logs nothing on a success or a retry**, so the call count
+took a scratch `fetch` preload. **`nvm use 22` inside a backgrounded `&` list
+resolved Node 20** — give a background process the absolute node path.
+
+**RULINGS** (the ledger's 15–20): (15) the follow-ups are PR 2's first commit,
+one review; (16) a number-word compound is refused whole bar a named allowlist,
+overruling the brief; (17) the consent sentence is visible, and an enabled org
+with no provider keeps its switch; (18) `requestedAt` on the response and
+`AI_PENDING_REQUEUE_AFTER_MS` in contracts; (19) the sentence names every
+category and an openai-compatible host; (20) "AI features" and Try again on
+refused stay, the wrong unit is a known limit.
+
+**KNOWN AND LEFT:**
+
+  - The check proves numbers, not units or pairings: a correct number with the
+    wrong unit passes, and so does a model pairing errors with requests by
+    matching counts (the facts carry no per-request error breakdown).
+  - The worker logs no line for a successful generation or a number-check
+    retry; the warn line's class reads `Error` for SDK 1.3.0 errors (no
+    `name`; fall back to `constructor.name`).
+  - A refused POST leaves focus on `<body>` (the button disables while
+    loading); the pending age is the browser's clock; a dead pending row from
+    an older pod (no `requestedAt`) polls every 3 s while the page is open.
+  - `double-checked`, `double-checking` and `one-offs` are refused; the bare
+    `third-party` entry is dead; `check.ts`' docstrings say compounds read
+    whole, true only when the number word leads.
+  - Settings: `RefreshFailed` says "This list could not be refreshed"; no
+    pending mark while the PUT is in flight; the provider is shown raw.
+  - Tests: `RunSummary.test`'s viewer half waits a real `setTimeout(20)`; the
+    POST's pending write is evidenced by the body alone; `ai-stub` is imported
+    without an extension in `playwright.config.ts`; e2e leaves queued AI jobs
+    in Redis.
+  - Stale prose: `OrgSettingsSchema` says "the other three" (four); the
+    playwright comment says "All four or none" beside "a fifth"; the plan
+    quotes the old consent sentence (historical).
+  - Still parked from PR 1: `readInput` outside the run's advisory lock;
+    cardinal words refused rather than mapped; a reset after send retried;
+    "single", "couple", "doubles" pass.
 
 The AI run analysis backend branch (`feat/ai-run-analysis`, PR 1 of
 `docs/superpowers/specs/2026-11-02-ai-run-analysis-design.md`, plan
@@ -253,7 +393,7 @@ brief; (6) a token inside a fact's display span passes; (7) clocks and
 durations are single tokens, the walk recursive; (8) `aiUnavailableReason`
 lives in persistence, one six-step precedence for API and worker; (9) PR 1 got
 its own whole-branch review; (10) 300 s, no retry after a client timeout,
-`stop_grace_period` 6m; (11) `verification_mismatch` hides a stored analysis
+`stop_grace_period` 6m (11m since PR 2's first commit — see the UI entry); (11) `verification_mismatch` hides a stored analysis
 on GET; (12) the worker starts the consumer only with its own `config.ai`;
 (13) `generated_at` is the facts-read instant; (14) the residuals below ship as
 PR 2's FIRST commit, not a second fix wave.
@@ -263,7 +403,9 @@ PR 2's FIRST commit, not a second fix wave.
   - Ruling 14's, PR 2's first commit: undici's own 300 s headers/body timeouts
     can fire first and read as transient; "a third-" and "one-off" are refused
     as number words; 6m of grace covers one call, not the two a retry makes
-    (11m does, and `DEPLOYMENT.md` says so).
+    (11m does, and `DEPLOYMENT.md` says so). **[Done by PR 2's first commit,
+    the AI run analysis UI entry above: undici's cut-offs are not transient, a
+    named few compounds pass, and the grace is 11m.]**
   - Parked: `readInput` is not under the run's advisory lock, so a recompute
     straddling the stamp is missed and `readStoredFigures` can read torn; bare
     cardinals could map to values instead of being refused; a reset after
@@ -272,13 +414,15 @@ PR 2's FIRST commit, not a second fix wave.
     (`-2,383`), trailing zeros (`28.00%`), comma placement (`17,24`) and an
     index label's digits (`Request 17`).
   - Minors: `AI_BASE_URL`'s error echoes userinfo; nothing lints insight's
-    `src` off persistence; an OpenAI `message.refusal` is a paid retry; 409 is
+    `src` off persistence **[done in PR 2]**; an OpenAI `message.refusal` is a
+    paid retry **[done in PR 2]**; 409 is
     not transient; the refused-number list is uncapped; a POST between
     `markFailed` and job removal waits out the 35 minutes; pending age mixes
     the API's and the database's clocks; the API keys reach migrate, bootstrap
     and runner via `app_env`; the `OrgSettings` invariants are prose; a corrupt
     rule snapshot's actual falls back to the raw fraction; nothing spawned
-    starts the AI consumer; no model was called here (Task 11's), and the
+    starts the AI consumer; no model was called here (Task 11's — **[done in
+    PR 2: one real Claude call, see its REAL CHECK]**), and the
     OpenAI strict-mode stripping met no self-hosted server.
 
 The zod-4 branch (`chore/zod-4`) added TWO unit files —
@@ -20588,6 +20732,9 @@ owns its own copy, because it seeds over plain `fetch` and can never see
 with `POST /v1/runs expected 202, got 404` naming somebody else's server. The
 port is worth having because `reuseExistingServer` is deliberately false, so
 anything at all on 3000 fails the whole run before a single spec.
+**[Corrected later: FIVE since the AI run analysis UI branch — Playwright's
+`globalSetup` starts the AI stub on `PERFPORTAL_E2E_PORT + 1`, so something
+holding that port fails the whole run at setup, naming it. See that entry.]**
 
 **`test.skip(fn, reason)` AT FILE SCOPE SKIPS THE FILE.** Reaching for it to
 exempt ONE test from one engine silently drops that whole spec file on that

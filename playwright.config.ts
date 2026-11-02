@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
+import { STUB_BASE_URL, STUB_MODEL } from './apps/web/e2e/ai-stub';
 
 /**
  * Drives the API serving the BUILT SPA (mountSpa, apps/api/src/spa.ts) —
@@ -30,15 +31,35 @@ import { defineConfig, devices } from '@playwright/test';
  * `apps/web/e2e/fixtures.ts`, which reads the same variable because it seeds
  * over plain fetch and cannot see `baseURL`. All four or none: moving three of
  * them sent the browser to 3100 and the seeding to 3000, and 214 specs failed
- * with a 404 from whatever else was listening there.
+ * with a 404 from whatever else was listening there. A fifth thing follows the
+ * same variable: the stub AI provider below listens on this port + 1, so a
+ * moved harness needs PORT+1 free as well.
  *
  * It stays same-origin, which is the property the session cookie depends on.
  */
 const PORT = process.env.PERFPORTAL_E2E_PORT ?? '3000';
 const ORIGIN = `http://localhost:${PORT}`;
 
+/**
+ * ═══ THE AI PROVIDER IS A STUB, AND THE API IS TOLD SO FOR EVERY SPEC ═══
+ *
+ * `apps/web/e2e/ai-stub.ts` is an OpenAI-compatible server started below as
+ * `globalSetup`, on 127.0.0.1 at this harness's port + 1, answering with an
+ * analysis built from the request's own facts. The API gets
+ * `AI_PROVIDER=openai-compatible` pointing at it, so it answers `org_disabled`
+ * — the switch is off by default — rather than `not_configured`. In that state
+ * the run Summary's AI card renders nothing, which is why no other spec moves:
+ * only `ai-analysis.spec.ts` turns an org's switch on.
+ *
+ * Inline on the start command, like PORT, so a value exported in the caller's
+ * shell (a real `AI_PROVIDER=anthropic` on a developer machine) can never send
+ * a seeded run's figures to a real provider from this suite.
+ */
+const AI_ENV = `AI_PROVIDER=openai-compatible AI_MODEL=${STUB_MODEL} AI_BASE_URL=${STUB_BASE_URL} AI_API_KEY=`;
+
 export default defineConfig({
   testDir: 'apps/web/e2e',
+  globalSetup: './apps/web/e2e/ai-stub.ts',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
@@ -131,7 +152,7 @@ export default defineConfig({
     // apps/worker/dist/pipeline/pipeline.service.js directly to run the
     // ingest pipeline synchronously against the same database, with no live
     // worker — see fixtures.ts's own comment for why.
-    command: `pnpm build && PORT=${PORT} pnpm --filter @perfportal/api start`,
+    command: `pnpm build && PORT=${PORT} ${AI_ENV} pnpm --filter @perfportal/api start`,
     url: ORIGIN,
     // A full workspace build (tsc -b across every package, plus the api,
     // worker and web builds) comfortably exceeds Playwright's 60s default

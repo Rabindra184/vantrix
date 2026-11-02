@@ -99,13 +99,14 @@ export const NO_ORG_ROUTE = '/no-organisation';
 export const ACCOUNT_PASSWORD_ROUTE = '/account/password';
 
 /**
- * Administration's pages, for an install-wide admin: accounts, projects and
- * data integrity. The account menu links to the first. None is a `/projects/`
+ * Administration's pages, for an install-wide admin: accounts, projects,
+ * data integrity and the org's settings. The account menu links to the first. None is a `/projects/`
  * segment, so none can shadow a project slug.
  */
 export const ADMIN_USERS_ROUTE = '/admin/users';
 export const ADMIN_PROJECTS_ROUTE = '/admin/projects';
 export const ADMIN_DATA_INTEGRITY_ROUTE = '/admin/data-integrity';
+export const ADMIN_SETTINGS_ROUTE = '/admin/settings';
 
 /**
  * One project — which is now its TESTS, not its runs.

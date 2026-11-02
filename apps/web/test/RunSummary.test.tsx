@@ -99,7 +99,7 @@ function readyRun({
 /** Answers each endpoint from the captured fixture; anything else is a 404,
  *  which `Payload` renders as an undrawn slot — still a figure with its id.
  *  `/trends` answers an empty cohort: nothing here is about a baseline. */
-function stubFetch(statsBody: unknown, statsStatus: number): string[] {
+function stubFetch(statsBody: unknown, statsStatus: number, aiBody: unknown = null): string[] {
   const seen: string[] = [];
   vi.stubGlobal('fetch', (input: RequestInfo | URL) => {
     const url = String(input);
@@ -126,7 +126,9 @@ function stubFetch(statsBody: unknown, statsStatus: number): string[] {
             ? reference.errors
             : path.endsWith('/trends')
               ? { runs: [] }
-              : null;
+              : path.endsWith('/ai-analysis')
+                ? aiBody
+                : null;
     return Promise.resolve(
       body === null
         ? new Response(JSON.stringify({ status: 404, title: 'Not Found', code: 'NOT_FOUND', detail: 'stub', remediation: 'stub' }), {
@@ -150,6 +152,7 @@ function renderSummary({
   toolAssertions,
   access = UNKNOWN_ACCESS,
   statsMethod,
+  aiBody = null,
 }: {
   url?: string;
   window?: RunWindowContext['window'];
@@ -165,8 +168,10 @@ function renderSummary({
   access?: ProjectAccess;
   /** Which engine processed the run; absent is an API that predates the field. */
   statsMethod?: RunResponse['statsMethod'];
+  /** What `/ai-analysis` answers; null is the 404 an API without the route gives. */
+  aiBody?: unknown;
 } = {}) {
-  const seen = stubFetch(statsBody, statsStatus);
+  const seen = stubFetch(statsBody, statsStatus, aiBody);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const run = readyRun({ status, durationMs, assertions, toolAssertions, statsMethod });
   client.setQueryData(runQueryKey(RUN_ID), { state: 'ready', run });
@@ -246,6 +251,39 @@ describe('RunSummary — always the whole run', () => {
       'Over time',
       'Errors',
     ]);
+  });
+
+  /** The analysis reads the numbers and verdicts, so it follows them; it is
+   *  text, so a phone gets it too; and only a member is offered to ask. */
+  it('draws the AI run analysis after the two bars and before the charts, on any viewport', async () => {
+    const none = { available: true, state: 'none', content: null, failureReason: null, generatedAt: null, model: null, stale: false, requestedAt: null };
+    const member = projectAccess(false, [{ slug: 'checkout', role: 'member' }], 'checkout');
+    renderSummary({ toolAssertions: [GLOBAL_ASSERTION], aiBody: none, access: member });
+    await screen.findByRole('heading', { level: 2, name: 'AI run analysis' });
+    await screen.findByRole('heading', { level: 2, name: 'Errors' });
+    expect(screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent?.trim())).toEqual([
+      'Platform gates',
+      'Simulation assertions',
+      'AI run analysis',
+      'Over time',
+      'Errors',
+    ]);
+    expect(screen.getByRole('button', { name: 'Analyze with AI' })).toBeVisible();
+    cleanup();
+
+    vi.mocked(useIsCompact).mockReturnValue(true);
+    renderSummary({ aiBody: none, access: member });
+    expect(await screen.findByRole('heading', { level: 2, name: 'AI run analysis' })).toBeVisible();
+    cleanup();
+
+    // A viewer, on a run nobody has asked about: nothing at all.
+    vi.mocked(useIsCompact).mockReturnValue(false);
+    const seen = renderSummary({ aiBody: none, access: projectAccess(false, [{ slug: 'checkout', role: 'viewer' }], 'checkout') });
+    await screen.findByRole('heading', { level: 2, name: 'Errors' });
+    // The read was answered, so its absence is the card's decision, not a wait.
+    await waitFor(() => expect(seen.some((u) => u.endsWith('/ai-analysis'))).toBe(true));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByRole('heading', { name: 'AI run analysis' })).toBeNull();
   });
 
   it('draws GE’s two charts, side by side', async () => {

@@ -116,6 +116,29 @@ describe('OpenAiCompatibleProvider', () => {
     expect(seen[0]!.headers.authorization).toBeUndefined();
   });
 
+  it('throws RefusedError for a structured-outputs refusal, rather than handing back an empty answer', async () => {
+    const { url, seen } = await stub(() => ({
+      json: { choices: [{ message: { content: null, refusal: 'I can’t help with that.' } }] },
+    }));
+    const provider = new OpenAiCompatibleProvider({ provider: 'openai-compatible', model: 'llama', baseUrl: url, apiKey: null });
+
+    const err = await provider.generate(REQ).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(RefusedError);
+    expect((err as RefusedError).category).toBeNull();
+    expect(seen).toHaveLength(1);
+  });
+
+  it('reads an answer whose refusal field is null or empty as the answer', async () => {
+    for (const refusal of [null, '', '  ']) {
+      const { url } = await stub(() => ({ json: { choices: [{ message: { content: JSON.stringify(CONTENT), refusal } }] } }));
+      const provider = new OpenAiCompatibleProvider({ provider: 'openai-compatible', model: 'llama', baseUrl: url, apiKey: null });
+      expect(await provider.generate(REQ)).toEqual(CONTENT);
+      await new Promise<void>((resolve) => server!.close(() => resolve()));
+      server = null;
+    }
+  });
+
   it('throws a transient error for a 503 and a lasting one for a 401', async () => {
     let status = 503;
     const { url } = await stub(() => ({ status, json: { error: 'no' } }));
@@ -267,6 +290,28 @@ describe('isTransientProviderError', () => {
       expect(isTransientProviderError(new ProviderHttpError(status, ''))).toBe(false);
       expect(isTransientProviderError(new Anthropic.APIError(status, undefined, 'x', headers))).toBe(false);
     }
+  });
+
+  it('never retries a call undici cut off at its own five-minute timeout', () => {
+    // undici's own errors, as lib/core/errors.js builds them (undici 6.x); fetch
+    // rejects with TypeError("fetch failed") carrying one as its cause —
+    // measured with an undici Agent at a 100 ms headersTimeout.
+    const undici = (name: string, message: string, code: string): Error =>
+      Object.assign(new Error(message), { name, code });
+    for (const cause of [
+      undici('HeadersTimeoutError', 'Headers Timeout Error', 'UND_ERR_HEADERS_TIMEOUT'),
+      undici('BodyTimeoutError', 'Body Timeout Error', 'UND_ERR_BODY_TIMEOUT'),
+    ]) {
+      const fetchFailed = new TypeError('fetch failed', { cause });
+      expect(isTransientProviderError(fetchFailed)).toBe(false);
+      // The SDK wraps a fetch failure it does not read as a timeout in an
+      // APIConnectionError, so the code sits two causes down.
+      expect(isTransientProviderError(new Anthropic.APIConnectionError({ message: 'Connection error.', cause: fetchFailed }))).toBe(false);
+    }
+    // The control: the same two shapes over a refused socket are still retried.
+    const refused = new TypeError('fetch failed', { cause: Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }) });
+    expect(isTransientProviderError(refused)).toBe(true);
+    expect(isTransientProviderError(new Anthropic.APIConnectionError({ message: 'Connection error.', cause: refused }))).toBe(true);
   });
 
   it('does not retry a TypeError that is not fetch’s network failure', () => {

@@ -1,5 +1,6 @@
 import { Controller, Get, Inject, Param, Post, Req, Res, UseGuards } from '@nestjs/common';
 import {
+  AI_PENDING_REQUEUE_AFTER_MS,
   AiAnalysisResponseSchema,
   type AiAnalysisResponse,
   type AiUnavailableReason,
@@ -21,27 +22,19 @@ import { conflict, runNotFound, uuidParam } from '../common/validation.js';
 import type { AppConfig } from '../config.js';
 import { AiAnalysisQueue } from './ai-analysis-queue.js';
 
-/**
- * How long a pending row is trusted to have a job behind it. Past this a
- * POST queues it again: a job BullMQ failed for stalling never reaches the
- * worker's service, so nothing else would ever settle its row, and the queue
- * keeps no failed job, so the re-queue is not ignored.
- *
- * Thirty-five minutes is the longest a job can run, with room. One attempt
- * makes at most two provider calls (a second only when the first answer
- * fails the number check) of at most 300 s each (`TIMEOUT_MS`, worker
- * providers.ts): 600 s. A call cut off at its timeout is recorded at once and
- * never retried, but a transient failure (a 5xx, a 429) can still arrive at
- * the end of a long call, so all three attempts (`AI_ANALYSIS_JOB_OPTIONS`)
- * can each take the full 600 s: 1,800 s, plus the backoff between them,
- * 10 s and then 20 s — 1,830 s, about 30.5 minutes.
+/*
+ * `AI_PENDING_REQUEUE_AFTER_MS`: how long a pending row is trusted to have a
+ * job behind it. Its arithmetic is in `@perfportal/contracts`, beside the
+ * `requestedAt` field the card reads it against.
+ * Past this a POST queues it again: a job BullMQ failed for stalling never
+ * reaches the worker's service, so nothing else would ever settle its row, and
+ * the queue keeps no failed job, so the re-queue is not ignored.
  *
  * Not counted: time the job spends WAITING behind other runs' analyses (the
  * consumer takes one at a time). That costs nothing: a POST past the window
  * while the job still waits re-marks the row pending and adds a job under the
  * same id, which BullMQ ignores while that job exists.
  */
-const PENDING_REQUEUE_AFTER_MS = 35 * 60_000;
 
 /** What a reader can do about each reason, for the POST's 409. */
 const UNAVAILABLE_REMEDIATION: Readonly<Record<AiUnavailableReason, string>> = {
@@ -49,7 +42,7 @@ const UNAVAILABLE_REMEDIATION: Readonly<Record<AiUnavailableReason, string>> = {
     'This deployment configures no AI provider. An operator sets AI_PROVIDER and its companion variables ' +
     '(DEPLOYMENT.md, "AI run analysis") and restarts the API and the worker.',
   org_disabled:
-    'An admin turns AI run analysis on for this organisation under Administration, or with ' +
+    'An admin turns AI run analysis on for this organisation under Administration › Settings, or with ' +
     'PUT /v1/admin/settings {"aiEnabled": true}.',
   not_terminal: 'Wait for the run to finish — GET /v1/runs/{id} reports its status — and ask again.',
   no_statistics: 'The run recorded no statistics, so there is nothing to analyse. Analyse a run that measured requests.',
@@ -122,7 +115,7 @@ export class RunAiAnalysisController {
    * record as having asked.
    *
    * 409 `AI_ANALYSIS_UNAVAILABLE` naming the reason when the run may not be
-   * analysed. A pending row younger than `PENDING_REQUEUE_AFTER_MS` answers
+   * analysed. A pending row younger than `AI_PENDING_REQUEUE_AFTER_MS` answers
    * 202 as it stands, and a ready one that is not stale 200: neither queues
    * again, so a double click costs nothing. Anything else — no row, a failed
    * attempt, a stale analysis, a pending row nothing is working on — is marked
@@ -132,7 +125,7 @@ export class RunAiAnalysisController {
    * a fast worker could store its answer and the mark land on top of it,
    * leaving the card reading "Analysing…" over a finished analysis. A queue
    * that refuses the add leaves the row pending and answers 500; the next
-   * POST after `PENDING_REQUEUE_AFTER_MS` re-queues it.
+   * POST after `AI_PENDING_REQUEUE_AFTER_MS` re-queues it.
    *
    * `@Res()` because the status depends on the row, 200 or 202.
    */
@@ -156,7 +149,7 @@ export class RunAiAnalysisController {
     }
 
     const row = await this.analyses.find(id);
-    if (row?.status === 'pending' && Date.now() - row.requestedAt.getTime() < PENDING_REQUEUE_AFTER_MS) {
+    if (row?.status === 'pending' && Date.now() - row.requestedAt.getTime() < AI_PENDING_REQUEUE_AFTER_MS) {
       res.status(202).json(toResponse(row, run));
       return;
     }
@@ -212,6 +205,7 @@ function toResponse(row: AiAnalysisRecord | null, run: AiEligibility): AiAnalysi
       generatedAt: null,
       model: null,
       stale: false,
+      requestedAt: null,
     });
   }
   return AiAnalysisResponseSchema.parse({
@@ -223,5 +217,6 @@ function toResponse(row: AiAnalysisRecord | null, run: AiEligibility): AiAnalysi
     generatedAt: row.generatedAt?.toISOString() ?? null,
     model: row.model,
     stale: isStale(row, run),
+    requestedAt: row.requestedAt.toISOString(),
   });
 }

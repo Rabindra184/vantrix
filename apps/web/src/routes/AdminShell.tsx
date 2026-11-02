@@ -3,11 +3,16 @@ import { Link } from 'react-router-dom';
 import { ProblemError } from '../api/fetch';
 import useDocumentTitle from '../useDocumentTitle';
 import { RecomputeProgress } from './RecomputeProgress';
-import { ADMIN_DATA_INTEGRITY_ROUTE, ADMIN_PROJECTS_ROUTE, ADMIN_USERS_ROUTE } from './paths';
+import {
+  ADMIN_DATA_INTEGRITY_ROUTE,
+  ADMIN_PROJECTS_ROUTE,
+  ADMIN_SETTINGS_ROUTE,
+  ADMIN_USERS_ROUTE,
+} from './paths';
 
 /**
  * The chrome every Administration page shares: one `<h1>`, and a tab strip
- * across Users, Projects and Data integrity — `ProjectShell`'s shape, one
+ * across Users, Projects, Data integrity and Settings — `ProjectShell`'s shape, one
  * level up.
  *
  * As there, the `<h1>` names the area and the section is not a heading: the
@@ -17,12 +22,13 @@ import { ADMIN_DATA_INTEGRITY_ROUTE, ADMIN_PROJECTS_ROUTE, ADMIN_USERS_ROUTE } f
  * There is no `/admin` page (ruling W9). The account menu links to Users, and
  * the tabs link each other.
  */
-export type AdminSection = 'users' | 'projects' | 'data-integrity';
+export type AdminSection = 'users' | 'projects' | 'data-integrity' | 'settings';
 
 const SECTIONS: readonly { section: AdminSection; label: string; path: string }[] = [
   { section: 'users', label: 'Users', path: ADMIN_USERS_ROUTE },
   { section: 'projects', label: 'Projects', path: ADMIN_PROJECTS_ROUTE },
   { section: 'data-integrity', label: 'Data integrity', path: ADMIN_DATA_INTEGRITY_ROUTE },
+  { section: 'settings', label: 'Settings', path: ADMIN_SETTINGS_ROUTE },
 ];
 
 /**

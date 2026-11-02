@@ -11,6 +11,7 @@ import StatTile from '../components/StatTile';
 import ErrorsTable, { ERRORS_TABLE_COLUMNS } from '../tables/ErrorsTable';
 import { formatCount, formatMs } from '../tables/StatisticsTable';
 import useIsCompact from '../useIsCompact';
+import AiAnalysisCard from './AiAnalysisCard';
 import { PlatformGatesBar, SimulationAssertionsBar } from './AssertionBars';
 import { rulesRan } from './decision';
 import { failingRequestNames } from './errorRequestFilter';
@@ -60,7 +61,8 @@ export default function RunSummary() {
   const { detail: run, terminal } = useRunTerminal(runId);
   const live = useLiveFromShell();
   // The run's project access, asked once by `RunShell` and shared through its
-  // outlet context (Ruling P13): this page only reads `rules:edit` from it.
+  // outlet context (Ruling P13): this page reads `rules:edit` and
+  // `run:analyze` from it.
   const projectAccess = useProjectAccessFromShell();
   const domainMs = useWholeRunDomainFromShell();
   const warmupMs = useWarmupFromShell() ?? undefined;
@@ -184,6 +186,12 @@ export default function RunSummary() {
           request, a group or neither is a question only `/stats` can answer.
           Until it resolves there is no link, only the name. */}
       <SimulationAssertionsBar runId={runId} assertions={body.toolAssertions} stats={stats.data?.stats ?? null} />
+      {/* The AI run analysis: a reading of the numbers and verdicts above, so
+          it follows them, and text, so it is drawn on a phone too — outside
+          the `!compact` gate the charts sit behind (Ruling 2). Finished runs
+          only: this branch is past the `processing` return, and the card asks
+          for nothing until it mounts. */}
+      <AiAnalysisCard runId={runId} canAnalyze={projectAccess.can('run:analyze')} />
       {!compact && (
         <OverTimeSection>
           <Payload query={series} slots={[REQUESTS_AND_RESPONSES, PERCENTILES]}>

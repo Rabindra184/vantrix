@@ -499,9 +499,10 @@ until both have:
 
 1. **An operator configures a provider** in the environment (below) and
    restarts the API and the worker.
-2. **An admin turns it on for the organisation** under **Administration**
-   (`PUT /v1/admin/settings` with `{"aiEnabled": true}`). It is off by
-   default. Turning it off again stops new analyses and hides stored ones.
+2. **An admin turns it on for the organisation** under **Administration ›
+   Settings** (`PUT /v1/admin/settings` with `{"aiEnabled": true}`). It is
+   off by default. Turning it off again stops new analyses and hides stored
+   ones.
 
 | Variable | Notes |
 |---|---|
@@ -514,8 +515,10 @@ until both have:
 A provider named without what it needs (no key, no base URL, no model for
 `openai-compatible`), or a provider this product does not know, stops the API
 and the worker at startup with a message naming the variable, rather than
-offering an analysis that fails on the first click. Administration shows which
-provider and model are configured; the key is never shown or returned.
+offering an analysis that fails on the first click. Administration › Settings
+shows which provider and model are configured — and, for `openai-compatible`,
+the endpoint's host alone, never its credentials, path or query; the key is
+never shown or returned.
 
 **What is sent to the provider**, for each analysis a member asks for: the
 run's aggregates and labels — its totals, the per-request and per-group
@@ -542,15 +545,14 @@ re-ingested since, or whose analysis failed, is analysed again. There is no
 quota; the provider bills the key's account.
 
 Analyses are made by the worker, one at a time, and **the worker waits for the
-one in progress when it is stopped**. Each call is cut off at 300 seconds, so
-give the worker a stop grace period of at least six minutes — one call and a
-margin; `infra/docker-compose.yml` sets `stop_grace_period: 6m`. An
-orchestrator that kills it sooner (Docker's own default is 10 seconds) leaves
-the job stalled; it then runs again from the start, and the provider is paid
-twice. An analysis whose first answer failed the check makes a second call,
-and a stop that lands during that one can outlast six minutes; raise the
-grace period to eleven minutes if a repeated call on a restart is not
-acceptable. An idle worker still stops in well under a second.
+one in progress when it is stopped**. Each call is cut off at 300 seconds,
+and one analysis can make two — the second only when the first answer failed
+its check — so give the worker a stop grace period of at least eleven minutes:
+both calls and a margin; `infra/docker-compose.yml` sets
+`stop_grace_period: 11m`. An orchestrator that kills it sooner (Docker's own
+default is 10 seconds) leaves the job stalled; it then runs again from the
+start, and the provider is paid again for every call it had already made. An
+idle worker still stops in well under a second.
 
 An analysis the worker could not produce is recorded with its reason
 (`provider_error` when the provider could not be reached after three tries

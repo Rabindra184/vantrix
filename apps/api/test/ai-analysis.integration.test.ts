@@ -162,6 +162,7 @@ describe('GET /v1/runs/{id}/ai-analysis — why a run cannot be analysed', () =>
       generatedAt: null,
       model: null,
       stale: false,
+      requestedAt: null,
     });
   });
 
@@ -233,6 +234,28 @@ describe('GET /v1/runs/{id}/ai-analysis — why a run cannot be analysed', () =>
   });
 });
 
+describe('the OpenAPI document', () => {
+  /**
+   * The document is derived from the contract, so this proves the field reached
+   * it: a generated client reading `requestedAt` must find it declared and
+   * nullable. Optional in the contract (an older API omits it), and always
+   * sent by this server — the response cases below pin that.
+   */
+  it('declares requestedAt on the available response, nullable', async () => {
+    ctx = await createTestApp();
+    const res = await request(ctx.app.getHttpServer()).get('/v1/openapi.json').expect(200);
+    const schema = res.body.components.schemas.AiAnalysisResponse as {
+      anyOf?: Array<{ properties: Record<string, unknown>; required?: string[] }>;
+      oneOf?: Array<{ properties: Record<string, unknown>; required?: string[] }>;
+    };
+    const branches = schema.oneOf ?? schema.anyOf ?? [];
+    const available = branches.find((b) => 'state' in b.properties);
+    expect(available, JSON.stringify(schema).slice(0, 400)).toBeDefined();
+    expect(available!.properties).toHaveProperty('requestedAt');
+    expect(JSON.stringify(available!.properties.requestedAt)).toContain('null');
+  });
+});
+
 describe('POST /v1/runs/{id}/ai-analysis', () => {
   it('POST queues once and answers the pending row twice', async () => {
     ctx = await configuredApp();
@@ -253,6 +276,9 @@ describe('POST /v1/runs/{id}/ai-analysis', () => {
     );
     expect(rows[0]?.requested_by).toBe(userId);
     const stamped = await requestedAt(runId);
+    // The response carries the row's own request time, which is what lets the
+    // card tell a pending row nothing is working on from one a job may be.
+    expect(first.body.requestedAt).toBe(stamped!.toISOString());
 
     const second = await post(runId, cookie);
     expect(second.status).toBe(202);
@@ -296,6 +322,7 @@ describe('POST /v1/runs/{id}/ai-analysis', () => {
     expect(res.status).toBe(202);
     expect(res.body.state).toBe('pending');
     expect((await requestedAt(runId))!.getTime()).toBeGreaterThan(old!.getTime());
+    expect(res.body.requestedAt).toBe((await requestedAt(runId))!.toISOString());
     expect((await aiQueue().getJob(runId))?.data).toEqual({ runId });
   });
 
@@ -385,6 +412,7 @@ describe('/v1/admin/settings', () => {
       aiProviderConfigured: true,
       aiProvider: 'anthropic',
       aiModel: 'claude-opus-5-5',
+      aiBaseUrlHost: null,
     });
     // The deployment's key never leaves it.
     expect(JSON.stringify(before.body)).not.toContain(KEY);
@@ -412,6 +440,34 @@ describe('/v1/admin/settings', () => {
     ctx = await createTestApp();
     const admin = await signInAsAdmin(ctx, email('admin'));
     const res = await request(ctx.app.getHttpServer()).get('/v1/admin/settings').set('Cookie', admin.cookie).expect(200);
-    expect(res.body).toEqual({ aiEnabled: false, aiProviderConfigured: false, aiProvider: null, aiModel: null });
+    expect(res.body).toEqual({
+      aiEnabled: false,
+      aiProviderConfigured: false,
+      aiProvider: null,
+      aiModel: null,
+      aiBaseUrlHost: null,
+    });
+  });
+
+  it('names an openai-compatible endpoint by its host alone, never its userinfo, path or query', async () => {
+    const openai: AiConfig = {
+      provider: 'openai-compatible',
+      model: 'llama-3.3-70b',
+      baseUrl: 'https://svc-user:svc-secret@llm.internal.example:8443/openai/v1?tenant=acme',
+      apiKey: KEY,
+    };
+    ctx = await createTestApp({}, [], [{ provide: CONFIG, useValue: { ...loadConfig(), ai: openai } }]);
+    const admin = await signInAsAdmin(ctx, email('admin'));
+    const res = await request(ctx.app.getHttpServer()).get('/v1/admin/settings').set('Cookie', admin.cookie).expect(200);
+    expect(OrgSettingsSchema.parse(res.body)).toEqual({
+      aiEnabled: false,
+      aiProviderConfigured: true,
+      aiProvider: 'openai-compatible',
+      aiModel: 'llama-3.3-70b',
+      aiBaseUrlHost: 'llm.internal.example:8443',
+    });
+    // The host alone: nothing else of the base URL reaches an admin's page.
+    const body = JSON.stringify(res.body);
+    for (const part of ['svc-user', 'svc-secret', '/openai/v1', 'tenant=acme', KEY]) expect(body).not.toContain(part);
   });
 });

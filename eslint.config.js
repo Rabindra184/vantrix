@@ -1,10 +1,25 @@
 import tseslint from 'typescript-eslint';
 
-const FORBIDDEN_IN_PURE = [
+const FORBIDDEN_IN_PURE_IO = [
   { group: ['node:fs', 'node:fs/*'],   message: 'Pure packages must not touch the filesystem (PRD 15.1).' },
   { group: ['node:http', 'node:https', 'node:net'], message: 'Pure packages must not do I/O (PRD 15.1).' },
   { group: ['pg', 'prisma', '@prisma/*'], message: 'Pure packages must not reach the database (PRD 15.1).' },
   { group: ['@nestjs/*'], message: 'Pure packages must not depend on the web framework (PRD 15.1).' },
+];
+
+// The database layer by name, a type-only import included: a type from there
+// is the database's shape, and a pure package declares the fields it reads
+// rather than borrowing persistence's (packages/insight/src/facts.ts). Its
+// TESTS may import it — insight's do, to prove its inputs accept what
+// persistence really reads — so this binds src alone. Kept out of
+// FORBIDDEN_IN_PURE_IO so the verifier, whose own pattern below refuses the
+// same import with its own reason, is told once and not twice.
+const FORBIDDEN_IN_PURE = [
+  ...FORBIDDEN_IN_PURE_IO,
+  {
+    group: ['@perfportal/persistence', '@perfportal/persistence/*'],
+    message: 'Pure packages must not depend on the database layer, even for a type (PRD 15.1).',
+  },
 ];
 
 const VERIFIER_INDEPENDENCE = 'The verifier must not share code with the engine it checks.';
@@ -251,7 +266,7 @@ export default tseslint.config(
    * compares. If it reached for the engine's own rank function, rollup or
    * sketch, a defect there would be in both answers and the comparison would
    * agree with it — the verifier would pass exactly the bug it exists to
-   * catch. So its source is pure (FORBIDDEN_IN_PURE) AND may not import
+   * catch. So its source is pure (FORBIDDEN_IN_PURE_IO) AND may not import
    * @perfportal/statistics, by name or by a relative path into its tree; it
    * may not read the database layer either, because the worker hands it the
    * stored figures. Its tests are held to the same independence (they may use
@@ -266,7 +281,7 @@ export default tseslint.config(
   {
     files: ['packages/verify/src/**/*.ts'],
     rules: {
-      'no-restricted-imports': ['error', { patterns: [...FORBIDDEN_IN_PURE, ...FORBIDDEN_IN_VERIFIER] }],
+      'no-restricted-imports': ['error', { patterns: [...FORBIDDEN_IN_PURE_IO, ...FORBIDDEN_IN_VERIFIER] }],
     },
   },
   {

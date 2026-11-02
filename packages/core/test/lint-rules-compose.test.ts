@@ -241,3 +241,46 @@ describe('the verifier may not import the engine it checks', () => {
     expect(messages).toEqual([]);
   });
 });
+
+/**
+ * A PURE PACKAGE MAY NOT IMPORT THE DATABASE LAYER, NOT EVEN FOR A TYPE.
+ * `packages/insight` builds the facts an AI analysis is checked against; it
+ * declares the fields it reads, and the worker hands it persistence's rows.
+ * A `import type` from `@perfportal/persistence` would compile, erase, and
+ * pass every suite — and make the pure package's shape the database's. The
+ * ban is a pattern in FORBIDDEN_IN_PURE, so it is linted for real here, at
+ * real paths, value and type, and its tests' legitimate import is left alone.
+ */
+describe('a pure package may not import the database layer', () => {
+  const DATABASE_LAYER = /Pure packages must not depend on the database layer/;
+
+  async function restricted(source: string, filePath: string): Promise<string[]> {
+    const [result] = await eslint.lintText(source, { filePath, warnIgnored: true });
+    return (result?.messages ?? []).filter((m) => m.ruleId === 'no-restricted-imports').map((m) => m.message);
+  }
+
+  it.each([
+    ["import type { StoredFigures } from '@perfportal/persistence';\nexport type Y = StoredFigures;", 'packages/insight/src/lint-probe.ts'],
+    ["import { AiAnalysisRepository } from '@perfportal/persistence';\nexport const y = AiAnalysisRepository;", 'packages/insight/src/lint-probe.ts'],
+    ["import type { X } from '@perfportal/persistence/src/x.js';\nexport type Y = X;", 'packages/insight/src/lint-probe.ts'],
+    ["import type { StoredFigures } from '@perfportal/persistence';\nexport type Y = StoredFigures;", 'packages/statistics/src/lint-probe.ts'],
+  ])('refuses %s in %s', async (source, path) => {
+    const messages = await restricted(`${source}\n`, path);
+    expect(messages, JSON.stringify(messages)).toHaveLength(1);
+    expect(messages[0]).toMatch(DATABASE_LAYER);
+  });
+
+  it('leaves the import alone in the package’s tests', async () => {
+    const messages = await restricted(
+      "import type { StoredFigures } from '@perfportal/persistence';\nexport type Y = StoredFigures;\n",
+      'packages/insight/test/lint-probe.test.ts',
+    );
+    expect(messages).toEqual([]);
+  });
+
+  it('tells the verifier once, in its own words', async () => {
+    const messages = await restricted("import { x } from '@perfportal/persistence';\nexport const y = x;\n", 'packages/verify/src/lint-probe.ts');
+    expect(messages, JSON.stringify(messages)).toHaveLength(1);
+    expect(messages[0]).not.toMatch(DATABASE_LAYER);
+  });
+});

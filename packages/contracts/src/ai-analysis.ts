@@ -98,6 +98,23 @@ export const AiAnalysisStateSchema = z.enum(['none', 'pending', 'ready', 'failed
 export type AiAnalysisState = z.infer<typeof AiAnalysisStateSchema>;
 
 /**
+ * How long a pending analysis is trusted to have a job behind it. Past this a
+ * POST queues it again, and the card offers to (it reads `requestedAt`). One
+ * number for both, so the page never offers a retry the API would answer with
+ * the same pending row.
+ *
+ * Thirty-five minutes is the longest a job can run, with room. One attempt
+ * makes at most two provider calls (a second only when the first answer
+ * fails the number check) of at most 300 s each (`TIMEOUT_MS`, worker
+ * providers.ts): 600 s. A call cut off at its timeout is recorded at once and
+ * never retried, but a transient failure (a 5xx, a 429) can still arrive at
+ * the end of a long call, so all three attempts (`AI_ANALYSIS_JOB_OPTIONS`)
+ * can each take the full 600 s: 1,800 s, plus the backoff between them,
+ * 10 s and then 20 s — 1,830 s, about 30.5 minutes.
+ */
+export const AI_PENDING_REQUEUE_AFTER_MS = 35 * 60_000;
+
+/**
  * `GET /v1/runs/{id}/ai-analysis`.
  *
  * Unavailable carries the reason alone, because nothing else can be true of
@@ -123,6 +140,20 @@ const AiAnalysisAvailableSchema = z
     generatedAt: z.string().datetime().nullable(),
     model: z.string().nullable(),
     stale: z.boolean(),
+    /**
+     * When the analysis was last asked for — the row's `requested_at`, null
+     * with no row. A pending row older than `AI_PENDING_REQUEUE_AFTER_MS` has
+     * nothing working on it any more, and this is how the card can tell that
+     * apart from one a job is still writing, and offer to ask again.
+     *
+     * `.optional()` as well as `.nullable()`, for the rolling-deploy reason
+     * `live-delta.ts` and `RunIdentity` carry: the GET shipped before this
+     * field did, the browser drops a body that fails the schema, and a page
+     * reading an older pod would lose its card — and read a POST that pod had
+     * accepted as a failure. Absent means "not reported", which the card
+     * treats as an unknown age: it keeps polling and offers no retry.
+     */
+    requestedAt: z.string().datetime().nullable().optional(),
   })
   .superRefine((body, ctx) => {
     if ((body.state === 'ready') !== (body.content !== null)) {

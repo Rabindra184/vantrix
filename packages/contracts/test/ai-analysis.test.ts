@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  AI_PENDING_REQUEUE_AFTER_MS,
   AI_UNAVAILABLE_REASONS,
   AiAnalysisContentSchema,
   AiAnalysisResponseSchema,
@@ -106,6 +107,7 @@ const READY = {
   generatedAt: '2026-11-02T10:00:00.000Z',
   model: 'claude-opus-5-5',
   stale: false,
+  requestedAt: '2026-11-02T09:59:00.000Z',
 };
 
 describe('AiAnalysisResponseSchema', () => {
@@ -136,6 +138,24 @@ describe('AiAnalysisResponseSchema', () => {
         failureReason: 'The provider timed out.',
       }).success,
     ).toBe(true);
+  });
+
+  /**
+   * The card tells an abandoned pending row from a live one by when it was
+   * asked for. The field arrived after the GET shipped, so a body from an
+   * older API — no `requestedAt` at all — must still parse, or a page reading
+   * an older pod mid-deploy loses its card.
+   */
+  it('carries when the analysis was asked for, and parses a body from an API that predates it', () => {
+    expect(AiAnalysisResponseSchema.safeParse({ ...READY, requestedAt: null }).success).toBe(true);
+    const older: Record<string, unknown> = { ...READY };
+    delete older.requestedAt;
+    expect(AiAnalysisResponseSchema.safeParse(older).success).toBe(true);
+    expect(AiAnalysisResponseSchema.safeParse({ ...READY, requestedAt: 'yesterday' }).success).toBe(false);
+  });
+
+  it('trusts a pending row for thirty-five minutes', () => {
+    expect(AI_PENDING_REQUEUE_AFTER_MS).toBe(35 * 60_000);
   });
 
   it('names the four states and nothing else', () => {
