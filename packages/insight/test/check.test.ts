@@ -138,7 +138,8 @@ describe('checkNumbers', () => {
   it('refuses an invented sum', () => {
     const sum = buildRunFacts(input());
     expect(sum.facts.some((f) => f.value === 342)).toBe(false);
-    expect(check('Place Order’s 172 failures plus 170 401s make 342 failures.', sum)).toEqual(['401', '342']);
+    // "401s" has a duration's shape and is reported whole; a status code is no fact's value either way.
+    expect(check('Place Order’s 172 failures plus 170 401s make 342 failures.', sum)).toEqual(['401s', '342']);
     expect(
       check(
         '342 failures',
@@ -182,6 +183,44 @@ describe('checkNumbers', () => {
     expect(check('Of 4242, none.')).toEqual(['4242']);
   });
 
+  it('checks every string the analysis carries, whatever its shape', () => {
+    // A field added to the content later is checked without anybody listing it.
+    const later = { ...content(), appendix: { notes: ['n 912', ['deeper 913']] } } as unknown as AiAnalysisContent;
+    expect(checkNumbers(later, FACTS)).toEqual(['912', '913']);
+  });
+
+  it('refuses a leading-zero number even when its value is a fact', () => {
+    // 1 is a fact on this run (one request always failed); 01 is not how any fact writes it.
+    expect(FACTS.facts.some((f) => f.value === 1)).toBe(true);
+    expect(check('Group 01 failed.')).toEqual(['01']);
+    expect(check('Group 007 failed.')).toEqual(['007']);
+    // A zero before the decimal point is not a leading zero.
+    expect(check('An error rate of 0.5%.', facts({ id: 'x', label: 'x', display: '0.5%', value: 0.5, text: null }))).toEqual([]);
+  });
+
+  describe('a clock or a duration is one number, and only a fact’s words can pass it', () => {
+    // On this run 0, 1 and 28 are all facts, so a check reading these shapes part by part
+    // passes an invented clock or duration whose parts coincide with them.
+    it('the fixture really has the coincidences', () => {
+      for (const v of [0, 1, 28]) expect(FACTS.facts.some((f) => f.value === v)).toBe(true);
+    });
+
+    it('refuses an invented elapsed clock', () => {
+      expect(check('OK fell to zero at 00:01:00.')).toEqual(['00:01:00']);
+      expect(check('Errors began at 0:28.')).toEqual(['0:28']);
+    });
+
+    it('refuses an invented duration', () => {
+      expect(check('The run lasted 1m 28s.')).toEqual(['1m 28s']);
+      expect(check('It recovered within 28s.')).toEqual(['28s']);
+    });
+
+    it('still passes the run’s own duration, and a unit glued to a number is not a duration', () => {
+      expect(check('Over 91s the run made 1,724 requests.')).toEqual([]);
+      expect(check('A p95 of 321ms.')).toEqual([]);
+    });
+  });
+
   describe('a fact’s display is a span too', () => {
     it('passes a duration written the way the facts write it', () => {
       const long = buildRunFacts(input({ run: { simulation: null, status: 'complete', durationMs: 3_723_000, activityMs: null } }));
@@ -190,7 +229,7 @@ describe('checkNumbers', () => {
       // Alone, so no other fact's value can pass these digits by coincidence.
       expect(check('The run lasted 1h 2m 3s.', facts(duration!))).toEqual([]);
       // Its parts, rearranged, are not its display.
-      expect(check('The run lasted 2h 3m 1s.', facts(duration!))).toEqual(['2', '3', '1']);
+      expect(check('The run lasted 2h 3m 1s.', facts(duration!))).toEqual(['2h 3m 1s']);
     });
 
     it('passes an elapsed clock written the way the facts write it', () => {
@@ -202,7 +241,7 @@ describe('checkNumbers', () => {
         text: 'only in the final drain',
       });
       expect(check('OK fell to zero at 00:01:28, only in the final drain.', zero)).toEqual([]);
-      expect(check('OK fell to zero at 00:01:29.', zero)).toEqual(['00', '01', '29']);
+      expect(check('OK fell to zero at 00:01:29.', zero)).toEqual(['00:01:29']);
     });
 
     it('passes a platform assertion’s actual, which has no value', () => {

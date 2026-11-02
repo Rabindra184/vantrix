@@ -11,14 +11,16 @@ import type { Fact, RunFacts } from './facts.js';
  * not. The model is told to cite facts and never to do arithmetic, and this is
  * what holds it to that.
  *
- * A token is a run of digits with `,` grouping and an optional decimal part.
- * It passes when ANY of these holds:
+ * A token is a run of digits with `,` grouping and an optional decimal part,
+ * or one of the two compound shapes below. It passes when ANY of these holds:
  *
  * (a) AS A VALUE — with `,` removed, it equals some fact's `value` exactly, or
  *     that value rounded to 0, 1 or 2 decimals. So `1,724` and `1724` both
  *     match 1724, and `16.76`, `16.8` and `17` all match 16.7633…%. Rounding
  *     is the only transformation allowed: `2.38` is not a rounding of 2383,
- *     it is a unit conversion, and conversions are where GE went wrong.
+ *     it is a unit conversion, and conversions are where GE went wrong. A
+ *     leading zero (`01`, `007`) is no way any fact writes a number, so such
+ *     a token never passes as a value.
  * (b) INSIDE A FACT'S WORDS — it lies wholly inside a span of the string that
  *     equals, verbatim, some fact's `display`, `text` or `label`. That passes
  *     the digits in a request name (`Get Product 2`), an error message
@@ -35,12 +37,42 @@ import type { Fact, RunFacts } from './facts.js';
  * Nobody writes the middle dot, so each ` · `-separated part of a display is a
  * span too — "failed at 812 ms" passes, "failed at 812" does not.
  *
+ * ═══ A CLOCK OR A DURATION IS ONE NUMBER ═══
+ *
+ * An elapsed clock (`00:01:28`, any `\d+:\d+…`) and a duration in the shape
+ * `formatDuration` writes (`91s`, `1m 28s`, `1h 2m 3s`) are each ONE token,
+ * and only rule (b) can pass one. Read part by part they would pass by
+ * coincidence: on GE's run 0, 1 and 28 are all facts, so an invented
+ * `00:01:00` or `1m 28s` read as 0, 1 and 28 would sail through. A unit glued
+ * to a plain number is not a duration — `321ms` is `321` and then `ms` — and
+ * a decimal one (`2.38s`) is a shape `formatDuration` never writes, so it
+ * stays a plain number for rule (a) to refuse. A plural status code
+ * (`401s`) has a duration's shape too and is read as one; that costs nothing,
+ * because a status code is never a fact's value — it passes only inside the
+ * error message that carries it, exactly as before.
+ *
  * A trailing `,` is the sentence's, not the number's ("Of 1,724, 289 failed"),
  * and is dropped before any rule reads the token.
  */
 
+/** An elapsed clock: `00:01:28`, or any run of digit groups joined by `:`. */
+const CLOCK = String.raw`\d+(?::\d+)+`;
+
+/** One part of a duration, `28s`: whole units only, and not the start of a word (`ms`, `hours`). */
+const DURATION_PART = String.raw`\d+[hms](?![A-Za-z])`;
+
+/** A duration as `formatDuration` writes it: `91s`, `1m 28s`, `1h 2m 3s`. */
+const DURATION = String.raw`${DURATION_PART}(?: ${DURATION_PART})*`;
+
 /** One number the way the facts can write it: grouped, with an optional decimal part. */
-const TOKEN = /\d[\d,]*(?:\.\d+)?/g;
+const NUMBER = String.raw`\d[\d,]*(?:\.\d+)?`;
+
+/**
+ * Every token, compound shapes first so neither is read as its parts. Nothing
+ * else is needed to keep a compound token from passing as a value: `Number`
+ * reads `00:01:00` and `1m 28s` as NaN, which no fact's value equals.
+ */
+const TOKEN = new RegExp(`${CLOCK}|${DURATION}|${NUMBER}`, 'g');
 
 /** How many decimals a fact's value may be rounded to and still be that fact. */
 const ROUNDINGS = [0, 1, 2] as const;
@@ -48,20 +80,16 @@ const ROUNDINGS = [0, 1, 2] as const;
 /** What separates an assertion display's outcome from its actual (`facts.ts`). */
 const DISPLAY_PART = ' · ';
 
-/** Every string the model wrote, in the order the page shows them. */
-function strings(content: AiAnalysisContent): string[] {
-  const { health, insights, recommendations } = content;
-  return [
-    health.headline,
-    ...health.bullets,
-    insights.headline,
-    ...insights.errors,
-    ...insights.assertions,
-    ...insights.injectionProfile,
-    ...insights.responseTimes,
-    recommendations.headline,
-    ...recommendations.bullets,
-  ];
+/**
+ * Every string the model wrote, in the order the content holds them. Collected
+ * by walking the value rather than by naming its fields, so a field the
+ * content gains later is checked without anybody remembering to list it.
+ */
+function strings(value: unknown, out: string[] = []): string[] {
+  if (typeof value === 'string') out.push(value);
+  else if (Array.isArray(value)) for (const v of value) strings(v, out);
+  else if (value !== null && typeof value === 'object') for (const v of Object.values(value)) strings(v, out);
+  return out;
 }
 
 /** Every number a fact's value may be written as: itself, and rounded to 0, 1 or 2 decimals. */
@@ -134,8 +162,9 @@ export function checkNumbers(content: AiAnalysisContent, facts: RunFacts): strin
       const start = m.index;
       const end = start + token.length;
 
-      if (values.has(Number(token.replaceAll(',', '')))) continue;
       if (ranges.some(([s, e]) => s <= start && end <= e)) continue;
+      const bare = token.replaceAll(',', '');
+      if (!/^0\d/.test(bare) && values.has(Number(bare))) continue;
       if (isRankPrefixed(line, start) && ranks.has(token)) continue;
       refused.add(token);
     }
