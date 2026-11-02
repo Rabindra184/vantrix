@@ -346,11 +346,22 @@ function largestBy(requests: FactsFigureStat[], key: string): { row: FactsFigure
  * when the only requests left were each user's last step, Place Order, which
  * failed every time. So the fact says which it was:
  *
- * "Final drain" means every zero-OK bucket STARTS AFTER the last users bucket
- * in which a user started — nothing new was arriving, only stragglers
- * finishing. One zero-OK bucket before that is "during the run". A run with no
- * users series cannot be shown to be draining, so it is "during the run": the
- * fact never claims the reassuring reading on missing evidence.
+ * "Final drain" means every zero-OK bucket starts at or after the END of the
+ * last users bucket in which a user started — nothing new was arriving, only
+ * stragglers finishing. One zero-OK bucket before that is "during the run".
+ *
+ * ═══ THE END OF THAT BUCKET, NOT ITS START ═══
+ *
+ * Users and response-time buckets coalesce on independent caps ("two series,
+ * two widths"), so on a long run a users bucket can be wider than a series
+ * bucket. Users 2 s wide whose last arrivals bucket starts at 84 s cover
+ * arrivals up to 86 s, and a zero-OK series bucket at 85 s starts after 84 s
+ * while users are still arriving. A users bucket's end is the next users
+ * bucket's start; when no bucket follows it, where arrivals ended is unknown.
+ *
+ * Every missing piece of evidence reads "during the run" — no users series, or
+ * no bucket after the last arrivals: the fact never claims the reassuring
+ * reading on missing evidence.
  *
  * A bucket with no responses at all is not OK falling to zero — nothing was
  * answered, so nothing failed. Run scope only.
@@ -362,9 +373,14 @@ function okZeroFact(figures: FactsFigures): Fact | null {
   const first = zeros[0];
   if (first === undefined) return null;
 
-  const starting = sumUsersByOffset(figures.userBuckets).filter((u) => u.started > 0);
-  const lastStart = starting.length > 0 ? Math.max(...starting.map((u) => u.startOffsetMs)) : null;
-  const drain = lastStart !== null && zeros.every((b) => b.startOffsetMs > lastStart);
+  // Ascending by offset, so the bucket after the last arrivals is its end.
+  const users = sumUsersByOffset(figures.userBuckets);
+  let lastArrivals = -1;
+  users.forEach((u, i) => {
+    if (u.started > 0) lastArrivals = i;
+  });
+  const arrivalsEnd = lastArrivals === -1 ? undefined : users[lastArrivals + 1]?.startOffsetMs;
+  const drain = arrivalsEnd !== undefined && zeros.every((b) => b.startOffsetMs >= arrivalsEnd);
   return {
     id: 'derived.okZero',
     label: 'OK responses fell to zero',

@@ -203,6 +203,36 @@ describe('buildRunFacts', () => {
     expect(fact(facts, 'derived.okZero')).toMatchObject({ text: 'during the run', display: '00:00:40', value: 40_000 });
   });
 
+  it('bounds the drain by the END of the last arrivals bucket, not its start', () => {
+    // Users and response-time buckets coalesce on independent caps, so on a
+    // long run a users bucket can be twice a series bucket's width. Users
+    // 2 s wide: the last one with arrivals starts at 84 s and covers arrivals
+    // up to 86 s. A zero-OK series bucket at 85 s STARTS after 84 s, and users
+    // were still arriving — that is the run, not its drain.
+    const wideUsers = [];
+    for (let t = 0; t <= 86_000; t += 2000) {
+      wideUsers.push({ scenario: 'Shop', startOffsetMs: t, started: t <= 84_000 ? 2 : 0, ended: 0, maxConcurrent: 15 });
+    }
+    const during = buildRunFacts(
+      input({ figures: figures({ userBuckets: wideUsers, seriesBuckets: [bucket(0, 19, 2), bucket(85_000, 0, 19)] }) }),
+    );
+    expect(fact(during, 'derived.okZero')).toMatchObject({ text: 'during the run', value: 85_000 });
+
+    // From the next users bucket's start on, nothing new was arriving.
+    const drain = buildRunFacts(
+      input({ figures: figures({ userBuckets: wideUsers, seriesBuckets: [bucket(0, 19, 2), bucket(86_000, 0, 19)] }) }),
+    );
+    expect(fact(drain, 'derived.okZero')).toMatchObject({ text: 'only in the final drain', value: 86_000 });
+  });
+
+  it('cannot call it the final drain when the last users bucket still had arrivals', () => {
+    // No bucket follows the last one that started anyone, so where arrivals
+    // ended is unknown — the conservative reading.
+    const series = [bucket(0, 19, 2), bucket(95_000, 0, 19)];
+    const facts = buildRunFacts(input({ figures: figures({ userBuckets: users(90_000, 90_000), seriesBuckets: series }) }));
+    expect(fact(facts, 'derived.okZero')).toMatchObject({ text: 'during the run', value: 95_000 });
+  });
+
   it('emits no okZero fact when OK never fell to zero', () => {
     // A bucket with no responses at all is not OK falling to zero: nothing
     // was answered, so nothing failed.
