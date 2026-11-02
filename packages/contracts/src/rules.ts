@@ -242,7 +242,7 @@ export type UpdateSlaRuleRequest = z.infer<typeof UpdateSlaRuleRequestSchema>;
  * validation and 500 the entire list rather than rendering as itself.
  */
 export const SlaRuleSchema = z.object({
-  id: z.string().uuid(),
+  id: z.guid(),
   name: z.string().nullable(),
   /**
    * The test this rule applies to, or null for a project-wide one.
@@ -257,7 +257,7 @@ export const SlaRuleSchema = z.object({
    * rules panel for a whole rolling deploy.
    */
   test: z
-    .object({ id: z.string().uuid(), slug: z.string(), name: z.string() })
+    .object({ id: z.guid(), slug: z.string(), name: z.string() })
     .nullable()
     .optional(),
   scope: z.string(),

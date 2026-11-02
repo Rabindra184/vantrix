@@ -204,7 +204,7 @@ export const VerificationSchema = z.object({
 export type Verification = z.infer<typeof VerificationSchema>;
 
 export const AssertionSchema = z.object({
-  ruleId: z.string().uuid(),
+  ruleId: z.guid(),
   outcome: AssertionOutcomeSchema,
   /** Null when the outcome is not_applicable — there was nothing to measure. */
   actualValue: z.number().nullable(),
@@ -278,7 +278,7 @@ export type ToolAssertion = z.infer<typeof ToolAssertionSchema>;
  * describe the same thing two ways.
  */
 export const ProjectRefSchema = z.object({
-  id: z.string().uuid(),
+  id: z.guid(),
   slug: z.string(),
   name: z.string(),
 });
@@ -299,7 +299,7 @@ export type ProjectRef = z.infer<typeof ProjectRefSchema>;
  * kind of work on a path a poller hits every five seconds.
  */
 export const TestRefSchema = z.object({
-  id: z.string().uuid(),
+  id: z.guid(),
   slug: z.string(),
   name: z.string(),
 });
@@ -324,7 +324,7 @@ export type TestRef = z.infer<typeof TestRefSchema>;
  * a running run's type from being able to express one.
  */
 export const RunIdentitySchema = z.object({
-  id: z.string().uuid(),
+  id: z.guid(),
   /**
    * The project this run belongs to. REQUIRED, not optional: run.project_id
    * is NOT NULL, so an optional field would model a state the database
@@ -466,7 +466,7 @@ export const RunIdentitySchema = z.object({
    *  runner did not produce — which is what decides whether the run page
    *  offers a Logs tab. OPTIONAL as well as nullable, for the rolling-deploy
    *  reason the stamps above give. */
-  runnerJobId: z.string().uuid().nullable().optional(),
+  runnerJobId: z.guid().nullable().optional(),
   /** Whether this run's statistics are exact ('exact-v1') or were estimated
    *  by the pre-2026-10-15 sketch engine ('estimated'). OPTIONAL for the
    *  rolling-deploy reason the stamps above give; a reader treats absent as
@@ -560,7 +560,7 @@ export type RunResponse = z.infer<typeof RunResponseSchema>;
  */
 export const RunProcessingSchema = RunIdentitySchema.partial().extend({
   // Re-required after `.partial()`: the API has always sent it, on every path.
-  id: z.string().uuid(),
+  id: z.guid(),
   status: z.enum(['pending', 'parsing', 'running']),
   statusUrl: z.string(),
 });

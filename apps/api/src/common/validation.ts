@@ -288,7 +288,7 @@ export function parseLimit(raw: string | undefined): number {
   return LimitSchema.parse(raw);
 }
 
-const CursorSchema = z.string().uuid();
+const CursorSchema = z.guid();
 
 /**
  * `cursor` feeds Prisma's `cursor: { id: ... }` keyset pagination directly.

@@ -128,9 +128,9 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **279 files / 4589 tests**, it
+`nvm use` first, and if a run reports fewer than **282 files / 4611 tests**, it
 did not run everything — nor did an integration run reporting fewer than
-**259 files / 4089 tests**, an e2e run fewer than **214**, or a
+**262 files / 4111 tests**, an e2e run fewer than **214**, or a
 `pnpm test:e2e:cross` run fewer than **642** (214 on each of three engines).
 (Update those numbers when a sub-project adds suites, or the next reader
 calibrates against a stale floor and a silently-skipped run looks like a
@@ -150,6 +150,129 @@ still Chromium and still 102; `pnpm test:e2e:cross` was 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The zod-4 branch (`chore/zod-4`) added TWO unit files —
+`packages/contracts/test/form-messages.test.ts` (8) and
+`packages/contracts/test/uuid-shape.test.ts` (2) — and 2 cases to
+`apps/api/test/openapi-dialect.test.ts`: unit **280 / 4599 to 282 / 4611**,
+integration **260 / 4099 to 262 / 4111** (all three are `.ts`); **e2e stays
+214**. It closes the repo's one `ignoreGhsas` exception (GHSA-mrhx-c7xc-m3w5,
+which covered every zod below 4.6.6, our own 3.25.76 among them): every
+package is on zod **4.6.7**, `zod-to-json-schema` is gone, the
+`auditConfig` block is deleted and `pnpm audit --prod` reads "No known
+vulnerabilities found" with nothing ignored. The `zod@4` override stays: it
+is what keeps a transitive copy patched and the tree on one zod.
+
+**THE RENAMED APIS WERE THE SMALL HALF; FIVE BEHAVIOUR CHANGES WERE
+MEASURED FIRST**, by parsing the same inputs with zod 3.25.76 and 4.6.7 side
+by side before a line moved (both copies were already in the store):
+
+```
+  z.string().uuid()        4 checks RFC 9562 version/variant nibbles: 11111111-1111-…  v3 ok, v4 refused
+  .default(obj) on object  4 returns the value WITHOUT parsing it: inner defaults never run
+  .default(x).optional()   4 applies the default to an absent key; 3 left it absent
+  default messages         every one reworded ("Too small: expected string to have >=2 characters")
+  z.number()               4 refuses Infinity and an .int() above 2^53
+```
+
+Unchanged and checked rather than assumed: an object's `.refine` still runs
+after a field has failed (the PASSWORD_UNCHANGED ordering `formIssues.ts` and
+`me.ts` argue), a custom issue's `params` survives, `.strict()` /
+`.passthrough()` / `.catch()` / `z.coerce` behave identically, and a
+one-argument `z.record` still PARSES (only its types demand two arguments, so
+all eleven were spelled out).
+
+**IDS ARE `z.guid()`, BECAUSE POSTGRES DECIDES WHAT A UUID IS HERE.** 44
+`z.string().uuid()` became `z.guid()`, which is exactly the 8-4-4-4-12 shape
+zod 3 checked and Postgres's `uuid` type accepts. The strict form would refuse
+ids the database holds. `uuid-shape.test.ts` scans contracts and the API for
+`.uuid(` (comments stripped) with a vacuity floor on the `z.guid()` it finds.
+
+**`LiveSlaSchema.default(...)` IS A `.prefault(...)` NOW, AND THE EXISTING
+GUARD IS WHAT PROVED IT HAD TO BE.** Under zod 4's `.default` a delta written
+before `sla` existed came back `{ evaluated: 0, breaching: [] }` with
+`notJudged` and `rulesUnavailable` ABSENT from a value typed as carrying
+both — the live banner's rolling-deploy guard, broken with every type green.
+`.prefault` runs the value through the schema, which is zod 3's `.default`.
+The one other object default, `settings.ts`' indicators, already spells
+every field (`{ lowerMs: 800, higherMs: 1200 }`), so it reads the same
+either way.
+
+**THE UPGRADE PUT ZOD'S OWN ENGLISH ON NEW PROJECT, AND ONE TEST SAW IT.**
+`NewProject` shows the first issue's message; the slug's `.min(2)` had none,
+so the form read "Too small: expected string to have >=2 characters". The
+project name and slug, a user's name and email, and a declared test slug's
+bounds carry their own sentences now — which also closes the project-access
+PR 2 minor "zod's English is reachable on Add user". `form-messages.test.ts`
+asks zod what it WOULD have said for each bare check and requires the
+contract to say something else, so it survives zod rewording again.
+
+**THREE GUARDS WERE GREEN AGAINST THE DEFECT THEY NAME.** `PasswordChangeForm`
+and `AdminUsers` asserted `not.toHaveTextContent(/String must contain/)` —
+zod 3's phrase, which zod 4 never writes, so a form showing the library's
+wording again would have passed all three. They ask `PasswordSchema` for its
+message now. **A negative assertion over a library's English is vacuous the
+day the library changes its English.**
+
+**THE OPENAPI DOCUMENT IS `z.toJSONSchema`, AND A ZOD SCHEMA HAS TWO JSON
+SCHEMAS.** A defaulted field is optional to a client and always present in
+what the server sends; a non-strict object accepts keys it strips but never
+emits one. `zod-to-json-schema` gave every component input's requiredness and
+output's closed objects, which was right for neither. The 19 components a
+`requestBody` names (`REQUEST_BODIES` in `schemas.ts`) convert with
+`io: 'input'`, everything else with `'output'`. Diffed against the document
+before, field by field: `paths` byte-identical; every change under
+`components.schemas` is added precision (147 safe-integer `maximum`s, 93
+uuid/date-time `pattern`s, 19 `propertyNames`), tuples moved to 2020-12's
+`prefixItems` (the old `items: [...]` is not valid in that dialect), and four
+non-strict request bodies lost `additionalProperties: false`, which they never
+enforced. `numericExclusiveBounds` is deleted: zod 4 writes `exclusiveMinimum`
+as a number, and the dialect test still refuses the boolean.
+
+**THE FIRST VERSION OF THE GUARD FOR THAT CHECKED THE SET, NOT ITS USE.** A
+case holding `REQUEST_BODIES` to the document's `requestBody` `$ref`s, both
+ways, passed with every component forced to `io: 'output'`. The second case
+pins what input mode buys — `CreateUserRequest.isAdmin` and the runner's
+`artifactKind` are not `required` — and fails that mutation.
+
+**RED-VERIFIED**, from a committed checkpoint, replacement counts asserted:
+
+```
+  .prefault back to .default            live-delta's before-sla case alone
+  the slug's min message dropped        the one-letter-slug case + NewProject's form case
+  one z.string().uuid() restored        the strict-uuid scan alone
+  a request body left out of the set    the set-equality case alone
+  io forced to 'output'                 the omit-a-defaulted-field case alone
+  formIssues shows issue.message        all three password-form cases (PasswordChangeForm, AdminUsers x2)
+```
+
+**WHAT WAS RUN**, Node v22.19.0, `perfportal_zod4` (created and migrated),
+Redis db 10 flushed before integration and e2e, bucket `perfportal-zod4`,
+every `.tsbuildinfo` deleted first: `pnpm audit --prod` exit 0, nothing
+ignored; `pnpm build`, `typecheck` and `lint` exit 0 by their own exit
+codes; `test:unit` **282 / 4611**, exit 0, zero `Errors` lines;
+`test:integration` and `test:e2e` were NOT run locally: the load gate (1-min
+< 8 and 5-min < 10) waited its full 40 minutes and never opened — Spotlight's
+`mds_stores` at 92% CPU after the install and build, swap 91% used, loads
+14 to 18. **CI's `build` job measured both on `d47e9cab`** (run 41361732121),
+read off its own log, each the per-file prediction exactly:
+
+```
+  pnpm audit --prod      No known vulnerabilities found
+  pnpm test:unit         Test Files 282 passed (282)   Tests 4610 passed | 1 skipped (4611)
+  pnpm test:integration  Test Files 262 passed (262)   Tests 4110 passed | 1 skipped (4111)
+  pnpm test:e2e          Running 214 tests using 2 workers -> 214 passed
+```
+
+The skip is `loopback.test.ts`' macOS-only case, on Linux. `e2e-cross-browser`
+was not dispatched: the web diff is four contract messages and the tests
+that read them.
+
+**KNOWN AND LEFT:** API 400 details built from a zod default message
+(`firstIssue`, `describeIssues`) now carry zod 4's wording — `code` and
+status are unchanged, and generated clients branch on those. The deprecated
+`.strict()`, `.passthrough()`, `z.string().datetime()` and `.email()`
+spellings still work in 4.6.7 and were left rather than churned.
 
 The transient-name-only-timeout branch (`fix/transient-name-only-timeout`)
 added no unit FILE and 3 cases to `apps/worker/test/retry.test.ts`: unit
@@ -1309,6 +1432,8 @@ session or a runner token). Neither approaches a crash.
 silences the advisory for every copy, so a future transitive zod 4 below
 4.6.6 would pass the gate silently; the override is what keeps those
 patched. Delete the exception in the branch that moves this repo to zod 4.
+**[Done by the zod-4 branch, the entry near the top: the exception is gone
+and the override stays.]**
 
 The GE report parity agent-and-runner branch (`feat/ge-report-parity`, PR 1
 of `docs/superpowers/specs/2026-10-22-ge-report-parity-design.md`, plan

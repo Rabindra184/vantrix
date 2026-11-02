@@ -302,7 +302,7 @@ export type LiveSla = z.infer<typeof LiveSlaSchema>;
  * would make that comparison meaningless, so both are rejected.
  */
 export const LiveDeltaSchema = z.object({
-  runId: z.string().uuid(),
+  runId: z.guid(),
   /**
    * A counter the consumer uses to detect dropped messages by comparing
    * consecutive values. Fractional or negative values are meaningless for this
@@ -332,7 +332,14 @@ export const LiveDeltaSchema = z.object({
    *
    * The default is the honest reading of a body that predates the field: no
    * rule was evaluated, so none is breaching and none was withheld.
+   *
+   * `.prefault`, NOT `.default`, AND THE DIFFERENCE IS THE TWO FIELDS ABOVE.
+   * zod 4's `.default` hands back its value WITHOUT parsing it, so a delta
+   * with no `sla` would come back as `{ evaluated: 0, breaching: [] }` alone —
+   * `notJudged` and `rulesUnavailable` absent from a value typed as carrying
+   * both. `.prefault` runs the value through `LiveSlaSchema`, which fills them
+   * in: zod 3's `.default` behaviour, which this field was written against.
    */
-  sla: LiveSlaSchema.default({ evaluated: 0, breaching: [] }),
+  sla: LiveSlaSchema.prefault({ evaluated: 0, breaching: [] }),
 });
 export type LiveDelta = z.infer<typeof LiveDeltaSchema>;

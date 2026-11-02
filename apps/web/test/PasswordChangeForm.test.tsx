@@ -5,6 +5,15 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import PasswordChangeForm from '../src/components/PasswordChangeForm';
 import { PASSWORD_LENGTH_MESSAGE } from '../src/formIssues';
+import { PasswordSchema } from '@perfportal/contracts';
+
+/**
+ * What zod itself would say about a short password — asked of the schema
+ * rather than written down, because zod 4 rewrote every default message (zod
+ * 3's was "String must contain at least 8 character(s)") and a pinned string
+ * would go on passing against a form that showed the library's wording again.
+ */
+const ZOD_SHORT_PASSWORD = PasswordSchema.safeParse('short12').error?.issues[0]?.message ?? '';
 
 afterEach(() => {
   cleanup();
@@ -102,14 +111,14 @@ describe('PasswordChangeForm — refused before it is sent', () => {
     expect(onDone).not.toHaveBeenCalled();
   });
 
-  /** One sentence from the contract's two bounds, never the schema's own
-   *  "String must contain at least 8 character(s)". */
+  /** One sentence from the contract's two bounds, never zod's own wording. */
   it('states the password bounds, not zod’s wording, for a short new password', async () => {
     renderForm();
     await fill({ current: 'old-password', fresh: 'short12', repeat: 'short12' });
 
     expect(fresh()).toHaveAccessibleDescription(PASSWORD_LENGTH_MESSAGE);
-    expect(document.body).not.toHaveTextContent(/String must contain/);
+    expect(ZOD_SHORT_PASSWORD).not.toBe('');
+    expect(document.body).not.toHaveTextContent(ZOD_SHORT_PASSWORD);
     expect(sent).toEqual([]);
   });
 

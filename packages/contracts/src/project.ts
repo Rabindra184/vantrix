@@ -3,7 +3,7 @@ import { PROJECT_ROLES } from './access.js';
 import { RunStatusSchema, RunVerdictSchema } from './run.js';
 
 export const ProjectSummarySchema = z.object({
-  id: z.string().uuid(),
+  id: z.guid(),
   slug: z.string(),
   name: z.string(),
   /**
@@ -17,7 +17,7 @@ export const ProjectSummarySchema = z.object({
    */
   latestRun: z
     .object({
-      id: z.string().uuid(),
+      id: z.guid(),
       status: RunStatusSchema,
       verdict: RunVerdictSchema.nullable(),
     })
@@ -56,12 +56,20 @@ export const PROJECT_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 export const CreateProjectRequestSchema = z
   .object({
-    name: z.string().trim().min(1).max(120),
+    // Every bound carries its own sentence because `NewProject` shows the
+    // first issue's message to a person, and zod's own wording describes the
+    // check ("Too small: expected string to have >=2 characters") rather
+    // than the field.
+    name: z
+      .string()
+      .trim()
+      .min(1, 'Enter a project name.')
+      .max(120, 'A project name is at most 120 characters.'),
     slug: z
       .string()
       .trim()
-      .min(2)
-      .max(80)
+      .min(2, 'A project slug is at least 2 characters.')
+      .max(80, 'A project slug is at most 80 characters.')
       .regex(PROJECT_SLUG_PATTERN, 'Use lowercase letters, numbers and single hyphens.'),
   })
   .strict();

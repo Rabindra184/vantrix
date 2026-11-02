@@ -12,6 +12,15 @@ import { adminProjectsQueryKey, adminUsersQueryKey } from '../src/api/admin';
 import { fetchProjects, projectsQueryKey } from '../src/api/projects';
 import { ADMIN_PROJECTS_ROUTE, ADMIN_USERS_ROUTE } from '../src/routes/paths';
 import { PASSWORD_LENGTH_MESSAGE } from '../src/formIssues';
+import { PasswordSchema } from '@perfportal/contracts';
+
+/**
+ * What zod itself would say about a short password — asked of the schema
+ * rather than written down, because zod 4 rewrote every default message (zod
+ * 3's was "String must contain at least 8 character(s)") and a pinned string
+ * would go on passing against a form that showed the library's wording again.
+ */
+const ZOD_SHORT_PASSWORD = PasswordSchema.safeParse('short12').error?.issues[0]?.message ?? '';
 
 // No vitest globals here, so Testing Library's automatic cleanup never
 // registers; without this every render stacks in one `document.body`.
@@ -580,7 +589,8 @@ describe('AdminUsers — Add user', () => {
     expect(field).toHaveAccessibleDescription(PASSWORD_LENGTH_MESSAGE);
     expect(field).toHaveAttribute('aria-invalid', 'true');
     await waitFor(() => expect(field).toHaveFocus());
-    expect(document.body).not.toHaveTextContent(/String must contain/);
+    expect(ZOD_SHORT_PASSWORD).not.toBe('');
+    expect(document.body).not.toHaveTextContent(ZOD_SHORT_PASSWORD);
     expect(sent.filter((s) => s.method === 'POST')).toEqual([]);
   });
 
@@ -1024,7 +1034,8 @@ describe('AdminUsers — the row menu', () => {
     expect(field).toHaveAccessibleDescription(PASSWORD_LENGTH_MESSAGE);
     expect(field).toHaveAttribute('aria-invalid', 'true');
     await waitFor(() => expect(field).toHaveFocus());
-    expect(document.body).not.toHaveTextContent(/String must contain/);
+    expect(ZOD_SHORT_PASSWORD).not.toBe('');
+    expect(document.body).not.toHaveTextContent(ZOD_SHORT_PASSWORD);
     expect(writes(sent)).toEqual([]);
 
     await clicker.clear(field);

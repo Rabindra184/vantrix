@@ -90,7 +90,7 @@ export type OpenLiveRunRequest = z.infer<typeof OpenLiveRunRequestSchema>;
  * on less clearly.
  */
 export const OpenLiveRunResponseSchema = z.object({
-  runId: z.string().uuid(),
+  runId: z.guid(),
   streamUrl: z.string(),
   nextOffset: z.number().int().min(0),
 });

@@ -47,7 +47,13 @@ export type AdminUserListResponse = z.infer<typeof AdminUserListResponseSchema>;
  * A person's display name, on a create and on an edit alike: trimmed, and the
  * 120-character bound every other human-typed name in this package carries.
  */
-const UserNameSchema = z.string().trim().min(1).max(120);
+// The Add user form shows these under their fields, so each bound says what
+// to do rather than reading out zod's own check.
+const UserNameSchema = z
+  .string()
+  .trim()
+  .min(1, 'Enter a name.')
+  .max(120, 'A name is at most 120 characters.');
 
 /**
  * One project row on an Add user form: which project, and what role.
@@ -91,7 +97,7 @@ const ProjectGrantSchema = z
  */
 export const CreateUserRequestSchema = z
   .object({
-    email: z.string().trim().toLowerCase().email(),
+    email: z.string().trim().toLowerCase().email('Enter an email address, such as name@example.com.'),
     name: UserNameSchema,
     password: PasswordSchema,
     isAdmin: z.boolean().default(false),
@@ -102,7 +108,7 @@ export const CreateUserRequestSchema = z
         rows.forEach((row, index) => {
           if (seen.has(row.projectSlug)) {
             ctx.addIssue({
-              code: z.ZodIssueCode.custom,
+              code: 'custom',
               path: [index, 'projectSlug'],
               message: `"${row.projectSlug}" is listed more than once. Give each project one role.`,
             });
@@ -195,7 +201,7 @@ export const DataIntegritySchema = z.object({
   }),
   problems: z.array(
     z.object({
-      runId: z.string().uuid(),
+      runId: z.guid(),
       projectSlug: z.string(),
       status: z.enum(['mismatch', 'unverifiable']),
       reason: UnverifiableReasonSchema.nullable(),

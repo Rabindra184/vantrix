@@ -37,7 +37,7 @@ export const StatRowSchema = z.object({
   stddevMs: z.number(),
   throughputRps: z.number(),
   /** Keys are p<number>: p50, p95, p99.9. */
-  percentiles: z.record(z.number()),
+  percentiles: z.record(z.string(), z.number()),
   /** Folded from this row's stored histogram at the project's current bounds. */
   indicators: IndicatorBandsSchema,
 });
@@ -62,7 +62,7 @@ export const WindowSchema = z.object({
 export type Window = z.infer<typeof WindowSchema>;
 
 export const StatsResponseSchema = z.object({
-  runId: z.string().uuid(),
+  runId: z.guid(),
   stats: z.array(StatRowSchema),
   /**
    * The window these statistics were computed over, or `null` when the whole
@@ -99,15 +99,15 @@ export const SeriesBucketSchema = z.object({
   minMs: z.number(),
   maxMs: z.number(),
   meanMs: z.number(),
-  percentiles: z.record(z.number()),
+  percentiles: z.record(z.string(), z.number()),
   /** OK-only. Gatling's percentiles-over-time chart uses this, not the combined set. */
-  percentilesOk: z.record(z.number()),
+  percentilesOk: z.record(z.string(), z.number()),
   /** KO-only. Empty for a bucket with no failures. */
-  percentilesKo: z.record(z.number()),
+  percentilesKo: z.record(z.string(), z.number()),
 });
 
 export const SeriesResponseSchema = z.object({
-  runId: z.string().uuid(),
+  runId: z.guid(),
   scope: MetricScopeSchema,
   name: z.string(),
   family: MetricFamilySchema,
@@ -155,7 +155,7 @@ export const SeriesResponseSchema = z.object({
 export type SeriesResponse = z.infer<typeof SeriesResponseSchema>;
 
 export const ErrorsResponseSchema = z.object({
-  runId: z.string().uuid(),
+  runId: z.guid(),
   errors: z.array(
     z.object({
       /**
@@ -175,7 +175,7 @@ export const ErrorsResponseSchema = z.object({
 export type ErrorsResponse = z.infer<typeof ErrorsResponseSchema>;
 
 export const ErrorSeriesResponseSchema = z.object({
-  runId: z.string().uuid(),
+  runId: z.guid(),
   /**
    * The width of every bucket in `series`, STORED rather than inferred. Errors
    * are sparse, and `inferBucketWidthMs` reads the smallest gap between
@@ -237,7 +237,7 @@ export const ErrorSeriesResponseSchema = z.object({
 export type ErrorSeriesResponse = z.infer<typeof ErrorSeriesResponseSchema>;
 
 export const DistributionResponseSchema = z.object({
-  runId: z.string().uuid(),
+  runId: z.guid(),
   /**
    * The window this payload was computed over, or `null` for the whole run.
    * Non-null values are SNAPPED to bucket boundaries — see WindowSchema.
@@ -261,7 +261,7 @@ export const DistributionResponseSchema = z.object({
 export type DistributionResponse = z.infer<typeof DistributionResponseSchema>;
 
 export const UsersResponseSchema = z.object({
-  runId: z.string().uuid(),
+  runId: z.guid(),
   /**
    * The window this payload was computed over, or `null` for the whole run.
    * Non-null values are SNAPPED to bucket boundaries — see WindowSchema.
@@ -298,7 +298,7 @@ export const UsersResponseSchema = z.object({
 export type UsersResponse = z.infer<typeof UsersResponseSchema>;
 
 export const ScatterResponseSchema = z.object({
-  runId: z.string().uuid(),
+  runId: z.guid(),
   name: z.string(),
   /**
    * The window this payload was computed over, or `null` for the whole run.
@@ -328,7 +328,7 @@ export type ScatterResponse = z.infer<typeof ScatterResponseSchema>;
  * provenance of.
  */
 export const TrendRunSchema = z.object({
-  id: z.string().uuid(),
+  id: z.guid(),
   startedAt: z.string().datetime(),
   /** The tool's own start. Null until the worker parses the run header. */
   toolStartedAt: z.string().datetime().nullable(),
@@ -343,7 +343,7 @@ export const TrendRunSchema = z.object({
   meanMs: z.number(),
   throughputRps: z.number(),
   /** Keys are p<number>, exactly as `StatRow.percentiles` are. */
-  percentiles: z.record(z.number()),
+  percentiles: z.record(z.string(), z.number()),
   /* ═══ WHAT MAKES TWO RUNS COMPARABLE, NOT JUST COHORTED ═══
    *
    * The cohort is (project, test): it says these runs exercised the same
@@ -422,7 +422,7 @@ export type TrendRun = z.infer<typeof TrendRunSchema>;
  * an unparsed run must not look like.
  */
 export const TrendsResponseSchema = z.object({
-  runId: z.string().uuid(),
+  runId: z.guid(),
   /**
    * What the tool called the simulation, as this run reported it. Captured
    * execution metadata — NOT the cohort key any more.
@@ -438,7 +438,7 @@ export const TrendsResponseSchema = z.object({
    * was" bucket the old string cohort produced.
    */
   test: z
-    .object({ id: z.string().uuid(), slug: z.string(), name: z.string() })
+    .object({ id: z.guid(), slug: z.string(), name: z.string() })
     .nullable(),
   /** Total runs matching the cohort, which may exceed `runs.length`. */
   cohortSize: z.number().int(),
@@ -553,7 +553,7 @@ export const TelemetryPointSchema = z.object({
 export type TelemetryPoint = z.infer<typeof TelemetryPointSchema>;
 
 export const TelemetryResponseSchema = z.object({
-  runId: z.string().uuid(),
+  runId: z.guid(),
   /**
    * False when no agent reported for this run's window — either because
    * `toolStartedAt` is null (the run never finished parsing, so it HAS no

@@ -27,7 +27,7 @@ export const PasswordSchema = z.string().min(PASSWORD_MIN_LENGTH).max(PASSWORD_M
 /**
  * The `params.code` of the issue `ChangePasswordRequestSchema` raises when the
  * new password equals the current one — and the way a caller finds that
- * issue: not by position and not by message. zod 3 runs a `.refine` on an
+ * issue: not by position and not by message. zod runs a `.refine` on an
  * object whose fields already failed, so `{ currentPassword: 'abc',
  * newPassword: 'abc' }` reports the length issue FIRST and this one second,
  * which makes "the first issue" the wrong one. A code rather than the message

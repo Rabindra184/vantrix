@@ -7,7 +7,7 @@ import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, PASSWORD_UNCHANGED } from '@p
  * ═══ A PASSWORD BOUND IS ONE SENTENCE, NOT ZOD'S ENGLISH ═══
  *
  * `PasswordSchema` is a plain `z.string().min(8).max(128)`, so its issues carry
- * zod's default wording — "String must contain at least 8 character(s)" — the
+ * zod's default wording — "Too small: expected string to have >=8 characters" — the
  * library describing its own check. A form that sets a password shows the
  * bound instead, built from the same two constants the schema is built from,
  * so the sentence and the check cannot disagree.
@@ -47,7 +47,7 @@ export function isPasswordUnchanged(issue: ZodIssue): boolean {
  * `newPassword`, or `projects.0.projectSlug` for a row — so a form puts each
  * under the control its path names.
  *
- * ONE PER FIELD, AND "THE SAME" YIELDS TO ANYTHING ELSE. zod 3 runs an object's
+ * ONE PER FIELD, AND "THE SAME" YIELDS TO ANYTHING ELSE. zod runs an object's
  * `.refine` after its fields have failed, so an equal pair whose new password
  * is out of bounds carries two issues on `newPassword`: the bound, then
  * PASSWORD_UNCHANGED. The bound is the one to act on, and acting on it settles

@@ -34,11 +34,11 @@ const OptionalRunMetadataSchema = z.object({
   test: DeclaredTestSlugSchema.optional(),
 });
 
-const SystemPropertiesSchema = z.record(z.string().trim().max(500)).superRefine((props, ctx) => {
+const SystemPropertiesSchema = z.record(z.string(), z.string().trim().max(500)).superRefine((props, ctx) => {
   for (const key of Object.keys(props)) {
     if (!/^[A-Za-z0-9_.-]{1,120}$/.test(key)) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         path: [key],
         message: 'System property keys may contain only letters, numbers, dots, underscores and hyphens.',
       });
@@ -74,7 +74,7 @@ export type RunnerStartMetadata = z.infer<typeof RunnerStartMetadataSchema>;
  * `gatlingVersion`: both describe a file, and this request sends none.
  */
 export const RunnerStartByPackageRequestSchema = OptionalRunMetadataSchema.extend({
-  packageId: z.string().uuid(),
+  packageId: z.guid(),
   name: z.string().trim().min(1).max(160),
   simulationClass: z.string().trim().min(1).max(300),
   javaOptions: z.string().trim().max(2_000).optional(),
@@ -84,7 +84,7 @@ export const RunnerStartByPackageRequestSchema = OptionalRunMetadataSchema.exten
 export type RunnerStartByPackageRequest = z.infer<typeof RunnerStartByPackageRequestSchema>;
 
 export const RunnerArtifactSchema = z.object({
-  id: z.string().uuid(),
+  id: z.guid(),
   name: z.string(),
   filename: z.string(),
   kind: RunnerArtifactKindSchema,
@@ -97,9 +97,9 @@ export const RunnerArtifactSchema = z.object({
 export type RunnerArtifact = z.infer<typeof RunnerArtifactSchema>;
 
 export const RunnerJobSchema = z.object({
-  id: z.string().uuid(),
-  artifactId: z.string().uuid(),
-  runId: z.string().uuid().nullable(),
+  id: z.guid(),
+  artifactId: z.guid(),
+  runId: z.guid().nullable(),
   status: RunnerJobStatusSchema,
   requestedBy: z.string(),
   environment: z.string().nullable(),
@@ -114,10 +114,10 @@ export const RunnerJobSchema = z.object({
   name: z.string().nullable().optional(),
   simulationClass: z.string().nullable().optional(),
   /** The package this job's version belongs to; null once it was deleted. */
-  packageId: z.string().uuid().nullable().optional(),
+  packageId: z.guid().nullable().optional(),
   packageName: z.string().nullable().optional(),
   javaOptions: z.string().nullable(),
-  systemProperties: z.record(z.string()),
+  systemProperties: z.record(z.string(), z.string()),
   /** Whether the runner loads the Gatling agent for this job. Optional: a pod
    *  that predates the agent sends none, and the browser drops a body that
    *  fails this schema — the rolling-deploy rule. Absent reads as true. */
@@ -155,7 +155,7 @@ export const RunnerJobActionResponseSchema = z.object({
 export type RunnerJobActionResponse = z.infer<typeof RunnerJobActionResponseSchema>;
 
 export const RunnerJobLogsResponseSchema = z.object({
-  jobId: z.string().uuid(),
+  jobId: z.guid(),
   text: z.string(),
   truncated: z.boolean(),
   updatedAt: z.string().datetime().nullable(),

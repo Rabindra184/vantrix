@@ -1,5 +1,4 @@
-import { zodToJsonSchema } from 'zod-to-json-schema';
-import type { ZodTypeAny } from 'zod';
+import { z } from 'zod';
 import {
   ActivityResponseSchema,
   AgentConnectionsResponseSchema,
@@ -100,7 +99,7 @@ export type JsonSchema = Record<string, unknown>;
  * silently drift from the request/response shapes the app actually produces
  * — that drift is how the previous (empty) `components.schemas` happened.
  */
-const SOURCE: Record<string, ZodTypeAny> = {
+const SOURCE: Record<string, z.ZodType> = {
   IngestMetadata: IngestMetadataSchema,
   ProblemDetails: ProblemDetailsSchema,
   RunResponse: RunResponseSchema,
@@ -202,92 +201,77 @@ const SOURCE: Record<string, ZodTypeAny> = {
 };
 
 /**
- * Converts one Zod schema to a fully self-contained JSON Schema object — no
- * internal `$ref`/`definitions` indirection (`$refStrategy: 'none'`), so
- * every component below is independently valid and there is nothing for a
- * validator to fail to resolve.
+ * The components a request BODY names — read by a client and parsed by this
+ * server — as opposed to everything else here, which the server sends.
  *
- * `target: 'jsonSchema2019-09'` picks the dialect closest to what OpenAPI
- * 3.1 actually uses (2020-12) without pulling in a Zod-to-JSON-Schema target
- * that doesn't exist yet: nullability comes out as `anyOf: [..., {type:
- * 'null'}]`, which both 2019-09 and 2020-12 accept, rather than the 3.0-only
- * `nullable: true` keyword (meaningless — and therefore a lie — once the
- * document claims to be 3.1).
+ * ═══ ONE ZOD SCHEMA HAS TWO JSON SCHEMAS, AND WHICH ONE IS A FACT ABOUT USE ═══
+ *
+ * A field with a `.default()` may be OMITTED by a client and is ALWAYS present
+ * in what the parse produces; a non-strict object accepts unknown keys (and
+ * strips them) but never emits one. So a request body is described by its
+ * INPUT and a response by its OUTPUT, and `z.toJSONSchema` asks which:
+ *
+ *     io: 'input'    defaulted fields optional, no `additionalProperties: false`
+ *     io: 'output'   defaulted fields required, `additionalProperties: false`
+ *
+ * `zod-to-json-schema` answered with a mixture of the two for every schema —
+ * input's requiredness with output's closed objects — which was right for
+ * neither half. No component is both a request body and a response;
+ * `openapi-dialect.test.ts` derives the set below from the document's own
+ * `requestBody` references and fails naming any that drift, in either
+ * direction.
  */
-function toJsonSchema(schema: ZodTypeAny): JsonSchema {
-  // No `name` option: passing one makes the library wrap the schema in a
-  // `definitions[name]` bag with a top-level `$ref` into it — a document
-  // structure appropriate for a standalone JSON Schema file, not for a
-  // value that itself becomes the body of `components.schemas.<name>`. The
-  // `$schema` dialect-identifier key is dropped for the same reason: it
-  // marks a schema *document*'s dialect, not a subschema embedded in one.
-  const out = zodToJsonSchema(schema, {
-    target: 'jsonSchema2019-09',
-    $refStrategy: 'none',
-  }) as JsonSchema;
-  delete out['$schema'];
-  return numericExclusiveBounds(out);
-}
+export const REQUEST_BODIES: ReadonlySet<string> = new Set([
+  'IngestMetadata',
+  'OpenLiveRunRequest',
+  'RunNoteRequest',
+  'CreateProjectRequest',
+  'MintTokenRequest',
+  'AddMemberRequest',
+  'UpdateMemberRequest',
+  'UpdateTestRequest',
+  'RunnerStartByPackageRequest',
+  'RunnerStartMetadata',
+  'CreatePackageRequest',
+  'RenamePackageRequest',
+  'CreateSlaRuleRequest',
+  'UpdateSlaRuleRequest',
+  'ChangePasswordRequest',
+  'CreateUserRequest',
+  'UpdateUserRequest',
+  'SetPasswordRequest',
+  'TelemetryBatch',
+]);
 
 /**
- * ═══ `exclusiveMinimum` IS A NUMBER IN THIS DOCUMENT'S OWN DIALECT ═══
+ * Converts one Zod schema to a fully self-contained JSON Schema object, in
+ * the JSON Schema 2020-12 dialect OpenAPI 3.1 — which `document.ts` declares —
+ * uses. Nothing is registered with a metadata registry, so no internal `$ref`
+ * is emitted and every component below is independently valid.
  *
- * OpenAPI 3.1 — which `document.ts` declares — uses JSON Schema 2020-12,
- * where `exclusiveMinimum`/`exclusiveMaximum` carry the BOUND. The boolean
- * spelling beside a separate `minimum`/`maximum` is draft-04, i.e. OpenAPI
- * 3.0, and it is a TYPE ERROR against 2020-12.
+ * `unrepresentable` is left at its default, `'throw'`: a schema this document
+ * cannot describe (a transform, a date object) fails the module load rather
+ * than shipping as `{}` — an empty schema is a claim that ANY value is valid.
  *
- * `zod-to-json-schema@3.25.2` emits the draft-04 form regardless of the
- * target — measured, and the reason this function exists rather than a
- * different `target:` string:
+ * The `$schema` dialect key is dropped: it marks a schema DOCUMENT's dialect,
+ * not a subschema embedded in one.
  *
- *     jsonSchema2019-09  {"exclusiveMinimum": true, "minimum": 0}   <- wrong
- *     jsonSchema7        {"exclusiveMinimum": 0}                    <- right
- *     openApi3           {"exclusiveMinimum": true, "minimum": 0}   <- right for 3.0
- *
- * 2019-09 inherits draft-06's numeric form, so the middle row is what this
- * target should already produce; the library disagrees with its own dialect.
- *
- * THE ONE-WORD FIX WAS MEASURED AND REJECTED. Switching to `jsonSchema7`
- * produces byte-identical output for every other construct this document
- * uses — nullability, enums, records, formats — so it would work today. It
- * is refused because the NAME would then claim draft-07 for a document that
- * declares 3.1, leaving the next reader to rediscover that the two targets
- * differ in exactly one keyword. Rewriting the keyword says so out loud, and
- * it degrades to a no-op the day the library emits the right form.
- *
- * BEFORE: 14 occurrences across six response schemas, and a standards
- * validator refused to compile the document at all.
+ * zod 4 writes `exclusiveMinimum` as a NUMBER, the 2020-12 form, so the
+ * draft-04 rewrite `zod-to-json-schema` needed is gone; `openapi-dialect.test.ts`
+ * still refuses the boolean spelling, should a later converter bring it back.
  */
-function numericExclusiveBounds<T>(node: T): T {
-  if (Array.isArray(node)) return node.map(numericExclusiveBounds) as unknown as T;
-  if (node === null || typeof node !== 'object') return node;
-
-  const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
-    out[key] = numericExclusiveBounds(value);
-  }
-  for (const [flag, bound] of [
-    ['exclusiveMinimum', 'minimum'],
-    ['exclusiveMaximum', 'maximum'],
-  ] as const) {
-    // Only the draft-04 pairing is rewritten: `exclusiveMinimum: true` is
-    // meaningless without the `minimum` it qualifies, and a numeric one is
-    // already correct and must be left alone.
-    if (out[flag] === true && typeof out[bound] === 'number') {
-      out[flag] = out[bound];
-      delete out[bound];
-    } else if (out[flag] === false) {
-      // draft-04's explicit "not exclusive" — the bound alone says that.
-      delete out[flag];
-    }
-  }
-  return out as T;
+function toJsonSchema(name: string, schema: z.ZodType): JsonSchema {
+  const out = z.toJSONSchema(schema, {
+    target: 'draft-2020-12',
+    io: REQUEST_BODIES.has(name) ? 'input' : 'output',
+  }) as JsonSchema;
+  delete out['$schema'];
+  return out;
 }
 
 /** `components.schemas`, built once at module load. */
 export const schemaComponents: Record<string, JsonSchema> = Object.fromEntries(
-  Object.entries(SOURCE).map(([name, zodSchema]) => [name, toJsonSchema(zodSchema)]),
+  Object.entries(SOURCE).map(([name, zodSchema]) => [name, toJsonSchema(name, zodSchema)]),
 );
 
 /** `{ "$ref": "#/components/schemas/<name>" }` for a name known to exist above. */

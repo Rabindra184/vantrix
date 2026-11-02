@@ -10,6 +10,6 @@ export const ProblemDetailsSchema = z.object({
   /** Required, mirroring IngestError.remediation. */
   remediation: z.string().min(1),
   traceId: z.string().optional(),
-  meta: z.record(z.unknown()).optional(),
+  meta: z.record(z.string(), z.unknown()).optional(),
 });
 export type ProblemDetails = z.infer<typeof ProblemDetailsSchema>;

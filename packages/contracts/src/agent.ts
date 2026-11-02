@@ -116,7 +116,7 @@ export type DurationSection = z.infer<typeof DurationSectionSchema>;
  * `available: true` with no buckets, never "not collected".
  */
 const figureBase = {
-  runId: z.string().uuid(),
+  runId: z.guid(),
   available: z.boolean(),
   reason: AgentUnavailableReasonSchema.nullable(),
   /** The stored reason a file was unreadable, or the agent's reason a collector was off. */
@@ -143,7 +143,7 @@ export type AgentHeader = z.infer<typeof AgentHeaderSchema>;
 
 /** `GET /v1/runs/{id}/agent`. */
 export const AgentSummaryResponseSchema = z.object({
-  runId: z.string().uuid(),
+  runId: z.guid(),
   available: z.boolean(),
   reason: AgentUnavailableReasonSchema.nullable(),
   detail: z.string().nullable(),
@@ -217,9 +217,9 @@ export const AgentInjectorsResponseSchema = z.object({
   buckets: z.array(z.object({
     startOffsetMs: z.number().int().nonnegative(),
     /** Collections per collector name in the bucket. */
-    gcCount: z.record(z.number()),
+    gcCount: z.record(z.string(), z.number()),
     /** Collection time (ms) per collector name in the bucket. */
-    gcTimeMs: z.record(z.number()),
+    gcTimeMs: z.record(z.string(), z.number()),
     /** `100 × Δuser / Δtotal`, rounded to 2 dp; null when Δtotal is 0 or absent. */
     cpuUserPct: z.number().nullable(),
     cpuSysPct: z.number().nullable(),
@@ -258,7 +258,7 @@ export const AgentStatusResponseSchema = z.object({
   buckets: z.array(z.object({
     startOffsetMs: z.number().int().nonnegative(),
     /** Responses per code in the bucket; a code absent here had none. */
-    counts: z.record(z.number()),
+    counts: z.record(z.string(), z.number()),
   })),
 });
 export type AgentStatusResponse = z.infer<typeof AgentStatusResponseSchema>;

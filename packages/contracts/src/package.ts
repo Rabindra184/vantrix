@@ -12,7 +12,7 @@ export type PackageKind = z.infer<typeof PackageKindSchema>;
 export const PackageNameSchema = z.string().trim().min(1).max(120);
 
 export const PackageVersionSchema = z.object({
-  artifactId: z.string().uuid(),
+  artifactId: z.guid(),
   filename: z.string(),
   bytes: z.number().int().nonnegative(),
   sha256: z.string(),
@@ -35,7 +35,7 @@ export const PackageUsageSchema = z.object({
 export type PackageUsage = z.infer<typeof PackageUsageSchema>;
 
 export const PackageSchema = z.object({
-  id: z.string().uuid(),
+  id: z.guid(),
   name: z.string(),
   kind: PackageKindSchema,
   createdAt: z.string().datetime(),
