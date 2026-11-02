@@ -12,8 +12,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AGENT_BUNDLE_FILE, hashToken, mintToken } from '@perfportal/core';
 import {
-  createAuth, createPool, createPrisma, OrgMemberRepository, PackageRepository, ProjectMemberRepository,
-  RunnerRepository, TelemetryStore, type InboundTelemetrySample,
+  AiAnalysisRepository, createAuth, createPool, createPrisma, OrgMemberRepository, OrgSettingsRepository,
+  PackageRepository, ProjectMemberRepository, RunnerRepository, TelemetryStore, type InboundTelemetrySample,
 } from '@perfportal/persistence';
 import { BlobStore } from '@perfportal/storage';
 // Reached into apps/worker's BUILT output, not its TypeScript source: the
@@ -26,6 +26,9 @@ import { BlobStore } from '@perfportal/storage';
 // runs under Vitest's TS transform and this one doesn't.
 import { PipelineService } from '../../worker/dist/pipeline/pipeline.service.js';
 import { loadWorkerConfig } from '../../worker/dist/config.js';
+import { AiAnalysisService } from '../../worker/dist/ai/ai-analysis.service.js';
+import { OpenAiCompatibleProvider } from '../../worker/dist/ai/providers.js';
+import { STUB_BASE_URL, STUB_MODEL } from './ai-stub.js';
 
 // DATABASE_URL points at the SAME Postgres apps/api/test/support/app.ts's
 // createTestApp() uses. That helper TRUNCATEs all 15 tables on every single
@@ -1448,4 +1451,46 @@ export async function seedTestWithRuns(
   }
 
   return { testId: test.id, slug: test.slug };
+}
+
+/**
+ * Turns on `orgId`'s AI run analysis switch — the one Administration ›
+ * Settings flips — by the repository the API's own PUT writes through, as
+ * every other seed here writes rows directly rather than signing an admin in.
+ * Off is the default, and the state every other spec runs in: only a test
+ * that calls this sees the card.
+ */
+export async function enableOrgAi(orgId: string): Promise<void> {
+  await new OrgSettingsRepository(pool).setAiEnabled(orgId, true);
+}
+
+/**
+ * The worker's half of one analysis, run IN-PROCESS, exactly as
+ * `parseUploadedRun` runs the pipeline: no worker process exists in this
+ * stack, so a job the API queued would otherwise sit in Redis for ever and
+ * the card would read "Analysing this run…" until the test timed out.
+ *
+ * It is the real `AiAnalysisService` from the worker's `dist` — the
+ * eligibility re-check, the facts, the schema and `checkNumbers` — talking to
+ * the real OpenAI-compatible provider, which talks to the stub
+ * (`ai-stub.ts`) the config started. The provider is configured HERE rather
+ * than read from the environment: this process is the test runner's, which
+ * carries no `AI_PROVIDER`, and the API's copy is on the webServer command.
+ *
+ * Returns the stored content, after asserting the job produced one: a
+ * `failed` or `skipped` outcome would otherwise reach the spec as a card that
+ * never leaves pending, which names nothing.
+ */
+export async function processAiAnalysis(runId: string): Promise<unknown> {
+  const ai = { provider: 'openai-compatible' as const, model: STUB_MODEL, baseUrl: STUB_BASE_URL, apiKey: null };
+  const service = new AiAnalysisService({ ...workerConfig, ai }, pool, new OpenAiCompatibleProvider(ai));
+  const outcome = await service.generate(runId, { lastAttempt: true });
+  const stored = await new AiAnalysisRepository(pool).find(runId);
+  if (outcome !== 'ready' || stored?.status !== 'ready') {
+    throw new Error(
+      `processAiAnalysis: run ${runId} did not get an analysis (outcome ${outcome}, ` +
+        `row ${stored?.status ?? 'MISSING'}, reason ${stored?.failureReason ?? 'none'}).`,
+    );
+  }
+  return stored.content;
 }
