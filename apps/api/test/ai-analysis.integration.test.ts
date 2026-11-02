@@ -162,6 +162,7 @@ describe('GET /v1/runs/{id}/ai-analysis — why a run cannot be analysed', () =>
       generatedAt: null,
       model: null,
       stale: false,
+      requestedAt: null,
     });
   });
 
@@ -233,6 +234,27 @@ describe('GET /v1/runs/{id}/ai-analysis — why a run cannot be analysed', () =>
   });
 });
 
+describe('the OpenAPI document', () => {
+  /**
+   * The document is derived from the contract, so this proves the field reached
+   * it: a generated client reading `requestedAt` must find it declared, and
+   * required on the available branch like every other field there.
+   */
+  it('declares requestedAt on the available response, nullable and required', async () => {
+    ctx = await createTestApp();
+    const res = await request(ctx.app.getHttpServer()).get('/v1/openapi.json').expect(200);
+    const schema = res.body.components.schemas.AiAnalysisResponse as {
+      anyOf?: Array<{ properties: Record<string, unknown>; required?: string[] }>;
+      oneOf?: Array<{ properties: Record<string, unknown>; required?: string[] }>;
+    };
+    const branches = schema.oneOf ?? schema.anyOf ?? [];
+    const available = branches.find((b) => 'state' in b.properties);
+    expect(available, JSON.stringify(schema).slice(0, 400)).toBeDefined();
+    expect(available!.required).toContain('requestedAt');
+    expect(JSON.stringify(available!.properties.requestedAt)).toContain('null');
+  });
+});
+
 describe('POST /v1/runs/{id}/ai-analysis', () => {
   it('POST queues once and answers the pending row twice', async () => {
     ctx = await configuredApp();
@@ -253,6 +275,9 @@ describe('POST /v1/runs/{id}/ai-analysis', () => {
     );
     expect(rows[0]?.requested_by).toBe(userId);
     const stamped = await requestedAt(runId);
+    // The response carries the row's own request time, which is what lets the
+    // card tell a pending row nothing is working on from one a job may be.
+    expect(first.body.requestedAt).toBe(stamped!.toISOString());
 
     const second = await post(runId, cookie);
     expect(second.status).toBe(202);
@@ -296,6 +321,7 @@ describe('POST /v1/runs/{id}/ai-analysis', () => {
     expect(res.status).toBe(202);
     expect(res.body.state).toBe('pending');
     expect((await requestedAt(runId))!.getTime()).toBeGreaterThan(old!.getTime());
+    expect(res.body.requestedAt).toBe((await requestedAt(runId))!.toISOString());
     expect((await aiQueue().getJob(runId))?.data).toEqual({ runId });
   });
 

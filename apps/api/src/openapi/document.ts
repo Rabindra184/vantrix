@@ -1358,7 +1358,9 @@ const paths: Record<string, PathItemObject> = {
         'stored figures disagree with its raw log). Otherwise "state" is "none" (never asked ' +
         'for), "pending" (queued or being written), "ready" (with "content") or "failed" (with ' +
         'a free-form "failureReason"). "stale" is true when the run\'s statistics were ' +
-        'recomputed or re-ingested after the analysis was written. A run outside the caller\'s ' +
+        'recomputed or re-ingested after the analysis was written. "requestedAt" is when it was ' +
+        'last asked for (null when never): a "pending" analysis asked for over thirty-five minutes ' +
+        'ago has nothing working on it, and a POST queues it again. A run outside the caller\'s ' +
         'organisation or project answers 404.',
       parameters: [parameters['RunId']!],
       responses: {
