@@ -81,13 +81,17 @@ test('a member generates an analysis and it survives a reload', async ({ page })
   // The POST's own answer, written into the read's key: the row is pending,
   // and the card is now polling it.
   await expect(card.getByRole('status')).toHaveText('Analysing this run…');
+  // The button went with the state it belonged to; the reader's place is the
+  // card's heading, not the page.
+  await expect(card.getByRole('heading', { level: 2, name: 'AI run analysis' })).toBeFocused();
 
   const content = (await processAiAnalysis(runId)) as Content;
 
   // The card polls every 3s (`AI_ANALYSIS_POLL_MS`), so the ready analysis
   // arrives on a later read with nothing reloaded.
   await expect(card.getByText(content.health.headline)).toBeVisible({ timeout: 15_000 });
-  await expect(card.getByRole('status')).toHaveCount(0);
+  // The card's one live region, still mounted, says the wait is over.
+  await expect(card.getByRole('status')).toHaveText('Analysis ready.');
 
   /** What the card must show for a ready analysis: every line, and its provenance. */
   const expectReady = async (): Promise<void> => {
@@ -113,6 +117,8 @@ test('a member generates an analysis and it survives a reload', async ({ page })
   // From the database, not the cache: a reload drops React Query's state.
   await page.reload();
   await expectReady();
+  // Nobody waited through this one, so there is nothing to announce.
+  await expect(card.getByRole('status')).toHaveText('');
 });
 
 test('the card does not appear while the org switch is off', async ({ page }) => {
