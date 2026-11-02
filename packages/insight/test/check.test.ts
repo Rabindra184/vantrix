@@ -293,19 +293,24 @@ describe('checkNumbers', () => {
       expect(check('Someone should double-check everyone’s setup, and none of it is done.')).toEqual([]);
     });
 
-    it('passes a number word before a hyphen, which is a compound and not a count', () => {
+    it('passes the named compounds that are not counts', () => {
       expect(check('It looks like a third-party service failed.')).toEqual([]);
+      expect(check('Its third-party calls failed.')).toEqual([]);
       expect(check('It was a one-off, a one-time spike.')).toEqual([]);
+      expect(check('A one-way, one-sided, one-shot call.')).toEqual([]);
     });
 
-    it('still refuses the same words standing alone, and a fraction however it is joined', () => {
-      // The controls for the case above: the guard is the hyphen, not the word.
-      expect(check('One third of them failed.')).toEqual(['One third']);
+    it('refuses any other hyphenated compound of a number word, whole', () => {
+      expect(check('After a five-minute ramp, it held.')).toEqual(['five-minute']);
+      expect(check('It showed a two-fold rise.')).toEqual(['two-fold']);
+      expect(check('Twenty-five requests failed.')).toEqual(['Twenty-five']);
       expect(check('A one-third share failed.')).toEqual(['one-third']);
+    });
+
+    it('still refuses the same words standing alone', () => {
       expect(check('Only one failed.')).toEqual(['one']);
+      expect(check('One third of them failed.')).toEqual(['One third']);
       expect(check('A third of them failed.')).toEqual(['A third']);
-      // A compound cardinal is still a number, refused by its last word.
-      expect(check('Twenty-five requests failed.')).toEqual(['five']);
     });
 
     it('lists the words after the digits of the same sentence', () => {

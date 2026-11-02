@@ -43,9 +43,10 @@ import type { Fact, RunFacts } from './facts.js';
  * passes, and so does a bare "third"; "a third" or "two thirds" is a fraction
  * and does not. A word that sits inside a fact's verbatim words (rule b) — a
  * request called "Add one item", an error message saying "half" — passes,
- * exactly as digits there do. A number word before a hyphen is not read as a
- * quantity — "double-check" is a verb, "one-off" and "a third-party" are not
- * counts; `NUMBER_WORD` says what that costs.
+ * exactly as digits there do. A hyphenated compound is read whole: "a
+ * five-minute ramp" is refused as "five-minute", and only the compounds named
+ * in `NON_COUNT_COMPOUNDS` ("one-off", "a third-party", the verb
+ * "double-check") pass.
  *
  * ═══ AN ASSERTION'S DISPLAY IS TWO PARTS ═══
  *
@@ -96,13 +97,14 @@ const TOKEN = new RegExp(`${CLOCK}|${DURATION}|${NUMBER}`, 'g');
  * plurals, and the multipliers and fractions. Matched as whole words, case
  * folded.
  *
- * No word is matched before a hyphen — `(?!-)` on the whole group, because
- * `\b` falls between a letter and a hyphen and would otherwise read
- * "a third-party", "one-off" and "one-time" (and "double-check", the case
- * this started with) as quantities. The cost is a compound's FIRST half:
- * "twenty-five" is refused by its "five", not whole, and "a five-minute
- * ramp" or "a two-fold rise" passes. "one-third" is a fraction and stays
- * refused whole, by the first alternative.
+ * A word joined by hyphens to more words is matched WHOLE, as one token:
+ * "five-minute", "two-fold", "twenty-five" and "one-third" are each refused
+ * as written, so the retry names the compound and not a fragment of it. `\b`
+ * falls between a letter and a hyphen, so without the `(?:-[a-z]+)*` tail a
+ * compound would be read as its first word — and a guard that merely skipped
+ * a word before a hyphen would let "a five-minute ramp" through, an invented
+ * number passing the check. The compounds that are not counts are named in
+ * `NON_COUNT_COMPOUNDS`, and only those pass.
  */
 const NUMBER_WORD = new RegExp(
   String.raw`\b(?:` +
@@ -116,9 +118,30 @@ const NUMBER_WORD = new RegExp(
       'twice', 'thrice', 'double', 'doubled', 'triple', 'tripled', 'quadruple', 'quadrupled',
       'half', 'halves', 'halved', 'quarters?', 'thirds',
     ].join('|') +
-    String.raw`)(?!-)\b`,
+    String.raw`)(?:-[a-z]+)*\b`,
   'gi',
 );
+
+/**
+ * ═══ THE HYPHENATED COMPOUNDS THAT ARE NOT COUNTS ═══
+ *
+ * Matched against a whole `NUMBER_WORD` token, case folded. An allowlist on
+ * purpose, and the asymmetry is the reason: a compound MISSING from it is
+ * refused, and costs one retry in which the model is told to rephrase; a
+ * compound wrongly ON it passes unchecked, which is an invented number
+ * reaching the reader. So an entry is added only for a compound that can
+ * never state a quantity. "double-check" is the verb this rule began with.
+ */
+export const NON_COUNT_COMPOUNDS: ReadonlySet<string> = new Set([
+  'one-off',
+  'one-time',
+  'one-way',
+  'one-sided',
+  'one-shot',
+  'third-party',
+  'a third-party',
+  'double-check',
+]);
 
 /** The same words, unanchored and stateless, for asking whether a string holds one. */
 const HAS_NUMBER_WORD = new RegExp(NUMBER_WORD.source, 'i');
@@ -227,6 +250,7 @@ export function checkNumbers(content: AiAnalysisContent, facts: RunFacts): strin
     for (const m of line.matchAll(NUMBER_WORD)) {
       const start = m.index;
       const end = start + m[0].length;
+      if (NON_COUNT_COMPOUNDS.has(m[0].toLowerCase().replace(/\s+/g, ' '))) continue;
       if (ranges.some(([s, e]) => s <= start && end <= e)) continue;
       refused.add(m[0]);
     }
