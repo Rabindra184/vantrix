@@ -212,7 +212,7 @@ async function openForm() {
 }
 
 describe('AdminUsers — the shell', () => {
-  it('is the Users section of Administration, with Projects and Data integrity beside it', async () => {
+  it('is the Users section of Administration, with Projects, Data integrity and Settings beside it', async () => {
     stubApi();
     renderPage();
     await table();

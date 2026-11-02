@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PROJECT_SLUG_PATTERN } from '@perfportal/contracts';
 import {
   ACCOUNT_PASSWORD_ROUTE,
+  ADMIN_DATA_INTEGRITY_ROUTE,
   ADMIN_PROJECTS_ROUTE,
   ADMIN_SETTINGS_ROUTE,
   ADMIN_USERS_ROUTE,
@@ -294,19 +295,21 @@ describe('static routes cannot shadow a project slug', () => {
   });
 
   /**
-   * ADMINISTRATION'S TWO PAGES, declared from their constants inside the shell
-   * — the account menu links the first, and the Users and Projects tabs link
-   * each other, all through those constants. And NO BARE `/admin`: there is
-   * no page there, and a route that only redirected would be a third URL for
-   * one of these two (ruling W9).
+   * ADMINISTRATION'S FOUR PAGES, declared from their constants inside the
+   * shell — the account menu links the first, and the Users, Projects, Data
+   * integrity and Settings tabs link each other, all through those constants.
+   * And NO BARE `/admin`: there is no page there, and a route that only
+   * redirected would be a second URL for one of these four (ruling W9).
    */
   it('declares the Administration pages, inside the shell, from their constants, and no bare /admin', () => {
     expect(ADMIN_USERS_ROUTE).toBe('/admin/users');
     expect(ADMIN_PROJECTS_ROUTE).toBe('/admin/projects');
+    expect(ADMIN_DATA_INTEGRITY_ROUTE).toBe('/admin/data-integrity');
     expect(ADMIN_SETTINGS_ROUTE).toBe('/admin/settings');
     const shell = APP.slice(APP.indexOf('<Route element={<AppShell />}>'));
     expect(shell).toMatch(/<Route\s+path=\{ADMIN_USERS_ROUTE\}\s+element=\{<AdminUsers\s*\/>\}/);
     expect(shell).toMatch(/<Route\s+path=\{ADMIN_PROJECTS_ROUTE\}\s+element=\{<AdminProjects\s*\/>\}/);
+    expect(shell).toMatch(/<Route\s+path=\{ADMIN_DATA_INTEGRITY_ROUTE\}\s+element=\{<AdminDataIntegrity\s*\/>\}/);
     expect(shell).toMatch(/<Route\s+path=\{ADMIN_SETTINGS_ROUTE\}\s+element=\{<AdminSettings\s*\/>\}/);
     expect(APP).not.toMatch(/path="\/admin\/?"/);
   });

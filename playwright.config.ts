@@ -31,7 +31,9 @@ import { STUB_BASE_URL, STUB_MODEL } from './apps/web/e2e/ai-stub';
  * `apps/web/e2e/fixtures.ts`, which reads the same variable because it seeds
  * over plain fetch and cannot see `baseURL`. All four or none: moving three of
  * them sent the browser to 3100 and the seeding to 3000, and 214 specs failed
- * with a 404 from whatever else was listening there.
+ * with a 404 from whatever else was listening there. A fifth thing follows the
+ * same variable: the stub AI provider below listens on this port + 1, so a
+ * moved harness needs PORT+1 free as well.
  *
  * It stays same-origin, which is the property the session cookie depends on.
  */

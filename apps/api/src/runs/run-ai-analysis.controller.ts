@@ -42,7 +42,7 @@ const UNAVAILABLE_REMEDIATION: Readonly<Record<AiUnavailableReason, string>> = {
     'This deployment configures no AI provider. An operator sets AI_PROVIDER and its companion variables ' +
     '(DEPLOYMENT.md, "AI run analysis") and restarts the API and the worker.',
   org_disabled:
-    'An admin turns AI run analysis on for this organisation under Administration, or with ' +
+    'An admin turns AI run analysis on for this organisation under Administration › Settings, or with ' +
     'PUT /v1/admin/settings {"aiEnabled": true}.',
   not_terminal: 'Wait for the run to finish — GET /v1/runs/{id} reports its status — and ask again.',
   no_statistics: 'The run recorded no statistics, so there is nothing to analyse. Analyse a run that measured requests.',

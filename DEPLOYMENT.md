@@ -499,9 +499,10 @@ until both have:
 
 1. **An operator configures a provider** in the environment (below) and
    restarts the API and the worker.
-2. **An admin turns it on for the organisation** under **Administration**
-   (`PUT /v1/admin/settings` with `{"aiEnabled": true}`). It is off by
-   default. Turning it off again stops new analyses and hides stored ones.
+2. **An admin turns it on for the organisation** under **Administration ›
+   Settings** (`PUT /v1/admin/settings` with `{"aiEnabled": true}`). It is
+   off by default. Turning it off again stops new analyses and hides stored
+   ones.
 
 | Variable | Notes |
 |---|---|
@@ -514,8 +515,10 @@ until both have:
 A provider named without what it needs (no key, no base URL, no model for
 `openai-compatible`), or a provider this product does not know, stops the API
 and the worker at startup with a message naming the variable, rather than
-offering an analysis that fails on the first click. Administration shows which
-provider and model are configured; the key is never shown or returned.
+offering an analysis that fails on the first click. Administration › Settings
+shows which provider and model are configured — and, for `openai-compatible`,
+the endpoint's host alone, never its credentials, path or query; the key is
+never shown or returned.
 
 **What is sent to the provider**, for each analysis a member asks for: the
 run's aggregates and labels — its totals, the per-request and per-group
