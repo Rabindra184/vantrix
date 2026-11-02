@@ -253,6 +253,27 @@ describe('AiAnalysisService', () => {
     expect(await analyses.find(runId)).toMatchObject({ status: 'failed', failureReason: 'provider_error' });
   });
 
+  it('stamps the analysis with when the facts were read, so a recompute during generation leaves it stale', async () => {
+    const runId = await seedRun();
+    // The recompute lands while the model is answering: after the facts were
+    // read, before the answer is stored.
+    const provider = new FakeProvider([
+      async () => {
+        await pool.query('UPDATE run SET recomputed_at = clock_timestamp() WHERE id = $1::uuid', [runId]);
+        return GOOD;
+      },
+    ]);
+
+    expect(await new AiAnalysisService(config, pool, provider).generate(runId, { lastAttempt: false })).toBe('ready');
+
+    const row = await analyses.find(runId);
+    const run = await analyses.eligibility(runId);
+    expect(row!.generatedAt).not.toBeNull();
+    expect(run!.recomputedAt).not.toBeNull();
+    // Later than the stamp: the API's isStale reads exactly this comparison.
+    expect(run!.recomputedAt!.getTime()).toBeGreaterThan(row!.generatedAt!.getTime());
+  });
+
   it('records provider_error at once for a request the provider refused', async () => {
     const runId = await seedRun();
     const provider = new FakeProvider([() => { throw new ProviderHttpError(401, 'bad key'); }]);

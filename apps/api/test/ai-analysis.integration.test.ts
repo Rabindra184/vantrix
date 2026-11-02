@@ -92,6 +92,7 @@ async function storeReady(runId: string): Promise<void> {
     provider: 'anthropic',
     model: 'claude-opus-5-5',
     factsVersion: 1,
+    generatedAt: new Date(),
   });
 }
 

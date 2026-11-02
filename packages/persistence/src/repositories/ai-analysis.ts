@@ -221,19 +221,25 @@ export class AiAnalysisRepository {
   /**
    * A finished analysis. When it was asked for, and by whom, is kept: those
    * describe the request, not the answer.
+   *
+   * `generatedAt` is REQUIRED and is the instant the facts were read
+   * (`readInput`'s `readAt`), never the moment of writing: a recompute that
+   * lands while the model is answering rewrites the figures after they were
+   * read, and only a stamp from before the read makes the analysis read stale
+   * against it. A default of now() would be the silent wrong answer.
    */
   async record(
     runId: string,
-    r: { content: unknown; provider: string; model: string; factsVersion: number },
+    r: { content: unknown; provider: string; model: string; factsVersion: number; generatedAt: Date },
   ): Promise<void> {
     await this.pool.query(
       `INSERT INTO run_ai_analysis (run_id, status, content, provider, model, facts_version, generated_at)
-       VALUES ($1::uuid, 'ready', $2::jsonb, $3, $4, $5, now())
+       VALUES ($1::uuid, 'ready', $2::jsonb, $3, $4, $5, $6::timestamptz)
        ON CONFLICT (run_id) DO UPDATE SET
          status = 'ready', content = EXCLUDED.content, provider = EXCLUDED.provider,
          model = EXCLUDED.model, facts_version = EXCLUDED.facts_version,
          failure_reason = NULL, generated_at = EXCLUDED.generated_at`,
-      [runId, JSON.stringify(r.content), r.provider, r.model, r.factsVersion],
+      [runId, JSON.stringify(r.content), r.provider, r.model, r.factsVersion, r.generatedAt],
     );
   }
 
@@ -260,7 +266,9 @@ export class AiAnalysisRepository {
    * simulation's own assertions as stored. Null for a run that does not exist.
    */
   async readInput(runId: string): Promise<AiAnalysisInput | null> {
+    // First, so the clock is read before any figure is.
     const { rows } = await this.pool.query<{
+      read_at: Date;
       simulation: string | null;
       status: string;
       duration_ms: number | null;
@@ -268,7 +276,8 @@ export class AiAnalysisRepository {
       started_on: string;
       tool_assertions: unknown;
     }>(
-      `SELECT simulation, status, duration_ms, activity_ms, started_on::text AS started_on, tool_assertions
+      `SELECT clock_timestamp() AS read_at, simulation, status, duration_ms, activity_ms,
+              started_on::text AS started_on, tool_assertions
          FROM run WHERE id = $1::uuid`,
       [runId],
     );
@@ -292,6 +301,7 @@ export class AiAnalysisRepository {
     );
 
     return {
+      readAt: run.read_at,
       run: {
         simulation: run.simulation,
         status: run.status,

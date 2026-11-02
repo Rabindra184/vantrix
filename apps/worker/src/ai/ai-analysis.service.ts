@@ -127,6 +127,9 @@ export class AiAnalysisService {
           provider: provider.name,
           model: provider.model,
           factsVersion: facts.version,
+          // When the facts were read, not now: a recompute landing while the
+          // model answered must leave this analysis stale.
+          generatedAt: input.readAt,
         });
         return 'ready';
       }

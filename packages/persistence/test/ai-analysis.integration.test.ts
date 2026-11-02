@@ -113,7 +113,7 @@ describe('AiAnalysisRepository', () => {
     });
     expect(pending!.requestedAt.getTime()).toBeGreaterThanOrEqual(before - 1000);
 
-    await repo.record(runId, { content: CONTENT, provider: 'anthropic', model: 'claude-opus-5-5', factsVersion: 1 });
+    await repo.record(runId, { content: CONTENT, provider: 'anthropic', model: 'claude-opus-5-5', factsVersion: 1, generatedAt: new Date() });
     const ready = await repo.find(runId);
     expect(ready).toMatchObject({
       runId,
@@ -126,6 +126,10 @@ describe('AiAnalysisRepository', () => {
     });
     expect(ready!.generatedAt).toBeInstanceOf(Date);
     // Recording keeps when it was asked for.
+    // The stamp is the one handed in — the instant the facts were read — never the moment of writing.
+    const readAt = new Date('2026-08-07T10:05:00.000Z');
+    await repo.record(runId, { content: CONTENT, provider: 'anthropic', model: 'm', factsVersion: 1, generatedAt: readAt });
+    expect((await repo.find(runId))!.generatedAt).toEqual(readAt);
     expect(ready!.requestedAt.getTime()).toBe(pending!.requestedAt.getTime());
   });
 
@@ -133,7 +137,7 @@ describe('AiAnalysisRepository', () => {
     const runId = await seedRun();
     const repo = new AiAnalysisRepository(pool);
     await repo.markPending(runId, userId);
-    await repo.record(runId, { content: CONTENT, provider: 'anthropic', model: 'm', factsVersion: 1 });
+    await repo.record(runId, { content: CONTENT, provider: 'anthropic', model: 'm', factsVersion: 1, generatedAt: new Date() });
     await repo.markFailed(runId, 'The analysis cited 41 ms, which is not one of the run’s figures.');
     expect(await repo.find(runId)).toMatchObject({
       status: 'failed',
@@ -183,7 +187,7 @@ describe('AiAnalysisRepository', () => {
     const runId = await seedRun();
     const repo = new AiAnalysisRepository(pool);
     await repo.markPending(runId, userId);
-    await repo.record(runId, { content: CONTENT, provider: 'anthropic', model: 'm', factsVersion: 1 });
+    await repo.record(runId, { content: CONTENT, provider: 'anthropic', model: 'm', factsVersion: 1, generatedAt: new Date() });
 
     // A deleted person keeps the analysis and drops only the attribution.
     await prisma.user.delete({ where: { id: userId } });
@@ -215,8 +219,12 @@ describe('AiAnalysisRepository', () => {
       );
     }
 
+    const before = await pool.query<{ now: Date }>('SELECT clock_timestamp() AS now');
     const input = await new AiAnalysisRepository(pool).readInput(runId);
     expect(input).not.toBeNull();
+    // The database's clock as the read began.
+    expect(input!.readAt.getTime()).toBeGreaterThanOrEqual(before.rows[0]!.now.getTime());
+    expect(input!.readAt.getTime()).toBeLessThanOrEqual(Date.now() + 60_000);
     expect(input!.run).toEqual({
       simulation: 'example.ParitySimulation',
       status: 'complete',
