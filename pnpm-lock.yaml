@@ -334,6 +334,19 @@ importers:
         specifier: ^2.0.2
         version: 2.0.2
 
+  packages/insight:
+    dependencies:
+      '@perfportal/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@perfportal/statistics':
+        specifier: workspace:*
+        version: link:../statistics
+    devDependencies:
+      '@perfportal/persistence':
+        specifier: workspace:*
+        version: link:../persistence
+
   packages/persistence:
     dependencies:
       '@perfportal/contracts':

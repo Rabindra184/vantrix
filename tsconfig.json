@@ -8,6 +8,7 @@
     { "path": "packages/contracts" },
     { "path": "packages/persistence" },
     { "path": "packages/storage" },
-    { "path": "packages/sla" }
+    { "path": "packages/sla" },
+    { "path": "packages/insight" }
   ]
 }

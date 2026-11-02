@@ -1,0 +1,21 @@
+{
+  "name": "@perfportal/insight",
+  "version": "0.0.0",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "perfportal-source": "./src/index.ts",
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
+    }
+  },
+  "files": ["dist"],
+  "dependencies": {
+    "@perfportal/contracts": "workspace:*",
+    "@perfportal/statistics": "workspace:*"
+  },
+  "devDependencies": {
+    "@perfportal/persistence": "workspace:*"
+  }
+}
