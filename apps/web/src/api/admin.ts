@@ -3,14 +3,17 @@ import {
   AdminUserListResponseSchema,
   AdminUserSchema,
   DataIntegritySchema,
+  OrgSettingsSchema,
   RecomputeProgressSchema,
   type AdminProjectListResponse,
   type AdminUser,
   type AdminUserListResponse,
   type CreateUserRequest,
   type DataIntegrity,
+  type OrgSettings,
   type RecomputeProgress,
   type SetPasswordRequest,
+  type UpdateOrgSettingsRequest,
   type UpdateUserRequest,
 } from '@perfportal/contracts';
 import { apiFetch, apiFetchNoContent } from './fetch';
@@ -84,4 +87,24 @@ export const dataIntegrityQueryKey = ['admin-data-integrity'] as const;
 
 export function fetchDataIntegrity(): Promise<DataIntegrity> {
   return apiFetch(DataIntegritySchema, '/v1/admin/data-integrity');
+}
+
+/**
+ * `GET`/`PUT /v1/admin/settings`: Administration › Settings — the org's AI run
+ * analysis switch, and, read-only, whether the deployment configures a
+ * provider and which one and which model. The PUT answers the settings as they
+ * stand afterwards; the page re-reads them anyway, so what it shows is what
+ * the server holds.
+ */
+export const orgSettingsQueryKey = ['admin-settings'] as const;
+
+const settingsPath = '/v1/admin/settings';
+
+export function fetchOrgSettings(): Promise<OrgSettings> {
+  return apiFetch(OrgSettingsSchema, settingsPath);
+}
+
+/** `body` is the whole strict request — the switch and nothing else. */
+export function updateOrgSettings(body: UpdateOrgSettingsRequest): Promise<OrgSettings> {
+  return apiFetch(OrgSettingsSchema, settingsPath, jsonInit('PUT', body));
 }

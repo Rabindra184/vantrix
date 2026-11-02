@@ -4,6 +4,7 @@ import { PROJECT_SLUG_PATTERN } from '@perfportal/contracts';
 import {
   ACCOUNT_PASSWORD_ROUTE,
   ADMIN_PROJECTS_ROUTE,
+  ADMIN_SETTINGS_ROUTE,
   ADMIN_USERS_ROUTE,
   ALL_RUNS_ROUTE,
   DEFAULT_ROUTE,
@@ -302,9 +303,11 @@ describe('static routes cannot shadow a project slug', () => {
   it('declares the Administration pages, inside the shell, from their constants, and no bare /admin', () => {
     expect(ADMIN_USERS_ROUTE).toBe('/admin/users');
     expect(ADMIN_PROJECTS_ROUTE).toBe('/admin/projects');
+    expect(ADMIN_SETTINGS_ROUTE).toBe('/admin/settings');
     const shell = APP.slice(APP.indexOf('<Route element={<AppShell />}>'));
     expect(shell).toMatch(/<Route\s+path=\{ADMIN_USERS_ROUTE\}\s+element=\{<AdminUsers\s*\/>\}/);
     expect(shell).toMatch(/<Route\s+path=\{ADMIN_PROJECTS_ROUTE\}\s+element=\{<AdminProjects\s*\/>\}/);
+    expect(shell).toMatch(/<Route\s+path=\{ADMIN_SETTINGS_ROUTE\}\s+element=\{<AdminSettings\s*\/>\}/);
     expect(APP).not.toMatch(/path="\/admin\/?"/);
   });
 

@@ -9,6 +9,7 @@ import {
   ACCOUNT_PASSWORD_ROUTE,
   ADMIN_DATA_INTEGRITY_ROUTE,
   ADMIN_PROJECTS_ROUTE,
+  ADMIN_SETTINGS_ROUTE,
   ADMIN_USERS_ROUTE,
   DEFAULT_ROUTE,
   HOME_ROUTE,
@@ -37,6 +38,7 @@ import {
 const AccountPassword = lazy(() => import('./routes/AccountPassword'));
 const AdminDataIntegrity = lazy(() => import('./routes/AdminDataIntegrity'));
 const AdminProjects = lazy(() => import('./routes/AdminProjects'));
+const AdminSettings = lazy(() => import('./routes/AdminSettings'));
 const AdminUsers = lazy(() => import('./routes/AdminUsers'));
 const GroupDetail = lazy(() => import('./routes/GroupDetail'));
 const Home = lazy(() => import('./routes/Home'));
@@ -96,12 +98,13 @@ export default function App() {
                 whatever was asked for. */}
             <Route path={ACCOUNT_PASSWORD_ROUTE} element={<AccountPassword />} />
             {/* Administration, for an install-wide admin: the account menu links
-                to Users, and the two pages tab to each other. No bare `/admin`
+                to Users, and the pages tab to each other. No bare `/admin`
                 — there is no page there. A session that is not an admin still
                 reaches these URLs and is shown the API's own refusal. */}
             <Route path={ADMIN_USERS_ROUTE} element={<AdminUsers />} />
             <Route path={ADMIN_PROJECTS_ROUTE} element={<AdminProjects />} />
             <Route path={ADMIN_DATA_INTEGRITY_ROUTE} element={<AdminDataIntegrity />} />
+            <Route path={ADMIN_SETTINGS_ROUTE} element={<AdminSettings />} />
             <Route path="/projects/:slug/run/new" element={<NewRunnerRun />} />
             <Route path="/projects/:slug/setup" element={<ProjectSetup />} />
             <Route path="/projects/:slug/packages" element={<ProjectPackages />} />

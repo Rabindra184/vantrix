@@ -164,16 +164,23 @@ export function Switch({
   label,
   testId,
   onClick,
+  describedBy,
 }: {
   readonly pressed: boolean;
   readonly label: string;
   readonly testId: string;
   readonly onClick: () => void;
+  /** The id of the switch's description — an ⓘ's hidden copy, as a form
+   *  field's hint is (`FormField`). Administration › Settings' AI switch is
+   *  the one caller with a description to point at; absent, the switch has
+   *  none. */
+  readonly describedBy?: string;
 }) {
   return (
     <button
       type="button"
       aria-pressed={pressed}
+      aria-describedby={describedBy}
       data-testid={testId}
       onClick={onClick}
       className={`${CHIP_BASE} ${

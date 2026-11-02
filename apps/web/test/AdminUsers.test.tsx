@@ -219,7 +219,7 @@ describe('AdminUsers — the shell', () => {
 
     expect(screen.getByRole('heading', { level: 1, name: 'Administration' })).toBeInTheDocument();
     const nav = screen.getByRole('navigation', { name: 'Administration sections' });
-    expect(within(nav).getAllByRole('link').map((link) => link.textContent)).toEqual(['Users', 'Projects', 'Data integrity']);
+    expect(within(nav).getAllByRole('link').map((link) => link.textContent)).toEqual(['Users', 'Projects', 'Data integrity', 'Settings']);
     expect(within(nav).getAllByRole('link', { current: 'page' }).map((link) => link.textContent)).toEqual(['Users']);
     expect(within(nav).getByRole('link', { name: 'Projects' })).toHaveAttribute('href', ADMIN_PROJECTS_ROUTE);
     expect(document.title).toBe('Users · Administration · PerfPortal');
