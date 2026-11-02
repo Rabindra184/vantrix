@@ -39,6 +39,13 @@ const NOT_CONFIGURED: OrgSettings = {
   aiModel: null,
 };
 
+/** An org switched on while a provider was configured, whose deployment has
+ *  since lost it: the switch must stay reachable, so it can be turned off. */
+const ENABLED_NOT_CONFIGURED: OrgSettings = { ...NOT_CONFIGURED, aiEnabled: true };
+
+const CONSENT =
+  "When on, a member can send a run's figures, request names and error messages to anthropic/claude-sonnet-4 to write an analysis.";
+
 interface Call {
   readonly method: string;
   readonly url: string;
@@ -99,6 +106,9 @@ describe('AdminSettings', () => {
     // Names the variable an operator sets, in one sentence.
     expect(line.textContent).toContain('AI_PROVIDER');
     expect(line.textContent?.trim().split(/(?<=[.!?])\s+/)).toHaveLength(1);
+    // True whether the org's switch is off or was left on: it says what the
+    // deployment lacks, not what an admin may do next.
+    expect(line.textContent).not.toMatch(/turned on/i);
     // NOT drawn, rather than drawn disabled: there is nothing to switch on.
     expect(screen.queryByRole('button', { name: 'AI features' })).toBeNull();
     expect(screen.queryByTestId('ai-features-switch')).toBeNull();
@@ -111,10 +121,42 @@ describe('AdminSettings', () => {
     expect(toggle).toHaveAttribute('aria-pressed', 'false');
     // The description is the CONTROL's, announced on focus — not a paragraph
     // under the title.
-    expect(toggle).toHaveAccessibleDescription(
-      "When on, a member can send a run's figures, request names and error messages to anthropic/claude-sonnet-4 to write an analysis.",
-    );
+    expect(toggle).toHaveAccessibleDescription(CONSENT);
+    // VISIBLE, not behind an ⓘ: it is the admin's consent to sending data to
+    // a third party, so it is read before the switch is pressed.
+    const sentence = screen.getByText(CONSENT);
+    expect(sentence).toBeVisible();
+    expect(sentence.closest('[hidden]')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'About AI features' })).toBeNull();
     expect(screen.queryByTestId('ai-provider-not-configured')).toBeNull();
+  });
+
+  it('keeps the switch, on, for an org left enabled with no provider configured, and turns it off', async () => {
+    let held: OrgSettings = ENABLED_NOT_CONFIGURED;
+    const calls = stub((call) => {
+      if (call.method === 'PUT') {
+        held = { ...held, ...(JSON.parse(call.body ?? '{}') as Pick<OrgSettings, 'aiEnabled'>) };
+      }
+      return json(200, held);
+    });
+    renderPage();
+    const toggle = await screen.findByRole('button', { name: 'AI features' });
+    expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    const line = screen.getByTestId('ai-provider-not-configured');
+    expect(line).toBeVisible();
+    expect(line.textContent).toContain('AI_PROVIDER');
+    expect(line.textContent).not.toMatch(/turned on/i);
+    // No destination to name, so no consent sentence naming one.
+    expect(screen.queryByText(/^When on,/)).toBeNull();
+
+    await userEvent.click(toggle);
+
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'AI features' })).toBeNull());
+    const puts = calls.filter((c) => c.url === SETTINGS && c.method === 'PUT');
+    expect(puts).toHaveLength(1);
+    expect(JSON.parse(puts[0]!.body ?? 'null')).toEqual({ aiEnabled: false });
+    // Off, with no provider: today's page — the one operator sentence.
+    expect(screen.getByTestId('ai-provider-not-configured')).toBeVisible();
   });
 
   it('turns AI features on and re-reads the settings', async () => {

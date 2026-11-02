@@ -2,7 +2,6 @@ import { useId } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { OrgSettings } from '@perfportal/contracts';
 import { Switch } from '../charts/ChartControls';
-import InfoTip from '../components/InfoTip';
 import { ErrorState, LoadingState } from '../components/States';
 import { ProblemError } from '../api/fetch';
 import { fetchOrgSettings, orgSettingsQueryKey, updateOrgSettings } from '../api/admin';
@@ -13,22 +12,23 @@ import AdminShell, { RefreshFailed, isRefusal } from './AdminShell';
  * switch — AI features, which lets a member send a run to the deployment's AI
  * provider for a written analysis.
  *
- * ═══ NO PROVIDER, NO SWITCH ═══
+ * ═══ NO PROVIDER, NO SWITCH — UNLESS IT IS ON (ruling 17) ═══
  *
  * The provider and model are the DEPLOYMENT's (`AI_PROVIDER`, `AI_MODEL`),
  * not the org's, and `PUT /v1/admin/settings` cannot set them. With none
- * configured there is nothing for the switch to turn on, so it is not drawn —
- * a disabled switch would still claim the feature is one click away — and one
- * sentence names the variable an operator sets.
+ * configured and the switch off there is nothing to switch on, so it is not
+ * drawn — a disabled switch would still claim the feature is one click away —
+ * and one sentence names the variable an operator sets. An org left ON keeps
+ * its switch, so it can be turned off before a later provider makes it send
+ * again; the sentence is worded to be true in both states.
  *
- * ═══ THE DESCRIPTION SAYS WHAT LEAVES THE DEPLOYMENT ═══
+ * ═══ THE DESCRIPTION SAYS WHAT LEAVES THE DEPLOYMENT, ON SCREEN ═══
  *
- * Turning this on is a decision about data leaving the install, so the
- * switch's description names exactly what is sent and to which provider and
- * model, from the API's own answer. It is the CONTROL's description — the ⓘ's
- * hidden copy, which the switch points `aria-describedby` at, as a form
- * field's hint is (`FormField`) — so a screen reader hears it on focus and the
- * page prints no paragraph under the switch (clean UI).
+ * Turning this on is the admin's consent to data leaving the install, so one
+ * VISIBLE sentence beside the switch names exactly what is sent and to which
+ * provider and model, from the API's own answer — a consequence of acting,
+ * which the clean-UI rule keeps on screen. It is also the switch's
+ * `aria-describedby`, so a screen reader hears it on focus.
  *
  * ═══ THE PAGE SHOWS WHAT THE SERVER HOLDS ═══
  *
@@ -71,35 +71,46 @@ function AiFeatures({ settings }: { readonly settings: OrgSettings }) {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: orgSettingsQueryKey }),
   });
 
-  if (!settings.aiProviderConfigured) {
-    return (
-      <p data-testid="ai-provider-not-configured" className="text-[0.8125rem] text-muted">
-        An operator must configure an AI provider on the deployment (<code>AI_PROVIDER</code>) before AI features can be turned on.
-      </p>
-    );
-  }
+  const operatorLine = (
+    <p id={descriptionId} data-testid="ai-provider-not-configured" className="text-[0.8125rem] text-muted">
+      No AI provider is configured on this deployment; an operator sets one with <code>AI_PROVIDER</code>.
+    </p>
+  );
+
+  /* Off with no provider: nothing to switch on, so no switch — the one
+     sentence. On with no provider (switched on while one was configured, and
+     the deployment has lost it since): the switch STAYS, on, so an admin can
+     turn it off — otherwise sending would resume, unseen, to whatever
+     provider an operator configures next. */
+  if (!settings.aiProviderConfigured && !settings.aiEnabled) return operatorLine;
 
   const problem = mutation.error instanceof ProblemError ? mutation.error : null;
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex items-center gap-1">
-        <Switch
-          pressed={settings.aiEnabled}
-          label="AI features"
-          testId="ai-features-switch"
-          describedBy={descriptionId}
-          onClick={() => {
-            // One change at a time: a second click while the first is in
-            // flight would PUT the same value the knob has not yet left.
-            if (mutation.isPending) return;
-            mutation.mutate({ aiEnabled: !settings.aiEnabled });
-          }}
-        />
-        <InfoTip label="About AI features" descriptionId={descriptionId}>
+      <Switch
+        pressed={settings.aiEnabled}
+        label="AI features"
+        testId="ai-features-switch"
+        describedBy={descriptionId}
+        onClick={() => {
+          // One change at a time: a second click while the first is in
+          // flight would PUT the same value the knob has not yet left.
+          if (mutation.isPending) return;
+          mutation.mutate({ aiEnabled: !settings.aiEnabled });
+        }}
+      />
+      {/* VISIBLE, and the switch's description: what leaves the deployment
+          is the admin's consent, read before the switch is pressed, never a
+          caveat behind an ⓘ. With no provider there is no destination to
+          name, so the operator line takes its place. */}
+      {settings.aiProviderConfigured ? (
+        <p id={descriptionId} className="text-[0.8125rem] text-muted">
           {`When on, a member can send a run's figures, request names and error messages to ${destination(settings)} to write an analysis.`}
-        </InfoTip>
-      </div>
+        </p>
+      ) : (
+        operatorLine
+      )}
       {mutation.isError && (
         <div role="alert" className="rounded-lg border border-default bg-sunken p-3 text-[0.8125rem] text-primary">
           <p>{problem?.detail ?? mutation.error.message}</p>
