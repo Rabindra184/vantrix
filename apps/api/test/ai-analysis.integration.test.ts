@@ -264,17 +264,29 @@ describe('POST /v1/runs/{id}/ai-analysis', () => {
     expect(read.body).toEqual(first.body);
   });
 
-  it('re-enqueues a pending row older than ten minutes', async () => {
+  it('re-enqueues a pending row older than thirty-five minutes, and not one a job may still be working on', async () => {
     ctx = await configuredApp();
     await enableOrg();
     const runId = await seedRun();
     const { cookie } = await member();
     await post(runId, cookie).expect(202);
-    // The job is gone — BullMQ failed it for stalling and removed it — and
-    // the row was left pending eleven minutes ago.
+    // The job is gone — BullMQ failed it for stalling and removed it.
     await (await aiQueue().getJob(runId))?.remove();
+
+    // Thirty minutes is inside the longest a job can run (three attempts of
+    // two 300 s calls, and the backoff): the row is still trusted.
     await ctx.pool.query(
-      `UPDATE run_ai_analysis SET requested_at = now() - interval '11 minutes' WHERE run_id = $1`,
+      `UPDATE run_ai_analysis SET requested_at = now() - interval '30 minutes' WHERE run_id = $1`,
+      [runId],
+    );
+    const trusted = await requestedAt(runId);
+    expect((await post(runId, cookie)).status).toBe(202);
+    expect(await requestedAt(runId)).toEqual(trusted);
+    expect(await aiQueue().getJob(runId)).toBeUndefined();
+
+    // Past the window, nothing can still be working on it.
+    await ctx.pool.query(
+      `UPDATE run_ai_analysis SET requested_at = now() - interval '36 minutes' WHERE run_id = $1`,
       [runId],
     );
     const old = await requestedAt(runId);

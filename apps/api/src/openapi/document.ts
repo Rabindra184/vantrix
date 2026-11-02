@@ -1385,7 +1385,7 @@ const paths: Record<string, PathItemObject> = {
         'analysis is marked pending and queued, and the worker writes it; poll GET ' +
         '/v1/runs/{id}/ai-analysis. A run that may not be analysed answers 409. An analysis ' +
         'already pending, or ready and not stale, is answered as it stands without queueing ' +
-        'again; a failed, stale or abandoned one (pending for over ten minutes) is queued afresh. ' +
+        'again; a failed, stale or abandoned one (pending for over thirty-five minutes) is queued afresh. ' +
         'No body.',
       parameters: [parameters['RunId']!],
       responses: {

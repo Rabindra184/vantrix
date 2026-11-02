@@ -25,11 +25,23 @@ import { AiAnalysisQueue } from './ai-analysis-queue.js';
  * How long a pending row is trusted to have a job behind it. Past this a
  * POST queues it again: a job BullMQ failed for stalling never reaches the
  * worker's service, so nothing else would ever settle its row, and the queue
- * keeps no failed job, so the re-queue is not ignored. Ten minutes covers a
- * generation (two provider calls of at most 120 s each, and the queue's
- * retries) with room to spare.
+ * keeps no failed job, so the re-queue is not ignored.
+ *
+ * Thirty-five minutes is the longest a job can run, with room. One attempt
+ * makes at most two provider calls (a second only when the first answer
+ * fails the number check) of at most 300 s each (`TIMEOUT_MS`, worker
+ * providers.ts): 600 s. A call cut off at its timeout is recorded at once and
+ * never retried, but a transient failure (a 5xx, a 429) can still arrive at
+ * the end of a long call, so all three attempts (`AI_ANALYSIS_JOB_OPTIONS`)
+ * can each take the full 600 s: 1,800 s, plus the backoff between them,
+ * 10 s and then 20 s — 1,830 s, about 30.5 minutes.
+ *
+ * Not counted: time the job spends WAITING behind other runs' analyses (the
+ * consumer takes one at a time). That costs nothing: a POST past the window
+ * while the job still waits re-marks the row pending and adds a job under the
+ * same id, which BullMQ ignores while that job exists.
  */
-const PENDING_REQUEUE_AFTER_MS = 10 * 60_000;
+const PENDING_REQUEUE_AFTER_MS = 35 * 60_000;
 
 /** What a reader can do about each reason, for the POST's 409. */
 const UNAVAILABLE_REMEDIATION: Readonly<Record<AiUnavailableReason, string>> = {
@@ -120,7 +132,7 @@ export class RunAiAnalysisController {
    * a fast worker could store its answer and the mark land on top of it,
    * leaving the card reading "Analysing…" over a finished analysis. A queue
    * that refuses the add leaves the row pending and answers 500; the next
-   * POST after the ten minutes re-queues it.
+   * POST after `PENDING_REQUEUE_AFTER_MS` re-queues it.
    *
    * `@Res()` because the status depends on the row, 200 or 202.
    */
