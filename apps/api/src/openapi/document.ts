@@ -1340,6 +1340,78 @@ const paths: Record<string, PathItemObject> = {
     },
   },
 
+  '/v1/runs/{id}/ai-analysis': {
+    get: {
+      operationId: 'getRunAiAnalysis',
+      summary: 'A run\'s AI analysis, or why it has none',
+      tags: ['runs'],
+      description:
+        sessionAccessSentence('project:read') + ' ' +
+        'Requires the "read" scope. A model\'s summary of a finished run in three sections — how ' +
+        'it went, what the figures show, what to do next — every number in it checked against ' +
+        'the run\'s own stored figures before it was kept. It never changes a verdict, an ' +
+        'assertion or a run\'s status. "available" is false with a "reason", in this order: ' +
+        '"not_configured" (the deployment sets no AI_PROVIDER), "org_disabled" (an admin has not ' +
+        'turned AI run analysis on for this organisation — a stored analysis is hidden too), ' +
+        '"not_terminal" (still pending, parsing or running), "no_statistics" (nothing measured), ' +
+        '"estimated" (its statistics predate exact statistics) or "verification_mismatch" (its ' +
+        'stored figures disagree with its raw log). Otherwise "state" is "none" (never asked ' +
+        'for), "pending" (queued or being written), "ready" (with "content") or "failed" (with ' +
+        'a free-form "failureReason"). "stale" is true when the run\'s statistics were ' +
+        'recomputed or re-ingested after the analysis was written. A run outside the caller\'s ' +
+        'organisation or project answers 404.',
+      parameters: [parameters['RunId']!],
+      responses: {
+        '200': {
+          description: 'This run\'s analysis, or why it has none.',
+          content: json(schemaRef('AiAnalysisResponse')),
+        },
+        '400': ref('BadRequest'),
+        '404': ref('NotFound'),
+        ...authFailureResponses,
+      },
+    },
+    post: {
+      operationId: 'requestRunAiAnalysis',
+      summary: 'Ask for a run\'s AI analysis',
+      tags: ['runs'],
+      // SESSION-ONLY: generating spends the operator's money, and the request
+      // is recorded as a person's.
+      security: [{ cookieAuth: [] }],
+      description:
+        sessionAccessSentence('run:analyze') + ' ' +
+        'Requires a signed-in session — refused for ANY bearer token regardless of scopes (see ' +
+        'SessionOnlyGuard and the 403 below). Never holds the request open for a model: the ' +
+        'analysis is marked pending and queued, and the worker writes it; poll GET ' +
+        '/v1/runs/{id}/ai-analysis. A run that may not be analysed answers 409. An analysis ' +
+        'already pending, or ready and not stale, is answered as it stands without queueing ' +
+        'again; a failed, stale or abandoned one (pending for over ten minutes) is queued afresh. ' +
+        'No body.',
+      parameters: [parameters['RunId']!],
+      responses: {
+        '200': {
+          description: 'The analysis is ready and not stale; nothing was queued.',
+          content: json(schemaRef('AiAnalysisResponse')),
+        },
+        '202': {
+          description: 'Queued, or already pending: the analysis in state "pending".',
+          content: json(schemaRef('AiAnalysisResponse')),
+        },
+        '400': ref('BadRequest'),
+        '401': ref('Unauthorized'),
+        '403': ref('SessionRequired'),
+        '404': ref('NotFound'),
+        '409': {
+          description:
+            'The run may not be analysed (code AI_ANALYSIS_UNAVAILABLE); the detail names the ' +
+            'reason GET /v1/runs/{id}/ai-analysis reports. Nothing was queued. ' +
+            'application/problem+json with a required "remediation".',
+          content: problem(),
+        },
+      },
+    },
+  },
+
   '/v1/runs/{id}/series': {
     get: {
       operationId: 'getRunSeries',
@@ -3085,6 +3157,61 @@ const paths: Record<string, PathItemObject> = {
         '200': {
           description: 'This organisation\'s data-integrity summary.',
           content: json(schemaRef('DataIntegrity')),
+        },
+        '401': ref('Unauthorized'),
+        '403': ref('SessionRequired'),
+      },
+    },
+  },
+
+  '/v1/admin/settings': {
+    get: {
+      operationId: 'getOrgSettings',
+      summary: 'This organisation\'s settings',
+      tags: ['admin'],
+      security: [{ cookieAuth: [] }],
+      description:
+        sessionAccessSentence('users:manage') + ' ' +
+        '"aiEnabled" is this organisation\'s switch for AI run analysis, off until an admin turns ' +
+        'it on. "aiProviderConfigured", "aiProvider" and "aiModel" are the DEPLOYMENT\'s ' +
+        'configuration (AI_PROVIDER, AI_MODEL), read-only here; the provider\'s key is never ' +
+        'returned. Nothing is sent to a provider unless a provider is configured AND the switch is ' +
+        'on.',
+      responses: {
+        '200': {
+          description: 'This organisation\'s settings.',
+          content: json(schemaRef('OrgSettings')),
+        },
+        '401': ref('Unauthorized'),
+        '403': ref('SessionRequired'),
+      },
+    },
+    put: {
+      operationId: 'updateOrgSettings',
+      summary: 'Turn AI run analysis on or off for this organisation',
+      tags: ['admin'],
+      security: [{ cookieAuth: [] }],
+      description:
+        sessionAccessSentence('users:manage') + ' ' +
+        'Sets the switch and nothing else. Turning it off stops new analyses and hides stored ' +
+        'ones; a job already queued is re-checked by the worker and sends nothing.',
+      requestBody: {
+        required: true,
+        description: '"aiEnabled": true or false. No other field is accepted.',
+        content: json(schemaRef('UpdateOrgSettingsRequest')),
+      },
+      responses: {
+        '200': {
+          description: 'Set. The settings as they now stand.',
+          content: json(schemaRef('OrgSettings')),
+        },
+        '400': {
+          description:
+            'The body failed UpdateOrgSettingsRequestSchema (code INVALID_ORG_SETTINGS) — a ' +
+            'missing switch, or a field the schema does not know, such as the provider or model, ' +
+            'which belong to the environment. Nothing changed. application/problem+json with a ' +
+            'required "remediation".',
+          content: problem(),
         },
         '401': ref('Unauthorized'),
         '403': ref('SessionRequired'),

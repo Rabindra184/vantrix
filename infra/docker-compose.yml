@@ -164,6 +164,23 @@ services:
       # default. A bigger file is refused 413 AGENT_LOG_TOO_LARGE and the run is
       # otherwise unaffected.
       MAX_AGENT_LOG_BYTES: ${PERFPORTAL_MAX_AGENT_LOG_BYTES:-}
+      # ═══ AI RUN ANALYSIS (the API and the worker read these) ═══
+      #
+      # Off unless AI_PROVIDER names a provider: `anthropic` (needs
+      # ANTHROPIC_API_KEY; AI_MODEL defaults to claude-opus-5-5) or
+      # `openai-compatible` (needs AI_BASE_URL and AI_MODEL; AI_API_KEY is
+      # optional, for a model that takes none). Even then nothing is sent until
+      # an admin turns AI run analysis on for the org under Administration.
+      # All five are passed as EMPTY when unset, and both processes read empty
+      # as unset; a provider named without what it needs stops the API and the
+      # worker at startup naming the missing variable (`parseAiConfig` in
+      # @perfportal/core). What is sent, and what it costs: DEPLOYMENT.md,
+      # "AI run analysis".
+      AI_PROVIDER: ${PERFPORTAL_AI_PROVIDER:-}
+      AI_MODEL: ${PERFPORTAL_AI_MODEL:-}
+      ANTHROPIC_API_KEY: ${PERFPORTAL_ANTHROPIC_API_KEY:-}
+      AI_BASE_URL: ${PERFPORTAL_AI_BASE_URL:-}
+      AI_API_KEY: ${PERFPORTAL_AI_API_KEY:-}
       # ═══ GATLING'S OWN METHOD, BESIDE EACH VERIFICATION (the worker reads these) ═══
       #
       # The verifier also replays a run's response times through Gatling's
@@ -285,6 +302,12 @@ services:
       context: ..
       dockerfile: infra/Dockerfile
     environment: *app_env
+    # Long enough for an AI analysis in flight to finish: the worker waits for
+    # it on SIGTERM, and one job can make two provider calls of up to 120 s
+    # each. Docker's default of 10 s would SIGKILL it part-way, and the job,
+    # left stalled, would run again from the start and be paid for twice.
+    # An idle worker still exits in well under a second.
+    stop_grace_period: 5m
     depends_on:
       postgres:
         condition: service_healthy

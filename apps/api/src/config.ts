@@ -1,4 +1,4 @@
-import { parseRawLogRetentionDays } from '@perfportal/core';
+import { parseAiConfig, parseRawLogRetentionDays, type AiConfig } from '@perfportal/core';
 
 export interface AppConfig {
   port: number;
@@ -58,6 +58,15 @@ export interface AppConfig {
    * would refuse too. 0 keeps raw logs for ever.
    */
   rawLogRetentionDays: number;
+  /**
+   * The AI provider that writes run analyses, or null when `AI_PROVIDER` is
+   * unset and the feature is off. The WORKER calls it; the API only decides
+   * whether to offer an analysis and states the provider and model on
+   * Administration, never the key. Read by the worker's own rule,
+   * `parseAiConfig`, so a provider named without what it needs stops the API
+   * at startup too, rather than offering a card the worker cannot produce.
+   */
+  ai: AiConfig | null;
 }
 
 /**
@@ -177,5 +186,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
      * already crossing the network in the clear. */
     allowInsecureCookies: env.ALLOW_INSECURE_COOKIES === 'true',
     rawLogRetentionDays: parseRawLogRetentionDays(env.RAW_LOG_RETENTION_DAYS),
+    ai: parseAiConfig(env),
   };
 }

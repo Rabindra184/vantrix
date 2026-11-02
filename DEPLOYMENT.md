@@ -486,6 +486,70 @@ would need**: while it is off, every run not yet verified reads
 backlog is checked once it is switched back on. The same holds for the
 backfill with `PERFPORTAL_RECOMPUTE_ENABLED=false`.
 
+### AI run analysis
+
+A run's Summary can carry a model's analysis of it: how the run went, what
+the figures show, and what to do next. Every number in it is checked against
+the run's own stored figures before it is kept; an answer carrying a number
+the run does not have is refused, not shown. An analysis never changes a
+verdict, an assertion or a run's status.
+
+It is **off unless two people turn it on**, and nothing leaves the deployment
+until both have:
+
+1. **An operator configures a provider** in the environment (below) and
+   restarts the API and the worker.
+2. **An admin turns it on for the organisation** under **Administration**
+   (`PUT /v1/admin/settings` with `{"aiEnabled": true}`). It is off by
+   default. Turning it off again stops new analyses and hides stored ones.
+
+| Variable | Notes |
+|---|---|
+| `PERFPORTAL_AI_PROVIDER` | `anthropic` (Claude) or `openai-compatible` (a self-hosted model, or any endpoint speaking the OpenAI chat API). **Empty means off**, and removes the feature entirely |
+| `PERFPORTAL_AI_MODEL` | The model. Empty means `claude-opus-5-5` for `anthropic`; **required** for `openai-compatible` |
+| `PERFPORTAL_ANTHROPIC_API_KEY` | **Required** for `anthropic` |
+| `PERFPORTAL_AI_BASE_URL` | **Required** for `openai-compatible`: the endpoint, such as `http://llm.internal/v1` |
+| `PERFPORTAL_AI_API_KEY` | Optional for `openai-compatible`, for a model that takes a key |
+
+A provider named without what it needs (no key, no base URL, no model for
+`openai-compatible`), or a provider this product does not know, stops the API
+and the worker at startup with a message naming the variable, rather than
+offering an analysis that fails on the first click. Administration shows which
+provider and model are configured; the key is never shown or returned.
+
+**What is sent to the provider**, for each analysis a member asks for: the
+run's aggregates and labels — its totals, the per-request and per-group
+statistics (counts, error rates, percentiles, throughput), its error messages
+and their counts, the SLA and simulation assertions with their outcomes, the
+injection figures, and the facts computed from them. Request, group and
+simulation names travel with them. **Never the raw log, and never who anybody
+is.** Gatling's error messages are its check failures, and **they can carry
+fragments of URLs or of response bodies** — whatever the failing check
+printed. If your test targets carry data that must not reach a model, use a
+self-hosted model (`openai-compatible`), or leave the feature off.
+
+**What it costs:** one analysis is one or two answered calls to the model (a
+second only when the first answer fails the check; a call the provider could
+not answer at all is retried, up to three attempts), and it is made only when
+a member asks for it on a run. It is written once per run: asking again answers
+the stored analysis, and only a run whose statistics were recomputed or
+re-ingested since, or whose analysis failed, is analysed again. There is no
+quota; the provider bills the key's account.
+
+Analyses are made by the worker, one at a time, and **the worker waits for the
+one in progress when it is stopped**. Each call is cut off at 120 seconds, and
+one analysis can make two, so give the worker a stop grace period of at least
+five minutes — `infra/docker-compose.yml` sets `stop_grace_period: 5m`. An
+orchestrator that kills it sooner (Docker's own default is 10 seconds) leaves
+the job stalled; it then runs again from the start, and the provider is paid
+twice. An idle worker still stops in well under a second.
+
+An analysis the worker could not produce is recorded with its reason
+(`provider_error` when the provider could not be reached after three tries,
+`refused`, a check failure, and so on) and the card says so, offering a retry.
+The worker's log has the detail; a provider's error message may itself quote
+part of a URL or of a response body.
+
 ---
 
 ## Before you expose it

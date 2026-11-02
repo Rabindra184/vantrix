@@ -1,6 +1,9 @@
 import { z } from 'zod';
 import {
   ActivityResponseSchema,
+  AiAnalysisResponseSchema,
+  OrgSettingsSchema,
+  UpdateOrgSettingsRequestSchema,
   AgentConnectionsResponseSchema,
   AgentDnsResponseSchema,
   AgentInjectorsResponseSchema,
@@ -198,6 +201,11 @@ const SOURCE: Record<string, z.ZodType> = {
   AgentInjectorsResponse: AgentInjectorsResponseSchema,
   AgentStatusResponse: AgentStatusResponseSchema,
   DurationSection: DurationSectionSchema,
+  // AI RUN ANALYSIS: a run's analysis or why it has none, and the org's
+  // switch (Administration's settings, read and written).
+  AiAnalysisResponse: AiAnalysisResponseSchema,
+  OrgSettings: OrgSettingsSchema,
+  UpdateOrgSettingsRequest: UpdateOrgSettingsRequestSchema,
 };
 
 /**
@@ -238,6 +246,7 @@ export const REQUEST_BODIES: ReadonlySet<string> = new Set([
   'UpdateSlaRuleRequest',
   'ChangePasswordRequest',
   'CreateUserRequest',
+  'UpdateOrgSettingsRequest',
   'UpdateUserRequest',
   'SetPasswordRequest',
   'TelemetryBatch',
