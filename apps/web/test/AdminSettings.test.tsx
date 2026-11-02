@@ -44,7 +44,16 @@ const NOT_CONFIGURED: OrgSettings = {
 const ENABLED_NOT_CONFIGURED: OrgSettings = { ...NOT_CONFIGURED, aiEnabled: true };
 
 const CONSENT =
-  "When on, a member can send a run's figures, request names and error messages to anthropic/claude-sonnet-4 to write an analysis.";
+  "When on, a member can send a run's figures and the names it records — its simulation, requests, groups and assertions — with its error messages to anthropic/claude-sonnet-4 to write an analysis. Off also hides analyses already written.";
+
+/** A self-hosted endpoint: the API names its host, and nothing else of its URL. */
+const OPENAI_COMPATIBLE: OrgSettings = {
+  aiEnabled: false,
+  aiProviderConfigured: true,
+  aiProvider: 'openai-compatible',
+  aiModel: 'llama-3.3-70b',
+  aiBaseUrlHost: 'llm.internal.example:8443',
+};
 
 interface Call {
   readonly method: string;
@@ -131,6 +140,37 @@ describe('AdminSettings', () => {
     expect(screen.queryByTestId('ai-provider-not-configured')).toBeNull();
   });
 
+  it('names every kind of thing that leaves the deployment, and says off hides what was written', async () => {
+    stub(() => json(200, CONFIGURED_OFF));
+    renderPage();
+    const toggle = await screen.findByRole('button', { name: 'AI features' });
+    const sentence = document.getElementById(toggle.getAttribute('aria-describedby') ?? '')!;
+    // Each category DEPLOYMENT.md lists as sent, not a sample of them: the
+    // consent is to all of it.
+    for (const sent of ['figures', 'simulation', 'requests', 'groups', 'assertions', 'error messages']) {
+      expect(sentence.textContent).toContain(sent);
+    }
+    expect(sentence.textContent).toMatch(/off also hides analyses already written/i);
+  });
+
+  it("names an openai-compatible endpoint's host as well as its provider and model", async () => {
+    stub(() => json(200, OPENAI_COMPATIBLE));
+    renderPage();
+    const toggle = await screen.findByRole('button', { name: 'AI features' });
+    expect(toggle).toHaveAccessibleDescription(
+      /to llm\.internal\.example:8443 \(openai-compatible\/llama-3\.3-70b\) to write an analysis\./,
+    );
+  });
+
+  it('names an openai-compatible provider without a host when an older API sends none', async () => {
+    const older: Record<string, unknown> = { ...OPENAI_COMPATIBLE };
+    delete older.aiBaseUrlHost;
+    stub(() => json(200, older));
+    renderPage();
+    const toggle = await screen.findByRole('button', { name: 'AI features' });
+    expect(toggle).toHaveAccessibleDescription(/ with its error messages to openai-compatible\/llama-3\.3-70b to write/);
+  });
+
   it('keeps the switch, on, for an org left enabled with no provider configured, and turns it off', async () => {
     let held: OrgSettings = ENABLED_NOT_CONFIGURED;
     const calls = stub((call) => {
@@ -157,6 +197,49 @@ describe('AdminSettings', () => {
     expect(JSON.parse(puts[0]!.body ?? 'null')).toEqual({ aiEnabled: false });
     // Off, with no provider: today's page — the one operator sentence.
     expect(screen.getByTestId('ai-provider-not-configured')).toBeVisible();
+  });
+
+  it('moves focus to the operator sentence when turning the switch off removes it', async () => {
+    let held: OrgSettings = ENABLED_NOT_CONFIGURED;
+    stub((call) => {
+      if (call.method === 'PUT') held = { ...held, aiEnabled: false };
+      return json(200, held);
+    });
+    renderPage();
+    const toggle = await screen.findByRole('button', { name: 'AI features' });
+    await userEvent.click(toggle);
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'AI features' })).toBeNull());
+    // Not dropped to <body> with the switch that held it.
+    const line = screen.getByTestId('ai-provider-not-configured');
+    await waitFor(() => expect(document.activeElement).toBe(line));
+    // Reachable by script, not added to the Tab order.
+    expect(line).toHaveAttribute('tabindex', '-1');
+  });
+
+  it('does not take focus to the operator sentence on a page that merely arrives without a switch', async () => {
+    stub(() => json(200, NOT_CONFIGURED));
+    renderPage();
+    await screen.findByTestId('ai-provider-not-configured');
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it("keeps the PUT's answer when the re-read after it fails, rather than showing the old state", async () => {
+    let gets = 0;
+    stub((call) => {
+      if (call.method === 'PUT') return json(200, { ...CONFIGURED_OFF, aiEnabled: true });
+      gets += 1;
+      return gets === 1
+        ? json(200, CONFIGURED_OFF)
+        : problem(500, 'INTERNAL', 'The request could not be completed.', 'Retry the request.');
+    });
+    renderPage();
+    const toggle = await screen.findByRole('button', { name: 'AI features' });
+    await userEvent.click(toggle);
+    // The re-read was asked for and failed...
+    await waitFor(() => expect(gets).toBe(2));
+    await screen.findByText(/could not be refreshed/i);
+    // ...and the switch still says ON, which is what the server holds.
+    expect(screen.getByRole('button', { name: 'AI features' })).toHaveAttribute('aria-pressed', 'true');
   });
 
   it('turns AI features on and re-reads the settings', async () => {
