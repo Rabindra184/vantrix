@@ -9,6 +9,9 @@ import {
   VerificationRepository,
 } from '@perfportal/persistence';
 import { BlobStore, LiveChunkStore } from '@perfportal/storage';
+import { AiAnalysisService } from './ai/ai-analysis.service.js';
+import { startAiAnalysisConsumer } from './ai/ai-queue.js';
+import { providerFor } from './ai/providers.js';
 import { loadWorkerConfig } from './config.js';
 import { startConsumer } from './consumer.js';
 import { LiveFoldOwner } from './live/fold-owner.js';
@@ -133,6 +136,11 @@ const RECOMPUTE_SCAN_CLIENTS = 1;
 // candidate query, which can run beside a verification. Reserved even when VERIFY_ENABLED=false.
 const VERIFY_CLIENTS = 2;
 const VERIFY_SCAN_CLIENTS = 1;
+// `AiAnalysisService.generate` (concurrency 1) reads and writes through the pool one query at a
+// time and holds no client across the provider call: one at once. Reserved even when
+// AI_PROVIDER is unset, for recompute's reason. It never touches Prisma, so Prisma's budget
+// above has no AI term.
+const AI_ANALYSIS_CLIENTS = 1;
 const pool = createPool(config.databaseUrl, {
   max:
     config.maxOwnedRuns +
@@ -142,7 +150,8 @@ const pool = createPool(config.databaseUrl, {
     RECOMPUTE_CLIENTS +
     RECOMPUTE_SCAN_CLIENTS +
     VERIFY_CLIENTS +
-    VERIFY_SCAN_CLIENTS,
+    VERIFY_SCAN_CLIENTS +
+    AI_ANALYSIS_CLIENTS,
   connectionTimeoutMillis: 10_000,
 });
 const blobs = new BlobStore(config.blob);
@@ -209,6 +218,17 @@ if (config.recomputeEnabled) {
   timer.unref();
   recompute = { queue, consumer, timer };
 }
+/**
+ * AI run analysis (`ai/ai-queue.ts`), only when the deployment names a
+ * provider: with `AI_PROVIDER` unset nothing consumes the queue, and the API
+ * offers no analysis to queue. A provider named without its companions has
+ * already stopped this process in `loadWorkerConfig`.
+ */
+const aiConsumer = config.ai === null
+  ? null
+  : startAiAnalysisConsumer(config, new AiAnalysisService(config, pool, providerFor(config.ai)));
+if (config.ai !== null) console.log(`ai analysis: generating with ${config.ai.provider} (${config.ai.model})`);
+
 /**
  * The sweeper's `live:closed` publisher is created HERE and quit HERE, in a
  * shutdown step of its own -- `Sweeper.close()` closes only the BullMQ queue
@@ -314,6 +334,10 @@ function shutdown(): Promise<void> {
         await verify.consumer.close();
       }
       await verifyQueue?.close();
+    } },
+    // Before pool.end(): an analysis in flight writes its answer through the pool.
+    { name: 'aiConsumer.close', run: async () => {
+      await aiConsumer?.close();
     } },
     { name: 'sweeper.close', run: () => sweeper.close() },
     // After sweeper.close(). A sweep still in flight publishes with `.catch()`, so a connection
