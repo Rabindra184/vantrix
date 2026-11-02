@@ -412,6 +412,7 @@ describe('/v1/admin/settings', () => {
       aiProviderConfigured: true,
       aiProvider: 'anthropic',
       aiModel: 'claude-opus-5-5',
+      aiBaseUrlHost: null,
     });
     // The deployment's key never leaves it.
     expect(JSON.stringify(before.body)).not.toContain(KEY);
@@ -439,6 +440,34 @@ describe('/v1/admin/settings', () => {
     ctx = await createTestApp();
     const admin = await signInAsAdmin(ctx, email('admin'));
     const res = await request(ctx.app.getHttpServer()).get('/v1/admin/settings').set('Cookie', admin.cookie).expect(200);
-    expect(res.body).toEqual({ aiEnabled: false, aiProviderConfigured: false, aiProvider: null, aiModel: null });
+    expect(res.body).toEqual({
+      aiEnabled: false,
+      aiProviderConfigured: false,
+      aiProvider: null,
+      aiModel: null,
+      aiBaseUrlHost: null,
+    });
+  });
+
+  it('names an openai-compatible endpoint by its host alone, never its userinfo, path or query', async () => {
+    const openai: AiConfig = {
+      provider: 'openai-compatible',
+      model: 'llama-3.3-70b',
+      baseUrl: 'https://svc-user:svc-secret@llm.internal.example:8443/openai/v1?tenant=acme',
+      apiKey: KEY,
+    };
+    ctx = await createTestApp({}, [], [{ provide: CONFIG, useValue: { ...loadConfig(), ai: openai } }]);
+    const admin = await signInAsAdmin(ctx, email('admin'));
+    const res = await request(ctx.app.getHttpServer()).get('/v1/admin/settings').set('Cookie', admin.cookie).expect(200);
+    expect(OrgSettingsSchema.parse(res.body)).toEqual({
+      aiEnabled: false,
+      aiProviderConfigured: true,
+      aiProvider: 'openai-compatible',
+      aiModel: 'llama-3.3-70b',
+      aiBaseUrlHost: 'llm.internal.example:8443',
+    });
+    // The host alone: nothing else of the base URL reaches an admin's page.
+    const body = JSON.stringify(res.body);
+    for (const part of ['svc-user', 'svc-secret', '/openai/v1', 'tenant=acme', KEY]) expect(body).not.toContain(part);
   });
 });

@@ -40,6 +40,23 @@ import { AdminUsersService } from './admin-users.service.js';
 /** How many failed verifications the data-integrity page lists; the counts above it are whole. */
 const PROBLEM_LIMIT = 100;
 
+/**
+ * The host (hostname and port) of an openai-compatible endpoint, for the
+ * consent sentence beside the AI switch. `URL#host` carries neither userinfo
+ * nor path nor query, so `https://user:secret@llm.internal:8443/v1?k=x`
+ * names `llm.internal:8443` and nothing an admin page must not show.
+ * `parseAiConfig` already refused a base URL that does not parse, so the
+ * catch is for a config object built some other way: no host is said rather
+ * than the raw string.
+ */
+function baseUrlHost(baseUrl: string): string | null {
+  try {
+    return new URL(baseUrl).host;
+  } catch {
+    return null;
+  }
+}
+
 function toAdminUser(row: OrgUserRow): AdminUser {
   return AdminUserSchema.parse({
     id: row.id,
@@ -288,6 +305,7 @@ export class AdminController {
       aiProviderConfigured: ai !== null,
       aiProvider: ai?.provider ?? null,
       aiModel: ai?.model ?? null,
+      aiBaseUrlHost: ai?.provider === 'openai-compatible' ? baseUrlHost(ai.baseUrl) : null,
     });
   }
 

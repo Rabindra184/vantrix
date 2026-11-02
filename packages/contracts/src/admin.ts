@@ -221,12 +221,21 @@ export type DataIntegrity = z.infer<typeof DataIntegritySchema>;
  * can say whether there is a provider to switch on and what leaves the
  * deployment when there is. `aiProvider` and `aiModel` are null exactly when
  * `aiProviderConfigured` is false.
+ *
+ * `aiBaseUrlHost` is the HOST of an openai-compatible provider's endpoint
+ * (`new URL(AI_BASE_URL).host`: hostname and port, never userinfo, path or
+ * query), so the consent sentence can name where the data actually goes; it
+ * is null for anthropic and with no provider. Optional as well as nullable,
+ * because an API pod that predates the field sends no key at all and the
+ * browser drops a body that fails this schema — a rolling deploy would
+ * otherwise blank the settings page.
  */
 export const OrgSettingsSchema = z.object({
   aiEnabled: z.boolean(),
   aiProviderConfigured: z.boolean(),
   aiProvider: z.enum(['anthropic', 'openai-compatible']).nullable(),
   aiModel: z.string().nullable(),
+  aiBaseUrlHost: z.string().nullable().optional(),
 });
 export type OrgSettings = z.infer<typeof OrgSettingsSchema>;
 
