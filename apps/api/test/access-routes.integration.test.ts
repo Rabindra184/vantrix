@@ -211,6 +211,8 @@ const ACCESS_BY_ROUTE: Readonly<Record<string, Access>> = {
   'GET /v1/runs/:id/events': 'project:read',
   'GET /v1/runs/:id/verification': 'project:read',
   'PUT /v1/runs/:id/note': 'run:note',
+  'GET /v1/runs/:id/ai-analysis': 'project:read',
+  'POST /v1/runs/:id/ai-analysis': 'run:analyze',
 
   'GET /v1/projects/:slug/tests': 'project:read',
   'GET /v1/projects/:slug/tests/:testSlug': 'project:read',
@@ -255,6 +257,8 @@ const ACCESS_BY_ROUTE: Readonly<Record<string, Access>> = {
   'GET /v1/admin/projects': 'users:manage',
   'GET /v1/admin/recompute': 'users:manage',
   'GET /v1/admin/data-integrity': 'users:manage',
+  'GET /v1/admin/settings': 'users:manage',
+  'PUT /v1/admin/settings': 'users:manage',
 };
 
 /** Where the run routes live. A run names its project through the run row. */
@@ -575,6 +579,7 @@ const PROBES: readonly Probe[] = [
   { action: 'project:read', role: 'viewer', route: 'GET /v1/projects/:slug/tests' },
   { action: 'rules:read', role: 'viewer', route: 'GET /v1/projects/:slug/rules' },
   { action: 'run:note', role: 'member', route: 'PUT /v1/runs/:id/note', body: {} },
+  { action: 'run:analyze', role: 'member', route: 'POST /v1/runs/:id/ai-analysis', body: {} },
   { action: 'run:upload', role: 'member', route: 'POST /v1/projects/:slug/runs' },
   { action: 'runner:run', role: 'member', route: 'POST /v1/projects/:slug/runner/runs' },
   { action: 'packages:manage', role: 'member', route: 'POST /v1/projects/:slug/packages' },

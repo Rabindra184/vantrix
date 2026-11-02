@@ -1,4 +1,4 @@
-import { parseRawLogRetentionDays } from '@perfportal/core';
+import { parseAiConfig, parseRawLogRetentionDays, type AiConfig } from '@perfportal/core';
 
 export interface WorkerConfig {
   databaseUrl: string;
@@ -168,6 +168,15 @@ export interface WorkerConfig {
    * verification's outcome.
    */
   gatlingMethodTimeoutMs: number;
+  /**
+   * The AI provider that writes run analyses (`ai/ai-queue.ts`), or null when
+   * `AI_PROVIDER` is unset and the feature is off. `parseAiConfig` in
+   * `@perfportal/core` is the ONE reading of those variables, shared with the
+   * API, and it THROWS at startup on a provider named without its companions
+   * (a missing key, a model `openai-compatible` cannot default), so a worker
+   * never starts that would fail the first analysis anybody asks for.
+   */
+  ai: AiConfig | null;
 }
 
 /**
@@ -289,5 +298,6 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv = process.env): WorkerCo
     gatlingMethodSeeds: seedsOr(env.GATLING_METHOD_SEEDS),
     // Blank, non-numeric, under a second or past a timer's limit is the default.
     gatlingMethodTimeoutMs: timeoutOr(env.GATLING_METHOD_TIMEOUT_MS, 300_000),
+    ai: parseAiConfig(env),
   };
 }

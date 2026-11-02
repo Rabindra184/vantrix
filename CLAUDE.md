@@ -128,9 +128,9 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **282 files / 4611 tests**, it
+`nvm use` first, and if a run reports fewer than **290 files / 4714 tests**, it
 did not run everything — nor did an integration run reporting fewer than
-**262 files / 4111 tests**, an e2e run fewer than **214**, or a
+**273 files / 4258 tests**, an e2e run fewer than **214**, or a
 `pnpm test:e2e:cross` run fewer than **642** (214 on each of three engines).
 (Update those numbers when a sub-project adds suites, or the next reader
 calibrates against a stale floor and a silently-skipped run looks like a
@@ -150,6 +150,136 @@ still Chromium and still 102; `pnpm test:e2e:cross` was 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The AI run analysis backend branch (`feat/ai-run-analysis`, PR 1 of
+`docs/superpowers/specs/2026-11-02-ai-run-analysis-design.md`, plan
+`docs/superpowers/plans/2026-11-02-ai-run-analysis.md`, GE backlog #11) added
+EIGHT unit files — `packages/contracts/test/ai-analysis.test.ts` (9),
+`packages/core/test/ai-config.test.ts` (9) and `ai-analysis-job-options.test.ts`
+(2), `packages/statistics/test/users-total.test.ts` (2),
+`packages/insight/test/facts.test.ts` (26) and `check.test.ts` (27),
+`apps/worker/test/ai-providers.test.ts` (13),
+`packages/persistence/test/ai-eligibility.test.ts` (7) — plus 5 cases in the
+API and worker `config.test.ts` and 3 from the loops over `ACCESS_ACTIONS`:
+unit **282 / 4611 to 290 / 4714**. Integration gains those `.ts` files, THREE
+`ai-analysis.integration.test.ts` (persistence 6, worker 17, API 16) and the
+new routes' walk, matrix and cross-org rows: **262 / 4111 to 273 / 4258**.
+**e2e stays 214** (642): nothing under `apps/web` changed; PR 2 carries the card.
+
+**THE MODEL NEVER DOES ARITHMETIC: PERFPORTAL HANDS IT FACTS AND CHECKS EVERY
+NUMBER IT WRITES BACK.** GE's analysis copied its numbers right and got every
+number it WORKED OUT wrong, so that rule is the feature. `@perfportal/insight`
+(new, pure) builds `{ id, label, display, value, text }` facts in the page's
+own formatting, the derived ones included — KO partitioned by request, the
+tail's owner, the always-failing requests, and whether OK fell to zero during
+the run or only in the final drain (per scenario, against the END of its last
+arrivals bucket). `checkNumbers` refuses any number that is not a fact's value
+or a rounding of one, inside a fact's verbatim span, or a `p95`-style rank;
+the worker retries once with the refused numbers named, then records
+`numbers_not_in_facts`. Around it: the contracts and `run:analyze` (Member),
+`parseAiConfig` and the job options in core, `sumUsersByOffset` (one users
+total for `/users` and the facts), `run_ai_analysis` and `org.ai_enabled`, two
+providers and an `ai-analysis` queue in the worker, `GET`/`POST
+/v1/runs/{id}/ai-analysis` and `GET`/`PUT /v1/admin/settings`, with OpenAPI,
+access rows, compose and `DEPLOYMENT.md`.
+
+**A CHECKED NUMBER IS SOME FACT, NOT NECESSARILY ITS SUBJECT'S.** "289 Search
+failures" passes because 289 is the run's KO — the rule's stated limit, not a
+guarantee to build on. What the reviews could close, they closed:
+`Number('00:01:00')` and `1m 28s` read as small integers that were facts on the
+GE fixture, so clocks and durations are single tokens only a verbatim span
+passes, and a leading-zero integer never passes on value; "three hundred",
+"twice" and "half" carried no digit, so number words are refused whole unless
+inside a fact's own text (the worker's fixture "One request failed." tripped
+it — expect that class); thresholds and "95th percentile" were uncitable until
+each assertion got threshold facts and ordinal ranks counted; and the content
+is walked recursively, not by a field list.
+
+**`removeOnFail` IS A DEDUPE TRAP, WHICH IS WHY THE JOB OPTIONS LIVE IN
+CORE.** BullMQ ignores an `add` whose `jobId` is still held, and kept failed
+jobs (`removeOnFail: 1000`) meant a run whose job failed for good could never be
+queued again while an unclassified error left it `pending` for ever. It is
+`true`, a last-attempt failure records `internal_error`, and the options are
+core's because BullMQ reads attempts from what a job is ADDED with — by the API.
+
+**A TIMED-OUT CALL IS BILLED, SO IT IS NOT RETRIED.** `TIMEOUT_MS` is 300 s;
+`APIConnectionTimeoutError` and fetch's `TimeoutError`/`AbortError` record
+`provider_error` at once; only an unreached connection, 408, 429 and 5xx are
+transient, and a bare `TypeError` no longer buys a paid retry. The SDK's
+`maxRetries` is 0 (on top of the queue's three it would make nine calls an
+outage), and a pending row is trusted for 35 minutes (3 × 2 × 300 s + backoff).
+
+**`generated_at` IS THE FACTS-READ INSTANT, NOT THE WRITE.** Stamped at write, a
+recompute mid-generation left an analysis of the old figures reading fresh.
+`readInput` opens with the database's `clock_timestamp()` — staleness compares
+with the database's `ingested_at`/`recomputed_at` — and `record()` takes it as
+a REQUIRED `generatedAt`.
+
+**THE SDK BINDING WAS READ OUT OF `@anthropic-ai/sdk` 1.3.0.** `fallbacks:
+'default'` exists only on the beta params, so the call is
+`client.beta.messages.parse` with `betas: ['server-side-fallback-2026-07-01']`
+for models that have one. `zodOutputFormat`'s `parse` THROWS on a schema miss,
+on every text block, which loses the answer the retry quotes — so it is spread
+with a lenient `parse`, `stop_reason === 'refusal'` is checked first, and the
+text after the last `fallback` block is read. The SDK beat the skill twice
+(`Authorization: Bearer`, and its own structured-outputs beta).
+
+**RED-VERIFIED, ABOUT EIGHTY MUTATIONS**, each from a committed checkpoint with
+its anchor count asserted at 1 (the reports under
+`.superpowers/sdd/2026-11-02-ai-run-analysis/`) — among them `removeOnFail:
+1000` with core rebuilt (the re-add case alone), the word loop matching nothing
+(4 cases), the timeout made transient, and `now()` for `generated_at` with
+persistence's `dist` rebuilt both ways.
+
+**WHAT WAS RUN**, on `fde9b2e7`, Node v22, `perfportal_ai`, Redis db 10 flushed
+through `infra-redis-1`, bucket `perfportal-ai`, no `dist/main.js` running:
+`pnpm build`, `typecheck` and `lint` exit 0 by their own exit codes;
+`test:unit` **290 / 4714**, exit 0, zero `Errors` lines; the env-example guard
+(32 variables) and `docker compose config --quiet`, base and `onprem`, exit 0;
+`prisma migrate diff` an empty migration; `pnpm audit --prod` exit 0 after the
+SDK landed. `test:integration` COLLECTED **273 / 4258** and exited 1 on ONE
+case, `org-tests.integration`'s owning-project-name case, a P1001 from
+`TestRepository.p95Histories`, a file this diff cannot reach — **17 of 17**
+alone, the full suite not re-run; it started at load 7.91 / 7.51 / 5.44 with
+9,833 of 11,264 MB of swap in use. **`test:e2e` was not run locally**: no spec
+and no web file changed.
+
+**RULINGS** (the ledger's 1–14): (1) insight declares its own `FactsFigures`
+and `StoredFigures` must be assignable, since a pure package imports no
+persistence; (2) the card mounts outside `DesktopOnly`; (3) merge after green
+CI was authorised with the plan; (4) Tasks 1–3 took one implementer and one
+review; (5) the drain ends at the last arrivals bucket's END, the spec over the
+brief; (6) a token inside a fact's display span passes; (7) clocks and
+durations are single tokens, the walk recursive; (8) `aiUnavailableReason`
+lives in persistence, one six-step precedence for API and worker; (9) PR 1 got
+its own whole-branch review; (10) 300 s, no retry after a client timeout,
+`stop_grace_period` 6m; (11) `verification_mismatch` hides a stored analysis
+on GET; (12) the worker starts the consumer only with its own `config.ai`;
+(13) `generated_at` is the facts-read instant; (14) the residuals below ship as
+PR 2's FIRST commit, not a second fix wave.
+
+**KNOWN AND LEFT:**
+
+  - Ruling 14's, PR 2's first commit: undici's own 300 s headers/body timeouts
+    can fire first and read as transient; "a third-" and "one-off" are refused
+    as number words; 6m of grace covers one call, not the two a retry makes
+    (11m does, and `DEPLOYMENT.md` says so).
+  - Parked: `readInput` is not under the run's advisory lock, so a recompute
+    straddling the stamp is missed and `readStoredFigures` can read torn; bare
+    cardinals could map to values instead of being refused; a reset after
+    send is retried though possibly billed; "single", "couple", "doubles" pass.
+  - The check ignores units ("2,383 seconds", PR 2's review), signs
+    (`-2,383`), trailing zeros (`28.00%`), comma placement (`17,24`) and an
+    index label's digits (`Request 17`).
+  - Minors: `AI_BASE_URL`'s error echoes userinfo; nothing lints insight's
+    `src` off persistence; an OpenAI `message.refusal` is a paid retry; 409 is
+    not transient; the refused-number list is uncapped; a POST between
+    `markFailed` and job removal waits out the 35 minutes; pending age mixes
+    the API's and the database's clocks; the API keys reach migrate, bootstrap
+    and runner via `app_env`; the `OrgSettings` invariants are prose; a corrupt
+    rule snapshot's actual falls back to the raw fraction; nothing spawned
+    starts the AI consumer; no model was called here (Task 11's), and the
+    OpenAI strict-mode stripping met no self-hosted server.
 
 The zod-4 branch (`chore/zod-4`) added TWO unit files —
 `packages/contracts/test/form-messages.test.ts` (8) and

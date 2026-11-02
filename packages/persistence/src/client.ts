@@ -159,6 +159,7 @@ export const SCHEMA_TABLES = [
   'run_assertion',
   'run_verdict_change',
   'run_verification',
+  'run_ai_analysis',
   'runner_artifact',
   'runner_job',
   'runner_job_event',

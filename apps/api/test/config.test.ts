@@ -100,3 +100,29 @@ describe('loadConfig maxAgentLogBytes', () => {
     expect(loadConfig({ ...base }).maxAgentLogBytes).toBe(268435456);
   });
 });
+
+/**
+ * The API reads the AI provider only to decide whether to offer an analysis
+ * and to state it on Administration, but by the worker's own rule
+ * (`parseAiConfig`): a provider named without what it needs must stop the
+ * API at startup too, or the page would offer a card the worker refuses.
+ */
+describe('loadConfig ai', () => {
+  it('is null when AI_PROVIDER is unset or blank', () => {
+    expect(loadConfig({ ...base }).ai).toBeNull();
+    expect(loadConfig({ ...base, AI_PROVIDER: '' }).ai).toBeNull();
+  });
+
+  it('refuses a provider without its required companion, naming the variable', () => {
+    expect(() => loadConfig({ ...base, AI_PROVIDER: 'anthropic' })).toThrow(/ANTHROPIC_API_KEY/);
+    expect(() => loadConfig({ ...base, AI_PROVIDER: 'openai-compatible', AI_MODEL: 'm' })).toThrow(/AI_BASE_URL/);
+  });
+
+  it('reads a configured provider', () => {
+    expect(loadConfig({ ...base, AI_PROVIDER: 'anthropic', ANTHROPIC_API_KEY: 'k' }).ai).toEqual({
+      provider: 'anthropic',
+      model: 'claude-opus-5-5',
+      apiKey: 'k',
+    });
+  });
+});

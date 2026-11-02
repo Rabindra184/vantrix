@@ -256,4 +256,17 @@ describe('loadWorkerConfig', () => {
       expect(loadWorkerConfig({ ...BASE_ENV, GATLING_METHOD_TIMEOUT_MS: '2147483647' }).gatlingMethodTimeoutMs).toBe(2_147_483_647);
     });
   });
+
+  describe('ai', () => {
+    it('is off without AI_PROVIDER, and reads the provider through parseAiConfig when set', () => {
+      expect(loadWorkerConfig(BASE_ENV).ai).toBeNull();
+      expect(loadWorkerConfig({ ...BASE_ENV, AI_PROVIDER: 'anthropic', ANTHROPIC_API_KEY: 'sk-test' }).ai).toEqual({
+        provider: 'anthropic', model: 'claude-opus-5-5', apiKey: 'sk-test',
+      });
+    });
+
+    it('refuses to load a provider named without its key', () => {
+      expect(() => loadWorkerConfig({ ...BASE_ENV, AI_PROVIDER: 'anthropic' })).toThrow(/ANTHROPIC_API_KEY/);
+    });
+  });
 });

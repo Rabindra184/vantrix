@@ -1,7 +1,7 @@
 import { Controller, Get, Param, Query, Req } from '@nestjs/common';
 import type { DistributionResponse, ScatterResponse, UsersResponse } from '@perfportal/contracts';
 import { MetricReader, RunRepository, type StoredBucket } from '@perfportal/persistence';
-import { Histogram, distribution, inferBucketWidthMs } from '@perfportal/statistics';
+import { Histogram, distribution, inferBucketWidthMs, sumUsersByOffset } from '@perfportal/statistics';
 import type { Request } from 'express';
 import { Scopes } from '../auth/scopes.decorator.js';
 import { uuidParam } from '../common/validation.js';
@@ -104,7 +104,6 @@ export class ParityController {
     const rows = all.filter((r) => inRange(r.startOffsetMs, range));
 
     const byScenario = new Map<string, UsersResponse['scenarios'][number]['buckets']>();
-    const total = new Map<number, { startOffsetMs: number; started: number; ended: number; maxConcurrent: number }>();
     for (const r of rows) {
       let list = byScenario.get(r.scenario);
       if (!list) { list = []; byScenario.set(r.scenario, list); }
@@ -112,17 +111,6 @@ export class ParityController {
         startOffsetMs: r.startOffsetMs, started: r.started,
         ended: r.ended, maxConcurrent: r.maxConcurrent,
       });
-      // Gatling's own 'All users' series is the per-scenario SUM in both
-      // charts - verified across all 63 fixture buckets. Summing maxima is
-      // normally wrong (max(a+b) != max(a)+max(b)); here it is what parity
-      // requires. Do not "fix" this to a true max-of-sums.
-      const t = total.get(r.startOffsetMs) ?? {
-        startOffsetMs: r.startOffsetMs, started: 0, ended: 0, maxConcurrent: 0,
-      };
-      t.started += r.started;
-      t.ended += r.ended;
-      t.maxConcurrent += r.maxConcurrent;
-      total.set(r.startOffsetMs, t);
     }
 
     return {
@@ -132,7 +120,9 @@ export class ParityController {
       window: range === null ? null : snapWindow(all.map((r) => r.startOffsetMs), range),
       scenarios: [...byScenario].map(([scenario, buckets]) => ({ scenario, buckets }))
         .sort((a, b) => a.scenario.localeCompare(b.scenario)),
-      total: [...total.values()].sort((a, b) => a.startOffsetMs - b.startOffsetMs),
+      // Gatling's own 'All users' series: the per-scenario SUM, the one
+      // definition the AI run analysis reads too (see `sumUsersByOffset`).
+      total: sumUsersByOffset(rows),
     };
   }
 

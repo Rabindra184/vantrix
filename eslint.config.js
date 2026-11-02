@@ -239,7 +239,7 @@ export default tseslint.config(
     rules: { 'no-restricted-syntax': ['error', ...NO_AVERAGED_PERCENTILES] },
   },
   {
-    files: ['packages/{core,plugin-gatling,statistics,sla}/src/**/*.ts'],
+    files: ['packages/{core,plugin-gatling,statistics,sla,insight}/src/**/*.ts'],
     rules: {
       'no-restricted-imports': ['error', { patterns: FORBIDDEN_IN_PURE }],
     },

@@ -5,18 +5,22 @@ import {
   AdminUserSchema,
   CreateUserRequestSchema,
   DataIntegritySchema,
+  OrgSettingsSchema,
   PASSWORD_MAX_LENGTH,
   PASSWORD_MIN_LENGTH,
   RecomputeProgressSchema,
   SetPasswordRequestSchema,
+  UpdateOrgSettingsRequestSchema,
   UpdateUserRequestSchema,
   type AdminProjectListResponse,
   type AdminUser,
   type AdminUserListResponse,
   type DataIntegrity,
+  type OrgSettings,
   type RecomputeProgress,
 } from '@perfportal/contracts';
 import {
+  OrgSettingsRepository,
   ProjectMemberRepository,
   ProjectRepository,
   RecomputeRepository,
@@ -79,6 +83,7 @@ export class AdminController {
     private readonly service: AdminUsersService,
     private readonly recompute: RecomputeRepository,
     private readonly verifications: VerificationRepository,
+    private readonly orgSettings: OrgSettingsRepository,
     @Inject(CONFIG) private readonly config: AppConfig,
   ) {}
 
@@ -236,6 +241,53 @@ export class AdminController {
       verification,
       problems: problems.map((p) => ({ ...p, checkedAt: p.checkedAt?.toISOString() ?? null })),
       rawLogRetentionDays: this.config.rawLogRetentionDays,
+    });
+  }
+
+  /**
+   * The org's own settings: the AI run analysis switch, and — read-only —
+   * whether the DEPLOYMENT configures a provider, which one and which model,
+   * so Administration can say whether there is anything to switch on and
+   * what leaves the deployment when it is. Never the key.
+   */
+  @Get('settings')
+  @Requires('users:manage')
+  async settings(@Req() req: Request): Promise<OrgSettings> {
+    return this.#settings(req.tenant!.orgId);
+  }
+
+  /**
+   * Turn AI run analysis on or off for this org. The switch is the only
+   * field: the provider and model are the environment's, and the schema is
+   * `.strict()`, so a body that tries to set them is refused rather than
+   * answered as though it had worked. Off stops new analyses AND hides stored
+   * ones; a job queued just before is re-checked by the worker and sends
+   * nothing.
+   */
+  @Put('settings')
+  @Requires('users:manage')
+  async updateSettings(@Req() req: Request, @Body() body: unknown): Promise<OrgSettings> {
+    const parsed = UpdateOrgSettingsRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      throw badRequest(
+        'INVALID_ORG_SETTINGS',
+        `The settings are not valid: ${firstIssue(parsed.error)}`,
+        'Send {"aiEnabled": true} or {"aiEnabled": false}. No other field is accepted: the AI provider and ' +
+          'model are the deployment\'s environment (AI_PROVIDER, AI_MODEL), not an organisation setting.',
+      );
+    }
+    const orgId = req.tenant!.orgId;
+    await this.orgSettings.setAiEnabled(orgId, parsed.data.aiEnabled);
+    return this.#settings(orgId);
+  }
+
+  async #settings(orgId: string): Promise<OrgSettings> {
+    const ai = this.config.ai;
+    return OrgSettingsSchema.parse({
+      aiEnabled: await this.orgSettings.aiEnabled(orgId),
+      aiProviderConfigured: ai !== null,
+      aiProvider: ai?.provider ?? null,
+      aiModel: ai?.model ?? null,
     });
   }
 

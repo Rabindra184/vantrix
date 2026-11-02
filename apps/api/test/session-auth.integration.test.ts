@@ -705,6 +705,9 @@ describe('cross-org isolation on every session-reachable endpoint', () => {
     `/v1/runs/${id}/telemetry`,
     `/v1/runs/${id}/events`,
     `/v1/runs/${id}/verification`,
+    // The AI analysis. No provider is configured here, so the positive half
+    // answers 200 `available: false` — the read resolving the run.
+    `/v1/runs/${id}/ai-analysis`,
     // The agent figures (GE report parity PR 2). The run under test carries
     // no agent file, so the positive half answers 200 `available: false` —
     // which is the read resolving the run, the thing this list proves.

@@ -10,9 +10,11 @@
     "recompute": "node dist/scripts/recompute.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "1.3.0",
     "@nestjs/common": "^11.1.6",
     "@perfportal/contracts": "workspace:*",
     "@perfportal/core": "workspace:*",
+    "@perfportal/insight": "workspace:*",
     "@perfportal/persistence": "workspace:*",
     "@perfportal/plugin-gatling": "workspace:*",
     "@perfportal/sla": "workspace:*",
@@ -22,7 +24,8 @@
     "bullmq": "^5.34.0",
     "ioredis": "^5.4.1",
     "pg": "^8.13.0",
-    "reflect-metadata": "^0.2.2"
+    "reflect-metadata": "^0.2.2",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@prisma/client": "^6.19.3",
