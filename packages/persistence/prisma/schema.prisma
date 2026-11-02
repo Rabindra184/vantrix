@@ -935,9 +935,6 @@ model RunVerification {
   @@map("run_verification")
 }
 
-/// One row per run that had an agent file: whether it could be read, why not,
-/// and what its figures were built on. Cascades from run, so unlike the two
-/// agent bucket tables it is not FK-free.
 /// One AI analysis per run (docs/superpowers/specs/2026-11-02-ai-run-analysis-design.md).
 /// Written through AiAnalysisRepository's raw SQL; `status` is held to
 /// pending/ready/failed by run_ai_analysis_status_check.
@@ -959,6 +956,9 @@ model RunAiAnalysis {
   @@map("run_ai_analysis")
 }
 
+/// One row per run that had an agent file: whether it could be read, why not,
+/// and what its figures were built on. Cascades from run, so unlike the two
+/// agent bucket tables it is not FK-free.
 model RunAgent {
   runId          String   @id @map("run_id") @db.Uuid
   orgId          String   @map("org_id") @db.Uuid
