@@ -1,5 +1,5 @@
 import type { ToolAssertion } from '@perfportal/contracts';
-import type { StoredFigures } from '@perfportal/persistence';
+import type { AiAnalysisInput, StoredFigures } from '@perfportal/persistence';
 import { describe, expect, it } from 'vitest';
 import {
   buildRunFacts,
@@ -146,6 +146,17 @@ describe('buildRunFacts', () => {
     const stored = {} as StoredFigures;
     const accepted: FactsFigures = stored;
     expect(accepted).toBe(stored);
+  });
+
+  it('accepts persistence’s run and platform assertions as readInput returns them', () => {
+    // The same direction as the figures above: persistence declares the
+    // shapes structurally (it may not depend on this package), and the
+    // worker hands readInput's fields straight in.
+    const read = {} as AiAnalysisInput;
+    const run: FactsInput['run'] = read.run;
+    const platformAssertions: FactsInput['platformAssertions'] = read.platformAssertions;
+    expect(run).toBe(read.run);
+    expect(platformAssertions).toBe(read.platformAssertions);
   });
 
   it('partitions KO by request so the parts sum to the run’s KO', () => {

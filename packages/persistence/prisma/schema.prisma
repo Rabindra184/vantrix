@@ -16,6 +16,8 @@ model Org {
   slug      String      @unique
   name      String
   createdAt DateTime    @default(now()) @map("created_at")
+  /// The org's opt-in to AI run analysis: off until an admin turns it on.
+  aiEnabled Boolean     @default(false) @map("ai_enabled")
   projects  Project[]
   members   OrgMember[]
 
@@ -544,6 +546,7 @@ model Run {
   assertions RunAssertion[]
   verdictChanges RunVerdictChange[]
   verification   RunVerification?
+  aiAnalysis     RunAiAnalysis?
   agent          RunAgent?
   runnerJobs RunnerJob[]
   /// SET NULL, not CASCADE: a deleted account keeps its words on the run and
@@ -935,6 +938,27 @@ model RunVerification {
 /// One row per run that had an agent file: whether it could be read, why not,
 /// and what its figures were built on. Cascades from run, so unlike the two
 /// agent bucket tables it is not FK-free.
+/// One AI analysis per run (docs/superpowers/specs/2026-11-02-ai-run-analysis-design.md).
+/// Written through AiAnalysisRepository's raw SQL; `status` is held to
+/// pending/ready/failed by run_ai_analysis_status_check.
+model RunAiAnalysis {
+  runId         String    @id @map("run_id") @db.Uuid
+  status        String
+  content       Json?
+  provider      String?
+  model         String?
+  factsVersion  Int?      @map("facts_version")
+  failureReason String?   @map("failure_reason")
+  requestedBy   String?   @map("requested_by")
+  requestedAt   DateTime  @default(now()) @map("requested_at") @db.Timestamptz(3)
+  generatedAt   DateTime? @map("generated_at") @db.Timestamptz(3)
+
+  run       Run   @relation(fields: [runId], references: [id], onDelete: Cascade)
+  requester User? @relation(fields: [requestedBy], references: [id], onDelete: SetNull)
+
+  @@map("run_ai_analysis")
+}
+
 model RunAgent {
   runId          String   @id @map("run_id") @db.Uuid
   orgId          String   @map("org_id") @db.Uuid
@@ -989,6 +1013,9 @@ model User {
   /// The memberships this person granted. Only here because Prisma names both
   /// ends of a relation; nothing reads it.
   projectMembersAdded ProjectMember[] @relation("ProjectMemberAddedBy")
+  /// The AI analyses this person asked for. Only here because Prisma names
+  /// both ends of a relation; nothing reads it.
+  aiAnalysesRequested RunAiAnalysis[]
 
   @@unique([email])
   @@map("user")
