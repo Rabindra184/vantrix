@@ -1,5 +1,10 @@
 export const INGEST_QUEUE = 'ingest';
 
+// AI run analysis has its own queue, so a slow provider call never sits in
+// front of an ingest, and an ingest backlog never delays an analysis a reader
+// is waiting on.
+export const AI_ANALYSIS_QUEUE = 'ai-analysis';
+
 // Deterministic failures are not retried; the worker decides by
 // rethrowing an UnrecoverableError. Transient ones get three tries.
 //
