@@ -4,7 +4,10 @@ import { describe, expect, it } from 'vitest';
 import {
   ASSERTION_FACT_LIMIT,
   buildRunFacts,
+  ERROR_FACT_LIMIT,
   FACTS_VERSION,
+  KO_PART_LIMIT,
+  NAME_LIST_LIMIT,
   type Fact,
   type FactsFigures,
   type FactsFigureSeriesBucket,
@@ -342,6 +345,71 @@ describe('buildRunFacts', () => {
     expect(names).toContain('ep-250');
     expect(names).toContain('ep-260');
     expect(fact(facts, 'derived.tailOwner').text).toBe('ep-250');
+  });
+
+  /*
+   * ═══ THE REMAINDERS, EACH ON A RUN WIDER THAN ITS LIMIT ═══
+   *
+   * Three facts fold what is past their limit into one, and each fold is a
+   * figure the model may cite — so each must be the exact sum of what it
+   * folded, or the "parts sum to the whole" guarantee fails one row past
+   * the cap, on exactly the wide runs where a reader most needs it.
+   */
+  it('folds the failing requests past the cap into one part, so the parts still sum to the run’s KO', () => {
+    const extra = 5;
+    // Distinct KO counts, so the order (largest first) is unambiguous.
+    const failing = Array.from({ length: KO_PART_LIMIT + extra }, (_, i) =>
+      req(`ko-${String(i).padStart(2, '0')}`, { count: 500, koCount: 100 - i }),
+    );
+    const totalKo = failing.reduce((s, r) => s + r.koCount, 0);
+    const run = { ...RUN_ROW, koCount: totalKo, okCount: RUN_ROW.count - totalKo };
+    const facts = buildRunFacts(input({ figures: figures({ stats: [run, ...failing] }) }));
+
+    const parts = facts.facts.filter((f) => f.id.startsWith('derived.koByRequest.'));
+    expect(parts).toHaveLength(KO_PART_LIMIT + 1);
+    const folded = failing.slice(KO_PART_LIMIT).reduce((s, r) => s + r.koCount, 0);
+    expect(fact(facts, 'derived.koByRequest.other')).toMatchObject({
+      label: `KO of ${String(extra)} other requests`,
+      text: `${String(extra)} other requests`,
+      value: folded,
+      display: formatCount(folded),
+    });
+    expect(parts.reduce((s, f) => s + (f.value ?? 0), 0)).toBe(fact(facts, 'run.ko').value);
+    // The folded requests are not also stated one by one.
+    expect(parts.map((f) => f.text)).not.toContain(failing[KO_PART_LIMIT]!.name);
+  });
+
+  it('folds the messages past the cap into Other errors, with the stored remainder', () => {
+    const extra = 4;
+    const named = Array.from({ length: ERROR_FACT_LIMIT + extra }, (_, i) => ({
+      scope: 'run', name: '', message: `failure ${String(i).padStart(2, '0')}`, isOther: false, count: 200 - i,
+    }));
+    // A remainder the ingest already folded: it joins the one this builder folds.
+    const stored = { scope: 'run', name: '', message: '', isOther: true, count: 9 };
+    const facts = buildRunFacts(input({ figures: figures({ errors: [...named, stored] }) }));
+
+    const last = ERROR_FACT_LIMIT;
+    const folded = named.slice(ERROR_FACT_LIMIT).reduce((s, e) => s + e.count, 0) + stored.count;
+    expect(fact(facts, `error.${String(last)}.message`).text).toBe('Other errors');
+    expect(fact(facts, `error.${String(last)}.count`)).toMatchObject({ value: folded, display: formatCount(folded) });
+    expect(byId(facts).has(`error.${String(last + 1)}.message`)).toBe(false);
+    // Every recorded error is counted exactly once, stated or folded.
+    const counts = facts.facts.filter((f) => /^error\.\d+\.count$/.test(f.id)).reduce((s, f) => s + (f.value ?? 0), 0);
+    expect(counts).toBe(fact(facts, 'errors.total').value);
+  });
+
+  it('lists the requests that always failed up to the cap, then says how many more', () => {
+    const extra = 3;
+    const always = Array.from({ length: NAME_LIST_LIMIT + extra }, (_, i) =>
+      req(`dead-${String(i).padStart(2, '0')}`, { count: 10, koCount: 10 }),
+    );
+    const facts = buildRunFacts(input({ figures: figures({ stats: [RUN_ROW, ...always] }) }));
+
+    const f = fact(facts, 'derived.alwaysFailed');
+    expect(f).toMatchObject({ value: always.length, display: formatCount(always.length) });
+    const shown = always.slice(0, NAME_LIST_LIMIT).map((r) => r.name).join(', ');
+    expect(f.text).toBe(`${shown}, and ${String(extra)} more`);
+    expect(f.text).not.toContain(always[NAME_LIST_LIMIT]!.name);
   });
 
   it('displays with the page’s rounding', () => {

@@ -206,12 +206,21 @@ describe('AiAnalysisService', () => {
 
   it('records provider_error on the last attempt and rethrows before it', async () => {
     const runId = await seedRun();
-    const unreachable = (): never => { throw new ProviderHttpError(503, 'overloaded'); };
+    const unreachable = (): never => { throw new ProviderHttpError(503, 'overloaded: secret-body-text'); };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
     const early = new AiAnalysisService(config, pool, new FakeProvider([unreachable]));
     await expect(early.generate(runId, { lastAttempt: false })).rejects.toBeInstanceOf(ProviderHttpError);
     // Left for the queue's next attempt: still pending, nothing recorded.
     expect(await analyses.find(runId)).toMatchObject({ status: 'pending', failureReason: null });
+    // But said, once: the run, the class and the status — never the body,
+    // which can quote a URL or a response.
+    expect(warn).toHaveBeenCalledTimes(1);
+    const [line, ...rest] = warn.mock.calls[0]!;
+    expect(rest).toEqual([]);
+    expect(String(line)).toContain(runId);
+    expect(String(line)).toContain('ProviderHttpError, status 503');
+    expect(String(line)).not.toContain('secret-body-text');
 
     const last = new AiAnalysisService(config, pool, new FakeProvider([unreachable]));
     expect(await last.generate(runId, { lastAttempt: true })).toBe('failed');

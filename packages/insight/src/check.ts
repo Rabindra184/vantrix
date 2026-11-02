@@ -43,8 +43,9 @@ import type { Fact, RunFacts } from './facts.js';
  * passes, and so does a bare "third"; "a third" or "two thirds" is a fraction
  * and does not. A word that sits inside a fact's verbatim words (rule b) — a
  * request called "Add one item", an error message saying "half" — passes,
- * exactly as digits there do. "double-" before another word ("double-check")
- * is a verb, not a multiplier.
+ * exactly as digits there do. A number word before a hyphen is not read as a
+ * quantity — "double-check" is a verb, "one-off" and "a third-party" are not
+ * counts; `NUMBER_WORD` says what that costs.
  *
  * ═══ AN ASSERTION'S DISPLAY IS TWO PARTS ═══
  *
@@ -93,21 +94,29 @@ const TOKEN = new RegExp(`${CLOCK}|${DURATION}|${NUMBER}`, 'g');
 /**
  * A number written as a word: cardinals, the tens, the large units and their
  * plurals, and the multipliers and fractions. Matched as whole words, case
- * folded; `double` followed by a hyphen is the verb "double-check".
+ * folded.
+ *
+ * No word is matched before a hyphen — `(?!-)` on the whole group, because
+ * `\b` falls between a letter and a hyphen and would otherwise read
+ * "a third-party", "one-off" and "one-time" (and "double-check", the case
+ * this started with) as quantities. The cost is a compound's FIRST half:
+ * "twenty-five" is refused by its "five", not whole, and "a five-minute
+ * ramp" or "a two-fold rise" passes. "one-third" is a fraction and stays
+ * refused whole, by the first alternative.
  */
 const NUMBER_WORD = new RegExp(
   String.raw`\b(?:` +
     [
       // First, so "one third" is refused whole rather than as "one".
-      String.raw`(?:a|one)\s+third`,
+      String.raw`(?:a|one)(?:\s+|-)third`,
       'zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten',
       'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen',
       'nineteen', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety',
       'tens', 'hundreds?', 'thousands?', 'millions?', 'billions?', 'dozens?',
-      'twice', 'thrice', 'double(?!-)', 'doubled', 'triple', 'tripled', 'quadruple', 'quadrupled',
+      'twice', 'thrice', 'double', 'doubled', 'triple', 'tripled', 'quadruple', 'quadrupled',
       'half', 'halves', 'halved', 'quarters?', 'thirds',
     ].join('|') +
-    String.raw`)\b`,
+    String.raw`)(?!-)\b`,
   'gi',
 );
 

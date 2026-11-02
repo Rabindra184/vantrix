@@ -68,7 +68,8 @@ const MAX_TOKENS = 16_000;
  * hope the first was slow by chance.
  *
  * DEPLOYMENT.md states this, and `infra/docker-compose.yml`'s worker
- * `stop_grace_period` (6m) covers one call plus a margin.
+ * `stop_grace_period` (11m) covers the two calls one attempt can make (the
+ * second only when the first answer failed its check) plus a margin.
  */
 export const TIMEOUT_MS = 300_000;
 
@@ -194,8 +195,15 @@ export function strictJsonSchema(): Record<string, unknown> {
   return strip(z.toJSONSchema(AiAnalysisContentSchema)) as Record<string, unknown>;
 }
 
+/**
+ * `refusal` is how a structured-outputs answer says the model declined: a
+ * string, with `content` null. Optional, because a server that does not
+ * implement it sends no such field at all.
+ */
 const OpenAiAnswerSchema = z.object({
-  choices: z.array(z.object({ message: z.object({ content: z.string().nullable() }) })).min(1),
+  choices: z
+    .array(z.object({ message: z.object({ content: z.string().nullable(), refusal: z.string().nullable().optional() }) }))
+    .min(1),
 });
 
 /**
@@ -251,7 +259,13 @@ export class OpenAiCompatibleProvider implements AnalysisProvider {
     // A 200 that is not a chat completion is the server misbehaving, not the
     // model writing a bad analysis: nothing came back to quote in a retry.
     if (!answer.success) throw new ProviderHttpError(res.status, body);
-    const content = answer.data.choices[0]?.message.content ?? '';
+    const message = answer.data.choices[0]?.message;
+    // A decline, not a bad analysis: read as content it would be an empty
+    // string, refused by the schema and asked again — a paid call to a model
+    // that has already said no. No category: the field is the model's prose,
+    // and nothing here classifies it.
+    if (typeof message?.refusal === 'string' && message.refusal.trim() !== '') throw new RefusedError(null);
+    const content = message?.content ?? '';
     try {
       return JSON.parse(content) as unknown;
     } catch {
@@ -282,6 +296,8 @@ export function providerFor(config: AiConfig): AnalysisProvider {
  *   extends), fetch's `TimeoutError` from `AbortSignal.timeout`, and an
  *   `AbortError` (nothing else here aborts a call). The provider may have
  *   finished it, and it has billed it either way;
+ * - a call undici cut off at ITS OWN timeout (`isUndiciCutOff`), which is the
+ *   same thing reached from underneath: the same request, already sent;
  * - any other 4xx: the request itself refused — a bad key, an unknown model —
  *   and the same request will be refused again;
  * - any other error, a bare `TypeError` included: a `TypeError` that is not
@@ -289,6 +305,10 @@ export function providerFor(config: AiConfig): AnalysisProvider {
  */
 export function isTransientProviderError(err: unknown): boolean {
   if (err instanceof Anthropic.APIConnectionTimeoutError) return false;
+  // Before both connection-failure checks below: undici's cut-off arrives as
+  // fetch's "fetch failed", or as the SDK's APIConnectionError wrapping it,
+  // and either would otherwise read as a connection that never got through.
+  if (isUndiciCutOff(err)) return false;
   if (err instanceof Anthropic.APIConnectionError) return true;
   // A status-less APIError that is not a connection failure is the SDK's
   // `APIUserAbortError`: nothing here aborts a call but the timeout.
@@ -296,6 +316,39 @@ export function isTransientProviderError(err: unknown): boolean {
   if (err instanceof ProviderHttpError) return isRetryableStatus(err.status);
   if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')) return false;
   return err instanceof TypeError && err.message === 'fetch failed' && err.cause !== undefined;
+}
+
+/**
+ * ═══ UNDICI HAS A FIVE-MINUTE TIMEOUT OF ITS OWN, AND IT IS THIS ONE ═══
+ *
+ * Node's fetch is undici, whose default `headersTimeout` and `bodyTimeout`
+ * are both 300 000 ms — exactly `TIMEOUT_MS`. Whichever timer fires first
+ * ends the call, so a slow answer is as likely to be cut off by undici as by
+ * `AbortSignal.timeout` or the SDK. Undici's arrives as `TypeError("fetch
+ * failed")` whose `cause` carries `code: 'UND_ERR_HEADERS_TIMEOUT'` or
+ * `'UND_ERR_BODY_TIMEOUT'` — exactly the shape of a connection that never got
+ * through, and read as one it would be retried: a second paid call for a
+ * request the provider already received.
+ *
+ * The SDK path is covered today by the SDK, not by this: SDK 1.3.0 tests a
+ * fetch failure's text against `/timed? ?out/i` and throws its own
+ * `APIConnectionTimeoutError` for "Headers Timeout Error" (measured, with an
+ * undici `Agent` at a 100 ms `headersTimeout`). That is a heuristic over a
+ * message; anything else it wraps in a plain `APIConnectionError` with the
+ * TypeError as `cause`, so the code would sit two causes down. So the chain
+ * is walked for those two codes, a bounded number of links (a cause cycle
+ * must not hang the classifier).
+ */
+const UNDICI_CUT_OFF_CODES = new Set(['UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT']);
+
+function isUndiciCutOff(err: unknown): boolean {
+  let node: unknown = err;
+  for (let depth = 0; depth < 8 && node instanceof Error; depth += 1) {
+    const code = (node as { code?: unknown }).code;
+    if (typeof code === 'string' && UNDICI_CUT_OFF_CODES.has(code)) return true;
+    node = node.cause;
+  }
+  return false;
 }
 
 /** 408, 429 and 5xx: the provider timed out on its own side, rate-limited the call, or failed. */

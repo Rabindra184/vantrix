@@ -114,7 +114,13 @@ export class AiAnalysisService {
           await this.#analyses.markFailed(runId, 'refused');
           return 'failed';
         }
-        if (isTransientProviderError(err) && !opts.lastAttempt) throw err;
+        if (isTransientProviderError(err) && !opts.lastAttempt) {
+          // The queue retries this, and nothing else would ever say it
+          // happened. The class and status only, never the error itself: a
+          // provider's message can quote a URL or part of a response body.
+          console.warn(`ai analysis: run ${runId}: the provider failed (${describeFailure(err)}); the queue will retry`);
+          throw err;
+        }
         console.error(`ai analysis: run ${runId}: the provider failed`, err);
         await this.#analyses.markFailed(runId, 'provider_error');
         return 'failed';
@@ -142,6 +148,13 @@ export class AiAnalysisService {
     // Unreachable: the second pass returns on every branch.
     throw new Error('ai analysis: retry loop fell through');
   }
+}
+
+/** An error's class, and its HTTP status where it has one: what a log line may say about a provider failure. */
+function describeFailure(err: unknown): string {
+  const name = err instanceof Error ? err.name : typeof err;
+  const status = (err as { status?: unknown } | null)?.status;
+  return typeof status === 'number' ? `${name}, status ${String(status)}` : name;
 }
 
 type Verdict =
