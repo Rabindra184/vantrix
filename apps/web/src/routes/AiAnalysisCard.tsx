@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AI_PENDING_REQUEUE_AFTER_MS,
@@ -99,6 +99,20 @@ function refusalText(error: unknown): string {
  *
  * `canAnalyze` IS REQUIRED: it is `run:analyze` from the shell's project
  * access, and a default would draw a button a viewer then meets as a 403.
+ *
+ * ═══ THE READER KEEPS THEIR PLACE, AND HEARS WHAT HAPPENED ═══
+ *
+ * "Analyze with AI", "Try again" and "Generate again" unmount in the commit
+ * that writes the POST's pending answer, so a successful POST moves focus to
+ * the card's heading (`tabIndex={-1}`) rather than letting it fall to
+ * `<body>`. And ONE `role="status"` region is mounted for as long as the card
+ * renders — never one mounted already holding its text, which a screen reader
+ * does not announce: it reads "Analysing this run…" while pending (visible,
+ * as the card's pending line) and "Analysis ready." once a pending analysis
+ * the reader was waiting on turns ready (screen-reader only), and is empty
+ * otherwise. One region per PAGE, not per card in a list: this card is drawn
+ * once, on a run's Summary, and a component repeated N times must not add N
+ * permanent live regions.
  */
 export default function AiAnalysisCard({
   runId,
@@ -108,6 +122,7 @@ export default function AiAnalysisCard({
   readonly canAnalyze: boolean;
 }) {
   const queryClient = useQueryClient();
+  const cardRef = useRef<HTMLElement>(null);
   const query = useQuery({
     queryKey: aiAnalysisQueryKey(runId),
     queryFn: () => fetchAiAnalysis(runId),
@@ -126,9 +141,26 @@ export default function AiAnalysisCard({
   const generate = useMutation({
     mutationFn: () => requestAiAnalysis(runId),
     // The POST answers the row as it now stands; writing it into the read's
-    // key is what starts the polling, with no second request.
-    onSuccess: (answer) => queryClient.setQueryData(aiAnalysisQueryKey(runId), answer),
+    // key is what starts the polling, with no second request. The button that
+    // asked is about to unmount with the state it belonged to, so focus goes
+    // to the heading, which every state draws.
+    onSuccess: (answer) => {
+      queryClient.setQueryData(aiAnalysisQueryKey(runId), answer);
+      cardRef.current?.querySelector<HTMLElement>('#ai-analysis-heading')?.focus();
+    },
   });
+
+  // "Analysis ready." is said once, for the transition the reader waited
+  // through — pending to ready — and cleared by any other change. Adjusted
+  // during render (React's pattern for state derived from a changing value),
+  // so the region's text and the card's state change in the same commit.
+  const state = query.data?.available === true ? query.data.state : null;
+  const [seenState, setSeenState] = useState(state);
+  const [readyAnnounced, setReadyAnnounced] = useState(false);
+  if (state !== seenState) {
+    setReadyAnnounced(seenState === 'pending' && state === 'ready');
+    setSeenState(state);
+  }
 
   // A pending row crosses its window without any read changing, so the card
   // has to be told when: one timer, set for the moment it is abandoned.
@@ -159,12 +191,15 @@ export default function AiAnalysisCard({
 
   return (
     <section
+      ref={cardRef}
       aria-labelledby="ai-analysis-heading"
       data-testid="ai-analysis"
       className="@container flex flex-col gap-4 rounded-xl border border-default bg-surface p-4 shadow-panel"
     >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <SectionHeading id="ai-analysis-heading">AI run analysis</SectionHeading>
+        <SectionHeading id="ai-analysis-heading" focusTarget>
+          AI run analysis
+        </SectionHeading>
         {data.state === 'ready' && data.generatedAt !== null && (
           <div className="flex items-center gap-1 text-[0.8125rem] text-muted">
             <span>Generated on {formatInstant(data.generatedAt)}</span>
@@ -175,18 +210,21 @@ export default function AiAnalysisCard({
         )}
       </div>
 
+      {/* The card's one live region (see the docstring): mounted with the
+          card, so a change of its text is announced. Visible while pending,
+          as the pending line; screen-reader only otherwise, and `sr-only` is
+          absolutely positioned, so an empty region takes no space or gap. */}
+      <p
+        role="status"
+        data-testid="ai-analysis-status"
+        className={data.state === 'pending' ? 'text-[0.8125rem] text-muted' : 'sr-only'}
+      >
+        {data.state === 'pending' ? 'Analysing this run…' : readyAnnounced ? 'Analysis ready.' : ''}
+      </p>
+
       {data.state === 'none' && <div>{ask('Analyze with AI')}</div>}
 
-      {data.state === 'pending' && (
-        <div className="flex flex-wrap items-center gap-3">
-          {/* Mounted only while pending: a region that is always there would be
-              one more permanent live region per run page. */}
-          <p role="status" className="text-[0.8125rem] text-muted">
-            Analysing this run…
-          </p>
-          {abandoned && ask('Try again')}
-        </div>
-      )}
+      {data.state === 'pending' && abandoned && <div>{ask('Try again')}</div>}
 
       {data.state === 'failed' && (
         <div className="flex flex-wrap items-center gap-3">
@@ -262,14 +300,18 @@ function AnalysisBody({ content }: { readonly content: AiAnalysisContent }) {
  * that draws a bordered card at the `<h2>` rung, and three cards inside this
  * one would be panels nested in a panel. Open on arrival, and each opens and
  * closes on its own; a closed one renders nothing into its region.
+ *
+ * A `<div>`, not a `<section aria-labelledby>`: a named section is a REGION
+ * landmark, and three more inside the card's own would put four landmarks on
+ * one card for a reader navigating by landmark. The `<h3>` keeps each in the
+ * heading outline, which is how these are found.
  */
 function AnalysisSection({ title, children }: { readonly title: string; readonly children: ReactNode }) {
   const [open, setOpen] = useState(true);
-  const headingId = useId();
   const regionId = useId();
   return (
-    <section aria-labelledby={headingId} className="border-t border-default pt-2">
-      <SectionHeading id={headingId} level={3}>
+    <div className="border-t border-default pt-2">
+      <SectionHeading level={3}>
         <button
           type="button"
           aria-expanded={open}
@@ -284,7 +326,7 @@ function AnalysisSection({ title, children }: { readonly title: string; readonly
       <div id={regionId} hidden={!open} className="flex flex-col gap-3 pt-2">
         {open && children}
       </div>
-    </section>
+    </div>
   );
 }
 

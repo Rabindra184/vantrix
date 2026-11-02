@@ -41,9 +41,17 @@ export default function SectionHeading({
   level = 2,
   overline,
   info,
+  focusTarget = false,
 }: {
   readonly children: ReactNode;
   readonly id?: string;
+  /**
+   * `tabIndex={-1}`: focusable by script and never a Tab stop. For a section
+   * whose own controls unmount under the reader — the AI analysis card's
+   * "Analyze with AI" goes the moment it is answered — so focus can be put
+   * back on the section's heading rather than fall to the page.
+   */
+  readonly focusTarget?: boolean;
   /** `3` for a heading inside a section; the size follows the level, so the visual ladder and the outline cannot disagree. */
   readonly level?: 2 | 3;
   /**
@@ -74,7 +82,11 @@ export default function SectionHeading({
   const Heading = level === 3 ? 'h3' : 'h2';
   const size = level === 3 ? 'text-[0.9375rem]' : 'text-base';
   const heading = (
-    <Heading id={id} className={`${size} font-semibold tracking-tight text-primary`}>
+    <Heading
+      id={id}
+      tabIndex={focusTarget ? -1 : undefined}
+      className={`${size} font-semibold tracking-tight text-primary`}
+    >
       {children}
     </Heading>
   );

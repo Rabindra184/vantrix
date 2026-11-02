@@ -145,11 +145,17 @@ describe('AiAnalysisCard', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(50); });
     await act(async () => { await vi.advanceTimersByTimeAsync(50); });
 
+    // The card's one live region exists, empty, BEFORE anything is pending —
+    // a region mounted already holding its text is not announced.
+    const status = screen.getByRole('status');
+    expect(status).toHaveTextContent(/^$/);
+
     fetchMock.mockResolvedValue(pending);
     fireEvent.click(screen.getByRole('button', { name: 'Analyze with AI' }));
     await act(async () => { await vi.advanceTimersByTimeAsync(50); });
     expect(requestMock).toHaveBeenCalledWith(RUN);
-    expect(screen.getByRole('status')).toHaveTextContent('Analysing this run…');
+    expect(screen.getByRole('status')).toBe(status);
+    expect(status).toHaveTextContent('Analysing this run…');
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
 
     // Still pending on the next read: still polling, still saying so.
@@ -162,8 +168,10 @@ describe('AiAnalysisCard', () => {
     fetchMock.mockResolvedValue(READY);
     await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
     await act(async () => { await vi.advanceTimersByTimeAsync(50); });
-    // The live region is mounted only while pending.
-    expect(screen.queryByRole('status')).toBeNull();
+    // The same region, now saying the wait is over — to a screen reader only.
+    expect(screen.getByRole('status')).toBe(status);
+    expect(status).toHaveTextContent('Analysis ready.');
+    expect(status).toHaveClass('sr-only');
     expect(
       screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent?.trim()),
     ).toEqual(['Health', 'Insights', 'Recommendations']);
@@ -188,10 +196,47 @@ describe('AiAnalysisCard', () => {
     expect(fetchMock.mock.calls.length).toBe(settled);
   });
 
+  it('moves focus to the card heading once Analyze with AI is answered', async () => {
+    fetchMock.mockResolvedValue(available({ state: 'none' }));
+    requestMock.mockResolvedValue(available({ state: 'pending', requestedAt: new Date().toISOString() }));
+    renderCard('member');
+    const button = await screen.findByRole('button', { name: 'Analyze with AI' });
+    button.focus();
+    fireEvent.click(button);
+    await screen.findByText('Analysing this run…');
+    // The button went with the state it belonged to; focus is not left on <body>.
+    expect(screen.queryByRole('button', { name: 'Analyze with AI' })).toBeNull();
+    const heading = screen.getByRole('heading', { level: 2, name: 'AI run analysis' });
+    expect(document.activeElement).toBe(heading);
+    // Focusable by script, not a new Tab stop.
+    expect(heading).toHaveAttribute('tabindex', '-1');
+  });
+
+  it('says nothing in its live region for an analysis that was already ready on arrival', async () => {
+    fetchMock.mockResolvedValue(READY);
+    renderCard();
+    await screen.findByText('The run held its SLA.');
+    // "Analysis ready." is for the wait the reader sat through, not for a page load.
+    expect(screen.getByRole('status')).toHaveTextContent(/^$/);
+  });
+
+  it('is one region landmark, with its three sections in the heading outline', async () => {
+    fetchMock.mockResolvedValue(READY);
+    renderCard();
+    await screen.findByText('The run held its SLA.');
+    expect(screen.getAllByRole('region').map((r) => r.getAttribute('aria-labelledby'))).toEqual(['ai-analysis-heading']);
+    expect(screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent?.trim())).toEqual([
+      'Health',
+      'Insights',
+      'Recommendations',
+    ]);
+  });
+
   it('omits an Insights sub-section that has no bullets', async () => {
     fetchMock.mockResolvedValue(READY);
     renderCard();
-    const insights = await screen.findByRole('region', { name: 'Insights' });
+    // Scoped through its heading: a section is a block in the outline, not a landmark.
+    const insights = (await screen.findByRole('heading', { level: 3, name: 'Insights' })).parentElement!;
     expect(within(insights).getAllByRole('heading', { level: 4 }).map((h) => h.textContent)).toEqual([
       'Errors',
       'Injection profile',
@@ -337,13 +382,13 @@ describe('AiAnalysisCard', () => {
       new ProblemError(409, {
         code: 'AI_ANALYSIS_UNAVAILABLE',
         detail: 'Run x cannot be analysed: org_disabled.',
-        remediation: 'An admin turns AI run analysis on for this organisation under Administration.',
+        remediation: 'An admin turns AI run analysis on for this organisation under Administration › Settings.',
       }),
     );
     renderCard('member');
     fireEvent.click(await screen.findByRole('button', { name: 'Analyze with AI' }));
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('An admin turns AI run analysis on for this organisation under Administration.');
+    expect(alert).toHaveTextContent('An admin turns AI run analysis on for this organisation under Administration › Settings.');
     // The detail names the reason as a code; the reader gets the sentence.
     expect(alert).not.toHaveTextContent('org_disabled');
   });
