@@ -4,7 +4,6 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { seriesQuery, statsQuery, trendsQuery } from '../api/metrics';
 import CompareChart from '../charts/CompareChart';
 import {
-  compareUnit,
   runLabels,
   seriesPoints,
   type CompareMetric,
@@ -518,8 +517,7 @@ export default function RunCompare() {
 
                 {matrixRuns.length > 0 && (
                   <CompareSummary
-                    summary={buildCompareSummary(matrixRuns, runId ?? '', metric)}
-                    unit={compareUnit(metric)}
+                    summary={buildCompareSummary(matrixRuns, runId ?? '', referenceRunId, metric)}
                   />
                 )}
 
@@ -550,16 +548,12 @@ function countRequested(raw: string | null, current: string): number {
   return new Set([current, ...asked]).size;
 }
 
-function CompareSummary({
-  summary,
-  unit,
-}: {
-  readonly summary: CompareSummaryModel;
-  /** The METRIC's own unit, for the two tiles that print a measurement. The
-   *  metric's NAME went with the count tile: the chart's selector states it,
-   *  and every value here carries this unit beside it. */
-  readonly unit: string;
-}) {
+function CompareSummary({ summary }: { readonly summary: CompareSummaryModel }) {
+  /* The unit is the MODEL's: the tiles' values are the table's first row, and
+     for errors that row is a count, where the metric's own unit ("/s") is the
+     overlay's. The metric's NAME went with the count tile: the chart's
+     selector states it, and every value here carries this unit beside it. */
+  const { unit } = summary;
   /* Each reason reads differently, because they are different facts. A zero
      baseline in particular is NOT a missing one: 0 → 2/s is the regression an
      engineer most needs to see, and "Waiting for baseline" hid it. */
@@ -606,7 +600,13 @@ function CompareSummary({
         testId="compare-best"
         value={summary.bestValue === null ? '-' : `${formatCell(summary.bestValue)} ${unit}`}
         exact={summary.bestExact}
-        detail={summary.bestLabel ?? 'Waiting for run statistics'}
+        // Users and CPU have no better or worse, so no run is best — which is
+        // a fact about the metric, not a wait for figures.
+        detail={
+          !summary.directional
+            ? 'This metric has no better or worse, so no run is best'
+            : (summary.bestLabel ?? 'Waiting for run statistics')
+        }
       />
     </section>
   );
