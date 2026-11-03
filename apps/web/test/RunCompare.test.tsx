@@ -74,7 +74,8 @@ function renderCompare(
    *  the run body below, which fails the stats schema — every case before the
    *  ≈ cases relied on that and drew no summary or matrix. */
   stats?: unknown,
-  /** Answers any other URL a case cares about; `undefined` falls through. */
+  /** Answers any other URL a case cares about; `undefined` falls through. A
+   *  promise is awaited, so a case can hold one read open and release it. */
   answer?: (url: string) => unknown,
 ) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -99,7 +100,7 @@ function renderCompare(
     if (stats !== undefined && url.includes('/stats')) {
       return new Response(JSON.stringify(stats), { status: 200 });
     }
-    const answered = answer?.(url);
+    const answered = await answer?.(url);
     if (answered !== undefined) {
       return new Response(JSON.stringify(answered), { status: 200 });
     }
@@ -764,6 +765,131 @@ describe('RunCompare — metric data, reference and time range', () => {
     const column = runColumns().findIndex((h) => h.startsWith('Run 2'));
     const allRequests = screen.getByRole('row', { name: /^All requests/ });
     expect(within(allRequests).getAllByRole('cell')[column]).toHaveTextContent(/^—$/);
+  });
+
+  /**
+   * The one clamp branch with no direct guard: a run that ENDS inside the
+   * window is asked for its own slice of it, never for time it did not have.
+   * Run 2 lasted 50 s and the window is 40–60 s, so its read stops at 50 s
+   * while the 63 s run's does not — and it is not "ended before this window".
+   */
+  it('holds a run that ends inside the window to its own end', async () => {
+    const { fetchSpy } = renderCompare(
+      { state: 'ready', run: COMPLETE_RUN },
+      three([63_161, 50_000, 63_161]),
+      '?from=40000&to=60000',
+      fixture.stats,
+    );
+
+    await waitFor(() =>
+      expect(urls(fetchSpy).some((u) => u.includes(`/runs/${OTHER}/stats?from=40000&to=50000`))).toBe(true),
+    );
+    expect(urls(fetchSpy).some((u) => u.includes(`/runs/${OTHER}/stats?from=40000&to=60000`))).toBe(false);
+    expect(urls(fetchSpy).some((u) => u.includes(`/runs/${RUN_ID}/stats?from=40000&to=60000`))).toBe(true);
+    expect(screen.queryByTestId('compare-ended')).toBeNull();
+  });
+
+  /**
+   * EVERY PERCENTILE IS AN EXACT RANK ASKED FOR (final review m1). `/stats`
+   * with no `?percentiles=` answers the project's configured set, so a project
+   * configured without p95 read `—` for p95 on an exact run while the overlay
+   * drew its line from the bucket bands. So p95 — the default — asks too.
+   */
+  it('asks /stats for the exact rank of the metric on screen, p95 included', async () => {
+    const { fetchSpy } = renderCompare({ state: 'ready', run: COMPLETE_RUN }, three(), '', fixture.stats);
+    await waitFor(() =>
+      expect(urls(fetchSpy).some((u) => u.endsWith(`/runs/${RUN_ID}/stats?percentiles=95`))).toBe(true),
+    );
+  });
+
+  /**
+   * ═══ A QUERY THAT HAS NOT ANSWERED HAS SEEN NOTHING (final review I1) ═══
+   *
+   * A window change re-keys every run's `/stats`, so for one round trip each
+   * `data` is `undefined`. The page drew that as "No statistics for the
+   * selected runs" and "Select at least one run to compare." — conclusions
+   * about reads that had not answered. The windowed `/stats` is held open here
+   * so the in-between state can be looked at.
+   */
+  it('says it is loading, not that nothing was measured, while a window’s stats are in flight', async () => {
+    let release: (value: unknown) => void = () => undefined;
+    const held = new Promise((resolve) => {
+      release = resolve;
+    });
+    const { fetchSpy } = renderCompare(
+      { state: 'ready', run: COMPLETE_RUN },
+      three(),
+      '',
+      undefined,
+      (url) => {
+        if (url.includes('/stats')) return url.includes('from=') ? held : fixture.stats;
+        if (url.includes('/series')) return fixture.series;
+        return undefined;
+      },
+    );
+    // The whole-run comparison is drawn first, so there is a table to lose.
+    await waitFor(() => expect(runColumns().length).toBeGreaterThan(0));
+
+    fireEvent.change(screen.getByLabelText('From (s)'), { target: { value: '10' } });
+    fireEvent.change(screen.getByLabelText('To (s)'), { target: { value: '20' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply window' }));
+    await waitFor(() =>
+      expect(urls(fetchSpy).some((u) => u.includes(`/runs/${RUN_ID}/stats?from=10000&to=20000`))).toBe(true),
+    );
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    expect(screen.queryByText('No statistics for the selected runs')).toBeNull();
+    expect(screen.queryByText('Select at least one run to compare.')).toBeNull();
+    expect(screen.getByText('Loading the comparison…')).toBeInTheDocument();
+
+    await act(async () => {
+      release(fixture.stats);
+    });
+    await waitFor(() => expect(runColumns().length).toBeGreaterThan(0));
+    expect(screen.queryByText('Loading the comparison…')).toBeNull();
+  });
+
+  /**
+   * A PIN STILL LOADING IS NOT A PIN THAT IS ABSENT. Resolved against the runs
+   * that had answered, `?ref=` naming the run still in flight fell back to
+   * another, and the chip and every change named the wrong reference until
+   * the pinned run's stats arrived.
+   */
+  it('does not fall back from a pinned reference whose stats are still loading', async () => {
+    let release: (value: unknown) => void = () => undefined;
+    const held = new Promise((resolve) => {
+      release = resolve;
+    });
+    const { fetchSpy } = renderCompare(
+      { state: 'ready', run: COMPLETE_RUN },
+      three(),
+      `?runs=${OTHER},${THIRD}&ref=${THIRD}`,
+      undefined,
+      (url) => {
+        if (url.includes('/stats')) return url.includes(`/runs/${THIRD}/`) ? held : fixture.stats;
+        if (url.includes('/series')) return fixture.series;
+        return undefined;
+      },
+    );
+    await waitFor(() =>
+      expect(urls(fetchSpy).some((u) => u.includes(`/runs/${THIRD}/stats`))).toBe(true),
+    );
+    // Long enough for the other two runs' stats to have answered.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    expect(screen.queryByTestId(`compare-role-${OTHER}`)).toBeNull();
+    expect(screen.queryAllByTestId('compare-column')).toHaveLength(0);
+    expect(screen.getByText('Loading the comparison…')).toBeInTheDocument();
+
+    await act(async () => {
+      release(fixture.stats);
+    });
+    await waitFor(() => expect(runColumns()[0]).toMatch(/^Run 1 /));
+    expect(screen.getByTestId(`compare-role-${THIRD}`)).toHaveTextContent('Reference');
   });
 
   /**

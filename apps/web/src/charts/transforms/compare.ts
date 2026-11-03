@@ -103,19 +103,30 @@ export const COMPARE_METRICS: readonly { value: CompareMetric; label: string }[]
 ];
 
 /**
- * The ranks a metric needs that a run does not answer by default, which the
- * page must ask for with `?percentiles=`.
+ * The exact rank `/stats` is asked for, per percentile metric — EVERY one of
+ * them, sent as `?percentiles=`.
  *
- * `/stats` answers the project's configured set, and `p90` is not in every
- * project's set, so the matrix asks for it too. Per BUCKET only `p99.9` and
- * `p99.99` need `/series?percentiles=`: the series histograms always carry a
- * fixed band set that includes p90. The key the server answers under is
- * `p<rank>`, so `p99.9` maps to `99.9` and back.
+ * `/stats` with no `?percentiles=` answers the project's configured set, and
+ * that set can omit any rank — a project configured `[90, 99]` has no p95. So
+ * a percentile left to the configured set read `—` in the table and the tiles
+ * for an EXACT run, while the overlay drew the same rank's line from the
+ * bucket bands; and the info tip's "a figure it did not record" was false,
+ * because the histograms answer it. Asking for every rank makes each answer
+ * an exact rank whatever the project configured (final review m1). The cost
+ * is that p50, p95 and p99 stop sharing the run page's `/stats` cache entry,
+ * which p90 had already given up.
+ *
+ * Per BUCKET only `p99.9` and `p99.99` need `/series?percentiles=`: the series
+ * histograms always carry a fixed band set that includes the rest. The key the
+ * server answers under is `p<rank>`, so `p99.9` maps to `99.9` and back.
  */
-export const EXTRA_RANKS: Partial<Record<CompareMetric, number>> = {
+export const STATS_RANKS: Partial<Record<CompareMetric, number>> = {
+  p50: 50,
+  p90: 90,
+  p95: 95,
+  p99: 99,
   'p99.9': 99.9,
   'p99.99': 99.99,
-  p90: 90,
 };
 
 /** The unit each metric carries, for the axis, the tooltip and the table. */
@@ -144,8 +155,13 @@ export type ComparePoint = readonly [offsetMs: number, value: number];
  *
  * `points: null` MEANS NOT RECORDED — a run with no CPU source at all — and is
  * a different fact from `[]`, which is a source that answered and measured
- * nothing in this window. The first is named under the chart; the second is
- * simply a run with no line in this span.
+ * nothing in this span. BOTH are named under the chart, in different words:
+ * a run with no line and no sentence is indistinguishable from a run that was
+ * left out (final review m2). The one exception is `ended`, below.
+ *
+ * `ended` is a run that finished before the window began: its `[]` is named by
+ * the page already ("Run 2 ended before this window."), so a second sentence
+ * here would say the same thing twice.
  *
  * `bucketWidthMs` is the resolution the points were taken at, for the note
  * that runs bucketed differently have different densities; `null` where the
@@ -156,6 +172,7 @@ export interface CompareRun {
   readonly label: string;
   readonly points: readonly ComparePoint[] | null;
   readonly bucketWidthMs: number | null;
+  readonly ended?: boolean;
 }
 
 /**
@@ -358,6 +375,17 @@ export function toCompare(runs: readonly CompareRun[], metric: CompareMetric): C
     .filter((run) => run.points === null)
     .map((run) => `${metricLabel(metric)} was not recorded for ${run.label}.`);
 
+  /*
+   * A RUN THAT RECORDED THE METRIC AND HAS NO READING IN THIS SPAN is named too
+   * — a CPU source that answered with nothing in a narrow window, or a series
+   * over a stretch where the run made no requests. Not "not recorded", which
+   * would be false of it; and not left as a legend entry with no line, which
+   * reads as a run whose data failed to arrive.
+   */
+  const unread = recorded
+    .filter((run) => run.points.length === 0 && run.ended !== true)
+    .map((run) => `${metricLabel(metric)} has no reading for ${run.label} in this span.`);
+
   const drawn: ChartSeries[] = recorded.map((run) => ({
     name: run.label,
     data: run.points,
@@ -390,6 +418,7 @@ export function toCompare(runs: readonly CompareRun[], metric: CompareMetric): C
         recorded.flatMap((run) => (run.bucketWidthMs === null ? [] : [run.bucketWidthMs])),
       ),
       ...unrecorded,
+      ...unread,
     ]
       .filter((note): note is string => note !== undefined)
       .join(' ') || undefined;
@@ -407,11 +436,15 @@ export function toCompare(runs: readonly CompareRun[], metric: CompareMetric): C
     // the chart.
     limitation,
     // Nothing to draw at all: say so rather than draw empty axes. The per-run
-    // sentences stay in `limitation`, so this does not repeat them.
+    // sentences stay in `limitation`, so this does not repeat them. Every
+    // recorded run reading nothing in this span is the same bare-axes case
+    // one step on, and is said as plainly.
     empty:
       recorded.length === 0
         ? `${metricLabel(metric)} was not recorded for any selected run.`
-        : undefined,
+        : recorded.every((run) => run.points.length === 0)
+          ? `${metricLabel(metric)} has no reading for any selected run in this span.`
+          : undefined,
   };
 }
 

@@ -7,7 +7,7 @@ import type {
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   COMPARE_METRICS,
-  EXTRA_RANKS,
+  STATS_RANKS,
   compareLabels,
   compareUnit,
   cpuPoints,
@@ -165,27 +165,24 @@ describe('toCompare', () => {
   });
 
   /**
-   * A percentile the bucket map does not store has to be ASKED for — `/stats`
-   * and `/series` answer only the project's configured ranks unless
-   * `?percentiles=` names more. So every percentile metric is either a key the
-   * payload really carries, or a rank `EXTRA_RANKS` says to request.
+   * `/stats` answers only the project's configured ranks unless
+   * `?percentiles=` names more, and that set can omit ANY rank. So every
+   * percentile metric the selector offers asks for its own rank, and the rank
+   * spells the key the server answers under — never left to the configured
+   * set, where an exact run would read `—` (final review m1).
    */
-  it('derives every percentile metric from the payload or from a rank it requests', () => {
-    const available = new Set(REFERENCE.buckets.flatMap((b) => Object.keys(b.percentiles)));
-    for (const { value } of COMPARE_METRICS) {
-      if (!/^p\d/.test(value)) continue;
-      const requested = EXTRA_RANKS[value];
-      expect(
-        available.has(value) || requested !== undefined,
-        `${value} is neither stored nor requested`,
-      ).toBe(true);
-      // And a requested rank spells the same key the server answers under.
-      if (requested !== undefined) expect(`p${requested}`).toBe(value);
+  it('asks /stats for every percentile metric’s own rank, under its own key', () => {
+    const percentiles = COMPARE_METRICS.map(({ value }) => value).filter((value) => /^p\d/.test(value));
+    expect(percentiles.length).toBeGreaterThan(5);
+    for (const value of percentiles) {
+      const requested = STATS_RANKS[value];
+      expect(requested, `${value} is not requested`).toBeDefined();
+      expect(`p${requested}`).toBe(value);
     }
-  });
-
-  it('requests exactly the ranks a run does not store by default', () => {
-    expect(EXTRA_RANKS).toEqual({ 'p99.9': 99.9, 'p99.99': 99.99, p90: 90 });
+    // And nothing that is not a percentile asks for a rank.
+    for (const { value } of COMPARE_METRICS) {
+      if (!/^p\d/.test(value)) expect(STATS_RANKS[value]).toBeUndefined();
+    }
   });
 });
 
@@ -575,6 +572,29 @@ describe('toCompare — a metric one run did not record', () => {
     for (const run of [missing, other]) {
       expect(d.limitation).toContain(`${label} was not recorded for ${run.label}.`);
     }
+  });
+
+  /**
+   * `[]` IS RECORDED AND EMPTY HERE, NOT UNRECORDED (final review m2). A CPU
+   * source that answered with no reading in a narrow window drew a legend
+   * entry and no line and said nothing, and a selection of nothing but such
+   * runs drew bare axes. Each is named in its own words, and an all-empty
+   * overlay explains itself — while a run that ENDED before the window is
+   * left to the page's own "ended before this window" sentence.
+   */
+  it('names a run with no reading in this span, and says so when none has one', () => {
+    const quiet: CompareRun = { id: 'q', label: 'Run 5', points: [], bucketWidthMs: null };
+    const ended: CompareRun = { id: 'e', label: 'Run 6', points: [], bucketWidthMs: null, ended: true };
+
+    const partial = toCompare([recorded, quiet, ended], 'cpu');
+    expect(partial.empty).toBeUndefined();
+    expect(partial.limitation).toContain(`${label} has no reading for ${quiet.label} in this span.`);
+    expect(partial.limitation).not.toContain(ended.label);
+    expect(partial.limitation).not.toContain(`${label} was not recorded for ${quiet.label}.`);
+
+    const none = toCompare([quiet, ended], 'cpu');
+    expect(none.empty).toBe(`${label} has no reading for any selected run in this span.`);
+    expect(none.limitation).toContain(`${label} has no reading for ${quiet.label} in this span.`);
   });
 
   it('keeps every run\'s column, a dash where it recorded nothing', () => {

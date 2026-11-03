@@ -6,7 +6,7 @@ import { agentInjectorsQuery } from '../api/agent';
 import { seriesQuery, statsQuery, telemetryQuery, trendsQuery, usersQuery } from '../api/metrics';
 import CompareChart from '../charts/CompareChart';
 import {
-  EXTRA_RANKS,
+  STATS_RANKS,
   cpuPoints,
   runLabels,
   seriesPoints,
@@ -17,7 +17,7 @@ import {
 } from '../charts/transforms/compare';
 import { runMinuteLabel } from '../charts/transforms/runLabel';
 import { formatCell } from '../charts/DataTable';
-import { EmptyState } from '../components/States';
+import { EmptyState, LoadingState } from '../components/States';
 import CompareMatrix from '../tables/CompareMatrix';
 import {
   resolveReference,
@@ -273,17 +273,19 @@ export default function RunCompare() {
 
   /* ═══ ONLY THE SELECTED METRIC'S READS ═══
    *
-   * Every run's `/stats` is read for the table and the tiles, with the one
-   * extra rank the metric needs (`EXTRA_RANKS`) and no more — a metric the
-   * project's set already answers asks for nothing extra, and so shares the
-   * cache entry its run page reads. The overlay's source is read only for the
-   * metric on screen: `/series`, `/users`, or the two CPU sources.
+   * Every run's `/stats` is read for the table and the tiles. A percentile
+   * metric asks for its own exact rank (`STATS_RANKS`) and no other — even one
+   * the project's set usually carries, because that set can omit it, and a
+   * rank left to it would read `—` on an exact run. A non-percentile metric
+   * asks for nothing extra, and so shares the cache entry its run page reads.
+   * The overlay's source is read only for the metric on screen: `/series`,
+   * `/users`, or the two CPU sources.
    *
    * `terminal` on every one, the rule every run section follows: a live run's
    * figures endpoints answer 202, and `selected` being empty until the
    * cohort arrives is a property of today's code, not a gate. */
-  const extraRank = EXTRA_RANKS[metric];
-  const statsRanks: readonly number[] = extraRank === undefined ? [] : [extraRank];
+  const statsRank = STATS_RANKS[metric];
+  const statsRanks: readonly number[] = statsRank === undefined ? [] : [statsRank];
   const seriesRanks: readonly number[] =
     metric === 'p99.9' || metric === 'p99.99' ? SERIES_EXTRA_RANKS : [];
   const source = overlaySource(metric);
@@ -359,7 +361,7 @@ export default function RunCompare() {
     const label = labelFor(id);
     // Not running during the window: recorded, and nothing in this span —
     // `[]`, not `null`, which would say the metric was never recorded.
-    if (scope.ended) return [{ id, label, points: [], bucketWidthMs: null }];
+    if (scope.ended) return [{ id, label, points: [], bucketWidthMs: null, ended: true }];
     if (source === 'users') {
       const data = usersResults[i]?.data;
       return data === undefined ? [] : [{ id, label, points: usersPoints(data), bucketWidthMs: null }];
@@ -430,16 +432,49 @@ export default function RunCompare() {
         (injectorsResults[i]?.isError === true || telemetryResults[i]?.isError === true)),
   );
 
+  /**
+   * ═══ A QUERY THAT HAS NOT ANSWERED HAS SEEN NOTHING ═══
+   *
+   * The two `flatMap`s above drop a run whose read has no data yet, and every
+   * window change, Whole run, and switch to a metric needing an extra rank
+   * changes those reads' keys — so for the length of one round trip every
+   * `data` is `undefined`. Drawn from that, the table said "No statistics for
+   * the selected runs" and the overlay "Select at least one run to compare"
+   * over two pressed chips, and a pinned reference whose stats were still in
+   * flight fell back to another run, so the chip and every change described a
+   * comparison against the wrong run until it landed.
+   *
+   * So the page knows when it is still asking, from exactly the reads it
+   * needs: every non-ended run's `/stats`, and the overlay's own source for
+   * the metric on screen. While any is pending the summary and the table are a
+   * loading state, the overlay says it is loading, and NO REFERENCE IS
+   * RESOLVED. Not `keepPreviousData`: that would draw the previous window's
+   * figures under the new window's handles, which is the worse lie. A read
+   * that FAILED is not pending — it is named in the alert above, and the
+   * comparison is drawn from what did load.
+   */
+  const pending = scopes.some(
+    (scope, i) =>
+      !scope.ended &&
+      (statsResults[i]?.isPending === true ||
+        (source === 'series' && seriesResults[i]?.isPending === true) ||
+        (source === 'users' && usersResults[i]?.isPending === true) ||
+        (source === 'cpu' && cpuOf(i) === undefined)),
+  );
+
   /* The reference every other column is measured against: the pinned run
      (`ref`) while it is among the runs whose figures loaded FOR THIS WINDOW,
      else the first such run other than this one. A run that ended before the
      window has a column of dashes, and changes measured against it would be
-     changes against nothing. */
-  const referenceRunId = resolveReference(
-    matrixRuns.filter((run) => run.stats !== null),
-    parseCompareReference(params.get('ref')),
-    runId ?? '',
-  );
+     changes against nothing. Resolved only once every read has answered:
+     against a partial set, a pin still loading would read as absent. */
+  const referenceRunId = pending
+    ? null
+    : resolveReference(
+        matrixRuns.filter((run) => run.stats !== null),
+        parseCompareReference(params.get('ref')),
+        runId ?? '',
+      );
   const matrix = toCompareMatrix(matrixRuns, metric, referenceRunId);
   const setReference = (id: string) => refine((next) => next.set('ref', id));
 
@@ -629,7 +664,7 @@ export default function RunCompare() {
                           /* The whole chip named in one string rather than left
                              to the reading order of four nodes, so a screen
                              reader hears "Run 12 · 09-13 11:31 · failed ·
-                             Baseline · production · main" instead of a glyph. */
+                             Reference · production · main" instead of a glyph. */
                           aria-label={[labelFor(run.id), startedLine, mark.label, role, conditions]
                             .filter((part) => part != null && part !== '')
                             .join(' · ')}
@@ -700,14 +735,25 @@ export default function RunCompare() {
                   </p>
                 )}
 
-                {matrixRuns.length > 0 && (
-                  <CompareSummary
-                    summary={buildCompareSummary(matrixRuns, runId ?? '', referenceRunId, metric)}
-                  />
+                {/* While a read is still answering, a loading line in place of
+                    the tiles and the table rather than a conclusion drawn from
+                    whatever has arrived (see `pending`). The overlay stays
+                    MOUNTED — it carries the metric selector and the window
+                    fields the reader is in the middle of using — and says it
+                    is loading instead of drawing. */}
+                {pending ? (
+                  <LoadingState label="Loading the comparison…" />
+                ) : (
+                  matrixRuns.length > 0 && (
+                    <CompareSummary
+                      summary={buildCompareSummary(matrixRuns, runId ?? '', referenceRunId, metric)}
+                    />
+                  )
                 )}
 
                 <CompareChart
                   runs={overlayRuns}
+                  pending={pending}
                   metric={metric}
                   onMetricChange={setMetric}
                   window={window}
@@ -715,7 +761,9 @@ export default function RunCompare() {
                   onWindow={setWindow}
                 />
 
-                <CompareMatrix matrix={matrix} metric={metric} onReference={setReference} />
+                {!pending && (
+                  <CompareMatrix matrix={matrix} metric={metric} onReference={setReference} />
+                )}
               </>
             )}
           </>

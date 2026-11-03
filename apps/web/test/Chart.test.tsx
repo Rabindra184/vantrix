@@ -1002,6 +1002,7 @@ describe('Chart — the time axis follows the viewer’s mode', () => {
               bucketWidthMs: fixture.series.bucketWidthMs,
             },
           ]}
+          pending={false}
           metric="p95"
           onMetricChange={() => undefined}
           window={null}
@@ -1154,6 +1155,7 @@ describe('CompareChart — the time range', () => {
             bucketWidthMs: fixture.series.bucketWidthMs,
           },
         ]}
+        pending={false}
         metric="p95"
         onMetricChange={() => undefined}
         window={null}

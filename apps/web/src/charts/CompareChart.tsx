@@ -22,6 +22,7 @@ import {
  */
 export default function CompareChart({
   runs,
+  pending,
   metric,
   onMetricChange,
   window,
@@ -29,6 +30,14 @@ export default function CompareChart({
   onWindow,
 }: {
   readonly runs: readonly CompareRun[];
+  /**
+   * A read the overlay needs is still answering. `runs` then holds only the
+   * runs that have arrived — possibly none — and a sentence drawn from them
+   * ("Select at least one run", "was not recorded") would be a claim about
+   * reads that have not answered. REQUIRED, with no default: forgetting it
+   * would bring that claim back silently.
+   */
+  readonly pending: boolean;
   readonly metric: CompareMetric;
   readonly onMetricChange: (metric: CompareMetric) => void;
   /** The comparison's window, `null` for every run whole. */
@@ -42,7 +51,19 @@ export default function CompareChart({
   /** Writes the window to the URL; `null` is the whole of every run. */
   readonly onWindow: (window: Window | null) => void;
 }) {
-  const data = useMemo(() => toCompare(runs, metric), [runs, metric]);
+  const data = useMemo(
+    () =>
+      pending
+        ? {
+            series: [],
+            axisLabels: [],
+            columns: ['Elapsed (s)'],
+            rows: [],
+            empty: 'Loading the selected runs…',
+          }
+        : toCompare(runs, metric),
+    [pending, runs, metric],
+  );
 
   /* The slider, the fields and Whole run behave exactly as the run page's
      `TimeBrush` does — the same hook, so a drag settles before it is written,
