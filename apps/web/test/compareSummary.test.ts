@@ -285,7 +285,9 @@ describe('buildCompareSummary — follows the reference', () => {
      KO-per-second rate — so the tiles read a count, and say so in their unit. */
   it('uses the first matrix row', () => {
     const runs = [
-      run('a', { koCount: 12, throughputRps: 40, errorRate: 0.3 }),
+      // Rates (40 × 0.25 = 10/s, 10 × 0.1 = 1/s) differ from both counts, so a
+      // tile that read the overlay's rate cannot pass on either side.
+      run('a', { koCount: 12, throughputRps: 40, errorRate: 0.25 }),
       run('b', { koCount: 8, throughputRps: 10, errorRate: 0.1 }),
     ];
     const summary = buildCompareSummary(runs, 'a', 'b', 'errors');
