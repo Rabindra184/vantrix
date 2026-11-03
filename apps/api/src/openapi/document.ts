@@ -159,6 +159,20 @@ const parameters: Record<string, ParameterObject> = {
       'strictly between 0 and 100, given once; anything else is a 400 INVALID_QUERY.',
     schema: { type: 'string' },
   },
+  SeriesPercentiles: {
+    name: 'percentiles',
+    in: 'query',
+    description:
+      'Ranks to add to every bucket beside the ones it stored, computed from that bucket\'s ' +
+      'stored histograms — for example "99.9,99.99". Each bucket\'s "percentiles", ' +
+      '"percentilesOk" and "percentilesKo" maps gain these ranks (keys "p99.9", "p99.99"), ' +
+      'from the merged, OK and KO histogram respectively; the ranks a bucket stored are ' +
+      'unchanged. A bucket whose histograms are not exact (ingested before 2026-10-15) gains ' +
+      'nothing, and an empty population (a bucket with no OK requests, say) gains no key ' +
+      'rather than a 0. One to twelve comma-separated decimal numbers strictly between 0 and ' +
+      '100, given once; anything else is a 400 INVALID_QUERY.',
+    schema: { type: 'string' },
+  },
   StatsFamily: {
     name: 'family',
     in: 'query',
@@ -717,7 +731,8 @@ const responses: Record<string, ResponseObject> = {
       'A path or query parameter was malformed (e.g. "id" or "cursor" is not a UUID), or ' +
       '(code RUN_FILTER_INVALID, on the run list routes) "status" or "verdict" named a value ' +
       'outside its enum, or (code INVALID_QUERY, on the run list routes) a parameter was given ' +
-      'more than once, or (codes UNKNOWN_REMOTE / UNKNOWN_HOSTNAME, on the agent routes) ' +
+      'more than once, or (code INVALID_QUERY, on the run series route) "percentiles" was not ' +
+      'a list of one to twelve ranks strictly between 0 and 100, or (codes UNKNOWN_REMOTE / UNKNOWN_HOSTNAME, on the agent routes) ' +
       '"remote" or "hostname" named one the run does not have. application/problem+json with ' +
       'a required "remediation" that says what a valid value looks like.',
     content: problem(),
@@ -1444,6 +1459,7 @@ const paths: Record<string, PathItemObject> = {
         parameters['SeriesFamily']!,
         parameters['WindowFrom']!,
         parameters['WindowTo']!,
+        parameters['SeriesPercentiles']!,
       ],
       responses: {
         '200': { description: 'Time-series buckets.', content: json(schemaRef('SeriesResponse')) },

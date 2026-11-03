@@ -6,7 +6,12 @@ import { fileURLToPath } from 'node:url';
 import { Queue } from 'bullmq';
 import request from 'supertest';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { StatsResponseSchema, type StatsResponse } from '@perfportal/contracts';
+import {
+  SeriesResponseSchema,
+  StatsResponseSchema,
+  type SeriesResponse,
+  type StatsResponse,
+} from '@perfportal/contracts';
 import { Histogram, mergedHistogram } from '@perfportal/statistics';
 import { createTestApp, type TestContext } from './support/app.js';
 import { runPipelineFor } from './support/pipeline.js';
@@ -190,6 +195,169 @@ describe('GET /v1/runs/:id/stats?percentiles=', () => {
 
     for (const query of ['?percentiles=0', '?percentiles=90&percentiles=95', '?percentiles=50,']) {
       const res = await stats(id, query);
+      expect(res.status, query).toBe(400);
+      expect(res.body.code, query).toBe('INVALID_QUERY');
+      expect(res.body.detail, query).toContain('percentiles');
+    }
+  });
+});
+
+/**
+ * `GET /v1/runs/:id/series?percentiles=` — each bucket gains the requested
+ * ranks beside the ones it stored, from that bucket's own OK and KO
+ * histograms. The expectation is again read out of `run_series_bucket` by raw
+ * SQL and computed with the histogram's own `percentiles`, never through the
+ * endpoint.
+ */
+describe('GET /v1/runs/:id/series?percentiles=', () => {
+  const series = (id: string, query = '') =>
+    request(ctx.app.getHttpServer()).get(`/v1/runs/${id}/series${query}`).set(auth());
+
+  const parsedSeries = async (id: string, query = ''): Promise<SeriesResponse> => {
+    const res = await series(id, query);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    return SeriesResponseSchema.parse(res.body);
+  };
+
+  /** Each stored bucket's two histograms, keyed by start offset. */
+  async function storedBuckets(id: string, scope: string, name: string) {
+    const { rows } = await ctx.pool.query<{
+      start_offset_ms: number; histogram_ok: Buffer; histogram_ko: Buffer;
+    }>(
+      `SELECT start_offset_ms, histogram_ok, histogram_ko FROM run_series_bucket
+        WHERE run_id = $1 AND scope = $2 AND name = $3 AND family = 'response_time'
+        ORDER BY start_offset_ms`,
+      [id, scope, name],
+    );
+    return new Map(rows.map((r) => [r.start_offset_ms, { ok: fromBytes(r.histogram_ok), ko: fromBytes(r.histogram_ko) }]));
+  }
+
+  /** The rank a histogram answers, as the map entry it should produce: absent when empty. */
+  const entry = (h: Histogram, p: number) => {
+    const [v] = h.percentiles([p]);
+    return v === undefined ? {} : { [`p${p}`]: v };
+  };
+
+  const pick = (map: Record<string, number>, key: string) =>
+    key in map ? { [key]: map[key] } : {};
+
+  it('adds p99.9 to every bucket from its own histograms', async () => {
+    ctx = await createTestApp();
+    const id = await ingested();
+
+    const stored = await storedBuckets(id, 'run', '');
+    const body = await parsedSeries(id, '?percentiles=99.9');
+    expect(body.buckets.length).toBeGreaterThan(5);
+    expect(body.buckets.map((b) => b.startOffsetMs)).toEqual([...stored.keys()]);
+
+    for (const b of body.buckets) {
+      const h = stored.get(b.startOffsetMs)!;
+      expect(h.ok.exact && h.ko.exact, String(b.startOffsetMs)).toBe(true);
+      const [all] = mergedHistogram(h.ok, h.ko).percentiles([99.9]);
+      expect(b.percentiles['p99.9'], String(b.startOffsetMs)).toBe(all);
+      expect(pick(b.percentilesOk, 'p99.9'), String(b.startOffsetMs)).toEqual(entry(h.ok, 99.9));
+      expect(pick(b.percentilesKo, 'p99.9'), String(b.startOffsetMs)).toEqual(entry(h.ko, 99.9));
+    }
+    // Vacuity: the KO map must have been exercised by some bucket.
+    expect(body.buckets.some((b) => 'p99.9' in b.percentilesKo)).toBe(true);
+    // The run's last second only ENDS a request; a bucket that started none
+    // has an empty population and gains no rank — not a 0.
+    const empty = body.buckets.filter((b) => b.startedCount === 0);
+    expect(empty.length).toBeGreaterThan(0);
+    for (const b of empty) expect(b.percentiles, String(b.startOffsetMs)).not.toHaveProperty('p99.9');
+  });
+
+  it('keeps the stored p95 byte-identical', async () => {
+    ctx = await createTestApp();
+    const id = await ingested();
+
+    const plain = await parsedSeries(id);
+    const ranked = await parsedSeries(id, '?percentiles=95,99.9');
+
+    const strip = (m: Record<string, number>) =>
+      Object.fromEntries(Object.entries(m).filter(([k]) => k !== 'p99.9'));
+    const stripAll = (body: SeriesResponse) => ({
+      ...body,
+      buckets: body.buckets.map((b) => ({
+        ...b,
+        percentiles: strip(b.percentiles),
+        percentilesOk: strip(b.percentilesOk),
+        percentilesKo: strip(b.percentilesKo),
+      })),
+    });
+    expect(stripAll(ranked)).toEqual(stripAll(plain));
+    expect(plain.buckets.length).toBeGreaterThan(5);
+    // Buckets that started a request (an empty one stores no rank at all).
+    const started = (body: SeriesResponse) => body.buckets.filter((b) => b.startedCount > 0);
+    expect(started(plain).every((b) => typeof b.percentiles['p95'] === 'number')).toBe(true);
+    // And the extra rank is really there, so the comparison above stripped something.
+    expect(started(ranked).every((b) => typeof b.percentiles['p99.9'] === 'number')).toBe(true);
+  });
+
+  it('a window past the run end clamps', async () => {
+    ctx = await createTestApp();
+    const id = await ingested();
+
+    const whole = await parsedSeries(id, '?percentiles=99.9');
+    const windowed = await parsedSeries(id, '?from=0&to=999999&percentiles=99.9');
+    expect(windowed.window).not.toBeNull();
+    expect(windowed.buckets.map((b) => b.startOffsetMs)).toEqual(whole.buckets.map((b) => b.startOffsetMs));
+    expect(windowed.buckets).toEqual(whole.buckets);
+    expect(windowed.buckets.filter((b) => b.startedCount > 0).every((b) => 'p99.9' in b.percentiles)).toBe(true);
+  });
+
+  it('a failed-only bucket has KO ranks and no OK rank', async () => {
+    ctx = await createTestApp();
+    const id = await ingested();
+
+    // Place Order fails outright in some seconds of the reference run.
+    const stored = await storedBuckets(id, 'request', 'Place Order');
+    const failedOnly = [...stored].filter(([, h]) => h.ok.total === 0 && h.ko.total > 0).map(([o]) => o);
+    expect(failedOnly.length).toBeGreaterThan(0);
+
+    const body = await parsedSeries(id, `?scope=request&name=${encodeURIComponent('Place Order')}&percentiles=99.9`);
+    for (const offset of failedOnly) {
+      const b = body.buckets.find((x) => x.startOffsetMs === offset)!;
+      expect(b.percentilesKo['p99.9'], String(offset)).toBe(stored.get(offset)!.ko.percentiles([99.9])[0]);
+      expect(b.percentilesOk, String(offset)).not.toHaveProperty('p99.9');
+      expect(b.percentiles['p99.9'], String(offset)).toBe(b.percentilesKo['p99.9']);
+    }
+    // And a mixed or OK bucket of the same series DOES get an OK rank.
+    expect(body.buckets.some((b) => 'p99.9' in b.percentilesOk)).toBe(true);
+  });
+
+  it('adds no rank to a bucket whose histograms are not exact', async () => {
+    ctx = await createTestApp();
+    const id = await ingested();
+
+    const stored = await storedBuckets(id, 'run', '');
+    const legacy = [...stored.keys()][1]!;
+    await ctx.pool.query(
+      `UPDATE run_series_bucket SET histogram_ok = $2, histogram_ko = $3
+        WHERE run_id = $1 AND scope = 'run' AND name = '' AND family = 'response_time' AND start_offset_ms = $4`,
+      [id, Buffer.from(Histogram.legacyV1ForTests([100, 200, 300])), Buffer.from(Histogram.legacyV1ForTests([])), legacy],
+    );
+
+    const body = await parsedSeries(id, '?percentiles=99.9');
+    const b = body.buckets.find((x) => x.startOffsetMs === legacy)!;
+    expect(b.percentiles).not.toHaveProperty('p99.9');
+    expect(b.percentilesOk).not.toHaveProperty('p99.9');
+    expect(b.percentilesKo).not.toHaveProperty('p99.9');
+    // Its stored ranks survive, and every other bucket still gains the rank.
+    expect(typeof b.percentiles['p95']).toBe('number');
+    expect(
+      body.buckets
+        .filter((x) => x.startOffsetMs !== legacy && x.startedCount > 0)
+        .every((x) => 'p99.9' in x.percentiles),
+    ).toBe(true);
+  });
+
+  it('refuses a malformed list', async () => {
+    ctx = await createTestApp();
+    const id = await ingested();
+
+    for (const query of ['?percentiles=100', '?percentiles=90&percentiles=95', '?percentiles=,']) {
+      const res = await series(id, query);
       expect(res.status, query).toBe(400);
       expect(res.body.code, query).toBe('INVALID_QUERY');
       expect(res.body.detail, query).toContain('percentiles');

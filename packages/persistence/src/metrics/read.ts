@@ -118,6 +118,21 @@ export const SERIES_SQL = `SELECT start_offset_ms, started_count, ended_count, o
         ORDER BY start_offset_ms`;
 
 /**
+ * The same buckets as SERIES_SQL — the same predicate, so the same single
+ * partition, and the same ordering — selecting only each bucket's two status
+ * histograms. Read only when a caller asks `/series` for ranks beyond the ones
+ * a bucket stored, so the ordinary series read does not pay for the bytes.
+ * Kept textually identical to SERIES_SQL from `FROM` on; the persistence test
+ * compares the two.
+ */
+export const SERIES_HISTOGRAMS_SQL = `SELECT start_offset_ms, histogram_ok, histogram_ko
+         FROM run_series_bucket
+        WHERE run_started_on = $1 AND run_id = $2
+          AND org_id = $3 AND project_id = $4
+          AND scope = $5 AND name = $6 AND family = $7
+        ORDER BY start_offset_ms`;
+
+/**
  * Shared verbatim with the "prunes partitions" integration test, for the same
  * load-bearing reason as SERIES_SQL: `run_started_on = $1` is the partition-key
  * predicate that lets Postgres prune `run_user_bucket`'s range partitions down
@@ -375,6 +390,36 @@ export class MetricReader {
       percentilesOk: (r.percentiles_ok ?? {}) as Record<string, number>,
       percentilesKo: (r.percentiles_ko ?? {}) as Record<string, number>,
     }));
+  }
+
+  /**
+   * Each bucket's OK and KO histograms for one (scope, name, family), keyed by
+   * `startOffsetMs` so a caller can join them onto `series()`. A bucket missing
+   * either column (written before the histograms existed) maps to null rather
+   * than to a half-pair: a rank from one status alone is not the bucket's.
+   * runStartedOn is REQUIRED for the same partition-pruning reason as series().
+   */
+  async seriesHistograms(
+    scope: ProjectScope,
+    runId: string,
+    runStartedOn: Date,
+    sel: { scope: string; name: string; family: string },
+  ): Promise<Map<number, { ok: Histogram; ko: Histogram } | null>> {
+    const { rows } = await this.pool.query<{
+      start_offset_ms: number; histogram_ok: Buffer | null; histogram_ko: Buffer | null;
+    }>(
+      SERIES_HISTOGRAMS_SQL,
+      [partitionDay(runStartedOn), runId, scope.orgId, scope.projectId, sel.scope, sel.name, sel.family],
+    );
+    return new Map(rows.map((r) => [
+      r.start_offset_ms,
+      r.histogram_ok && r.histogram_ko
+        ? {
+            ok: Histogram.deserialize(new Uint8Array(r.histogram_ok)),
+            ko: Histogram.deserialize(new Uint8Array(r.histogram_ko)),
+          }
+        : null,
+    ]));
   }
 
   async hasGroupSeries(
