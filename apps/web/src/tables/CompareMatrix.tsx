@@ -7,7 +7,7 @@ import TableFrame from '../components/TableFrame';
 import { ChangeDownIcon, ChangeUpIcon, PinIcon } from '../components/icons';
 import { ROW, TABLE, TD, TD_NUM, TH, THEAD, TH_NUM, TH_ROW } from '../components/tableStyles';
 import { formatCell } from '../charts/DataTable';
-import { COMPARE_METRICS, compareUnit, type CompareMetric } from '../charts/transforms/compare';
+import { compareUnit, type CompareMetric } from '../charts/transforms/compare';
 import { cn } from '../lib/cn';
 import {
   SUMMARY_LABELS,
@@ -39,8 +39,6 @@ export default function CompareMatrix({
   const headingId = useId();
   const labelIds = useId();
 
-  const metricLabel = COMPARE_METRICS.find((m) => m.value === metric)?.label ?? metric;
-
   /* ═══ THE UNIT RIDES WITH THE COLUMN (review.md copy row 7) ═══
    *
    * A cell's announced context is its column header, so a screen-reader user
@@ -55,11 +53,17 @@ export default function CompareMatrix({
   const unit = metric === 'errors' ? null : compareUnit(metric);
 
   /* THE ACCESSIBLE NAME, AND IT IS SHORT ON PURPOSE (review 09-13 C06): the
-   * dash definition lives behind the heading's info, never in the name. Its
-   * words share nothing distinctive with any other table's name in the app
-   * (Statistics, Errors, Tests, Members…), because Playwright matches a
-   * table's name as a substring. */
-  const name = `${metricLabel} compared across the selected runs`;
+   * dash definition lives behind the heading's info, never in the name.
+   *
+   * NO METRIC, AND NO "ACROSS" OR "RUN". Playwright matches a table's name as
+   * a SUBSTRING, and this page has a second table: the overlay's data table,
+   * named `<metric label> across runs — every value this chart plots, as
+   * text.` (`CompareChart`'s title, `Chart`'s caption). A name carrying the
+   * metric or "across … runs" resolved both for `/percentile|across/i` once
+   * the reader opened the chart's table view. The metric is already in every
+   * header's unit and in the heading's help. Fixed, so it is the same for
+   * every metric. */
+  const name = 'Changes against the reference';
 
   const reference = matrix.columns.find((column) => column.reference) ?? null;
   const hasRequests = matrix.rows.some((row) => row.kind === 'request');
@@ -98,7 +102,7 @@ export default function CompareMatrix({
         {heading}
       </SectionHeading>
 
-      <TableFrame name={name} label="Comparison by run">
+      <TableFrame name={name} label="Reference comparison">
         <table className={TABLE}>
           <caption className="sr-only">{name}</caption>
 

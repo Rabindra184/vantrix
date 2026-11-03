@@ -2,7 +2,7 @@ import type { StatsResponse } from '@perfportal/contracts';
 import { cleanup, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
-import type { CompareMetric } from '../src/charts/transforms/compare';
+import { COMPARE_METRICS, type CompareMetric } from '../src/charts/transforms/compare';
 import CompareMatrix from '../src/tables/CompareMatrix';
 import { toCompareMatrix, type CompareStats } from '../src/tables/buildCompareMatrix';
 import fixture from './fixtures/reference-run.json';
@@ -179,8 +179,32 @@ describe('CompareMatrix — units and rows', () => {
   it('keeps the dash definition out of the accessible name, and in the help', () => {
     renderMatrix();
     const table = screen.getByRole('table');
-    expect(table).toHaveAccessibleName('95th percentile compared across the selected runs');
+    expect(table).toHaveAccessibleName('Changes against the reference');
     expect(screen.getByText(/a dash means that run has no value for the row/i)).toBeInTheDocument();
+  });
+
+  /* THE OVERLAY'S DATA TABLE SHARES THIS PAGE. `CompareChart` names it
+     `<metric label> across runs — every value this chart plots, as text.`,
+     and Playwright matches a table's name as a SUBSTRING — so a name carrying
+     the metric, "across" or "run" made one query resolve both tables. The
+     sibling's name is spelled out here rather than imported, so a change to
+     either side is a change this case sees. */
+  it('shares no distinctive word with the overlay’s data table, for any metric', () => {
+    for (const metric of COMPARE_METRICS) {
+      const { unmount } = renderMatrix(metric.value);
+      // The `<caption>` is what names the table (`TableFrame` gives it no
+      // `aria-label`); the case above pins the computed name itself.
+      const name = screen.getByRole('table').querySelector('caption')?.textContent ?? '';
+      expect(name, metric.value).toBe('Changes against the reference');
+      const sibling = `${metric.label} across runs — every value this chart plots, as text.`;
+      const words = (text: string) =>
+        new Set(text.toLowerCase().split(/[^a-z0-9.]+/).filter((w) => w.length > 3));
+      const shared = [...words(name)].filter((w) =>
+        [...words(sibling)].some((s) => s.includes(w) || w.includes(s)),
+      );
+      expect(shared, metric.value).toEqual([]);
+      unmount();
+    }
   });
 });
 
