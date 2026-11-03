@@ -60,7 +60,11 @@ export function buildCompareSummary(
   currentRunId: string,
   metric: CompareMetric,
 ): CompareSummaryModel {
-  const values = runs.map((run) => ({ ...run, value: runMetricValue(run.stats, metric) }));
+  const values = runs.map((run) => ({
+    ...run,
+    // A run with no figures for the window has no value — never a zero.
+    value: run.stats === null ? null : runMetricValue(run.stats, metric),
+  }));
   const current = values.find((run) => run.id === currentRunId) ?? values[0] ?? null;
   const baseline = values.find((run) => run.id !== current?.id) ?? null;
   const comparable = values.filter((run): run is typeof run & { value: number } => run.value !== null);

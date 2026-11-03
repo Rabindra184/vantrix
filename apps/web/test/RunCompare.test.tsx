@@ -457,17 +457,24 @@ describe('RunCompare — ≈ marks an estimated run’s figures', () => {
   it('marks the estimated baseline’s column, the change and the delta, not the exact run', async () => {
     renderCompare({ state: 'ready', run: COMPLETE_RUN }, cohort('estimated'), '', fixture.stats);
 
-    expect(await screen.findByRole('columnheader', { name: `approximately ${otherLabel} (ms)` })).toBeInTheDocument();
+    // The other run is the default reference, so it leads and says so.
+    expect(
+      await screen.findByRole('columnheader', { name: `approximately ${otherLabel} (ms) Reference` }),
+    ).toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: `${currentLabel} (ms)` })).toBeInTheDocument();
-    expect(screen.getByRole('columnheader', { name: 'approximately Change' })).toBeInTheDocument();
+    // The current run's change leans on the estimated reference, so it carries ≈.
+    const allRequests = screen.getByRole('row', { name: /^All requests/ });
+    expect(within(allRequests).getByTestId('compare-change').textContent).toContain('≈');
     expect(screen.getByTestId('compare-delta').textContent).toMatch(/^≈approximately /);
   });
 
   it('marks nothing when every selected run is exact', async () => {
     renderCompare({ state: 'ready', run: COMPLETE_RUN }, cohort('exact-v1'), '', fixture.stats);
 
-    expect(await screen.findByRole('columnheader', { name: `${otherLabel} (ms)` })).toBeInTheDocument();
-    expect(screen.getByRole('columnheader', { name: 'Change' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('columnheader', { name: `${otherLabel} (ms) Reference` }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: `${currentLabel} (ms)` })).toBeInTheDocument();
     const summary = screen.getByRole('region', { name: 'Comparison summary' });
     expect(summary.textContent).not.toContain('≈');
     for (const h of screen.getAllByRole('columnheader')) expect(h.textContent).not.toContain('≈');

@@ -2,7 +2,9 @@ import type { StatRow, StatsResponse } from '@perfportal/contracts';
 import { isChangeGood, type CompareMetric } from '../charts/transforms/compare';
 
 /**
- * The per-request comparison matrix: requests down, runs across.
+ * The comparison table: Gatling Enterprise's summary rows for the chosen
+ * metric, then one row per request, and one column per selected run — the
+ * REFERENCE run first, every other run's cell carrying its change against it.
  *
  * THIS IS THE HALF OF COMPARE THAT ATTRIBUTES. The overlay above it shows
  * THAT run 7 got slower; this shows that `Catalog/Product Detail` got slower
@@ -14,7 +16,7 @@ import { isChangeGood, type CompareMetric } from '../charts/transforms/compare';
  * DOM to be true.
  */
 
-/** One selected run's statistics, with the identity to label its column. */
+/** One selected run's figures, with the identity to label its column. */
 export interface CompareStats {
   readonly id: string;
   readonly label: string;
@@ -25,16 +27,33 @@ export interface CompareStats {
    * an estimate, and nothing would fail.
    */
   readonly exact: boolean;
-  readonly stats: StatsResponse;
+  /**
+   * The run's `/stats` for the chosen window, or `null` when the run has no
+   * figures for it (it ended before the window began). `null` makes EVERY
+   * cell in the run's column `null` — users and CPU included — so a run that
+   * was not running during the window can never show a figure for it.
+   */
+  readonly stats: StatsResponse | null;
+  /**
+   * The run's peak concurrent users over the window, or `null` where it was
+   * not read. REQUIRED, with no default, for the same reason as `exact`: a
+   * caller that forgot it would silently draw a dash under a run that has a
+   * value.
+   */
+  readonly peakUsers: number | null;
+  /** The run's load-generator CPU over the window (mean and max of its
+   *  samples), or `null` where none was recorded or read. REQUIRED, as above. */
+  readonly cpu: { readonly mean: number; readonly max: number } | null;
 }
 
 /**
  * Which compare metrics an estimated run reported from its sketch.
  *
- * Only the percentiles. `max` is the exactly tracked extreme, and throughput
- * and errors are counts over a duration — all exact on every run, so a ≈ on
- * them would mark a figure that is not an estimate. A `Record` so a metric
- * added to `CompareMetric` has to answer here before anything compiles.
+ * Only the percentiles. `max` is the exactly tracked extreme, throughput and
+ * errors are counts over a duration, and users and CPU are not statistics of
+ * response times at all — all exact on every run, so a ≈ on them would mark a
+ * figure that is not an estimate. A `Record` so a metric added to
+ * `CompareMetric` has to answer here before anything compiles.
  */
 const ESTIMATED_BY_SKETCH: Record<CompareMetric, boolean> = {
   users: false,
@@ -59,99 +78,113 @@ export function figureIsExact(runExact: boolean, metric: CompareMetric): boolean
   return runExact || !ESTIMATED_BY_SKETCH[metric];
 }
 
-export interface CompareColumn {
+/**
+ * The reference run: the one every other column's change is measured against.
+ *
+ * `requested` (the reader's pin, from the URL) wins only while it names a run
+ * in `runs` — a run that is selected AND whose figures loaded, because
+ * `RunCompare` passes only those. A pin naming a run that has since been
+ * deselected, or whose statistics failed, falls back to the default rather
+ * than computing changes against a column that is not there. The default is
+ * the first run that is NOT the one being read, which is what "vs the
+ * previous run" has always meant on this page; with nothing else selected
+ * there is no reference at all.
+ */
+export function resolveReference(
+  runs: readonly CompareStats[],
+  requested: string | null,
+  currentRunId: string,
+): string | null {
+  if (requested !== null && runs.some((run) => run.id === requested)) return requested;
+  return runs.find((run) => run.id !== currentRunId)?.id ?? null;
+}
+
+export interface CompareCell {
+  readonly value: number;
+  /**
+   * How this cell differs from the reference column's cell in the same row,
+   * or `null` — on the reference column itself, and wherever the reference
+   * has no value for the row (a request it never made, a rank it never
+   * stored). A missing reference is never treated as zero: that would state
+   * a change nobody measured.
+   */
+  readonly change: {
+    /** This cell minus the reference, in the row's own unit. */
+    readonly absolute: number;
+    /**
+     * The same change as a percentage of the reference, or `null` when the
+     * reference is ZERO. Errors rising from 0 to 2 has no percentage and is
+     * the regression an engineer most needs to see, so the absolute carries
+     * it — the distinction `compareSummary`'s `deltaUnavailable` draws.
+     */
+    readonly percent: number | null;
+    /**
+     * Whether the change is an improvement (`isChangeGood`), or `null` where
+     * it is neither: a metric with no direction (users, CPU), or no change at
+     * all. An unchanged figure is not an improvement, and colouring it as one
+     * would be a judgement the numbers do not make.
+     */
+    readonly good: boolean | null;
+  } | null;
+}
+
+export interface CompareRow {
+  /** A summary row's label (`All requests`, `Count`, …) or a request name. */
   readonly label: string;
-  readonly exact: boolean;
+  readonly kind: 'summary' | 'request';
+  /** One per column, in `columns` order. `null` where that run has no value. */
+  readonly cells: readonly (CompareCell | null)[];
 }
 
 export interface CompareMatrix {
-  /** Row headers — request names, in stable order. */
-  readonly requests: readonly string[];
   /**
-   * One per run, in selection order: its label (the column header) and
-   * whether its figures for this metric are exact (`figureIsExact`) — `false`
-   * puts ≈ in its header. ONE object per column rather than two parallel
-   * arrays, so a header cannot read past the end of one of them: the renderer
-   * used to fall back to "exact" when it did, a silent default toward the
-   * claim this mark exists to qualify.
+   * One per run: the reference first, then the others in selection order.
+   * `exact` is `figureIsExact` for this metric — `false` puts ≈ in the
+   * header. ONE object per column rather than parallel arrays, so a header
+   * cannot read past the end of one of them.
    */
-  readonly columns: readonly CompareColumn[];
-  /** `cells[request][run]`. `null` where that run has no such request. */
-  readonly cells: readonly (readonly (number | null)[])[];
-  /**
-   * How the run being read changed against its baseline, per request — or
-   * `null` when there is no pair to compare.
-   *
-   * ═══ THE COLUMN THE TABLE WAS ASKING THE READER TO COMPUTE ═══
-   *
-   * `review.md`'s finding 18: the matrix put one number per run per row and
-   * nothing else, so `146.95` beside `2515.46` was arithmetic homework in a
-   * table whose whole purpose is attribution — and the rows that did NOT move
-   * looked exactly like the rows that did.
-   *
-   * SAME PAIR AS THE SUMMARY TILES ABOVE IT, deliberately. `buildCompareSummary`
-   * defines the subject as the run the reader came from and the baseline as the
-   * first other selected run; a table that chose a different pair would put two
-   * different comparisons on one screen under one metric selector.
-   */
-  readonly change: CompareChange | null;
+  readonly columns: readonly {
+    readonly id: string;
+    readonly label: string;
+    readonly exact: boolean;
+    readonly reference: boolean;
+  }[];
+  readonly rows: readonly CompareRow[];
 }
 
-/** The per-request change between one pair of runs. */
-export interface CompareChange {
-  /** The run the change is ABOUT. */
-  readonly subjectLabel: string;
-  /** The run it is measured AGAINST. */
-  readonly referenceLabel: string;
-  /** Per request, in `requests` order. `null` where either side has no value. */
-  readonly rows: readonly (CompareChangeRow | null)[];
-  /** Whether BOTH runs' figures are exact: a difference is no more exact than
-   *  its least exact term. `false` puts ≈ in the Change header. */
-  readonly exact: boolean;
-}
-
-export interface CompareChangeRow {
-  /** Subject minus reference, in the metric's own unit. */
-  readonly absolute: number;
-  /**
-   * The same change as a percentage, or `null` when the reference is ZERO.
-   *
-   * Not an error and not "no change": errors rising from 0 to 2/s has no
-   * percentage and is the regression an engineer most needs to see, which is
-   * the distinction `compareSummary`'s `deltaUnavailable` already draws. The
-   * absolute value carries it, and `good` below is still decided.
-   */
-  readonly percent: number | null;
-  /** Whether the change is an improvement — see `isChangeGood`; `null` for a
-   *  metric that is neither (users, CPU), whose change is drawn neutral. */
-  readonly good: boolean | null;
-}
+/** The summary row labels, in this product's words (the spec's table). */
+export const SUMMARY_LABELS = {
+  allRequests: 'All requests',
+  value: 'Value',
+  count: 'Count',
+  ratio: 'Ratio',
+  max: 'Max',
+  mean: 'Mean',
+} as const;
 
 /**
- * One request's value for one metric in one run.
+ * One row's value for one metric in one run.
  *
- * `errors` IS A RATE — `throughputRps * errorRate`, KO per second — and NOT a
- * count, deliberately. The metric selector says "Errors" above both this table
- * and the overlay, and the overlay plots `koCount` per second. One label
- * meaning a count here and a rate there is exactly the divergence that sharing
- * `formatCell` between the tooltip and the data table exists to prevent, and a
- * matrix is where it would be least visible.
+ * `errors` IS A RATE here — `throughputRps * errorRate`, KO per second — the
+ * quantity the overlay plots, and what the summary tiles read through this
+ * function. The TABLE's errors rows are counts and a ratio instead, read
+ * directly by `toCompareMatrix` (the spec's `Count` and `Ratio`), because a
+ * per-second figure in a row labelled `Count` would be a false label.
  *
  * `max` reads `maxMs`, not the percentile map: no percentile map contains a
- * `max` key — the same fact that made the KO min/max on the percentiles chart
- * a lie — and reaching for `percentiles.max` would silently yield `null` for
- * every row.
+ * `max` key, and reaching for `percentiles.max` would silently yield `null`
+ * for every row.
  *
  * A missing percentile key yields `null` rather than a neighbouring one. The
- * set is a project setting, so a run whose project does not configure `p99`
- * genuinely has no answer, and the nearest percentile is a different question.
+ * set is per project, and the extra ranks (`p90`, `p99.9`, `p99.99`) are only
+ * present when the page asked for them — and never on a legacy estimated row
+ * that did not store them. The nearest percentile is a different question.
  *
- * EXPORTED, because the compare page's summary tiles sit between this matrix
- * and the overlay and have to mean the same thing by "Errors" as both. They
- * shipped with a line-for-line copy of this function, which is the third
- * copy of the decision this docstring exists to protect.
+ * Users and CPU are not properties of a statistics row at all, so they answer
+ * `null` here; the matrix reads them from `CompareStats.peakUsers`/`cpu`.
  */
 export function metricValue(row: StatRow, metric: CompareMetric): number | null {
+  if (metric === 'users' || metric === 'cpu') return null;
   if (metric === 'throughput') return row.throughputRps;
   if (metric === 'errors') return row.throughputRps * row.errorRate;
   if (metric === 'max') return row.maxMs;
@@ -160,106 +193,166 @@ export function metricValue(row: StatRow, metric: CompareMetric): number | null 
   return value === undefined || !Number.isFinite(value) ? null : value;
 }
 
+/** A row read from one run: its value, or `null` for "this run has none". */
+type Reader = (run: CompareStats) => number | null;
+
+const finite = (value: number | null | undefined): number | null =>
+  value === null || value === undefined || !Number.isFinite(value) ? null : value;
+
+/** The run-scope statistics row, or `null`. */
+const runRow = (run: CompareStats): StatRow | null =>
+  run.stats?.stats.find((row) => row.scope === 'run') ?? null;
+
+/** The summary rows for one metric, each a label and how to read it. */
+function summaryRows(metric: CompareMetric): readonly { label: string; read: Reader }[] {
+  const fromRunRow =
+    (read: (row: StatRow) => number | null): Reader =>
+    (run) => {
+      const row = runRow(run);
+      return row === null ? null : finite(read(row));
+    };
+
+  switch (metric) {
+    case 'users':
+      return [{ label: SUMMARY_LABELS.max, read: (run) => finite(run.peakUsers) }];
+    case 'cpu':
+      return [
+        { label: SUMMARY_LABELS.mean, read: (run) => finite(run.cpu?.mean) },
+        { label: SUMMARY_LABELS.max, read: (run) => finite(run.cpu?.max) },
+      ];
+    case 'errors':
+      return [
+        { label: SUMMARY_LABELS.count, read: fromRunRow((row) => row.koCount) },
+        { label: SUMMARY_LABELS.ratio, read: fromRunRow((row) => row.errorRate) },
+      ];
+    case 'throughput':
+      return [{ label: SUMMARY_LABELS.value, read: fromRunRow((row) => row.throughputRps) }];
+    default:
+      return [
+        { label: SUMMARY_LABELS.allRequests, read: fromRunRow((row) => metricValue(row, metric)) },
+      ];
+  }
+}
+
+/**
+ * How a request row reads one metric, or `null` where the metric has no
+ * per-request value (users and CPU are properties of the run).
+ *
+ * Errors per request is the KO COUNT — the same unit as the `Count` summary
+ * row above it, so the rows of one table are one quantity.
+ */
+function requestValue(metric: CompareMetric): ((row: StatRow) => number | null) | null {
+  if (metric === 'users' || metric === 'cpu') return null;
+  if (metric === 'errors') return (row) => row.koCount;
+  return (row) => metricValue(row, metric);
+}
+
 export function toCompareMatrix(
   runs: readonly CompareStats[],
   metric: CompareMetric,
   /**
-   * The run the reader is looking at — the subject of `change` below.
+   * The run every change is measured against — `resolveReference`'s answer.
    *
    * REQUIRED, WITH NO DEFAULT, because every wrong answer here is silent. The
-   * obvious shortcut is `runs[0]`: selection order does put the current run
-   * first (`parseCompareSelection` prepends it). But `RunCompare` drops a run
-   * whose statistics failed to load before this is called, so on exactly the
-   * day one request errors, `runs[0]` is a DIFFERENT run and every change in
-   * the table silently changes meaning. A caller that cannot say which run is
-   * the subject should get no change column, which is what `''` yields.
+   * obvious shortcut is `runs[0]`, and `RunCompare` drops a run whose figures
+   * failed to load before calling this — so on exactly the day one request
+   * errors, `runs[0]` is a different run and every change silently changes
+   * meaning. An id not among `runs` (or `null`) yields no reference column
+   * and no changes, rather than changes against a guess.
    */
-  currentRunId: string,
+  referenceRunId: string | null,
 ): CompareMatrix {
-  /**
-   * REQUEST SCOPE ONLY. `StatsResponse` carries run, group and request rows in
-   * one array; including groups would list every request twice — once on its
-   * own and once inside the group that contains it — and including the run row
-   * would put the whole run's total in a column of per-request values.
-   */
-  const perRun = runs.map(
-    (run) =>
-      new Map(
-        run.stats.stats
-          .filter((row) => row.scope === 'request')
-          .map((row) => [row.name, row] as const),
-      ),
-  );
+  const reference = runs.find((run) => run.id === referenceRunId) ?? null;
+  const ordered = reference === null ? [...runs] : [reference, ...runs.filter((run) => run !== reference)];
+
+  const columns = ordered.map((run) => ({
+    id: run.id,
+    label: run.label,
+    exact: figureIsExact(run.exact, metric),
+    reference: run === reference,
+  }));
 
   /**
-   * THE UNION, not the intersection, and not the first run's list.
-   *
-   * A request that exists in only one of the selected runs is precisely what a
-   * reader comparing them is looking for: a request added last week, or one
-   * that stopped being exercised. An intersection would hide both, and the
-   * hiding would be invisible.
-   *
-   * First-seen order across the runs in selection order, which is stable: the
-   * same payloads always produce the same rows in the same sequence, so two
-   * readers looking at the same URL see the same table.
+   * One row of raw values → cells with their changes. The reference is
+   * column 0 whenever there is one, which is what the ordering above is for.
    */
-  const requests: string[] = [];
-  const seen = new Set<string>();
-  for (const lookup of perRun) {
-    for (const name of lookup.keys()) {
-      if (seen.has(name)) continue;
-      seen.add(name);
-      requests.push(name);
+  const toCells = (values: readonly (number | null)[]): (CompareCell | null)[] => {
+    const base = reference === null ? null : values[0] ?? null;
+    return values.map((value, i) => {
+      if (value === null) return null;
+      if (i === 0 && reference !== null) return { value, change: null };
+      if (base === null) return { value, change: null };
+      const absolute = value - base;
+      return {
+        value,
+        change: {
+          absolute,
+          percent: base === 0 ? null : (absolute / base) * 100,
+          good: absolute === 0 ? null : isChangeGood(absolute, metric),
+        },
+      };
+    });
+  };
+
+  /* A run with no figures for the window has no value in ANY row — users and
+     CPU included — so its whole column is dashes. */
+  const readAll = (read: Reader) => ordered.map((run) => (run.stats === null ? null : read(run)));
+
+  const rows: CompareRow[] = summaryRows(metric).map(({ label, read }) => ({
+    label,
+    kind: 'summary',
+    cells: toCells(readAll(read)),
+  }));
+
+  const perRequest = requestValue(metric);
+  if (perRequest !== null) {
+    /**
+     * REQUEST SCOPE ONLY. `StatsResponse` carries run, group and request rows
+     * in one array; including groups would list every request twice — once on
+     * its own and once inside the group that contains it.
+     */
+    const lookups = ordered.map(
+      (run) =>
+        new Map(
+          (run.stats?.stats ?? [])
+            .filter((row) => row.scope === 'request')
+            .map((row) => [row.name, row] as const),
+        ),
+    );
+
+    /**
+     * THE UNION, not the intersection, and not the first run's list: a
+     * request that exists in only one run is precisely what a reader comparing
+     * them is looking for. First-seen order across the runs in SELECTION
+     * order (not column order), so moving the reference never reorders the
+     * rows under the reader.
+     */
+    const names: string[] = [];
+    const seen = new Set<string>();
+    for (const run of runs) {
+      for (const row of run.stats?.stats ?? []) {
+        if (row.scope !== 'request' || seen.has(row.name)) continue;
+        seen.add(row.name);
+        names.push(row.name);
+      }
+    }
+
+    for (const name of names) {
+      rows.push({
+        label: name,
+        kind: 'request',
+        // `null`, never `0`, for a request a run does not have. It did not take
+        // no time — it did not run, and a zero would sort to the top of a
+        // column of durations as though it were the fastest thing here.
+        cells: toCells(
+          lookups.map((lookup) => {
+            const row = lookup.get(name);
+            return row === undefined ? null : finite(perRequest(row));
+          }),
+        ),
+      });
     }
   }
 
-  const cells = requests.map((name) =>
-    perRun.map((lookup) => {
-      const row = lookup.get(name);
-      return row === undefined ? null : metricValue(row, metric);
-    }),
-  );
-
-  /* The pair, resolved exactly as `buildCompareSummary` resolves it: the run
-     the reader came from, against the first OTHER selected run. Both have to
-     exist — a comparison of one run has nothing to change against, and saying
-     so with `null` is what keeps the column out of a table that cannot fill
-     it. */
-  const subjectIndex = runs.findIndex((run) => run.id === currentRunId);
-  const referenceIndex = runs.findIndex((run, i) => i !== subjectIndex && subjectIndex !== -1);
-  const change: CompareChange | null =
-    subjectIndex === -1 || referenceIndex === -1
-      ? null
-      : {
-          subjectLabel: runs[subjectIndex]!.label,
-          referenceLabel: runs[referenceIndex]!.label,
-          exact:
-            figureIsExact(runs[subjectIndex]!.exact, metric) &&
-            figureIsExact(runs[referenceIndex]!.exact, metric),
-          rows: cells.map((row) => {
-            const subject = row[subjectIndex];
-            const reference = row[referenceIndex];
-            // `null` where EITHER side is missing: a request one run never made
-            // has no change, and treating the absence as zero is the same lie
-            // the cells above refuse to tell.
-            if (subject === null || subject === undefined) return null;
-            if (reference === null || reference === undefined) return null;
-            const absolute = subject - reference;
-            return {
-              absolute,
-              percent: reference === 0 ? null : (absolute / reference) * 100,
-              good: isChangeGood(absolute, metric),
-            };
-          }),
-        };
-
-  return {
-    requests,
-    change,
-    columns: runs.map((run) => ({ label: run.label, exact: figureIsExact(run.exact, metric) })),
-    // `null`, never `0`, for a request a run does not have. It did not take no
-    // time — it did not run, and a zero would sort to the top of a column of
-    // durations as though it were the fastest thing in the comparison.
-    cells,
-  };
+  return { columns, rows };
 }

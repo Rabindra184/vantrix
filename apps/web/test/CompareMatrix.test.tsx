@@ -1,20 +1,17 @@
 import type { StatsResponse } from '@perfportal/contracts';
 import { cleanup, render, screen, within } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
+import type { CompareMetric } from '../src/charts/transforms/compare';
 import CompareMatrix from '../src/tables/CompareMatrix';
-import type { CompareStats } from '../src/tables/buildCompareMatrix';
+import { toCompareMatrix, type CompareStats } from '../src/tables/buildCompareMatrix';
 import fixture from './fixtures/reference-run.json';
 
 /**
- * review.md's copy table, row 7 — "Every request… a dash means…" → "Put unit
- * in the table header; missing-data definition in help".
- *
- * THIS COMPONENT HAD NO TEST FILE. `buildCompareMatrix.test.ts` covers the
- * transform, which is pure and well pinned; nothing rendered the table, so
- * neither half of row 7 could have been noticed by the suite. That is the
- * "grep for components with no test file before looking for untested
- * BEHAVIOUR" lesson, met one table over.
+ * The comparison table: summary rows then requests, the reference column
+ * first, a change chip in every other column, and a pin per non-reference
+ * column. The matrix is built by `toCompareMatrix` here, as the page builds
+ * it, so these cases render real rows rather than a hand-written model.
  */
 
 const REFERENCE = fixture.stats as unknown as StatsResponse;
@@ -24,15 +21,17 @@ const asRun = (
   id: string,
   over?: (s: StatsResponse) => StatsResponse,
   exact = true,
+  extra: Partial<Pick<CompareStats, 'peakUsers' | 'cpu'>> = {},
 ): CompareStats => ({
   id,
   label: id,
   exact,
   stats: over ? over(REFERENCE) : REFERENCE,
+  peakUsers: null,
+  cpu: null,
+  ...extra,
 });
 
-/** A copy of the payload with some request rows removed — the same helper the
- *  transform's own suite uses, so both describe one absence the same way. */
 const without =
   (names: readonly string[]) =>
   (s: StatsResponse): StatsResponse => ({
@@ -41,108 +40,161 @@ const without =
   });
 
 /** `vitest.config.ts` does not set `globals`, so Testing Library's automatic
- *  cleanup never registers and every file has to call it. CLAUDE.md records
- *  four files that did not and the intermittent cross-test leak it produced. */
+ *  cleanup never registers and every file has to call it. */
 afterEach(cleanup);
 
 const renderMatrix = (
-  metric: 'p95' | 'throughput' = 'p95',
-  metricLabel = '95th percentile',
-  runs: readonly CompareStats[] = [asRun('a'), asRun('b')],
+  metric: CompareMetric = 'p95',
+  runs: readonly CompareStats[] = [asRun('Run 1'), asRun('Run 2')],
+  referenceRunId: string | null = 'Run 1',
+  onReference: (id: string) => void = () => undefined,
 ) =>
   render(
-    <CompareMatrix runs={runs} metric={metric} metricLabel={metricLabel} currentRunId="a" />,
+    <CompareMatrix
+      matrix={toCompareMatrix(runs, metric, referenceRunId)}
+      metric={metric}
+      onReference={onReference}
+    />,
   );
 
-describe('CompareMatrix — review.md copy row 7', () => {
-  /* Clause one. Asserted on EVERY run column rather than the first: a unit
-     appended to one header and not the rest reads as a property of that run,
-     which is worse than stating it nowhere. */
-  it('carries the unit in every run column header, not in prose', () => {
-    renderMatrix();
-    const headers = screen.getAllByRole('columnheader');
-    const runHeaders = headers.filter((h) => /^[ab] /.test(h.textContent ?? ''));
-    expect(runHeaders).toHaveLength(2);
-    for (const h of runHeaders) expect(h).toHaveTextContent(/\(ms\)$/);
+const runHeaders = () => screen.getAllByTestId('compare-column');
+
+describe('CompareMatrix — the reference', () => {
+  it('reference header reads Reference', () => {
+    renderMatrix('p95', [asRun('Run 1'), asRun('Run 2')], 'Run 2');
+    const [first] = runHeaders();
+    // First, because the reference column always leads.
+    expect(first).toHaveTextContent('Run 2 (ms)');
+    expect(within(first!).getByTestId('compare-reference')).toHaveTextContent('Reference');
+    expect(screen.getByRole('columnheader', { name: 'Run 2 (ms) Reference' })).toBe(first);
   });
 
-  /* The unit is the METRIC's, not a constant. A header hard-coded to `(ms)`
-     satisfies the case above and mislabels every throughput and error-rate
-     comparison in the product — the same class of defect review.md 1 found
-     in the SLA actuals, one table over. */
-  it('takes the unit from the metric, so a rate is not labelled in milliseconds', () => {
-    renderMatrix('throughput', 'Throughput');
-    const runHeaders = screen
-      .getAllByRole('columnheader')
-      .filter((h) => /^[ab] /.test(h.textContent ?? ''));
-    expect(runHeaders).toHaveLength(2);
-    for (const h of runHeaders) expect(h).toHaveTextContent(/\(\/s\)$/);
-    expect(screen.queryByText(/\(ms\)/)).toBeNull();
+  it('a pin button names its run and makes it the reference', () => {
+    const onReference = vi.fn();
+    renderMatrix('p95', [asRun('Run 1'), asRun('Run 2')], 'Run 2', onReference);
+    screen.getByRole('button', { name: 'Set Run 1 as reference' }).click();
+    expect(onReference).toHaveBeenCalledWith('Run 1');
+    expect(onReference).toHaveBeenCalledTimes(1);
   });
 
-  /* Clause two, and the half that matters most for the reader this table is
-     hardest on: the definition used to BE the accessible name, so a screen
-     reader announced the whole paragraph before the first number, every
-     visit.
-
-     SPLIT FROM THE CASE BELOW ON PURPOSE. These were one case asserting both
-     halves, and two separate mutations — restoring the prose as the name, and
-     deleting the definition outright — both failed it, on different
-     assertions under one test name. That is the bundled-claim shape review9
-     earned: the coverage was right and the REPORT named one defect for two.
-     Apart, each mutation fails the case that describes it. */
-  it('keeps the dash definition out of the accessible name', () => {
-    renderMatrix();
-    const table = screen.getByRole('table');
-    expect(table).toHaveAccessibleName('Per-request 95th percentile across the selected runs');
-    expect(table.querySelector('caption')?.textContent ?? '').not.toMatch(/a dash means/i);
+  it('the reference column has no pin button', () => {
+    renderMatrix('p95', [asRun('Run 1'), asRun('Run 2'), asRun('Run 3')], 'Run 1');
+    const [reference, ...others] = runHeaders();
+    expect(within(reference!).queryByRole('button')).toBeNull();
+    for (const header of others) expect(within(header).getAllByRole('button')).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: 'Set Run 1 as reference' })).toBeNull();
   });
 
-  /* ...and the other half, which is what stops the case above being satisfied
-     by simply deleting the explanation. row 7 says to MOVE it, not drop it.
-     `<details>` keeps its children in the DOM under jsdom, so this asserts
-     presence; whether a reader has to open the disclosure to see it is the
-     browser's business and `TableFrame`'s own contract. */
-  it('keeps the dash definition available in the help', () => {
-    renderMatrix();
-    expect(
-      screen.getByText(/a dash means the request did not run in that one/i),
-    ).toBeInTheDocument();
-  });
-
-  /* The claim the definition is ABOUT, so the prose and the product cannot
-     drift apart: a request one run never made is a dash, never a zero. The
-     transform's own comment gives the reason — a zero would sort to the top
-     of a column of durations as though it were the fastest thing here. */
-  it('renders a dash, never a zero, for a request a run did not make', () => {
-    const dropped = ALL_REQUESTS[0]!;
-    renderMatrix('p95', '95th percentile', [asRun('a', without([dropped])), asRun('b')]);
-    const row = screen.getByRole('row', { name: new RegExp(`^${dropped}\\b`) });
-    const cells = within(row).getAllByRole('cell');
-    expect(cells[0]).toHaveTextContent('—');
-    expect(cells[0]).not.toHaveTextContent('0');
+  /* The pin is inside the `<th>`, and a header left to compute its name from
+     its contents takes the button's `aria-label` too — in Chromium. jsdom's
+     name computation does NOT consult a descendant's `aria-label` (CLAUDE.md),
+     so a name assertion alone cannot fail here: it was red-verified as
+     passing with the fix removed. What can fail is the mechanism — the
+     header is labelled by its label span, which the pin is not inside. */
+  it('keeps the pin out of the column header’s name', () => {
+    renderMatrix('p95', [asRun('Run 1'), asRun('Run 2')], 'Run 1');
+    const header = runHeaders()[1]!;
+    expect(screen.getByRole('columnheader', { name: 'Run 2 (ms)' })).toBe(header);
+    const ids = (header.getAttribute('aria-labelledby') ?? '').split(' ').filter(Boolean);
+    expect(ids).toHaveLength(1);
+    const label = document.getElementById(ids[0]!)!;
+    expect(label).toHaveTextContent(/^Run 2 \(ms\)$/);
+    expect(label.querySelector('button')).toBeNull();
+    expect(within(header).getByRole('button', { name: 'Set Run 2 as reference' })).toBeInTheDocument();
   });
 });
 
-/**
- * ═══ ≈ IN AN ESTIMATED RUN'S COLUMN HEADER, AND ONLY THERE ═══
- *
- * A cell's announced context is its column header, so the mark in the header
- * reaches every value in that run's column — "approximately b (ms)" — while
- * an exact run's header stays exactly "a (ms)". The Change column leans on
- * both runs, so it carries ≈ when either was estimated.
- */
+describe('CompareMatrix — change chips', () => {
+  const chipsIn = (row: HTMLElement) => within(row).queryAllByTestId('compare-change');
+
+  it('shows a chip in every non-reference cell, none in the reference’s', () => {
+    renderMatrix('p95', [asRun('Run 1'), asRun('Run 2'), asRun('Run 3')], 'Run 1');
+    const all = screen.getByRole('row', { name: /^All requests/ });
+    const cells = within(all).getAllByRole('cell');
+    expect(chipsIn(cells[0]!)).toHaveLength(0);
+    expect(chipsIn(cells[1]!)).toHaveLength(1);
+    expect(chipsIn(cells[2]!)).toHaveLength(1);
+  });
+
+  it('reads = for an unchanged figure, with no good or bad colour', () => {
+    renderMatrix('p95');
+    const chip = within(screen.getByRole('row', { name: /^All requests/ })).getByTestId('compare-change');
+    expect(chip).toHaveTextContent(/^=$/);
+    expect(chip.getAttribute('style') ?? '').not.toMatch(/--color-status-/);
+  });
+
+  it('a worse change carries the failed tone, its signed percentage and the word', () => {
+    const slower = (s: StatsResponse): StatsResponse => ({
+      ...s,
+      stats: s.stats.map((row) => ({ ...row, maxMs: row.maxMs * 2 })),
+    });
+    renderMatrix('max', [asRun('Run 1'), asRun('Run 2', slower)], 'Run 1');
+    const chip = within(screen.getByRole('row', { name: /^All requests/ })).getByTestId('compare-change');
+    expect(chip).toHaveTextContent('+100.0% worse');
+    expect(chip.getAttribute('style')).toContain('var(--color-status-failed)');
+  });
+
+  it('neutral chip for users carries no good/bad colour', () => {
+    renderMatrix(
+      'users',
+      [
+        asRun('Run 1', undefined, true, { peakUsers: 10 }),
+        asRun('Run 2', undefined, true, { peakUsers: 13 }),
+      ],
+      'Run 1',
+    );
+    const chip = within(screen.getByRole('row', { name: /^Max/ })).getByTestId('compare-change');
+    expect(chip).toHaveTextContent('+30.0%');
+    expect(chip.getAttribute('style') ?? '').not.toMatch(/--color-status-/);
+    expect(chip).toHaveClass('text-muted');
+    expect(chip).not.toHaveTextContent(/better|worse/);
+  });
+});
+
+describe('CompareMatrix — units and rows', () => {
+  it('carries the metric’s unit in every run column header', () => {
+    renderMatrix('throughput');
+    for (const h of runHeaders()) expect(h.querySelector('[id]')).toHaveTextContent(/\(\/s\)$/);
+    expect(screen.queryByText(/\(ms\)/)).toBeNull();
+  });
+
+  it('labels no errors column with a rate, and prints the ratio as a percentage', () => {
+    renderMatrix('errors');
+    for (const h of runHeaders()) expect(h).not.toHaveTextContent('/s');
+    const runRow = REFERENCE.stats.find((s) => s.scope === 'run')!;
+    const ratio = within(screen.getByRole('row', { name: /^Ratio/ })).getAllByRole('cell')[0]!;
+    expect(ratio).toHaveTextContent(`${(runRow.errorRate * 100).toFixed(2)}%`);
+    const count = within(screen.getByRole('row', { name: /^Count/ })).getAllByRole('cell')[0]!;
+    expect(count).toHaveTextContent(String(runRow.koCount));
+  });
+
+  it('renders a dash, never a zero, for a request a run did not make', () => {
+    const dropped = ALL_REQUESTS[0]!;
+    renderMatrix('p95', [asRun('Run 1'), asRun('Run 2', without([dropped]))], 'Run 1');
+    const row = screen.getByRole('row', { name: new RegExp(`^${dropped}\\b`) });
+    const cells = within(row).getAllByRole('cell');
+    expect(cells[1]).toHaveTextContent(/^—$/);
+  });
+
+  it('keeps the dash definition out of the accessible name, and in the help', () => {
+    renderMatrix();
+    const table = screen.getByRole('table');
+    expect(table).toHaveAccessibleName('95th percentile compared across the selected runs');
+    expect(screen.getByText(/a dash means that run has no value for the row/i)).toBeInTheDocument();
+  });
+});
+
 describe('CompareMatrix — an estimated run’s column', () => {
-  it('marks the estimated run’s header and the change, and not the exact run’s', () => {
-    renderMatrix('p95', '95th percentile', [asRun('a'), asRun('b', undefined, false)]);
-    const names = screen.getAllByRole('columnheader').map((h) => h.textContent);
-    expect(names).toEqual(['Request', 'a (ms)', '≈approximately b (ms)', '≈approximately Change']);
-    expect(screen.getByRole('columnheader', { name: 'a (ms)' })).toBeInTheDocument();
+  it('marks the estimated run’s header and its change, not the exact run’s', () => {
+    renderMatrix('p95', [asRun('a'), asRun('b', undefined, false)], 'a');
+    expect(screen.getByRole('columnheader', { name: 'a (ms) Reference' })).toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: 'approximately b (ms)' })).toBeInTheDocument();
+    const chip = within(screen.getByRole('row', { name: /^All requests/ })).getByTestId('compare-change');
+    expect(chip.textContent).toContain('≈');
   });
 
   it('marks nothing when both runs are exact', () => {
-    renderMatrix('p95', '95th percentile', [asRun('a'), asRun('b')]);
+    renderMatrix('p95', [asRun('a'), asRun('b')], 'a');
     for (const h of screen.getAllByRole('columnheader')) expect(h.textContent).not.toContain('≈');
   });
 });

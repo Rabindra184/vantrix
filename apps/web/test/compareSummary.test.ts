@@ -41,8 +41,8 @@ describe('compareSummary', () => {
   it('marks lower latency as better and names the best selected run', () => {
     const summary = buildCompareSummary(
       [
-        { id: 'current', label: 'Current', exact: true, stats: stats({ percentiles: { p95: 240 } }) },
-        { id: 'baseline', label: 'Baseline', exact: true, stats: stats({ percentiles: { p95: 300 } }) },
+        { id: 'current', label: 'Current', exact: true, stats: stats({ percentiles: { p95: 240 } }), peakUsers: null, cpu: null },
+        { id: 'baseline', label: 'Baseline', exact: true, stats: stats({ percentiles: { p95: 300 } }), peakUsers: null, cpu: null },
       ],
       'current',
       'p95',
@@ -56,8 +56,8 @@ describe('compareSummary', () => {
   it('marks higher throughput as better', () => {
     const summary = buildCompareSummary(
       [
-        { id: 'current', label: 'Current', exact: true, stats: stats({ throughputRps: 80 }) },
-        { id: 'baseline', label: 'Baseline', exact: true, stats: stats({ throughputRps: 100 }) },
+        { id: 'current', label: 'Current', exact: true, stats: stats({ throughputRps: 80 }), peakUsers: null, cpu: null },
+        { id: 'baseline', label: 'Baseline', exact: true, stats: stats({ throughputRps: 100 }), peakUsers: null, cpu: null },
       ],
       'current',
       'throughput',
@@ -87,6 +87,8 @@ describe('buildCompareSummary — why a delta is missing', () => {
     id,
     label: id,
     exact: true,
+    peakUsers: null,
+    cpu: null,
     stats: {
       runId: id,
       stats: [
@@ -150,6 +152,8 @@ describe('buildCompareSummary — which figures are estimates', () => {
     id,
     label: id,
     exact,
+    peakUsers: null,
+    cpu: null,
     stats: stats({ percentiles: { p95 }, throughputRps: p95 }),
   });
 
@@ -172,7 +176,7 @@ describe('buildCompareSummary — which figures are estimates', () => {
     expect(noBaseline.deltaUnavailable).toBe('no-baseline');
     expect(noBaseline.deltaExact).toBe(true);
 
-    const unmeasured = { id: 'b', label: 'b', exact: false, stats: stats({ percentiles: {} }) };
+    const unmeasured = { id: 'b', label: 'b', exact: false, stats: stats({ percentiles: {} }), peakUsers: null, cpu: null };
     const notMeasured = buildCompareSummary([at('a', 200, false), unmeasured], 'a', 'p95');
     expect(notMeasured.deltaUnavailable).toBe('not-measured');
     expect(notMeasured.deltaExact).toBe(true);

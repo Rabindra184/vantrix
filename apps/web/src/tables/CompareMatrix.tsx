@@ -1,176 +1,199 @@
-import { useId, useMemo } from 'react';
+import { useId } from 'react';
 import { Approx } from '../components/Approx';
 import InfoTip from '../components/InfoTip';
 import SectionHeading from '../components/SectionHeading';
 import { EmptyState } from '../components/States';
 import TableFrame from '../components/TableFrame';
+import { ChangeDownIcon, ChangeUpIcon, PinIcon } from '../components/icons';
 import { ROW, TABLE, TD, TD_NUM, TH, THEAD, TH_NUM, TH_ROW } from '../components/tableStyles';
 import { formatCell } from '../charts/DataTable';
-import { compareUnit, type CompareMetric } from '../charts/transforms/compare';
-import { toCompareMatrix, type CompareChangeRow, type CompareStats } from './buildCompareMatrix';
+import { COMPARE_METRICS, compareUnit, type CompareMetric } from '../charts/transforms/compare';
+import { cn } from '../lib/cn';
+import {
+  SUMMARY_LABELS,
+  type CompareCell,
+  type CompareMatrix as CompareMatrixModel,
+} from './buildCompareMatrix';
 
 /**
- * Requests down, runs across.
+ * The comparison table: the metric's summary rows, then requests down, and
+ * runs across with the REFERENCE first.
  *
  * The figure above answers "did this get slower". This answers "what got
- * slower", which is the question that leads somewhere.
+ * slower, and by how much against the run I chose to measure from", which is
+ * the question that leads somewhere.
+ *
+ * Built by the caller (`toCompareMatrix`), not here, so the summary tiles
+ * above can read the same matrix and the two cannot disagree.
  */
 export default function CompareMatrix({
-  runs,
+  matrix,
   metric,
-  metricLabel,
-  currentRunId,
+  onReference,
 }: {
-  readonly runs: readonly CompareStats[];
+  readonly matrix: CompareMatrixModel;
   readonly metric: CompareMetric;
-  readonly metricLabel: string;
-  /** The run being read — the subject of the Change column. See
-   *  `toCompareMatrix`, which refuses to infer it from column order. */
-  readonly currentRunId: string;
+  /** Make a run the reference. Wired to the URL by the page. */
+  readonly onReference: (id: string) => void;
 }) {
   const headingId = useId();
-  const matrix = useMemo(
-    () => toCompareMatrix(runs, metric, currentRunId),
-    [runs, metric, currentRunId],
-  );
+  const labelIds = useId();
 
-  /* ═══ review.md's COPY TABLE, ROW 7 ═══
-   *
-   * "Every request… a dash means…" → "Put unit in the table header;
-   * missing-data definition in help". Both halves were open, and they are
-   * the same mistake twice: the only statement of the UNIT and the only
-   * definition of the DASH both lived in one paragraph above the numbers,
-   * met on every visit by a reader who needed either of them once.
-   *
-   * The unit is in the column headers now, which is strictly better than
-   * prose for the reader this table is hardest on: a cell's announced
-   * context IS its column header, so a screen-reader user hears "09-13
-   * 11:31, ms, 146.95" per cell instead of holding a sentence in their head
-   * from above the table.
-   *
-   * `compareUnit` is the module that already owns this decision — its own
-   * docstring says "for the axis and the tooltip", and this table draws the
-   * same numbers as both. One more caller, not a second opinion. */
-  const unit = compareUnit(metric);
+  const metricLabel = COMPARE_METRICS.find((m) => m.value === metric)?.label ?? metric;
 
-  /* THE ACCESSIBLE NAME, AND IT IS SHORT ON PURPOSE (review 09-13 C06).
-   * This was the whole paragraph below — so a screen-reader user met the
-   * dash definition unavoidably, every visit, before reaching a single
-   * number. That is the defect C06 names in as many words ("avoid
-   * duplicating the full prose as the accessible name"), and this table is
-   * free to fix it where `StatisticsTable` was not: nothing in the unit
-   * suite or the e2e suite finds this table by name, checked before
-   * changing it. */
-  const name = `Per-request ${metricLabel.toLowerCase()} across the selected runs`;
+  /* ═══ THE UNIT RIDES WITH THE COLUMN (review.md copy row 7) ═══
+   *
+   * A cell's announced context is its column header, so a screen-reader user
+   * hears "09-13 11:31 (ms), 146.95" per cell instead of holding a sentence
+   * from above the table. `compareUnit` owns the decision, as it does for the
+   * axis and the tooltip.
+   *
+   * EXCEPT FOR ERRORS, whose unit for the OVERLAY is "/s" (KO per second) and
+   * whose TABLE rows are a count and a ratio. "(/s)" over `Count` would be a
+   * false label on every cell beneath it, so the errors headers carry no unit:
+   * the count is a plain count, and the ratio prints its own "%". */
+  const unit = metric === 'errors' ? null : compareUnit(metric);
 
-  /* The help, behind the section heading's info (the clean-UI text rule).
-   * The visible line that used to sit above the table ("p95 for every
-   * request, in each selected run") only restated the heading, so it is gone.
-   * A dash is worth defining precisely BECAUSE the obvious reading is wrong:
-   * it is not a zero, and `toCompareMatrix` refuses to emit one for the
-   * reason its own comment gives — a zero would sort to the top of a column of
-   * durations as though it were the fastest thing in the comparison. */
+  /* THE ACCESSIBLE NAME, AND IT IS SHORT ON PURPOSE (review 09-13 C06): the
+   * dash definition lives behind the heading's info, never in the name. Its
+   * words share nothing distinctive with any other table's name in the app
+   * (Statistics, Errors, Tests, Members…), because Playwright matches a
+   * table's name as a substring. */
+  const name = `${metricLabel} compared across the selected runs`;
+
+  const reference = matrix.columns.find((column) => column.reference) ?? null;
+  const hasRequests = matrix.rows.some((row) => row.kind === 'request');
+
   const info = (
     <>
-      A dash means the request did not run in that one — not that it took no time.
-      {matrix.change !== null && (
+      A dash means that run has no value for the row — a request it did not make, or a figure it did
+      not record — not that it took no time.
+      {reference !== null && (
         <>
           {' '}
-          Change is {matrix.change.subjectLabel} against {matrix.change.referenceLabel}, the same
-          pair the summary above compares.
+          Each change is against the reference, {reference.label}. Pin another run to measure from it
+          instead.
         </>
       )}
     </>
   );
 
-  if (matrix.requests.length === 0) {
+  const heading = hasRequests ? 'By request' : 'By run';
+
+  if (matrix.columns.length === 0) {
     return (
       <section aria-labelledby={headingId} className="flex flex-col gap-3">
-        <SectionHeading id={headingId}>By request</SectionHeading>
+        <SectionHeading id={headingId}>{heading}</SectionHeading>
         {/* No headings over nothing: an empty grid reads as "these runs were
-            compared and found to share no requests", which is a measurement
+            compared and found to share nothing", which is a measurement
             nobody took. */}
-        <EmptyState title="No request-level statistics for the selected runs" />
+        <EmptyState title="No statistics for the selected runs" />
       </section>
     );
   }
 
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-3">
-      <SectionHeading id={headingId} info={<InfoTip label="About By request">{info}</InfoTip>}>
-        By request
+      <SectionHeading id={headingId} info={<InfoTip label={`About ${heading}`}>{info}</InfoTip>}>
+        {heading}
       </SectionHeading>
 
-      <TableFrame name={name} label="Per-request comparison">
+      <TableFrame name={name} label="Comparison by run">
         <table className={TABLE}>
-          {/* THE NAME, NOT THE PROSE: a short name for both readers, the dash
-              definition behind the heading's info (review C06). */}
           <caption className="sr-only">{name}</caption>
 
           <thead className={THEAD}>
             <tr>
-              {/* This comment used to say "NOT `uppercase`", on the grounds
-                  that Playwright applies `text-transform` when it computes an
-                  accessible name. That was re-measured on Playwright 1.62.1
-                  and does not reproduce — `text-transform` is a RENDERING
-                  property and `th.textContent` is unchanged, so the computed
-                  name is too. `TH` has carried `uppercase` since the redesign
-                  and the e2e suite passes 94/94 with it. See CLAUDE.md and
-                  `tableStyles.ts` for the measurement, and for what genuinely
-                  is still unsafe: uppercasing the DATA or an `aria-label`. */}
               <th scope="col" className={TH}>
-                Request
+                {hasRequests ? 'Request' : 'Figure'}
               </th>
-              {matrix.columns.map(({ label, exact }) => (
-                // Was `${TH} text-right` written out here — the same thing
-                // `TH_NUM` now names for every table, so a new one gets the
-                // alignment by reaching for the right constant.
-                <th key={label} scope="col" className={TH_NUM}>
-                  {/* THE UNIT RIDES WITH THE COLUMN, which is the point of
-                      row 7. Repeated per run rather than stated once
-                      somewhere: a cell's announced context is its own column
-                      header, so this is the only placement where every value
-                      carries its unit to a screen-reader user. */}
-                  {/* ≈ when THIS run's figures were estimated, so every value
-                      in its column is announced with the mark. */}
-                  <Approx exact={exact}>
-                    {label} ({unit})
-                  </Approx>
-                </th>
-              ))}
-              {/* LAST, after the values it is derived from: a reader scans the
-                  numbers and then the conclusion, and a change column between
-                  two run columns would read as belonging to one of them. */}
-              {matrix.change !== null && (
-                <th scope="col" className={TH_NUM}>
-                  <Approx exact={matrix.change.exact}>Change</Approx>
-                </th>
-              )}
+              {matrix.columns.map((column, index) => {
+                const labelId = `${labelIds}-label-${index}`;
+                const tagId = `${labelIds}-tag-${index}`;
+                return (
+                  <th
+                    key={column.id}
+                    scope="col"
+                    data-testid="compare-column"
+                    data-reference={column.reference ? 'true' : undefined}
+                    /* THE HEADER'S NAME IS ITS LABEL (and, on the reference,
+                       the word Reference) — never the pin button's name. A
+                       `<th>` left to compute its name from its contents
+                       concatenates a descendant's `aria-label` in Chromium,
+                       so every cell below would be announced as
+                       "b (ms) Set b as reference, 146.95". The same fix
+                       `StatisticsTable`'s `SortableHeader` documents. */
+                    aria-labelledby={column.reference ? `${labelId} ${tagId}` : labelId}
+                    className={cn(TH_NUM, column.reference && 'bg-accent/10 text-accent')}
+                  >
+                    <span className="inline-flex items-center justify-end gap-1.5">
+                      <span id={labelId}>
+                        {/* ≈ when THIS run's figures were estimated, so every
+                            value in its column is announced with the mark. */}
+                        <Approx exact={column.exact}>
+                          {column.label}
+                          {unit === null ? '' : ` (${unit})`}
+                        </Approx>
+                      </span>
+                      {column.reference ? (
+                        <span
+                          id={tagId}
+                          data-testid="compare-reference"
+                          className="rounded bg-accent/10 px-1.5 py-0.5 normal-case tracking-normal"
+                        >
+                          Reference
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          /* Named after its run: one pin per column means
+                             several in one header row, and identical names
+                             are the duplicate-name defect this repo has paid
+                             for before. */
+                          aria-label={`Set ${column.label} as reference`}
+                          title={`Set ${column.label} as reference`}
+                          onClick={() => onReference(column.id)}
+                          className="transition-ui inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted hover:bg-surface hover:text-primary"
+                        >
+                          <PinIcon className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </span>
+                  </th>
+                );
+              })}
             </tr>
           </thead>
 
           <tbody>
-            {matrix.requests.map((name, row) => (
-              <tr key={name} className={ROW}>
-                <th scope="row" className={`${TH_ROW} ${TD}`}>
-                  {name}
-                </th>
-                {matrix.cells[row]!.map((value, column) => (
-                  <td key={matrix.columns[column]?.label ?? column} className={TD_NUM}>
-                    {/* `formatCell`, the same function the data tables and the
-                        tooltip use, so no surface in this app rounds a number
-                        differently from another. A dash for absence — never a
-                        zero, which would sort as the fastest cell here. */}
-                    {value === null ? '—' : formatCell(value)}
-                  </td>
-                ))}
-                {matrix.change !== null && (
-                  <td className={TD_NUM}>
-                    <ChangeCell row={matrix.change.rows[row] ?? null} />
-                  </td>
-                )}
-              </tr>
-            ))}
+            {matrix.rows.map((row) => {
+              const ratio = metric === 'errors' && row.kind === 'summary' && row.label === SUMMARY_LABELS.ratio;
+              return (
+                <tr key={`${row.kind}:${row.label}`} className={ROW}>
+                  <th
+                    scope="row"
+                    className={cn(TH_ROW, TD, row.kind === 'summary' && 'font-semibold')}
+                  >
+                    {row.label}
+                  </th>
+                  {row.cells.map((cell, column) => {
+                    const col = matrix.columns[column]!;
+                    return (
+                      <td
+                        key={col.id}
+                        className={cn(TD_NUM, col.reference && 'bg-accent/5')}
+                      >
+                        <Cell
+                          cell={cell}
+                          ratio={ratio}
+                          changeExact={col.exact && (reference?.exact ?? true)}
+                        />
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </TableFrame>
@@ -178,53 +201,101 @@ export default function CompareMatrix({
   );
 }
 
-/**
- * One request's change, in the metric's own unit and as a percentage.
- *
- * ═══ BOTH NUMBERS, BECAUSE EACH ONE ALONE MISLEADS ═══
- *
- * A percentage alone cannot tell a reader whether 40% is four milliseconds or
- * four seconds, and on a fast request it turns noise into a headline. An
- * absolute alone hides that +60 ms doubled a 60 ms request while barely moving
- * a 3 s one. The review's own example is the pair at its starkest: 146.95
- * against 2515.46 is both +2368.51 ms and +1612%.
- *
- * ═══ A ZERO BASELINE STILL HAS A CHANGE ═══
- *
- * `percent` is null when the reference is zero, and the absolute is shown on
- * its own rather than the row being dropped or dashed. Errors rising from 0 to
- * 2/s is the regression an engineer most needs to see, and it is exactly the
- * row a percentage cannot describe — the same reasoning `compareSummary`'s
- * `deltaUnavailable` carries for the tiles above.
- *
- * ═══ THE TONE IS A TOKEN, NOT A UTILITY ═══
- *
- * `text-status-*` emits no CSS: the status colours are declared on `:root`
- * rather than inside `@theme inline`, which CLAUDE.md records as silent. The
- * sign is also spelled out, so the judgement never rests on colour alone.
- */
-function ChangeCell({ row }: { readonly row: CompareChangeRow | null }) {
-  // A dash for "no change to state" — one of the two runs never made this
-  // request — which is the same absence the value cells refuse to call zero.
-  if (row === null) return <>—</>;
+/** A fraction as a percentage, at the precision the run totals use. */
+const asPercent = (fraction: number): string => `${(fraction * 100).toFixed(2)}%`;
 
-  const sign = row.absolute > 0 ? '+' : '';
+/**
+ * One value and, beside it, its change against the reference.
+ *
+ * `formatCell` for the value — the function the data tables and the tooltip
+ * use, so no surface rounds a number differently — and a dash for absence,
+ * never a zero, which would sort as the fastest cell here.
+ */
+function Cell({
+  cell,
+  ratio,
+  changeExact,
+}: {
+  readonly cell: CompareCell | null;
+  readonly ratio: boolean;
+  /** Whether both this column's and the reference's figures are exact: a
+   *  difference is no more exact than its least exact term. */
+  readonly changeExact: boolean;
+}) {
+  if (cell === null) return <>—</>;
+  return (
+    <span className="inline-flex items-center justify-end gap-2">
+      <span>{ratio ? asPercent(cell.value) : formatCell(cell.value)}</span>
+      {cell.change !== null && (
+        <ChangeChip change={cell.change} ratio={ratio} exact={changeExact} />
+      )}
+    </span>
+  );
+}
+
+/**
+ * `+7.7%` / `−7.7%` / `=`, with Gatling Enterprise's arrow (north-east up,
+ * south-east down), coloured by whether the change is an improvement.
+ *
+ * ═══ THE PERCENTAGE, OR THE ABSOLUTE WHERE THERE IS NONE ═══
+ *
+ * A reference of ZERO has no percentage — errors rising from 0 to 2 is the
+ * regression an engineer most needs to see — so the chip states the absolute
+ * change instead, in the row's own unit (percentage POINTS for the ratio row,
+ * so it cannot be misread as a relative change).
+ *
+ * ═══ THE TONE IS A TOKEN, NOT A UTILITY, AND NEVER THE ONLY SIGNAL ═══
+ *
+ * `text-status-*` emits no CSS (the status colours live on `:root`, outside
+ * `@theme`), so the colour is an inline `var()`. The sign is spelled out and a
+ * visually hidden word says better or worse, so the judgement never rests on
+ * colour alone. A change with no direction — users, CPU, or no change at all —
+ * is muted: colouring it would be a judgement nobody configured.
+ */
+function ChangeChip({
+  change,
+  ratio,
+  exact,
+}: {
+  readonly change: NonNullable<CompareCell['change']>;
+  readonly ratio: boolean;
+  readonly exact: boolean;
+}) {
+  const { absolute, percent, good } = change;
+  const sign = absolute > 0 ? '+' : absolute < 0 ? '−' : '';
+  const magnitude = Math.abs(absolute);
+  const text =
+    absolute === 0
+      ? '='
+      : percent !== null
+        ? `${sign}${Math.abs(percent).toFixed(1)}%`
+        : ratio
+          ? `${sign}${(magnitude * 100).toFixed(2)} pp`
+          : `${sign}${formatCell(magnitude)}`;
+
   return (
     <span
       data-testid="compare-change"
+      className={cn(
+        'inline-flex items-center gap-0.5 text-[0.6875rem]',
+        good === null && 'text-muted',
+      )}
       style={
-        row.good === null
+        good === null
           ? undefined
-          : { color: `var(--color-status-${row.good ? 'passed' : 'failed'})` }
+          : { color: `var(--color-status-${good ? 'passed' : 'failed'})` }
       }
     >
-      {sign}
-      {formatCell(row.absolute)}
-      {row.percent !== null && (
-        <span className="ml-1 text-[0.6875rem] text-muted">
-          ({sign}
-          {row.percent.toFixed(1)}%)
-        </span>
+      {absolute > 0 && <ChangeUpIcon className="h-3 w-3" />}
+      {absolute < 0 && <ChangeDownIcon className="h-3 w-3" />}
+      <Approx exact={exact}>{text}</Approx>
+      {/* The space is its own text node, outside the hidden span: a space
+          inside it is dropped by the name computation (see `Approx`). */}
+      {good !== null && (
+        <>
+          {' '}
+          <span className="sr-only">{good ? 'better' : 'worse'}</span>
+        </>
       )}
     </span>
   );

@@ -4,7 +4,6 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { seriesQuery, statsQuery, trendsQuery } from '../api/metrics';
 import CompareChart from '../charts/CompareChart';
 import {
-  COMPARE_METRICS,
   compareUnit,
   runLabels,
   seriesPoints,
@@ -15,7 +14,11 @@ import { runMinuteLabel } from '../charts/transforms/runLabel';
 import { formatCell } from '../charts/DataTable';
 import { EmptyState } from '../components/States';
 import CompareMatrix from '../tables/CompareMatrix';
-import type { CompareStats } from '../tables/buildCompareMatrix';
+import {
+  resolveReference,
+  toCompareMatrix,
+  type CompareStats,
+} from '../tables/buildCompareMatrix';
 import type { TrendRun } from '@perfportal/contracts';
 import { VERDICT } from './marks';
 import { Payload, type Slot } from './payload';
@@ -237,7 +240,18 @@ export default function RunCompare() {
     const data = statsResults[i]?.data;
     return data === undefined
       ? []
-      : [{ id, label: labelFor(id), exact: isExact(statsMethodOf(id)), stats: data }];
+      : [
+          {
+            id,
+            label: labelFor(id),
+            exact: isExact(statsMethodOf(id)),
+            stats: data,
+            // Not fetched yet: the users and CPU reads arrive with the page's
+            // per-metric wiring, and until then those rows read as dashes.
+            peakUsers: null,
+            cpu: null,
+          },
+        ];
   });
 
   /**
@@ -258,7 +272,12 @@ export default function RunCompare() {
     (_, i) => seriesResults[i]?.isError === true || statsResults[i]?.isError === true,
   );
 
-  const metricLabel = COMPARE_METRICS.find((m) => m.value === metric)?.label ?? metric;
+  /* The reference every other column is measured against: the pinned run
+     (`ref`) while it is among the runs whose figures loaded, else the first
+     run other than this one. */
+  const referenceRunId = resolveReference(matrixRuns, params.get('ref'), runId ?? '');
+  const matrix = toCompareMatrix(matrixRuns, metric, referenceRunId);
+  const setReference = (id: string) => refine((next) => next.set('ref', id));
 
   // AFTER the hooks, never before one: an early return above a `useQueries`
   // would change the hook count between renders the moment the viewport
@@ -506,12 +525,7 @@ export default function RunCompare() {
 
                 <CompareChart runs={overlayRuns} metric={metric} onMetricChange={setMetric} />
 
-                <CompareMatrix
-                  runs={matrixRuns}
-                  metric={metric}
-                  metricLabel={metricLabel}
-                  currentRunId={runId ?? ''}
-                />
+                <CompareMatrix matrix={matrix} metric={metric} onReference={setReference} />
               </>
             )}
           </>
