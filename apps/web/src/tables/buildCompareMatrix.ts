@@ -166,8 +166,9 @@ export const SUMMARY_LABELS = {
  * One row's value for one metric in one run.
  *
  * `errors` IS A RATE here — `throughputRps * errorRate`, KO per second — the
- * quantity the overlay plots, and what the summary tiles read through this
- * function. The TABLE's errors rows are counts and a ratio instead, read
+ * quantity the overlay's word means. The TABLE's errors rows (and so the
+ * summary tiles, which read the table's first row) are counts and a ratio
+ * instead, read
  * directly by `toCompareMatrix` (the spec's `Count` and `Ratio`), because a
  * per-second figure in a row labelled `Count` would be a false label.
  *
