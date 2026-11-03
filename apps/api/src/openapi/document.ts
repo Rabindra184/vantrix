@@ -146,6 +146,19 @@ const parameters: Record<string, ParameterObject> = {
       'matches no rows rather than being rejected, so the response\'s "stats" array comes back empty.',
     schema: { type: 'string', enum: ['run', 'scenario', 'group', 'request'] },
   },
+  StatsPercentiles: {
+    name: 'percentiles',
+    in: 'query',
+    description:
+      'Ranks to answer instead of the project\'s configured set, computed from the stored ' +
+      'histograms — for example "90,99.9,99.99". Every row\'s "percentiles" map then holds ' +
+      'exactly these ranks (keys "p90", "p99.9", "p99.99"), on the whole run and under a ' +
+      '"from"/"to" window alike; indicator bands and every other field are unchanged. A row ' +
+      'whose statistics are estimated answers only the requested ranks it stored, and omits ' +
+      'the rest rather than guessing them. One to twelve comma-separated decimal numbers ' +
+      'strictly between 0 and 100, given once; anything else is a 400 INVALID_QUERY.',
+    schema: { type: 'string' },
+  },
   StatsFamily: {
     name: 'family',
     in: 'query',
@@ -742,8 +755,9 @@ const responses: Record<string, ResponseObject> = {
       '"indicators" setting cannot be used to compute indicator bands for this run — either ' +
       'the setting itself is structurally invalid (e.g. lowerMs >= higherMs), or its ' +
       '"higherMs" sits above the histogram\'s overflow cap while this run has overflow ' +
-      'observations. application/problem+json with a required "remediation" naming the setting ' +
-      'to fix.',
+      'observations, or (code INVALID_QUERY) "percentiles" was not a list of one to twelve ' +
+      'ranks strictly between 0 and 100. application/problem+json with a required ' +
+      '"remediation" naming what to fix.',
     content: problem(),
   },
   BundleTooLarge: {
@@ -1224,7 +1238,7 @@ const paths: Record<string, PathItemObject> = {
         'top-level "indicators") are folded from the run\'s stored histogram at the project\'s ' +
         'current "indicators" bounds — see "configurable" and "bounds" on the response. ' +
         'Percentiles are recomputed exactly from each row\'s stored histograms at the project\'s ' +
-        'current percentile set. A run whose statistics are estimated (ingested before ' +
+        'current percentile set, or at the ranks "percentiles" names. A run whose statistics are estimated (ingested before ' +
         '2026-10-15 and not yet recomputed from its raw log) answers only the ranks it stored, ' +
         'each clamped to the row\'s minMs and maxMs; a rank it never stored is omitted, not zero.',
       parameters: [
@@ -1234,6 +1248,7 @@ const paths: Record<string, PathItemObject> = {
         parameters['StatsFamily']!,
         parameters['WindowFrom']!,
         parameters['WindowTo']!,
+        parameters['StatsPercentiles']!,
       ],
       responses: {
         '200': { description: 'Statistics for this run, optionally filtered.', content: json(schemaRef('StatsResponse')) },

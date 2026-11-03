@@ -26,7 +26,7 @@ import {
 } from '@perfportal/statistics';
 import type { Request } from 'express';
 import { Scopes } from '../auth/scopes.decorator.js';
-import { badRequest, parseLimit, uuidParam } from '../common/validation.js';
+import { badRequest, parseLimit, parsePercentileList, uuidParam } from '../common/validation.js';
 import { inRange, resolveRange, snapWindow } from '../common/window.js';
 import { runNotFound } from '../common/validation.js';
 import { Requires } from '../auth/access.decorator.js';
@@ -198,7 +198,11 @@ export class MetricsController {
     @Query('family') family?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
+    @Query('percentiles') percentiles?: unknown,
   ): Promise<StatsResponse> {
+    // Parsed before anything is read, so a malformed list is the same 400
+    // whatever the run's state. `null` means "the project's own set".
+    const requested = parsePercentileList('percentiles', percentiles);
     const run = await this.#run(req, id);
 
     // parseProjectSettings throws (a ZodError) on stored settings that are
@@ -222,10 +226,21 @@ export class MetricsController {
       );
     }
 
+    /**
+     * THE RANKS THIS RESPONSE ANSWERS: the caller's `?percentiles=` when it
+     * named any, else the project's configured set. Compare plots p90, p99.9
+     * and p99.99 for runs whose project configures none of them, and every
+     * one is still computed from the stored histograms by the paths below —
+     * `storedPercentiles` unwindowed, `rollupFromHistograms` windowed — never
+     * by a second percentile computation here. Indicator bands keep the
+     * project's bounds: the parameter is about ranks and nothing else.
+     */
+    const set = requested ?? settings.percentiles;
+
     const range = await resolveRange(this.reader, run, from, to);
     const tenant = { orgId: run.orgId, projectId: run.projectId };
     if (range !== null) {
-      return this.#windowedStats(run, tenant, range, settings, scope, name, family);
+      return this.#windowedStats(run, tenant, range, { ...settings, percentiles: set }, scope, name, family);
     }
 
     const all = await this.reader.stats({ orgId: run.orgId, projectId: run.projectId }, run.id);
@@ -257,7 +272,7 @@ export class MetricsController {
       stddevMs: s.stddevMs,
       throughputRps: s.throughputRps,
       // Exact for rows written since 2026-10-15; a legacy row answers its stored ranks, clamped — see storedPercentiles.
-      percentiles: storedPercentiles(s, settings.percentiles),
+      percentiles: storedPercentiles(s, set),
       indicators: s.histogramOk
         ? bandsOrRefuse(s.histogramOk, s.koCount, settings.indicators)
         : { under: 0, between: 0, over: 0, failed: s.koCount },
