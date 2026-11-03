@@ -452,15 +452,23 @@ export default function RunCompare() {
    * figures under the new window's handles, which is the worse lie. A read
    * that FAILED is not pending — it is named in the alert above, and the
    * comparison is drawn from what did load.
+   *
+   * TWO FLAGS, BECAUSE THE OVERLAY READS LESS THAN THE TABLE. `overlayPending`
+   * is the overlay's own source alone; `pending` adds every run's `/stats`.
+   * A percentile switch re-keys `/stats` (each metric asks its own rank) while
+   * the overlay's series is usually already cached, so handing the chart the
+   * page-wide flag blanked a line that was ready to draw for a round trip.
    */
-  const pending = scopes.some(
+  const overlayPending = scopes.some(
     (scope, i) =>
       !scope.ended &&
-      (statsResults[i]?.isPending === true ||
-        (source === 'series' && seriesResults[i]?.isPending === true) ||
+      ((source === 'series' && seriesResults[i]?.isPending === true) ||
         (source === 'users' && usersResults[i]?.isPending === true) ||
         (source === 'cpu' && cpuOf(i) === undefined)),
   );
+  const pending =
+    overlayPending ||
+    scopes.some((scope, i) => !scope.ended && statsResults[i]?.isPending === true);
 
   /* The reference every other column is measured against: the pinned run
      (`ref`) while it is among the runs whose figures loaded FOR THIS WINDOW,
@@ -740,9 +748,20 @@ export default function RunCompare() {
                     whatever has arrived (see `pending`). The overlay stays
                     MOUNTED — it carries the metric selector and the window
                     fields the reader is in the middle of using — and says it
-                    is loading instead of drawing. */}
+                    is loading instead of drawing while its OWN reads are.
+
+                    ONE LIVE REGION PER LOADING STATE. When the overlay is
+                    loading too, its own `role="status"` line announces it, so
+                    this line is plain text — two regions mounting together
+                    would be announced twice. */}
                 {pending ? (
-                  <LoadingState label="Loading the comparison…" />
+                  overlayPending ? (
+                    <p data-testid="compare-loading" className="text-muted">
+                      Loading the comparison…
+                    </p>
+                  ) : (
+                    <LoadingState label="Loading the comparison…" />
+                  )
                 ) : (
                   matrixRuns.length > 0 && (
                     <CompareSummary
@@ -753,7 +772,7 @@ export default function RunCompare() {
 
                 <CompareChart
                   runs={overlayRuns}
-                  pending={pending}
+                  pending={overlayPending}
                   metric={metric}
                   onMetricChange={setMetric}
                   window={window}

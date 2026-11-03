@@ -31,11 +31,13 @@ export default function CompareChart({
 }: {
   readonly runs: readonly CompareRun[];
   /**
-   * A read the overlay needs is still answering. `runs` then holds only the
-   * runs that have arrived — possibly none — and a sentence drawn from them
-   * ("Select at least one run", "was not recorded") would be a claim about
-   * reads that have not answered. REQUIRED, with no default: forgetting it
-   * would bring that claim back silently.
+   * One of the OVERLAY'S OWN reads is still answering — its `/series`,
+   * `/users` or CPU sources, never the page's `/stats`, which the table waits
+   * on and this chart does not draw from. `runs` then holds only the runs that
+   * have arrived — possibly none — and a sentence drawn from them ("Select at
+   * least one run", "was not recorded") would be a claim about reads that
+   * have not answered. REQUIRED, with no default: forgetting it would bring
+   * that claim back silently.
    */
   readonly pending: boolean;
   readonly metric: CompareMetric;

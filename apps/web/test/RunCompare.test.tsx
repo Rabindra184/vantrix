@@ -852,6 +852,90 @@ describe('RunCompare — metric data, reference and time range', () => {
   });
 
   /**
+   * THE OVERLAY WAITS ON ITS OWN READS, NOT ON THE TABLE'S (fix-wave review).
+   * Every percentile asks `/stats` for its own rank, so switching p95 to p50
+   * re-keys `/stats` — while the overlay's series is the same cached read for
+   * both. Handed the page-wide flag, the chart blanked a line that was ready.
+   */
+  it('keeps drawing a cached overlay while a percentile switch reloads the table', async () => {
+    let release: (value: unknown) => void = () => undefined;
+    const held = new Promise((resolve) => {
+      release = resolve;
+    });
+    const { fetchSpy } = renderCompare(
+      { state: 'ready', run: COMPLETE_RUN },
+      three(),
+      '',
+      undefined,
+      (url) => {
+        if (url.includes('/stats')) return url.includes('percentiles=50') ? held : fixture.stats;
+        if (url.includes('/series')) return fixture.series;
+        return undefined;
+      },
+    );
+    await waitFor(() => expect(runColumns().length).toBeGreaterThan(0));
+    const seriesReads = () => urls(fetchSpy).filter((u) => u.includes('/series')).length;
+    const before = seriesReads();
+
+    fireEvent.change(screen.getByLabelText('Metric'), { target: { value: 'p50' } });
+    await waitFor(() =>
+      expect(urls(fetchSpy).some((u) => u.endsWith(`/runs/${RUN_ID}/stats?percentiles=50`))).toBe(true),
+    );
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    // The series really was cached: the switch asked for no new one.
+    expect(seriesReads()).toBe(before);
+    expect(screen.getByText('Loading the comparison…')).toBeInTheDocument();
+    expect(screen.queryAllByTestId('compare-column')).toHaveLength(0);
+    expect(screen.queryByText('Loading the selected runs…')).toBeNull();
+
+    await act(async () => {
+      release(fixture.stats);
+    });
+    await waitFor(() => expect(runColumns().length).toBeGreaterThan(0));
+  });
+
+  /** One loading state, one live region: with the table and the overlay both
+   *  waiting, the overlay's status line is the announcement and the page's
+   *  line is plain text — two regions mounting at once read out twice. */
+  it('announces a loading comparison once when the table and the overlay both wait', async () => {
+    let release: (value: unknown) => void = () => undefined;
+    const held = new Promise((resolve) => {
+      release = resolve;
+    });
+    renderCompare(
+      { state: 'ready', run: COMPLETE_RUN },
+      three(),
+      '',
+      undefined,
+      (url) => {
+        if (url.includes('from=')) return held;
+        if (url.includes('/stats')) return fixture.stats;
+        if (url.includes('/series')) return fixture.series;
+        return undefined;
+      },
+    );
+    await waitFor(() => expect(runColumns().length).toBeGreaterThan(0));
+
+    fireEvent.change(screen.getByLabelText('From (s)'), { target: { value: '10' } });
+    fireEvent.change(screen.getByLabelText('To (s)'), { target: { value: '20' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply window' }));
+    await screen.findByText('Loading the selected runs…');
+
+    const loading = screen
+      .getAllByRole('status')
+      .filter((region) => /loading/i.test(region.textContent ?? ''));
+    expect(loading).toHaveLength(1);
+    expect(screen.getByText('Loading the comparison…')).toBeInTheDocument();
+
+    await act(async () => {
+      release(fixture.series);
+    });
+  });
+
+  /**
    * A PIN STILL LOADING IS NOT A PIN THAT IS ABSENT. Resolved against the runs
    * that had answered, `?ref=` naming the run still in flight fell back to
    * another, and the chip and every change named the wrong reference until
