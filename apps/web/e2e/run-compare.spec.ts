@@ -19,9 +19,15 @@ const OVERLAY = 'chart-compare-overlay';
  * `useWindowControl`'s settle: how long a drag must stop before it is written.
  *
  * Restated rather than imported, because that module imports `../routes/window`
- * without an extension and this project's `nodenext` resolution refuses it. The
- * cases below wait a MULTIPLE of it and bound one gap BELOW it, so a SHORTER
- * settle in the product leaves them sound; a longer one should be mirrored here.
+ * without an extension and this project's `nodenext` resolution refuses it.
+ *
+ * WHICH WAY DRIFT CUTS. Only the drag case leans on it: it waits four settles
+ * for a late write, and `slowDrag` beats ~130 ms between moves. A LONGER
+ * product settle (up to that ~1 s wait) is harmless. A SHORTER one is what
+ * breaks it — below the beat, each move commits on its own and "written
+ * exactly once" goes red on a correct product — so a change to the product's
+ * value must be mirrored here. The Apply case does not use this at all: it
+ * reads the order of writes off the history recorder instead.
  */
 const SETTLE_MS = 250;
 
@@ -252,6 +258,61 @@ function windowParams(page: Page): { from: number | null; to: number | null } {
   const params = new URL(page.url()).searchParams;
   const read = (key: string) => (params.has(key) ? Number(params.get(key)) : null);
   return { from: read('from'), to: read('to') };
+}
+
+/** One view-state write the page made: its (from, to) pair and when. */
+interface WindowWrite {
+  /** `"<from>-<to>"`, or `''` when the URL carries no window. */
+  readonly pair: string;
+  /** `performance.now()` in the page. */
+  readonly at: number;
+}
+
+/**
+ * Records every write the page makes to its address, before it loads.
+ *
+ * Every view-state write on Compare goes through React Router's `replace`,
+ * i.e. `history.replaceState`, so wrapping the history API sees each one —
+ * timestamped in the page's own clock, so a case can ask what was written
+ * BETWEEN two of the reader's actions rather than trusting a mirrored timer.
+ */
+async function recordWindowWrites(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const writes: { pair: string; at: number }[] = [];
+    (window as unknown as { __windowWrites: typeof writes }).__windowWrites = writes;
+    const record = (url: string | URL | null | undefined) => {
+      if (url == null) return;
+      const params = new URL(String(url), location.href).searchParams;
+      const pair =
+        params.has('from') || params.has('to') ? `${params.get('from')}-${params.get('to')}` : '';
+      writes.push({ pair, at: performance.now() });
+    };
+    const replace = history.replaceState.bind(history);
+    history.replaceState = (data, unused, url) => {
+      record(url);
+      replace(data, unused, url);
+    };
+    const push = history.pushState.bind(history);
+    history.pushState = (data, unused, url) => {
+      record(url);
+      push(data, unused, url);
+    };
+  });
+}
+
+async function windowWrites(page: Page): Promise<WindowWrite[]> {
+  return page.evaluate(() => (window as unknown as { __windowWrites: WindowWrite[] }).__windowWrites);
+}
+
+/**
+ * The distinct windows written, in order: a re-write of the window already in
+ * the address is not a second window.
+ */
+function distinctWindows(writes: readonly WindowWrite[]): string[] {
+  return writes.reduce<string[]>(
+    (seen, write) => (seen.at(-1) === write.pair ? seen : [...seen, write.pair]),
+    [],
+  );
 }
 
 /** Seeds a cohort of two and returns the newer run's id. */
@@ -683,7 +744,10 @@ test('p99.9 on Compare equals the run’s own /stats p99.9', async ({ page }) =>
   await page.getByLabel('Metric', { exact: true }).selectOption({ label: '99.9th percentile' });
   await expect(page).toHaveURL(/[?&]metric=p99\.9(&|$)/);
 
+  // BOTH runs' chips, or the expectation below is `{}` — and so is the
+  // table's answer until it settles, which would pass the poll at once.
   const byLabel = await runIdsByLabel(page);
+  expect(byLabel.size, 'one label per run in the cohort').toBe(2);
   const expected: Record<string, string> = {};
   for (const [label, id] of byLabel) {
     expected[label] = String(await runPercentile(page, id, 'p99.9', '?percentiles=99.9'));
@@ -794,9 +858,7 @@ test('a time range narrows the table and survives a reload', async ({ page }) =>
  * re-reads every run), and that the window it writes narrows all three
  * readers of it — the overlay, the table and the tiles.
  *
- * WRITES ARE COUNTED AT THE HISTORY API. Every view-state write on this page
- * goes through React Router's `replace`, i.e. `history.replaceState`, so a
- * recorder installed before the page loads sees each one. Counted as distinct
+ * WRITES ARE COUNTED AT THE HISTORY API (`recordWindowWrites`), as distinct
  * (from, to) pairs in order: a re-write of the same window is not a second
  * window.
  */
@@ -805,26 +867,7 @@ test('a drag on the overlay settles into one window that narrows the chart, tabl
 }) => {
   const { admin, runId } = await cohortOfTwo();
   await signIn(page, admin);
-  await page.addInitScript(() => {
-    const seen: string[] = [];
-    (window as unknown as { __windowWrites: string[] }).__windowWrites = seen;
-    const record = (url: string | URL | null | undefined) => {
-      if (url == null) return;
-      const params = new URL(String(url), location.href).searchParams;
-      const pair = params.has('from') || params.has('to') ? `${params.get('from')}-${params.get('to')}` : '';
-      if (seen.at(-1) !== pair) seen.push(pair);
-    };
-    const replace = history.replaceState.bind(history);
-    history.replaceState = (data, unused, url) => {
-      record(url);
-      replace(data, unused, url);
-    };
-    const push = history.pushState.bind(history);
-    history.pushState = (data, unused, url) => {
-      record(url);
-      push(data, unused, url);
-    };
-  });
+  await recordWindowWrites(page);
 
   await page.goto(runComparePath(runId));
   await drawn(page);
@@ -867,9 +910,7 @@ test('a drag on the overlay settles into one window that narrows the chart, tabl
   );
   expect(to).toBe(extent);
 
-  const writes = await page.evaluate(
-    () => (window as unknown as { __windowWrites: string[] }).__windowWrites,
-  );
+  const writes = distinctWindows(await windowWrites(page));
   expect(writes.filter((pair) => pair !== ''), 'the drag was written exactly once').toEqual([
     `${from}-${to}`,
   ]);
@@ -882,7 +923,9 @@ test('a drag on the overlay settles into one window that narrows the chart, tabl
   expect(await overlayRows.count()).toBeLessThan(wholeRows);
 
   // THE TABLE: each run's figures for this window, as the API answers them.
+  // Both runs named first, or `{}` would match a table that has not settled.
   const byLabel = await runIdsByLabel(page);
+  expect(byLabel.size, 'one label per run in the cohort').toBe(2);
   const windowed: Record<string, string> = {};
   for (const [label, id] of byLabel) {
     windowed[label] = String(await runPercentile(page, id, 'p95', `?from=${from}&to=${to}`));
@@ -903,13 +946,19 @@ test('a drag on the overlay settles into one window that narrows the chart, tabl
  * reader's last gesture silently undone. Started from a window, so the stale
  * answer (10–40 s) is distinguishable from the dragged one.
  *
- * The timing guard is what keeps this honest: Apply has to land INSIDE the
- * settle, or the drag commits first and the case proves nothing about the
- * race. Measured in the page, not in the runner.
+ * The guard is what keeps this honest: Apply has to land BEFORE the drag's own
+ * write, or the drag commits first and the case proves nothing about the
+ * race. It is read off the history recorder, in the page's clock: until the
+ * click, nothing but the opening 10–40 s window may have been written. So it
+ * needs no copy of the product's settle and cannot drift from it — and it
+ * covers the whole gesture, not only the gap after the release, because a
+ * short settle can commit while the pointer is still down (measured: at a
+ * 20 ms settle the drag wrote 40 ms BEFORE its own mouseup).
  */
 test('Apply pressed right after a drag commits the dragged window', async ({ page }) => {
   const { admin, runId } = await cohortOfTwo();
   await signIn(page, admin);
+  await recordWindowWrites(page);
 
   await page.goto(`${runComparePath(runId)}?from=10000&to=40000`);
   await drawn(page);
@@ -918,22 +967,25 @@ test('Apply pressed right after a drag commits the dragged window', async ({ pag
   const apply = page.getByTestId('compare-window-apply');
   await apply.scrollIntoViewIfNeeded();
   await page.evaluate(() => {
-    const times = { up: 0, apply: 0 };
-    (window as unknown as { __times: typeof times }).__times = times;
-    document.addEventListener('mouseup', () => (times.up = performance.now()), true);
+    const clicked = { at: 0 };
+    (window as unknown as { __applyClicked: typeof clicked }).__applyClicked = clicked;
     document
       .querySelector('[data-testid="compare-window-apply"]')!
-      .addEventListener('click', () => (times.apply = performance.now()), true);
+      .addEventListener('click', () => (clicked.at = performance.now()), true);
   });
 
   const { left, track } = await slider(page);
   await drag(page, left, track.left + (track.right - track.left) * 0.03);
   await apply.click();
 
-  const times = await page.evaluate(
-    () => (window as unknown as { __times: { up: number; apply: number } }).__times,
+  const applyAt = await page.evaluate(
+    () => (window as unknown as { __applyClicked: { at: number } }).__applyClicked.at,
   );
-  expect(times.apply - times.up, 'Apply must land inside the drag’s settle').toBeLessThan(SETTLE_MS);
+  expect(applyAt, 'the Apply click was recorded').toBeGreaterThan(0);
+  const beforeApply = (await windowWrites(page)).filter(
+    (write) => write.at < applyAt && write.pair !== '10000-40000',
+  );
+  expect(beforeApply, 'Apply must land before the drag’s own write').toEqual([]);
 
   // The dragged window, not the fields' 10–40 s, once everything has settled.
   await expect.poll(() => windowParams(page).from, { timeout: 5_000 }).not.toBe(10_000);
