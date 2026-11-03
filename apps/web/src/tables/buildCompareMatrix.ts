@@ -37,12 +37,17 @@ export interface CompareStats {
  * added to `CompareMetric` has to answer here before anything compiles.
  */
 const ESTIMATED_BY_SKETCH: Record<CompareMetric, boolean> = {
+  users: false,
+  cpu: false,
+  errors: false,
   p50: true,
+  p90: true,
   p95: true,
   p99: true,
+  'p99.9': true,
+  'p99.99': true,
   max: false,
   throughput: false,
-  errors: false,
 };
 
 /**
@@ -117,8 +122,9 @@ export interface CompareChangeRow {
    * absolute value carries it, and `good` below is still decided.
    */
   readonly percent: number | null;
-  /** Whether the change is an improvement — see `isChangeGood`. */
-  readonly good: boolean;
+  /** Whether the change is an improvement — see `isChangeGood`; `null` for a
+   *  metric that is neither (users, CPU), whose change is drawn neutral. */
+  readonly good: boolean | null;
 }
 
 /**

@@ -212,7 +212,11 @@ function ChangeCell({ row }: { readonly row: CompareChangeRow | null }) {
   return (
     <span
       data-testid="compare-change"
-      style={{ color: `var(--color-status-${row.good ? 'passed' : 'failed'})` }}
+      style={
+        row.good === null
+          ? undefined
+          : { color: `var(--color-status-${row.good ? 'passed' : 'failed'})` }
+      }
     >
       {sign}
       {formatCell(row.absolute)}

@@ -1,4 +1,9 @@
-import type { SeriesResponse } from '@perfportal/contracts';
+import type {
+  AgentInjectorsResponse,
+  SeriesResponse,
+  TelemetryResponse,
+  UsersResponse,
+} from '@perfportal/contracts';
 import type { ChartData, ChartSeries, ChartTableRow } from '../types';
 import { clampPercentile } from '../../percentile';
 import { runMinuteLabel } from './runLabel';
@@ -35,70 +40,123 @@ import { runName, runTag } from '../../runNumber';
  * said in `limitation` as well.
  */
 
-export type CompareMetric = 'p50' | 'p95' | 'p99' | 'max' | 'throughput' | 'errors';
+export type CompareMetric =
+  | 'users'
+  | 'cpu'
+  | 'errors'
+  | 'p50'
+  | 'p90'
+  | 'p95'
+  | 'p99'
+  | 'p99.9'
+  | 'p99.99'
+  | 'max'
+  | 'throughput';
 
 /**
- * Which way is an improvement, for one metric.
+ * Which way is an improvement, for one metric — or `null` where neither is.
  *
- * ═══ ONE PLACE, BECAUSE IT IS ABOUT TO HAVE A SECOND READER ═══
+ * ═══ ONE PLACE, BECAUSE IT HAS SEVERAL READERS ═══
  *
- * `compareSummary` has owned this since the review-majors branch and is right
- * about it: throughput going up is good, and every other metric here — the
- * response-time percentiles, the max, the error rate — is better going down.
- * The per-request matrix now needs the identical judgement, and a second copy
- * is how the tiles above a table come to disagree with the table.
+ * The summary tiles and the per-request matrix both colour a change by this,
+ * and a second copy is how the tiles above a table come to disagree with the
+ * table. It lives beside `CompareMetric` rather than in either consumer, so
+ * neither owns a decision the other depends on.
  *
- * It lives beside `CompareMetric` rather than in either consumer, so neither
- * owns a decision the other depends on.
+ * Throughput going up is good; every latency metric and the error rate are
+ * better going down. CONCURRENT USERS AND CPU ARE NEITHER: more users is the
+ * load the test was told to apply, and a generator's CPU says how hard the
+ * MACHINE worked, not whether the system under test got better. A coloured
+ * chip on either would be a judgement nobody configured, so they answer
+ * `null` and their chips are neutral.
  *
  * TAKES A SIGNED CHANGE, not specifically a percentage. Only the sign is read,
- * and the matrix has a case the summary does not: a baseline of ZERO has no
+ * and the matrix has a case the summary does not: a reference of ZERO has no
  * percentage at all — errors rising from 0 to 2/s is the regression an
  * engineer most needs to see — while the ABSOLUTE change is still perfectly
- * signed. Naming the parameter for the percentage would have quietly excluded
- * exactly that row.
+ * signed.
  */
-export function isChangeGood(signedChange: number, metric: CompareMetric): boolean {
+export function isChangeGood(signedChange: number, metric: CompareMetric): boolean | null {
+  if (metric === 'users' || metric === 'cpu') return null;
   return metric === 'throughput' ? signedChange >= 0 : signedChange <= 0;
 }
 
 /**
- * What the selector offers, and nothing else.
- *
- * ONLY WHAT `/series` CAN ANSWER. Gatling's own comparison also offers
- * concurrent users and CPU; ours does not, because the first lives in
- * `/users` and the second is not collected at all. Adding either would make
- * the metric selector change which endpoints the page fetches — a second fetch
- * shape for one option — and a selector that promises a metric the page cannot
- * produce is worse than a shorter selector.
+ * What the selector offers, in Gatling Enterprise's order, in this product's
+ * words. Users come from `/users` and CPU from the agent or the telemetry
+ * agent, so choosing either changes which endpoints the page reads — that is
+ * the page's job (only the selected metric's extra reads are fetched), and
+ * this list is only what can be asked.
  */
 export const COMPARE_METRICS: readonly { value: CompareMetric; label: string }[] = [
+  { value: 'users', label: 'Concurrent users' },
+  { value: 'cpu', label: 'CPU usage' },
+  { value: 'errors', label: 'Errors' },
   { value: 'p50', label: '50th percentile' },
+  { value: 'p90', label: '90th percentile' },
   { value: 'p95', label: '95th percentile' },
   { value: 'p99', label: '99th percentile' },
+  { value: 'p99.9', label: '99.9th percentile' },
+  { value: 'p99.99', label: '99.99th percentile' },
   { value: 'max', label: 'Max response time' },
   { value: 'throughput', label: 'Throughput' },
-  { value: 'errors', label: 'Errors' },
 ];
 
-/** A run in the selection: its identity, how to label it, and its series. */
+/**
+ * The ranks a metric needs that a run does not answer by default, which the
+ * page must ask for with `?percentiles=`.
+ *
+ * `/stats` answers the project's configured set, and `p90` is not in every
+ * project's set, so the matrix asks for it too. Per BUCKET only `p99.9` and
+ * `p99.99` need `/series?percentiles=`: the series histograms always carry a
+ * fixed band set that includes p90. The key the server answers under is
+ * `p<rank>`, so `p99.9` maps to `99.9` and back.
+ */
+export const EXTRA_RANKS: Partial<Record<CompareMetric, number>> = {
+  'p99.9': 99.9,
+  'p99.99': 99.99,
+  p90: 90,
+};
+
+/** The unit each metric carries, for the axis, the tooltip and the table. */
+const UNIT: Record<CompareMetric, 'ms' | '/s' | 'users' | '%'> = {
+  users: 'users',
+  cpu: '%',
+  errors: '/s',
+  p50: 'ms',
+  p90: 'ms',
+  p95: 'ms',
+  p99: 'ms',
+  'p99.9': 'ms',
+  'p99.99': 'ms',
+  max: 'ms',
+  throughput: '/s',
+};
+
+export const compareUnit = (metric: CompareMetric): string => UNIT[metric];
+
+/** One overlay point: elapsed milliseconds within its own run, and the value. */
+export type ComparePoint = readonly [offsetMs: number, value: number];
+
+/**
+ * A run in the selection: its identity, how to label it, and the points its
+ * source yielded for the selected metric.
+ *
+ * `points: null` MEANS NOT RECORDED — a run with no CPU source at all — and is
+ * a different fact from `[]`, which is a source that answered and measured
+ * nothing in this window. The first is named under the chart; the second is
+ * simply a run with no line in this span.
+ *
+ * `bucketWidthMs` is the resolution the points were taken at, for the note
+ * that runs bucketed differently have different densities; `null` where the
+ * run has no points to describe.
+ */
 export interface CompareRun {
   readonly id: string;
   readonly label: string;
-  readonly series: SeriesResponse;
+  readonly points: readonly ComparePoint[] | null;
+  readonly bucketWidthMs: number | null;
 }
-
-const IS_RATE: Record<CompareMetric, boolean> = {
-  p50: false,
-  p95: false,
-  p99: false,
-  max: false,
-  throughput: true,
-  errors: true,
-};
-
-/** The unit each metric carries, for the axis and the tooltip. */
-export const compareUnit = (metric: CompareMetric): string => (IS_RATE[metric] ? '/s' : 'ms');
 
 /**
  * One bucket's value for one metric, or `null` where it was not measured.
@@ -115,6 +173,11 @@ export const compareUnit = (metric: CompareMetric): string => (IS_RATE[metric] ?
  * and nothing telling the reader which they had. The combined set is the only
  * one all three CAN share without a backend change, so it is the one they
  * share, and `limitation` says so on screen.
+ *
+ * An extra rank (`p99.9`, `p99.99`) is read from the same map, under the key
+ * `/series?percentiles=` answers it with. A bucket without that key — the run
+ * was read without asking, or a legacy row never stored it — has no value,
+ * never a neighbouring rank and never zero.
  *
  * ═══ `max` COMES FIRST, AND THAT ORDER IS THE FIX ═══
  *
@@ -159,15 +222,96 @@ function valueOf(
 }
 
 /**
+ * One run's `/series` read as overlay points for one metric.
+ *
+ * NOT PLOTTED AT ALL rather than plotted as null where a bucket has no value:
+ * on a value axis a point carries its own x, so an unmeasured bucket is simply
+ * absent and the line joins its neighbours. A `[x, null]` pair would be a
+ * point at an unknown height.
+ *
+ * Concurrent users and CPU are not `/series` metrics — `usersPoints` and
+ * `cpuPoints` read them — so this has nothing to say for either and answers
+ * `[]` rather than inventing a value from a payload that does not carry one.
+ */
+export function seriesPoints(series: SeriesResponse, metric: CompareMetric): ComparePoint[] {
+  if (metric === 'users' || metric === 'cpu') return [];
+  const perSecond = series.bucketWidthMs / 1000;
+  const out: ComparePoint[] = [];
+  for (const bucket of series.buckets) {
+    const value = valueOf(bucket, metric, perSecond);
+    if (value !== null) out.push([bucket.startOffsetMs, value]);
+  }
+  return out;
+}
+
+/**
+ * Concurrent users over the run: the all-scenario `maxConcurrent` at each
+ * offset — the same "All users" line the run page draws, which Gatling's own
+ * report sums per scenario (see `UsersResponseSchema.total`).
+ */
+export function usersPoints(users: UsersResponse): ComparePoint[] {
+  return users.total.map((bucket): ComparePoint => [bucket.startOffsetMs, bucket.maxConcurrent]);
+}
+
+/**
+ * The load generator's CPU over the run, from the best source the run has.
+ *
+ *   1. The Gatling agent's MACHINE collector — `cpuUserPct + cpuSysPct`, the
+ *      generator's whole CPU — when it ran. A bucket with neither reading
+ *      (the first sample, or a counter that did not move) is skipped, never
+ *      read as an idle machine.
+ *   2. Else the telemetry agent: `cpuTotalPct` per host, averaged at each
+ *      offset over the hosts that read one. A host whose interval could not
+ *      be measured is left out of that offset's mean rather than counted as
+ *      zero, and an offset no host read is skipped.
+ *   3. Else `null` — NOT RECORDED. The agent off or without its machine
+ *      collector, and no telemetry agent reporting, is a run whose CPU nobody
+ *      measured, and the chart names it rather than drawing a flat line.
+ *
+ * A source that answered but holds nothing in the asked window yields `[]`:
+ * the CPU was recorded, just not there.
+ */
+export function cpuPoints(
+  injectors: AgentInjectorsResponse | null,
+  telemetry: TelemetryResponse | null,
+): ComparePoint[] | null {
+  if (injectors !== null && injectors.available && injectors.machine.available) {
+    return injectors.buckets.flatMap((bucket): ComparePoint[] =>
+      bucket.cpuUserPct === null && bucket.cpuSysPct === null
+        ? []
+        : [[bucket.startOffsetMs, (bucket.cpuUserPct ?? 0) + (bucket.cpuSysPct ?? 0)]],
+    );
+  }
+
+  if (telemetry !== null && telemetry.available) {
+    const sums = new Map<number, { total: number; hosts: number }>();
+    for (const host of telemetry.hosts) {
+      for (const point of host.points) {
+        if (point.cpuTotalPct === null) continue;
+        const acc = sums.get(point.startOffsetMs) ?? { total: 0, hosts: 0 };
+        acc.total += point.cpuTotalPct;
+        acc.hosts += 1;
+        sums.set(point.startOffsetMs, acc);
+      }
+    }
+    return [...sums.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([offset, { total, hosts }]): ComparePoint => [offset, total / hosts]);
+  }
+
+  return null;
+}
+
+/**
  * Which responses the drawn values are computed from.
  *
  * Stated rather than assumed: latency read over every response is a different
  * quantity from latency read over successful ones, and a failing run is
- * exactly when they diverge most. Rates carry no population question, so they
- * get no note.
+ * exactly when they diverge most. Rates, users and CPU carry no population
+ * question, so they get no note.
  */
 function populationNote(metric: CompareMetric): string | undefined {
-  if (IS_RATE[metric]) return undefined;
+  if (UNIT[metric] !== 'ms') return undefined;
   return (
     'Latency here is computed over every response, successful and failed — the same ' +
     'population as the comparison table and the summary above it.'
@@ -184,6 +328,9 @@ function widthNote(widths: readonly number[]): string | undefined {
   );
 }
 
+const metricLabel = (metric: CompareMetric): string =>
+  COMPARE_METRICS.find((m) => m.value === metric)?.label ?? metric;
+
 export function toCompare(runs: readonly CompareRun[], metric: CompareMetric): ChartData {
   const columns = ['Elapsed (s)', ...runs.map((r) => r.label)];
 
@@ -197,22 +344,24 @@ export function toCompare(runs: readonly CompareRun[], metric: CompareMetric): C
     };
   }
 
-  const drawn: ChartSeries[] = runs.map((run) => {
-    const perSecond = run.series.bucketWidthMs / 1000;
-    const points: [number, number][] = [];
+  const recorded = runs.filter(
+    (run): run is CompareRun & { points: readonly ComparePoint[] } => run.points !== null,
+  );
 
-    for (const bucket of run.series.buckets) {
-      const value = valueOf(bucket, metric, perSecond);
-      // NOT PLOTTED AT ALL rather than plotted as null: on a value axis a
-      // point carries its own x, so an unmeasured bucket is simply absent and
-      // the line joins its neighbours. A `[x, null]` pair would be a point at
-      // an unknown height.
-      if (value === null) continue;
-      points.push([bucket.startOffsetMs, value]);
-    }
+  /*
+   * A RUN THAT DID NOT RECORD THIS METRIC DRAWS NOTHING AND IS NAMED. No line
+   * is the honest drawing — a flat zero would read as an idle generator — and
+   * no line alone is indistinguishable from a run that was left out, so the
+   * note says which run and why.
+   */
+  const unrecorded = runs
+    .filter((run) => run.points === null)
+    .map((run) => `${metricLabel(metric)} was not recorded for ${run.label}.`);
 
-    return { name: run.label, data: points };
-  });
+  const drawn: ChartSeries[] = recorded.map((run) => ({
+    name: run.label,
+    data: run.points,
+  }));
 
   /**
    * THE UNION OF EVERY RUN'S OFFSETS, so the table holds every measurement any
@@ -220,24 +369,30 @@ export function toCompare(runs: readonly CompareRun[], metric: CompareMetric): C
    * rows to them, and the table is the parity surface and the screen-reader
    * route to the same data.
    */
-  const offsets = [
-    ...new Set(runs.flatMap((run) => run.series.buckets.map((b) => b.startOffsetMs))),
-  ].sort((a, b) => a - b);
+  const offsets = [...new Set(recorded.flatMap((run) => run.points.map(([x]) => x)))].sort(
+    (a, b) => a - b,
+  );
 
-  const byOffset = runs.map((run) => {
-    const perSecond = run.series.bucketWidthMs / 1000;
-    return new Map(
-      run.series.buckets.map((b) => [b.startOffsetMs, valueOf(b, metric, perSecond)]),
-    );
-  });
+  const byOffset = runs.map((run) => new Map(run.points ?? []));
 
   const rows: ChartTableRow[] = offsets.map((offset) => ({
     label: String(offset / 1000),
-    // `—` for a run that has no bucket at this offset — it ended earlier, or
-    // is bucketed more coarsely. Not zero, which would read as a measured
-    // collapse to nothing.
+    // `—` for a run that has no value at this offset — it ended earlier, is
+    // bucketed more coarsely, or did not record the metric at all. Not zero,
+    // which would read as a measured collapse to nothing.
     values: byOffset.map((lookup) => lookup.get(offset) ?? '—'),
   }));
+
+  const limitation =
+    [
+      populationNote(metric),
+      widthNote(
+        recorded.flatMap((run) => (run.bucketWidthMs === null ? [] : [run.bucketWidthMs])),
+      ),
+      ...unrecorded,
+    ]
+      .filter((note): note is string => note !== undefined)
+      .join(' ') || undefined;
 
   return {
     series: drawn,
@@ -246,14 +401,17 @@ export function toCompare(runs: readonly CompareRun[], metric: CompareMetric): C
     axisLabels: [],
     columns,
     rows,
-    // `undefined` rather than an empty string when neither note applies: the
-    // field is optional, and a rate metric on runs of one width genuinely has
+    // `undefined` rather than an empty string when no note applies: the field
+    // is optional, and a rate metric on runs of one width genuinely has
     // nothing to say. An empty string would render an empty paragraph beside
     // the chart.
-    limitation:
-      [populationNote(metric), widthNote(runs.map((r) => r.series.bucketWidthMs))]
-        .filter((note): note is string => note !== undefined)
-        .join(' ') || undefined,
+    limitation,
+    // Nothing to draw at all: say so rather than draw empty axes. The per-run
+    // sentences stay in `limitation`, so this does not repeat them.
+    empty:
+      recorded.length === 0
+        ? `${metricLabel(metric)} was not recorded for any selected run.`
+        : undefined,
   };
 }
 

@@ -3,6 +3,7 @@ import { act, cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Chart from '../src/charts/Chart.js';
 import CompareChart from '../src/charts/CompareChart.js';
+import { seriesPoints } from '../src/charts/transforms/compare.js';
 import { CATEGORICAL } from '../src/charts/theme.js';
 import { clockStepMs } from '../src/charts/timeTicks.js';
 import type { ChartData } from '../src/charts/types.js';
@@ -992,7 +993,14 @@ describe('Chart — the time axis follows the viewer’s mode', () => {
     render(
       <TimeAxisProvider anchor={ANCHOR}>
         <CompareChart
-          runs={[{ id: 'a', label: 'Run a', series: fixture.series as never }]}
+          runs={[
+            {
+              id: 'a',
+              label: 'Run a',
+              points: seriesPoints(fixture.series as never, 'p95'),
+              bucketWidthMs: fixture.series.bucketWidthMs,
+            },
+          ]}
           metric="p95"
           onMetricChange={() => undefined}
         />

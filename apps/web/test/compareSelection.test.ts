@@ -139,6 +139,20 @@ describe('parseCompareMetric', () => {
     expect(parseCompareMetric('p99')).toBe('p99');
   });
 
+  it('reads the new metrics, a rank with a dot in it included', () => {
+    expect(parseCompareMetric('p99.9')).toBe('p99.9');
+    expect(parseCompareMetric('p99.99')).toBe('p99.99');
+    expect(parseCompareMetric('p90')).toBe('p90');
+    expect(parseCompareMetric('users')).toBe('users');
+    expect(parseCompareMetric('cpu')).toBe('cpu');
+  });
+
+  /** `p99.999` is a rank the page does not offer, not a near-miss of one. */
+  it('falls back to p95 on a rank the page does not offer', () => {
+    expect(parseCompareMetric('p99.999')).toBe('p95');
+    expect(parseCompareMetric('P99.9')).toBe('p95');
+  });
+
   it('falls back to the default when absent', () => {
     expect(parseCompareMetric(null)).toBe(DEFAULT_COMPARE_METRIC);
   });

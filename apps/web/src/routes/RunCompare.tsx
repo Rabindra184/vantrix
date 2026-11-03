@@ -7,6 +7,7 @@ import {
   COMPARE_METRICS,
   compareUnit,
   runLabels,
+  seriesPoints,
   type CompareMetric,
   type CompareRun,
 } from '../charts/transforms/compare';
@@ -211,7 +212,16 @@ export default function RunCompare() {
 
   const overlayRuns: CompareRun[] = selected.flatMap((id, i) => {
     const data = seriesResults[i]?.data;
-    return data === undefined ? [] : [{ id, label: labelFor(id), series: data }];
+    return data === undefined
+      ? []
+      : [
+          {
+            id,
+            label: labelFor(id),
+            points: seriesPoints(data, metric),
+            bucketWidthMs: data.bucketWidthMs,
+          },
+        ];
   });
 
   /**
