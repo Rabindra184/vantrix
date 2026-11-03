@@ -26,8 +26,9 @@ const OVERLAY = 'chart-compare-overlay';
  * product settle (up to that ~1 s wait) is harmless. A SHORTER one is what
  * breaks it — below the beat, each move commits on its own and "written
  * exactly once" goes red on a correct product — so a change to the product's
- * value must be mirrored here. The Apply case does not use this at all: it
- * reads the order of writes off the history recorder instead.
+ * value must be mirrored here. The Apply case's only use of it is a wait
+ * four settles long, so a late write has time to land; what it ASSERTS rests
+ * on the order of writes off the history recorder, not on this value.
  */
 const SETTLE_MS = 250;
 
@@ -877,6 +878,11 @@ test('a drag on the overlay settles into one window that narrows the chart, tabl
   const firstElapsed = async () => Number(await overlayRows.first().locator('th').textContent());
   await expect(runsInTable(page)).toHaveCount(3);
   const wholeFirst = await firstElapsed();
+  // Polled, not read once: `count()` is an immediate read with no waiting,
+  // and a table still filling in would make the narrowing below compare
+  // against a short baseline. The overlay draws only once every run's read
+  // has answered, so a non-empty count here is the whole run's.
+  await expect.poll(() => overlayRows.count()).toBeGreaterThan(0);
   const wholeRows = await overlayRows.count();
 
   const { left, track } = await slider(page);
