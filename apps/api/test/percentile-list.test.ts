@@ -25,6 +25,12 @@ describe('parsePercentileList', () => {
     expect(parsePercentileList('percentiles', '99.9,90,90')).toEqual([90, 99.9]);
   });
 
+  it('accepts a fractional rank, answered under the key the caller spelled', () => {
+    const ranks = parsePercentileList('percentiles', '99.99,0.000001')!;
+    expect(ranks).toEqual([0.000001, 99.99]);
+    expect(ranks.map((p) => `p${p}`)).toEqual(['p0.000001', 'p99.99']);
+  });
+
   it('accepts the twelve-rank maximum', () => {
     const twelve = Array.from({ length: 12 }, (_, i) => i + 1);
     expect(parsePercentileList('percentiles', twelve.join(','))).toEqual(twelve);
@@ -43,6 +49,11 @@ describe('parsePercentileList', () => {
     ['an exponent', '1e1'],
     ['hexadecimal', '0x10'],
     ['padding', ' 90'],
+    // In the pattern and out of the open interval: the range check refuses it.
+    ['above 100', '100.5'],
+    // Seven places: `Number` gives 1e-7, which would be keyed `p1e-7` — not
+    // the decimal the caller sent.
+    ['more than six decimal places', '0.0000001'],
   ])('refuses %s with INVALID_QUERY naming the parameter', (_label, raw) => {
     const err = refusal(raw);
     expect(err.code).toBe('INVALID_QUERY');

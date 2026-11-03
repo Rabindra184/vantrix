@@ -156,7 +156,8 @@ const parameters: Record<string, ParameterObject> = {
       '"from"/"to" window alike; indicator bands and every other field are unchanged. A row ' +
       'whose statistics are estimated answers only the requested ranks it stored, and omits ' +
       'the rest rather than guessing them. One to twelve comma-separated decimal numbers ' +
-      'strictly between 0 and 100, given once; anything else is a 400 INVALID_QUERY.',
+      'of at most six decimal places, strictly between 0 and 100, given once; anything ' +
+      'else is a 400 INVALID_QUERY.',
     schema: { type: 'string' },
   },
   SeriesPercentiles: {
@@ -169,8 +170,9 @@ const parameters: Record<string, ParameterObject> = {
       'from the merged, OK and KO histogram respectively; the ranks a bucket stored are ' +
       'unchanged. A bucket whose histograms are not exact (ingested before 2026-10-15) gains ' +
       'nothing, and an empty population (a bucket with no OK requests, say) gains no key ' +
-      'rather than a 0. One to twelve comma-separated decimal numbers strictly between 0 and ' +
-      '100, given once; anything else is a 400 INVALID_QUERY.',
+      'rather than a 0. One to twelve comma-separated decimal numbers of at most six ' +
+      'decimal places, strictly between 0 and 100, given once; anything else is a 400 ' +
+      'INVALID_QUERY.',
     schema: { type: 'string' },
   },
   StatsFamily: {

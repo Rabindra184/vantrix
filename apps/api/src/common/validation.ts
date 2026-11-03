@@ -343,8 +343,15 @@ const PERCENTILE_LIST_MAX = 12;
  * caller means — `Number('')` and `Number(' ')` are 0, `Number('0x10')` is 16
  * and `Number('1e1')` is 10 — and an empty item is exactly what a trailing
  * comma (`?percentiles=50,`) produces.
+ *
+ * AT MOST SIX DECIMAL PLACES, because the answer is keyed `p${rank}` from the
+ * parsed NUMBER, and `String` writes a number below 1e-6 in exponent form:
+ * `0.0000001` would be answered under `p1e-7`, a key that is not the decimal
+ * the caller sent, and `nearestRankIndex` would read its precision from that
+ * exponent form too. Six places is the most `String` keeps in plain decimal
+ * (`0.000001`), and far finer than any rank a report asks for.
  */
-const PERCENTILE_ITEM = /^\d+(\.\d+)?$/;
+const PERCENTILE_ITEM = /^\d+(\.\d{1,6})?$/;
 
 /**
  * `?percentiles=90,99.9,99.99` — ranks a read answers INSTEAD of the
