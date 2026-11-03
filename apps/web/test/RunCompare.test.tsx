@@ -1,12 +1,13 @@
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, fireEvent, render, screen, within, waitFor } from '@testing-library/react';
-import { MemoryRouter, Outlet, Route, Routes, useLocation } from 'react-router-dom';
+import { MemoryRouter, Outlet, Route, Routes, useLocation, useNavigationType } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { RunProcessing, RunResponse } from '@perfportal/contracts';
 import { runQueryKey } from '../src/api/run';
 import RunCompare from '../src/routes/RunCompare';
 import { runMinuteLabel } from '../src/charts/transforms/runLabel';
+import { formatCell } from '../src/charts/DataTable';
 import type { RunWindowContext } from '../src/routes/useRunWindow';
 import { UNKNOWN_ACCESS } from './support/access';
 import fixture from './fixtures/reference-run.json';
@@ -56,8 +57,14 @@ function processing(status: RunProcessing['status']) {
   return { state: 'processing' as const, run: { id: RUN_ID, status, statusUrl: `/v1/runs/${RUN_ID}` } };
 }
 
-/** Reports the live query string, so a URL write can be asserted. */
-const Where = () => <span data-testid="where">{useLocation().search}</span>;
+/** Reports the live query string, so a URL write can be asserted — and how
+ *  the last navigation was made, so `replace: true` can be. */
+const Where = () => (
+  <>
+    <span data-testid="where">{useLocation().search}</span>
+    <span data-testid="how">{useNavigationType()}</span>
+  </>
+);
 
 function renderCompare(
   body: ReturnType<typeof processing> | { state: 'ready'; run: RunResponse },
@@ -67,6 +74,8 @@ function renderCompare(
    *  the run body below, which fails the stats schema — every case before the
    *  ≈ cases relied on that and drew no summary or matrix. */
   stats?: unknown,
+  /** Answers any other URL a case cares about; `undefined` falls through. */
+  answer?: (url: string) => unknown,
 ) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   client.setQueryData(runQueryKey(RUN_ID), body);
@@ -89,6 +98,10 @@ function renderCompare(
     }
     if (stats !== undefined && url.includes('/stats')) {
       return new Response(JSON.stringify(stats), { status: 200 });
+    }
+    const answered = answer?.(url);
+    if (answered !== undefined) {
+      return new Response(JSON.stringify(answered), { status: 200 });
     }
     // Reads `current` AFTER a microtask, not at call time — see the comment
     // above on why the read has to be deferred for a same-tick `rerenderAs`
@@ -315,10 +328,10 @@ describe('RunCompare — the picker says which run each candidate is', () => {
   });
 
   /**
-   * `compareSummary` defines the baseline as the first OTHER selected run and
-   * the summary tiles divide by it, so the picker has to answer that question
-   * with the same expression. A chip labelled Baseline that is not the run the
-   * tiles used would be worse than no label, because it reads as evidence.
+   * The chip names the REFERENCE the tiles and the table measure from —
+   * `resolveReference`'s answer — so it has to be the run the table leads
+   * with. A chip naming any other run would be worse than no label, because
+   * it reads as evidence.
    */
   it('marks which run is current and which one the deltas are measured against', async () => {
     renderCompare(
@@ -327,10 +340,42 @@ describe('RunCompare — the picker says which run each candidate is', () => {
         cohortRunAt({}),
         cohortRunAt({ id: OTHER, startedAt: '2026-08-15T11:00:00.000Z', toolStartedAt: '2026-08-15T11:00:00.000Z' }),
       ]),
+      '',
+      fixture.stats,
     );
 
-    expect(await screen.findByTestId(`compare-role-${RUN_ID}`)).toHaveTextContent('Current');
-    expect(screen.getByTestId(`compare-role-${OTHER}`)).toHaveTextContent('Baseline');
+    expect(await screen.findByTestId(`compare-role-${OTHER}`)).toHaveTextContent('Reference');
+    expect(screen.getByTestId(`compare-role-${RUN_ID}`)).toHaveTextContent('Current');
+    expect(screen.getByTestId(`compare-role-${RUN_ID}`)).not.toHaveTextContent('Reference');
+    // The same run the table leads with.
+    expect(screen.getAllByTestId('compare-column')[0]).toHaveAttribute('data-reference', 'true');
+    expect(screen.queryByText('Baseline')).toBeNull();
+  });
+
+  /**
+   * PINNED ON THE CURRENT RUN, the chip says both and the tile states the
+   * other run against it — so the tile cannot be labelled as though the
+   * current run were its subject.
+   */
+  it('follows a pin on the current run, in the chip and the tile', async () => {
+    renderCompare(
+      { state: 'ready', run: COMPLETE_RUN },
+      populated([
+        cohortRunAt({ runNumber: 2 }),
+        cohortRunAt({ id: OTHER, runNumber: 1, startedAt: '2026-08-15T11:00:00.000Z', toolStartedAt: '2026-08-15T11:00:00.000Z' }),
+      ]),
+      `?ref=${RUN_ID}`,
+      fixture.stats,
+    );
+
+    const current = await screen.findByTestId(`compare-role-${RUN_ID}`);
+    await waitFor(() => expect(current).toHaveTextContent('Reference'));
+    expect(current).toHaveTextContent('Current');
+    expect(screen.queryByTestId(`compare-role-${OTHER}`)).toBeNull();
+
+    const summary = screen.getByRole('region', { name: 'Comparison summary' });
+    expect(summary).not.toHaveTextContent(/current vs/i);
+    expect(summary).toHaveTextContent('Run 1 against Run 2');
   });
 
   /** A numbered cohort: each chip is NAMED by its number, with the start time
@@ -478,5 +523,246 @@ describe('RunCompare — ≈ marks an estimated run’s figures', () => {
     const summary = screen.getByRole('region', { name: 'Comparison summary' });
     expect(summary.textContent).not.toContain('≈');
     for (const h of screen.getAllByRole('columnheader')) expect(h.textContent).not.toContain('≈');
+  });
+});
+
+/**
+ * ═══ THE PAGE WIRING: METRICS, THE REFERENCE AND THE TIME RANGE ═══
+ *
+ * The pure cases (`compare`, `buildCompareMatrix`, `compareSummary`) prove each
+ * decision from payloads they build. These prove the page asks for the right
+ * payloads and hands each one to the right decision — the seam none of those
+ * files can reach.
+ */
+describe('RunCompare — metric data, reference and time range', () => {
+  const urls = (spy: { mock: { calls: unknown[][] } }) => spy.mock.calls.map((c) => String(c[0]));
+
+  /** Three numbered, exact runs, newest first: Run 3 is the one the page is
+   *  on. Exact, so no header carries ≈ in front of its label. */
+  const three = (durations: [number, number, number] = [63_161, 63_161, 63_161]) =>
+    populated([
+      cohortRunAt({ runNumber: 3, durationMs: durations[0], statsMethod: 'exact-v1' }),
+      cohortRunAt({ id: OTHER, runNumber: 2, durationMs: durations[1], statsMethod: 'exact-v1', startedAt: '2026-08-15T11:00:00.000Z', toolStartedAt: '2026-08-15T11:00:00.000Z' }),
+      cohortRunAt({ id: THIRD, runNumber: 1, durationMs: durations[2], statsMethod: 'exact-v1', startedAt: '2026-08-15T10:00:00.000Z', toolStartedAt: '2026-08-15T10:00:00.000Z' }),
+    ]);
+
+  /** The header names in table order, the leading `Request`/`Figure` dropped. */
+  const runColumns = () =>
+    screen.getAllByTestId('compare-column').map((th) => th.textContent ?? '');
+
+  it('selector lists eleven metrics in GE order', async () => {
+    renderCompare({ state: 'ready', run: COMPLETE_RUN }, three());
+    const select = await screen.findByLabelText('Metric');
+    const values = within(select).getAllByRole('option').map((o) => (o as HTMLOptionElement).value);
+    expect(values).toEqual([
+      'users', 'cpu', 'errors', 'p50', 'p90', 'p95', 'p99', 'p99.9', 'p99.99', 'max', 'throughput',
+    ]);
+  });
+
+  it('pinning writes ref and moves the column', async () => {
+    const search = `?runs=${OTHER},${THIRD}&metric=p99&from=1000&to=5000`;
+    renderCompare({ state: 'ready', run: COMPLETE_RUN }, three(), search, fixture.stats);
+
+    // The default reference is the first other selected run, Run 2.
+    await waitFor(() => expect(runColumns()[0]).toMatch(/^Run 2 /));
+    fireEvent.click(screen.getByRole('button', { name: 'Set Run 1 as reference' }));
+
+    const after = new URLSearchParams(screen.getByTestId('where').textContent ?? '');
+    expect(after.get('ref')).toBe(THIRD);
+    // `refine` keeps every other parameter and pushes no history entry.
+    expect(after.get('runs')).toBe(`${OTHER},${THIRD}`);
+    expect(after.get('metric')).toBe('p99');
+    expect(after.get('from')).toBe('1000');
+    expect(after.get('to')).toBe('5000');
+    expect(screen.getByTestId('how')).toHaveTextContent('REPLACE');
+
+    await waitFor(() => expect(runColumns()[0]).toMatch(/^Run 1 /));
+    expect(screen.getAllByTestId('compare-column')[0]).toHaveAttribute('data-reference', 'true');
+    expect(screen.getByTestId(`compare-role-${THIRD}`)).toHaveTextContent('Reference');
+  });
+
+  it('a ref outside the selection is ignored', async () => {
+    // Default selection: this run and its neighbour, Run 2. Run 1 is in the
+    // cohort but not selected, so a pin on it cannot be honoured.
+    renderCompare({ state: 'ready', run: COMPLETE_RUN }, three(), `?ref=${THIRD}`, fixture.stats);
+
+    await waitFor(() => expect(runColumns()[0]).toMatch(/^Run 2 /));
+    expect(screen.getAllByTestId('compare-column')[0]).toHaveAttribute('data-reference', 'true');
+    expect(screen.queryByTestId(`compare-role-${THIRD}`)).toBeNull();
+  });
+
+  it('trims the pinned id before honouring it', async () => {
+    // Selection order puts Run 1 first among the others, so the default would
+    // be Run 1; only the trimmed pin makes Run 2 the reference.
+    renderCompare(
+      { state: 'ready', run: COMPLETE_RUN },
+      three(),
+      `?runs=${THIRD},${OTHER}&ref=%20${OTHER}%20`,
+      fixture.stats,
+    );
+    await waitFor(() => expect(runColumns()[0]).toMatch(/^Run 2 /));
+  });
+
+  it('typing From/To writes from and to and refetches stats with the window', async () => {
+    const { fetchSpy } = renderCompare({ state: 'ready', run: COMPLETE_RUN }, three(), '', fixture.stats);
+
+    fireEvent.change(await screen.findByLabelText('From (s)'), { target: { value: '10' } });
+    fireEvent.change(screen.getByLabelText('To (s)'), { target: { value: '20' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply window' }));
+
+    const after = new URLSearchParams(screen.getByTestId('where').textContent ?? '');
+    expect(after.get('from')).toBe('10000');
+    expect(after.get('to')).toBe('20000');
+    expect(screen.getByTestId('how')).toHaveTextContent('REPLACE');
+
+    await waitFor(() =>
+      expect(
+        urls(fetchSpy).some((u) => u.includes(`/runs/${RUN_ID}/stats?from=10000&to=20000`)),
+      ).toBe(true),
+    );
+    expect(urls(fetchSpy).some((u) => u.includes(`/runs/${OTHER}/stats?from=10000&to=20000`))).toBe(true);
+
+    // And Whole run clears both bounds.
+    fireEvent.click(await screen.findByRole('button', { name: 'Whole run' }));
+    const cleared = new URLSearchParams(screen.getByTestId('where').textContent ?? '');
+    expect(cleared.has('from')).toBe(false);
+    expect(cleared.has('to')).toBe(false);
+  });
+
+  it('p99.9 requests percentiles=99.9 on stats and 99.9,99.99 on series', async () => {
+    const { fetchSpy } = renderCompare(
+      { state: 'ready', run: COMPLETE_RUN },
+      three(),
+      '?metric=p99.9',
+      fixture.stats,
+    );
+
+    await waitFor(() =>
+      expect(urls(fetchSpy).some((u) => /\/stats\?percentiles=99\.9$/.test(u))).toBe(true),
+    );
+    await waitFor(() =>
+      expect(urls(fetchSpy).some((u) => u.includes('/series?') && u.endsWith('&percentiles=99.9,99.99'))).toBe(true),
+    );
+    // Only the selected metric's reads.
+    expect(urls(fetchSpy).some((u) => /\/users|\/agent\/|\/telemetry/.test(u))).toBe(false);
+  });
+
+  it('names every run without CPU', async () => {
+    const notCollected = (url: string) => {
+      const id = /\/runs\/([^/]+)\//.exec(url)?.[1];
+      if (url.includes('/agent/injectors')) {
+        return {
+          runId: id, available: false, reason: 'not_collected', detail: null,
+          bucketWidthMs: null, window: null, machine: { available: false, reason: null }, buckets: [],
+        };
+      }
+      if (url.includes('/telemetry')) {
+        return { runId: id, available: false, bucketWidthMs: 1000, window: null, hosts: [] };
+      }
+      return undefined;
+    };
+    const { fetchSpy } = renderCompare(
+      { state: 'ready', run: COMPLETE_RUN },
+      three(),
+      '?metric=cpu',
+      fixture.stats,
+      notCollected,
+    );
+
+    for (const label of ['Run 3', 'Run 2']) {
+      await waitFor(() =>
+        expect(document.body.textContent).toContain(`CPU usage was not recorded for ${label}.`),
+      );
+    }
+    // The table's CPU rows read dashes for every run, never a zero.
+    for (const name of ['Mean', 'Max']) {
+      const row = screen.getByRole('row', { name: new RegExp(`^${name}`) });
+      expect(within(row).getAllByRole('cell').map((c) => c.textContent)).toEqual(['—', '—']);
+    }
+    expect(urls(fetchSpy).some((u) => /\/series|\/users/.test(u))).toBe(false);
+  });
+
+  /** The users table's `Max` is each run's peak, read from its own `/users`. */
+  it('fills the users table from each run’s /users', async () => {
+    const peak = Math.max(...fixture.users.total.map((bucket) => bucket.maxConcurrent));
+    renderCompare(
+      { state: 'ready', run: COMPLETE_RUN },
+      three(),
+      '?metric=users',
+      fixture.stats,
+      (url) => (url.includes('/users') ? fixture.users : undefined),
+    );
+
+    const row = await screen.findByRole('row', { name: /^Max/ });
+    await waitFor(() =>
+      expect(within(row).getAllByRole('cell').map((c) => c.textContent?.startsWith(formatCell(peak)))).toEqual([
+        true,
+        true,
+      ]),
+    );
+  });
+
+  /** CPU `Mean` and `Max` are over the run's own samples, from the agent's
+   *  machine collector when it ran (`cpuUserPct + cpuSysPct`). */
+  it('fills the CPU table from each run’s agent samples', async () => {
+    const samples = [
+      [10, 2],
+      [30, 5],
+      [20, 3],
+    ] as const;
+    const totals = samples.map(([user, sys]) => user + sys);
+    const mean = totals.reduce((a, b) => a + b, 0) / totals.length;
+    const max = Math.max(...totals);
+    const injectors = (url: string) => {
+      if (url.includes('/agent/injectors')) {
+        return {
+          runId: /\/runs\/([^/]+)\//.exec(url)?.[1], available: true, reason: null, detail: null,
+          bucketWidthMs: 1000, window: null, machine: { available: true, reason: null },
+          buckets: samples.map(([user, sys], i) => ({
+            startOffsetMs: i * 1000, gcCount: {}, gcTimeMs: {}, cpuUserPct: user, cpuSysPct: sys,
+            ramTotalBytes: null, ramUsedBytes: null, heapMaxBytes: null, heapCommittedBytes: null,
+            heapUsedBytes: null, nettyDirectBytes: null, nettyHeapBytes: null,
+            tcpEvents: null, tcpSegments: null,
+          })),
+        };
+      }
+      if (url.includes('/telemetry')) {
+        return { runId: /\/runs\/([^/]+)\//.exec(url)?.[1], available: false, bucketWidthMs: 1000, window: null, hosts: [] };
+      }
+      return undefined;
+    };
+    renderCompare({ state: 'ready', run: COMPLETE_RUN }, three(), '?metric=cpu', fixture.stats, injectors);
+
+    for (const [name, value] of [['Mean', mean], ['Max', max]] as const) {
+      const row = await screen.findByRole('row', { name: new RegExp(`^${name}`) });
+      await waitFor(() =>
+        expect(within(row).getAllByRole('cell').map((c) => c.textContent?.startsWith(formatCell(value)))).toEqual([
+          true,
+          true,
+        ]),
+      );
+    }
+  });
+
+  it('clamps each run to its own duration', async () => {
+    // Run 3 lasted 60 s, Run 2 30 s; the window is 40–60 s, after Run 2 ended.
+    const { fetchSpy } = renderCompare(
+      { state: 'ready', run: COMPLETE_RUN },
+      three([60_000, 30_000, 63_161]),
+      '?from=40000&to=60000',
+      fixture.stats,
+    );
+
+    expect(await screen.findByTestId('compare-ended')).toHaveTextContent('Run 2 ended before this window.');
+    await waitFor(() =>
+      expect(urls(fetchSpy).some((u) => u.includes(`/runs/${RUN_ID}/stats?from=40000&to=60000`))).toBe(true),
+    );
+    // No request at all for the run that had ended — never its whole run.
+    expect(urls(fetchSpy).some((u) => u.includes(`/runs/${OTHER}/`))).toBe(false);
+
+    await waitFor(() => expect(runColumns().some((h) => h.startsWith('Run 2'))).toBe(true));
+    const column = runColumns().findIndex((h) => h.startsWith('Run 2'));
+    const allRequests = screen.getByRole('row', { name: /^All requests/ });
+    expect(within(allRequests).getAllByRole('cell')[column]).toHaveTextContent(/^—$/);
   });
 });

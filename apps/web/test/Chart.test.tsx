@@ -1003,6 +1003,9 @@ describe('Chart — the time axis follows the viewer’s mode', () => {
           ]}
           metric="p95"
           onMetricChange={() => undefined}
+          window={null}
+          extentMs={fixture.series.bucketWidthMs * fixture.series.buckets.length}
+          onWindow={() => undefined}
         />
       </TimeAxisProvider>,
     );

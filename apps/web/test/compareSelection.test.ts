@@ -6,6 +6,7 @@ import {
   serialiseCompareSelection,
   DEFAULT_COMPARE_METRIC,
   parseCompareMetric,
+  parseCompareReference,
 } from '../src/routes/compareSelection';
 
 /**
@@ -168,5 +169,19 @@ describe('parseCompareMetric', () => {
     for (const { value } of COMPARE_METRICS) {
       expect(parseCompareMetric(value)).toBe(value);
     }
+  });
+});
+
+/**
+ * `?ref=` arrives from a URL bar like every other parameter here. An id pasted
+ * with a space matches no run, so untrimmed it would silently drop the pin.
+ */
+describe('parseCompareReference', () => {
+  it('trims the id, and reads empty as no pin', () => {
+    expect(parseCompareReference('  run-3 ')).toBe('run-3');
+    expect(parseCompareReference('run-3')).toBe('run-3');
+    expect(parseCompareReference('   ')).toBeNull();
+    expect(parseCompareReference('')).toBeNull();
+    expect(parseCompareReference(null)).toBeNull();
   });
 });
