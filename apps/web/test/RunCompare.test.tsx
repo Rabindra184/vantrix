@@ -765,4 +765,23 @@ describe('RunCompare — metric data, reference and time range', () => {
     const allRequests = screen.getByRole('row', { name: /^All requests/ });
     expect(within(allRequests).getAllByRole('cell')[column]).toHaveTextContent(/^—$/);
   });
+
+  /**
+   * A pin on a run that ended before the window names a column of dashes, and
+   * a change measured against it would be a change against nothing — so the
+   * reference falls back to the default among the runs that have figures.
+   */
+  it('a pin on a run that ended before the window falls back', async () => {
+    renderCompare(
+      { state: 'ready', run: COMPLETE_RUN },
+      three([60_000, 30_000, 63_161]),
+      `?runs=${OTHER},${THIRD}&from=40000&to=60000&ref=${OTHER}`,
+      fixture.stats,
+    );
+
+    await screen.findByTestId('compare-ended');
+    await waitFor(() => expect(runColumns()[0]).toMatch(/^Run 1 /));
+    expect(screen.getAllByTestId('compare-column')[0]).toHaveAttribute('data-reference', 'true');
+    expect(screen.queryByTestId(`compare-role-${OTHER}`)).toBeNull();
+  });
 });
