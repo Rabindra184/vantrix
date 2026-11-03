@@ -158,10 +158,10 @@ The compare-parity branch (`feat/compare-parity`, gap #2 of
 — `apps/api/test/percentile-list.test.ts` (16) and
 `apps/web/test/useWindowControl.test.tsx` (2) — and rewrote or grew
 `buildCompareMatrix` (18 to 25), `CompareMatrix` (7 to 15),
-`transforms.compare` (26 to 40), `RunCompare` (17 to 33), `compareSummary`
+`transforms.compare` (26 to 40), `RunCompare` (17 to 35), `compareSummary`
 (9 to 17), `metricPaths` (4 to 9), `compareSelection` (19 to 22) and `Chart`
-(+1), 80 cases in all, each count read off `vitest list` at both ends: unit
-**292 / 4766 to 294 / 4846**. Integration gains `percentile-list` and
+(+1), 82 cases in all, each count read off `vitest list` at both ends: unit
+**292 / 4766 to 294 / 4848**. Integration gains `percentile-list` and
 `apps/api/test/compare-percentiles.integration.test.ts` (12), 1 case in
 persistence's `metrics.integration`, 2 in `openapi.integration` and the 37
 `.ts` web cases: **273 / 4277 to 275 / 4345**. **e2e 217 to 223**
@@ -387,6 +387,15 @@ swaps only its drawing. Not `keepPreviousData`, which would draw the previous
 window's figures under the new handles — the worse lie. A FAILED read is not
 pending; it stays named in the alert.
 
+**AND THE CHART WAITS ON ITS OWN READS ONLY, WHICH THE RE-REVIEW CAUGHT.**
+Handed the page-wide flag, the overlay blanked on every percentile switch:
+each percentile asks `/stats` its own rank, so the switch re-keys `/stats`
+while the series is one cached read for p50, p90, p95 and p99. The chart
+takes `overlayPending` (its `/series`, `/users` or CPU sources alone) and the
+tiles, table and reference keep `pending`, which adds `/stats`. And when both
+wait, the page's line is plain text beside the chart's `role="status"` one, so
+a screen reader hears the load once rather than two regions mounting together.
+
 **AND THE REST.** m1 above (`EXTRA_RANKS` is `STATS_RANKS` now, every
 percentile); m2/m3 the CPU paragraph's `[]` sentence; m6 the six-place rule;
 m4 and m5 two comments (`Reference`, not `Baseline`; a number's `String` form
@@ -398,9 +407,11 @@ users AND CPU; a run that ends INSIDE the window has its case (a 50 s run under
 spec's `SETTLE_MS` docstring says what the Apply case actually uses it for.
 
 **RED-VERIFIED** from committed checkpoints (`866ee617`, `f24b0bf4`,
-`e7e834c0`), anchor counts asserted, each restored with `git checkout HEAD --`:
+`e7e834c0`, and the re-review's two from its own fix commit), anchor counts asserted, each restored with `git checkout HEAD --`:
 
 ```
+  chart handed the page-wide flag          the cached-overlay percentile case alone
+  the page's line always a live region     the announced-once case alone
   pending never set (the before-state)     both loading cases — at "No statistics
                                            for the selected runs" and at the wrong
                                            run's Reference chip
@@ -422,7 +433,8 @@ spec's `SETTLE_MS` docstring says what the Apply case actually uses it for.
 flushed through `infra-redis-1`, bucket `perfportal-compare`), e2e on port
 3870 because the real check's API held 3860: `typecheck` and `lint` exit 0 by
 their own exit codes; `test:unit` **294 / 4846**, exit 0, zero `Errors` lines,
-the prediction from per-file deltas exactly; the three API files the parser
+the prediction from per-file deltas exactly, and **294 / 4848** after the
+re-review's two `RunCompare` cases (`run-compare.spec.ts` **16 / 16** again); the three API files the parser
 change reaches (`percentile-list`, `compare-percentiles.integration`,
 `openapi.integration`) **3 / 64** alone; `run-compare.spec.ts` on Chromium
 **16 / 16**. `test:integration` COLLECTED **275 / 4345**, the prediction
