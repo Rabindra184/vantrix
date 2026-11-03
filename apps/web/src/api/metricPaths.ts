@@ -81,8 +81,8 @@ export const runPath = (id: string): string => `/v1/runs/${encodeURIComponent(id
  *
  * LAST, after the window, and the join character is decided here beside the
  * query string it follows, for the reason `rangeSuffix` argues. The commas are
- * literal: a finite number's `String` form carries only digits, `.` and `e`,
- * none of which needs escaping, and the server splits on `,`.
+ * literal: a finite number's `String` form carries only digits, `.`, `e` and
+ * `-` (an exponent), none of which needs escaping, and the server splits on `,`.
  */
 const percentilesSuffix = (ranks: readonly number[], join: '?' | '&'): string =>
   ranks.length === 0 ? '' : `${join}percentiles=${ranks.join(',')}`;

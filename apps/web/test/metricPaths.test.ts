@@ -2,7 +2,8 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { Window } from '@perfportal/contracts';
 import * as paths from '../src/api/metricPaths';
-import { seriesQuery, seriesQueryKey, statsQuery, statsQueryKey } from '../src/api/metrics';
+import { liveSeriesKey } from '../src/api/live';
+import { seriesQuery, statsQuery, statsQueryKey } from '../src/api/metrics';
 
 /**
  * THE DEFECT THESE GUARD. `scripts/capture-chart-fixture.mjs` used to spell
@@ -184,10 +185,8 @@ describe('the percentiles parameter', () => {
     expect(seriesQuery(ID, 'run', '', 'response_time', null, RANKS).queryKey).not.toEqual(
       seriesQuery(ID).queryKey,
     );
-    expect(seriesQuery(ID).queryKey).toEqual([
-      ...seriesQueryKey(ID, 'run', '', 'response_time'),
-      null,
-      null,
-    ]);
+    // The key the live socket writes into, read from `api/live.ts` itself
+    // rather than spelled out again here.
+    expect(seriesQuery(ID).queryKey).toEqual(liveSeriesKey(ID));
   });
 });

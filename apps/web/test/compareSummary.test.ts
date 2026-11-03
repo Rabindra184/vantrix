@@ -305,15 +305,17 @@ describe('buildCompareSummary — follows the reference', () => {
     expect(summary.bestValue).toBe(runs[1]!.stats!.stats[0]!.koCount);
   });
 
-  it('neutral for users', () => {
-    const runs = [
-      run('a', {}, { peakUsers: 40 }),
-      run('b', {}, { peakUsers: 20 }),
-    ];
-    const summary = buildCompareSummary(runs, 'a', 'b', 'users');
-    const cell = firstRowCell(runs, 'b', 'users', 'a')!;
+  /** Users and CPU both have no better or worse — each source is checked,
+   *  because a direction added to one alone would colour only its chips. */
+  it.each([
+    ['users', { peakUsers: 40 }, { peakUsers: 20 }, 'users'],
+    ['cpu', { cpu: { mean: 40, max: 60 } }, { cpu: { mean: 20, max: 30 } }, '%'],
+  ] as const)('neutral for %s', (metric, current, reference, unit) => {
+    const runs = [run('a', {}, current), run('b', {}, reference)];
+    const summary = buildCompareSummary(runs, 'a', 'b', metric);
+    const cell = firstRowCell(runs, 'b', metric, 'a')!;
 
-    // A change is still stated: users doubled.
+    // A change is still stated: the figure doubled.
     expect(summary.deltaPercent).toBe(cell.change!.percent);
     expect(summary.deltaPercent).toBe(100);
     // With no direction, nothing is better or worse, and no run is "best".
@@ -321,7 +323,7 @@ describe('buildCompareSummary — follows the reference', () => {
     expect(summary.directional).toBe(false);
     expect(summary.bestLabel).toBeNull();
     expect(summary.bestValue).toBeNull();
-    expect(summary.unit).toBe('users');
+    expect(summary.unit).toBe(unit);
   });
 
   it('colours an unchanged figure as neither better nor worse, as the table does', () => {
