@@ -86,8 +86,10 @@ describe('compareSummary', () => {
  * most: errors rising from 0 to 2/s is the regression an engineer most needs
  * to see, and it is exactly when the baseline is zero.
  *
- * The model has to distinguish them; the tile can then say "0 → 2/s, relative
- * change undefined" rather than pretending nothing was selected.
+ * The model has to distinguish them; the tile can then say "0 → 2 failed,
+ * relative change undefined" rather than pretending nothing was selected. (The
+ * tiles read the table's first row now, so the errors tile counts failed
+ * requests rather than the overlay's rate — see `unit` below.)
  */
 describe('buildCompareSummary — why a delta is missing', () => {
   const row = (id: string, value: number) => ({
