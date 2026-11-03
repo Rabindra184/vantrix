@@ -226,8 +226,15 @@ export default function RunCompare() {
     .map(durationOf)
     .filter((ms): ms is number => ms !== null);
   const extentMs = durations.length === 0 ? null : Math.max(...durations);
-  const window =
-    extentMs === null ? null : parseWindow(params.get('from'), params.get('to'), extentMs);
+  /* MEMOISED ON ITS INPUTS: the window control re-syncs its fields whenever
+     this object changes, so a fresh one per render would wipe the reader's
+     typing on every one (`useWindowControl`). */
+  const rawFrom = params.get('from');
+  const rawTo = params.get('to');
+  const window = useMemo(
+    () => (extentMs === null ? null : parseWindow(rawFrom, rawTo, extentMs)),
+    [rawFrom, rawTo, extentMs],
+  );
   const setWindow = (next: Window | null) =>
     refine((updated) => {
       updated.delete('from');

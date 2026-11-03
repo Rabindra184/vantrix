@@ -1,7 +1,8 @@
-import { useEffect, useId, useRef, useState, type ComponentType } from 'react';
+import { useId, type ComponentType } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type { Window } from '@perfportal/contracts';
 import Chart from './Chart';
+import { asSeconds, useWindowControl } from './useWindowControl';
 import { seriesQuery } from '../api/metrics';
 import { RATE_ROLES, toRequestRate } from './transforms/rates';
 import { useTimeAxis } from './TimeAxisContext';
@@ -15,7 +16,6 @@ import {
 import {
   WINDOW_PRESETS,
   WINDOW_STEPS,
-  asWindow,
   canStep,
   presetWindow,
   stepWindow,
@@ -83,9 +83,10 @@ import {
  * a URL entry and six refetches per pixel; the range is held and written once
  * the drag settles. A step, a preset or Whole run is one navigation too, and
  * cancels a drag still settling so the drag cannot land after it and undo it.
- * Apply deliberately does not; `apply` says why.
+ * Apply deliberately does not; `useWindowControl`'s `apply` says why. That
+ * hook is where the settle, the fields and Apply live, shared with Compare's
+ * overlay so the two cannot drift apart again.
  */
-const SETTLE_MS = 250;
 
 const STEP_ICONS: Record<WindowStep, ComponentType<{ className?: string }>> = {
   'fast-backward': FastBackwardIcon,
@@ -138,10 +139,6 @@ export default function TimeBrush({
   const noAnchorId = useId();
   const { mode, anchorMs, setMode } = useTimeAxis();
 
-  /** Set when `apply` refuses; cleared by a valid apply, and by any change to
-   *  the selection itself so a stale complaint never outlives its input. */
-  const [rangeError, setRangeError] = useState<string | null>(null);
-
   // THE WHOLE RUN, deliberately unwindowed; see the docstring.
   const series = useQuery(seriesQuery(runId, 'run', '', 'response_time', null));
 
@@ -177,128 +174,27 @@ export default function TimeBrush({
   );
   const zoneLabel = anchorMs === null ? null : `${formatZoneName()} - ${formatZoneOffset(anchorMs)}`;
 
-  const asSeconds = (ms: number): string => String(Math.round(ms / 1000));
-  const [from, setFrom] = useState(() => (window ? asSeconds(window.fromMs) : ''));
-  const [to, setTo] = useState(() => (window ? asSeconds(window.toMs) : ''));
-  /* WHETHER THE READER HAS TYPED IN EACH FIELD since the URL last set it. The
-     fields SHOW whole seconds, so a dragged 27,412 ms reads `27`; Apply keeps
-     the exact bound for a field nobody touched rather than committing what it
-     happens to display. Typing is the edit, not "reads differently":
-     retyping the number already shown is how a reader asks for that whole
-     second. */
-  const [fromEdited, setFromEdited] = useState(false);
-  const [toEdited, setToEdited] = useState(false);
-
-  // The URL is the source of truth, so a back button or a pasted link moves the
-  // fields rather than leaving them describing a window no longer selected —
-  // and an edit made before it describes that old window too, so it goes.
-  useEffect(() => {
-    setFrom(window ? asSeconds(window.fromMs) : '');
-    setTo(window ? asSeconds(window.toMs) : '');
-    setFromEdited(false);
-    setToEdited(false);
-    setRangeError(null);
-  }, [window]);
-
-  const settle = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => () => {
-    if (settle.current !== null) clearTimeout(settle.current);
-  }, []);
-  const cancelSettle = (): void => {
-    if (settle.current !== null) clearTimeout(settle.current);
-    settle.current = null;
-  };
-
-  const commit = (fromMs: number, toMs: number): void => {
-    cancelSettle();
-    settle.current = setTimeout(() => {
-      // A drag covering the whole extent is a request for the whole run, not a
-      // window that happens to match it, so the URL loses its parameters
-      // rather than pinning a range that would then not follow a re-ingest.
-      onChange(asWindow(fromMs, Math.min(toMs, runDurationMs), runDurationMs));
-    }, SETTLE_MS);
-  };
+  const { from, to, editFrom, editTo, rangeError, apply, drag, navigate } = useWindowControl({
+    window,
+    extentMs: runDurationMs,
+    onChange,
+  });
 
   const step = (which: WindowStep): void => {
     if (resolutionMs === null) return;
-    cancelSettle();
-    onChange(stepWindow(current, which, runDurationMs, resolutionMs));
+    navigate(stepWindow(current, which, runDurationMs, resolutionMs));
   };
 
   const choosePreset = (spanMs: number | null): void => {
-    if (spanMs === null) {
-      cancelSettle();
-      onChange(null);
-    } else if (resolutionMs !== null) {
-      cancelSettle();
-      onChange(presetWindow(spanMs, runDurationMs, resolutionMs));
-    }
-  };
-
-  /**
-   * Commits the From/To fields.
-   *
-   * ═══ IT DOES NOT CANCEL A SETTLING DRAG, DELIBERATELY ═══
-   *
-   * The fields follow the URL, so in the 250 ms a drag takes to settle they
-   * still hold the window from BEFORE it. Cancelling here would commit those
-   * numbers and throw the drag away; left alone, the drag lands a moment
-   * later, as the reader made it. A step, a preset and Whole run read no
-   * fields, which is why they can cancel and this cannot.
-   *
-   * ═══ IT COMMITS WHAT THE READER CHANGED, AND NOTHING ELSE ═══
-   *
-   * A field the reader has not typed in keeps the URL's exact bound (see
-   * `fromEdited`), and a span covering the whole run commits no window at all
-   * through `asWindow`, the rule a drag and every step already follow.
-   */
-  const apply = (): void => {
-    const parse = (raw: string, fallback: number): number | null => {
-      if (raw.trim() === '') return fallback;
-      const n = Number(raw);
-      return Number.isFinite(n) && n >= 0 ? Math.round(n * 1000) : null;
-    };
-    const fromMs = window !== null && !fromEdited ? window.fromMs : parse(from, 0);
-    /* THE RUN'S END, SHOWN ROUNDED, IS STILL THE RUN'S END. The fields show
-       whole seconds, so a window ending at the run's 63,161 ms reads `63`,
-       and applying it untouched committed 63,000: the run's last partial
-       bucket, which `snapBound` keeps exactly and the steps now reach often,
-       dropped by a button that changed nothing on screen. A To reading
-       exactly what the run's end reads is the run's end. */
-    const toMs =
-      window !== null && !toEdited
-        ? window.toMs
-        : to.trim() === asSeconds(runDurationMs)
-          ? runDurationMs
-          : parse(to, runDurationMs);
-
-    /* ═══ AN INVALID RANGE IS REFUSED, NEVER WIDENED ═══
-     *
-     * This used to answer every unparseable, negative or reversed input with
-     * `onChange(null)`, which is not a neutral failure: it is the signal for
-     * "the whole run". So a reader who typed From=30 To=10 got a SILENTLY
-     * BROADER scope than the one they already had. Refusing leaves the
-     * previous window standing, and `window` not changing keeps the reader's
-     * typing in place so the mistake can be corrected. Widening on purpose is
-     * still one click away: "Whole run", and the Everything preset. */
-    if (fromMs === null || toMs === null) {
-      setRangeError('Enter the window as seconds — for example 10 and 30.');
-      return;
-    }
-    if (fromMs >= toMs) {
-      setRangeError('End must be later than start.');
-      return;
-    }
-
-    setRangeError(null);
-    onChange(asWindow(fromMs, Math.min(toMs, runDurationMs), runDurationMs));
+    if (spanMs === null) navigate(null);
+    else if (resolutionMs !== null) navigate(presetWindow(spanMs, runDurationMs, resolutionMs));
   };
 
   // Requests/s: the densest, most continuous view of a run's shape, which is
   // what a reader is aiming at when they drag.
   //
   // `{ x: 'ms' }` IS LOAD-BEARING, not a formatting choice. The slider reports
-  // its handles in the x axis' own units and `commit` writes those straight to
+  // its handles in the x axis' own units and `drag` writes those straight to
   // the URL as milliseconds; the category form's scalars made those units
   // RATES, and a drag across the first third of this run committed
   // `?from=0&to=7`.
@@ -443,7 +339,7 @@ export default function TimeBrush({
             unit="/s"
             brush={{
               value: window,
-              onChange: commit,
+              onChange: drag,
             }}
           />
         )}
@@ -460,10 +356,7 @@ export default function TimeBrush({
               aria-invalid={rangeError === null ? undefined : true}
               aria-describedby={rangeError === null ? undefined : errorId}
               value={from}
-              onChange={(e) => {
-                setFrom(e.target.value);
-                setFromEdited(true);
-              }}
+              onChange={(e) => editFrom(e.target.value)}
               placeholder="0"
               className="w-24 rounded border border-default bg-surface px-2 py-1 text-sm text-primary"
             />
@@ -480,10 +373,7 @@ export default function TimeBrush({
               aria-invalid={rangeError === null ? undefined : true}
               aria-describedby={rangeError === null ? undefined : errorId}
               value={to}
-              onChange={(e) => {
-                setTo(e.target.value);
-                setToEdited(true);
-              }}
+              onChange={(e) => editTo(e.target.value)}
               placeholder={asSeconds(runDurationMs)}
               className="w-24 rounded border border-default bg-surface px-2 py-1 text-sm text-primary"
             />
@@ -501,10 +391,7 @@ export default function TimeBrush({
           {window !== null && (
             <button
               type="button"
-              onClick={() => {
-                cancelSettle();
-                onChange(null);
-              }}
+              onClick={() => navigate(null)}
               data-testid="window-clear"
               className="rounded border border-default bg-surface px-3 py-1 text-sm text-primary"
             >
