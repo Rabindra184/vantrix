@@ -155,17 +155,17 @@ The compare-parity branch (`feat/compare-parity`, gap #2 of
 `docs/superpowers/research/2026-11-03-ge-page-parity/README.md`, spec
 `docs/superpowers/specs/2026-11-03-compare-parity-design.md`, ledger
 `.superpowers/sdd/2026-11-03-compare-parity/progress.md`) added TWO unit files
-— `apps/api/test/percentile-list.test.ts` (13) and
+— `apps/api/test/percentile-list.test.ts` (16) and
 `apps/web/test/useWindowControl.test.tsx` (2) — and rewrote or grew
 `buildCompareMatrix` (18 to 25), `CompareMatrix` (7 to 15),
-`transforms.compare` (26 to 40), `RunCompare` (15 to 27), `compareSummary`
-(9 to 16), `metricPaths` (4 to 9), `compareSelection` (19 to 22) and `Chart`
-(+1), 72 cases in all: unit **292 / 4766 to 294 / 4838**. Integration gains
-`percentile-list` and `apps/api/test/compare-percentiles.integration.test.ts`
-(12), 1 case in persistence's `metrics.integration`, 2 in
-`openapi.integration` and the 36 `.ts` web cases: **273 / 4277 to
-275 / 4341**, measured, and exactly the prediction from per-file deltas.
-**e2e 217 to 223** (`run-compare.spec.ts`, 16 on each engine);
+`transforms.compare` (26 to 40), `RunCompare` (17 to 33), `compareSummary`
+(9 to 17), `metricPaths` (4 to 9), `compareSelection` (19 to 22) and `Chart`
+(+1), 80 cases in all, each count read off `vitest list` at both ends: unit
+**292 / 4766 to 294 / 4846**. Integration gains `percentile-list` and
+`apps/api/test/compare-percentiles.integration.test.ts` (12), 1 case in
+persistence's `metrics.integration`, 2 in `openapi.integration` and the 37
+`.ts` web cases: **273 / 4277 to 275 / 4345**. **e2e 217 to 223**
+(`run-compare.spec.ts` 10 to 16, 48 on three engines);
 `test:e2e:cross` **669** by arithmetic, the compare spec alone run on three
 engines (48 / 48).
 
@@ -178,9 +178,13 @@ per request for a percentile or max, `Value` for throughput, `Count` and
 is pinned (`?ref=`, button `Set <run label> as reference`), drawn first and
 tagged **Reference**, and every other column carries its own change chip. A
 time range above the overlay (`?from=`/`?to=`) narrows the chart, the table
-and the tiles at once. No rank is ever guessed: `GET /v1/runs/:id/stats` and
-`/series` take `?percentiles=` (1–12 ranks in the open interval (0, 100),
-else 400 `INVALID_QUERY`; repeated is `singleValue`'s refusal) and answer them
+and the tiles at once. No rank is ever guessed, and none is left to the
+project's configured set: every percentile metric, p50, p95 and p99
+included, asks `/stats` for its own rank (`STATS_RANKS`), because a project
+set lacking p95 read `—` on an exact run while the overlay drew the line.
+`GET /v1/runs/:id/stats` and `/series` take `?percentiles=` (1–12 ranks in the
+open interval (0, 100), at most six decimal places, else 400 `INVALID_QUERY`;
+repeated is `singleValue`'s refusal) and answer them
 from the stored `sparse-ms-v2` histograms — `/stats` REPLACES the project's
 set, `/series` ADDS to each bucket's stored bands and leaves a non-exact
 bucket alone. A legacy estimated row gets nothing it never stored, so its cell
@@ -197,8 +201,10 @@ partition.
 **THE PARSER CHECKS THE TEXT BEFORE IT CALLS `Number`.** `Number('')` is 0,
 `Number('0x10')` is 16, `Number('1e1')` is 10 and `Number(' 90')` is 90, so a
 trailing comma or a typo would have asked for a real rank. Each item must
-match `^\d+(\.\d+)?$` first, and three cases (`1e1`, `0x10`, ` 90`) are all
-that guard the pattern: removing it fails exactly those.
+match `^\d+(\.\d{1,6})?$` first — six places because the answer is keyed
+`p${rank}` off the parsed number, and `String(0.0000001)` is `1e-7`, a key
+the caller never sent — and four cases (`1e1`, `0x10`, ` 90`, `0.0000001`)
+are all that guard the pattern: removing it fails exactly those.
 
 **ONE WINDOW CONTROL, BECAUSE THE COPY HAD ALREADY DRIFTED.** The compare
 overlay's From/To fields and drag settle were first a copy of `TimeBrush`'s,
@@ -233,7 +239,12 @@ Gatling agent's `user + sys` when `/agent/injectors` has `machine.available`,
 else telemetry averaged over hosts, else `null` — and `null` is named under
 the chart per run while the table reads `—`. Measured below: on macOS the
 agent records heap and GC and no machine figure, and nothing else reports CPU,
-so that note is what a Mac-recorded run shows.
+so that note is what a Mac-recorded run shows. A source that is available
+and has no reading in the window (telemetry samples every 3 s under a 1 s
+window) answers `[]`, which is recorded and empty, not unrecorded: the chart
+names it in its own words (`… has no reading for Run 2 in this span.`), says
+so instead of drawing bare axes when no run has a reading, and leaves a run
+that ended before the window to the page's own sentence.
 
 **TWO GUARDS IN THE BROWSER SPEC WERE VACUOUS UNTIL A MUTATION SAID SO.**
 `SETTLE_MS = 0` survived the drag case twice: a fast drag yields one throttled
@@ -277,7 +288,8 @@ every row):
   T5  reference ignored                         pinned reference, reference is the current run
       best ranked with no direction check       neutral for users alone
   T6  ended detection removed                   the clamps case
-      reference resolved over ended runs        SURVIVED 28/28; case added (1f93b8f7)
+      reference resolved over ended runs        SURVIVED 28/28; case added (1f93b8f7);
+                                                the new case now fails under it alone
       Apply cancels a settling drag             the hook's Apply case + CompareChart's
   T7  ref ignored                               the pin case (Received "Run 1")
       window dropped from statsQuery            time-range and drag cases (654 vs 662 / 653)
@@ -313,7 +325,8 @@ local: `ParitySimulation` twice through the Gradle plugin into one test
 `verified`, 895 requests each, Gatling exiting 1 on its own deliberately
 failing `Search` p95. An independent oracle decoded the local
 `simulation.log` Gatling wrote (`parseSimulationLog`, integer nearest rank)
-and every figure Compare reads agreed with it, value for value:
+and every figure the endpoints behind Compare answer agreed with it, value
+for value:
 
 ```
                               Run 1          Run 2          oracle
@@ -323,7 +336,8 @@ and every figure Compare reads agreed with it, value for value:
   windowed 20–30 s             561 / 2228 n 146  611 / 2503 n 146  equal
   windowed 40–63 s             538 / 2506 n 377  582 / 2296 n 373  equal (Run 2's
                                                                    window clamped to 62 s)
-  /series ?percentiles=99.9,99.99  63 of 63 buckets   61 of 61    equal per bucket
+  /series ?percentiles=99.9,99.99  63 of 63 request-carrying buckets   61 of 61
+                                                                   equal per bucket
 ```
 
 **p99.9 OVER 895 REQUESTS IS THE MAXIMUM**, rank ⌈0.999 × 895⌉ = 895, so the
@@ -341,7 +355,7 @@ signed-in BROWSER half (the `All requests` cell beside `/stats`, pin, narrow,
 reload) is the controller's, with the user signing in (Ruling 9). Both tokens
 were revoked and the processes stopped by PID.
 
-**RULINGS** (the ledger's 1–9): (1) every task leaves typecheck, lint and unit
+**RULINGS** (the ledger's 1–10): (1) every task leaves typecheck, lint and unit
 green, adapting call sites outside its list; (2) "ended before the window" is
 `window.fromMs >= durationMs` checked before clamping, and `parseWindow`'s
 `null` means whole run only; (3) `PinIcon = icon(MapPin)` in `icons.tsx`; (4)
@@ -351,6 +365,76 @@ illustrative; (6) the default stays p95 — the spec's "Default p99" describes
 GE; (7) the interim state between T3 and T6 was accepted and T6 closed it; (8)
 `run-compare.spec.ts` was knowingly red from T4 until T7 rewrote it; (9) the
 real check's browser half waits for the user to sign in.
+(10) the final fix wave took the Important, the six Minors and every FIX NOW
+row of the whole-branch review in one pass, and left every LEAVE row alone.
+
+**THE FINAL FIX WAVE, AND ITS ONE IMPORTANT WAS THE M12 CLASS AGAIN: A QUERY
+THAT HAS NOT ANSWERED HAS SEEN NOTHING.** A window change, Whole run, or a
+switch to a metric needing an extra rank re-keys every run's `/stats` (and
+`/series` for those metrics), and with no placeholder each `data` was
+`undefined` for one round trip — so the table said "No statistics for the
+selected runs", the overlay "Select at least one run to compare." over two
+pressed chips, the tiles vanished, and a `?ref=` whose run was still loading
+fell back to another, the chip and every change naming the wrong reference
+until it landed. The branch put that moment on every interaction it added.
+`RunCompare` derives one `pending` from exactly the reads it needs — every
+non-ended run's `/stats` and the overlay's own source — and while it is set
+the tiles and the table are a loading line, the overlay says it is loading,
+and no reference is resolved. **The overlay stays mounted**, unlike the
+review's sketch: it holds the metric selector and the window fields the reader
+is in the middle of using, so `CompareChart` takes a REQUIRED `pending` and
+swaps only its drawing. Not `keepPreviousData`, which would draw the previous
+window's figures under the new handles — the worse lie. A FAILED read is not
+pending; it stays named in the alert.
+
+**AND THE REST.** m1 above (`EXTRA_RANKS` is `STATS_RANKS` now, every
+percentile); m2/m3 the CPU paragraph's `[]` sentence; m6 the six-place rule;
+m4 and m5 two comments (`Reference`, not `Baseline`; a number's `String` form
+can carry `-`). From the triage: `liveSeriesKey` is exported from
+`api/live.ts` so `metricPaths.test` holds `seriesQuery`'s key to it rather
+than to a hand-written copy; the neutral summary case is an `it.each` over
+users AND CPU; a run that ends INSIDE the window has its case (a 50 s run under
+40–60 s asks `to=50000`); the drag case polls its baseline row count; and the
+spec's `SETTLE_MS` docstring says what the Apply case actually uses it for.
+
+**RED-VERIFIED** from committed checkpoints (`866ee617`, `f24b0bf4`,
+`e7e834c0`), anchor counts asserted, each restored with `git checkout HEAD --`:
+
+```
+  pending never set (the before-state)     both loading cases — at "No statistics
+                                           for the selected runs" and at the wrong
+                                           run's Reference chip
+  reference resolved while pending         the pinned-reference case alone
+  p95 left out of STATS_RANKS              the p95 request case + the every-rank case
+  `[]` runs not named                      the no-reading case alone
+  all-empty overlay not said               the same case, at its second half
+  ended runs named twice                   the same case, at `not.toContain`
+  no clamp to the run's own duration       the ends-inside-the-window case alone
+  live series key drifts                   the rankless-key case alone (the old
+                                           hand-written copy would have passed)
+  CPU judged                               `neutral for cpu` alone
+  seven decimal places accepted            the six-place case alone
+  range check loosened to 101              the 100 and 100.5 cases
+  decimal pattern removed                  1e1, 0x10, ` 90` and 0.0000001 alone
+```
+
+**WHAT WAS RUN FOR THE WAVE**, Node v22.19.0, the same scratch stores (`perfportal_compare`, Redis db 9
+flushed through `infra-redis-1`, bucket `perfportal-compare`), e2e on port
+3870 because the real check's API held 3860: `typecheck` and `lint` exit 0 by
+their own exit codes; `test:unit` **294 / 4846**, exit 0, zero `Errors` lines,
+the prediction from per-file deltas exactly; the three API files the parser
+change reaches (`percentile-list`, `compare-percentiles.integration`,
+`openapi.integration`) **3 / 64** alone; `run-compare.spec.ts` on Chromium
+**16 / 16**. `test:integration` COLLECTED **275 / 4345**, the prediction
+exactly, and exited 1 on TWO cases in files this wave cannot reach — the
+padded-provenance POST returning no run id at 5.9 s (Prisma's connect
+timeout) and `visibility.integration`'s fourth list answering 500 — at a
+start load of 27.5 / 30.6 (1328 s); the two files then passed **30 / 30**
+alone. `pnpm test:e2e --workers=2` read back `Running 223 tests using 2
+workers`, **223 passed, exit 0** (start load 16.1). One process slip is
+recorded rather than hidden: a five-second mutation of `validation.ts` (the
+pattern-guard measurement above) ran while that integration suite was live;
+every file the parser reaches passed in it.
 
 **KNOWN AND LEFT:**
 
@@ -359,26 +443,25 @@ real check's browser half waits for the user to sign in.
     win" in `/series`' join is unobservable on exact data; `/series` with
     `?percentiles=` is two round trips on one partition; the shared
     `BadRequest` description keeps gaining route clauses; the
-    `withExtraRanks` call is one ~120-character line.
+    `withExtraRanks` call is one ~120-character line; `99.900000` is accepted
+    and answered as `p99.9`, a key spelled unlike the text sent.
   - API tests: `compare-percentiles.integration` builds a fresh app and a full
     ingest per case (slow, obliterates the ingest queue); its windowed case
-    asserts the run row only; no unit case for an in-pattern out-of-range rank
-    (`100.5`) or a fractional key (`p99.99`, integration has it).
-  - Figures: `cpuPoints` plots a partial sum when exactly one of
-    `cpuUserPct`/`cpuSysPct` is null; CPU `Mean` is unweighted and does not
-    say so; the errors "best" tile is a raw KO count beside an overlay
-    plotting KO/s under the same word.
+    asserts the run row only.
+  - Figures: `cpuPoints` would plot a partial sum if exactly one of
+    `cpuUserPct`/`cpuSysPct` were null, which `buildAgentFigures` never
+    files (user, sys and total land together); CPU `Mean` is unweighted and
+    does not say so; the errors "best" tile is a raw KO count beside an
+    overlay plotting KO/s under the same word; p50, p95 and p99 no longer
+    share the run page's `/stats` cache entry (`STATS_RANKS`).
   - Matrix: the Ratio chip is relative % for a non-zero reference and pp for a
     zero one, two conventions on one row; an estimated `=` renders `≈=`;
     `absolute === 0` is exact float equality, so 1e-12 of window noise draws a
     coloured `+0.0%`; the errors unit special case lives in both
     `compareSummary.ts` and `CompareMatrix.tsx`; `deltaGood: null` means both
     "no delta" and "neutral metric".
-  - Web tests: the best-tile "no better or worse" detail is untested, the
-    neutral-direction summary case covers users and not CPU, a run ending
-    INSIDE the window has no case, the `metricPaths` rankless-key guard
-    re-derives the live key by hand, and a comment says `String(number)` holds
-    only digits `.` `e` (`1e-7` has `-`).
+  - Web tests: the best-tile "no better or worse" detail is untested; the
+    loading cases hold a read open for 20 ms of real time before looking.
   - Code shape: `window` shadows the browser global in `RunCompare.tsx` and
     `CompareChart.tsx`; the settle timer captures `onWindow` from the last
     drag frame's render (`TimeBrush` shares it); the `/comparison/i` region
@@ -387,11 +470,9 @@ real check's browser half waits for the user to sign in.
     (942 px in 950), so "scrolls inside its region" rests on containment and
     `overflow-x: auto`; `cohortOfTwo` ingests one bundle twice, so swapped
     columns are undetectable in the p99.9, range and drag cases; prose pins
-    remain (`Change against the reference`, `Current · Reference`); the drag
-    case's `wholeRows` is an immediate `count()`; `SETTLE_MS` is restated in
-    the spec (the source module's extensionless import fails `nodenext`) and
-    a docstring says the Apply case does not use it while it still waits
-    `SETTLE_MS * 4`; and the drag and Apply cases' page-timed guards fail
+    remain (`Change against the reference`, `Current · Reference`);
+    `SETTLE_MS` is restated in the spec (the source module's extensionless
+    import fails `nodenext`); and the drag and Apply cases' page-timed guards fail
     under load by design (one did here, at a 306 ms gap) — a red there names
     a stall, and `run-compare.spec.ts` alone is the re-check.
   - The time range is in the URL and GE's is not; the 2–5 selection is too.
