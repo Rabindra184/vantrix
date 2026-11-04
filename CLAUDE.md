@@ -351,8 +351,10 @@ buckets carrying heap and none carrying CPU, and `/telemetry` is
 both runs as not recorded. And for Run 2 a window starting at 62 s
 (past its end) answers `/stats` 200 with no row, which is why the page decides
 "ended before this window" from the run's duration and sends nothing. The
-signed-in BROWSER half (the `All requests` cell beside `/stats`, pin, narrow,
-reload) is the controller's, with the user signing in (Ruling 9). Both tokens
+signed-in BROWSER half was the user's (Ruling 9), on the final fix-wave build at
+:3860, signing in themselves: `?metric=p99.9` read `All requests` **2504 / 2509**,
+`&from=0&to=10000` read **2164 / 1740**, CPU named as not recorded for both runs,
+and pinning Run 1 then reloading kept both the pin and the window. Both tokens
 were revoked and the processes stopped by PID.
 
 **RULINGS** (the ledger's 1–10): (1) every task leaves typecheck, lint and unit
