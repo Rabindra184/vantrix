@@ -134,3 +134,20 @@ export function parseCompareMetric(raw: string | null): CompareMetric {
   const found = COMPARE_METRICS.find((m) => m.value === raw);
   return found?.value ?? DEFAULT_COMPARE_METRIC;
 }
+
+/**
+ * `?ref=` — the run every change is measured against, as the URL spells it.
+ *
+ * TRIMMED, and empty is no pin at all. A run id pasted into a URL by hand
+ * carries a space as easily as anything else, and an untrimmed id matches no
+ * run, so the pin would silently fall back to the default with nothing on
+ * screen saying the reader's choice was dropped.
+ *
+ * NOT VALIDATED HERE: whether the id names a selected run whose figures loaded
+ * is `resolveReference`'s question, and it falls back on its own. This only
+ * says what the URL asked for.
+ */
+export function parseCompareReference(raw: string | null): string | null {
+  const id = raw?.trim() ?? '';
+  return id === '' ? null : id;
+}

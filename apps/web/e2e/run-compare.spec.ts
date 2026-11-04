@@ -1,6 +1,6 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { seedAdmin, seedRunWithData } from './fixtures.js';
-import { plot, signIn } from './helpers.js';
+import { apiJson, plot, signIn } from './helpers.js';
 import { runComparePath, runTrendsPath } from '../src/routes/paths.js';
 
 /**
@@ -14,6 +14,23 @@ import { runComparePath, runTrendsPath } from '../src/routes/paths.js';
  */
 
 const OVERLAY = 'chart-compare-overlay';
+
+/**
+ * `useWindowControl`'s settle: how long a drag must stop before it is written.
+ *
+ * Restated rather than imported, because that module imports `../routes/window`
+ * without an extension and this project's `nodenext` resolution refuses it.
+ *
+ * WHICH WAY DRIFT CUTS. Only the drag case leans on it: it waits four settles
+ * for a late write, and `slowDrag` beats ~130 ms between moves. A LONGER
+ * product settle (up to that ~1 s wait) is harmless. A SHORTER one is what
+ * breaks it — below the beat, each move commits on its own and "written
+ * exactly once" goes red on a correct product — so a change to the product's
+ * value must be mirrored here. The Apply case's only use of it is a wait
+ * four settles long, so a late write has time to land; what it ASSERTS rests
+ * on the order of writes off the history recorder, not on this value.
+ */
+const SETTLE_MS = 250;
 
 function overlay(page: Page): Locator {
   return page.getByTestId(OVERLAY);
@@ -59,6 +76,246 @@ function runsInTable(page: Page): Locator {
   return page.getByTestId('chart-data-compare-overlay').locator('thead th');
 }
 
+/**
+ * The comparison table, by its exact name.
+ *
+ * `exact`, because Playwright matches a table's name as a SUBSTRING and this
+ * page carries a second table — the overlay's data table — whose caption a
+ * looser pattern has already collided with once (the matrix's own docstring).
+ */
+const MATRIX = 'Changes against the reference';
+
+function matrix(page: Page): Locator {
+  return page.getByRole('table', { name: MATRIX, exact: true });
+}
+
+/**
+ * Each matrix column's run label, in the order the table draws them — the
+ * reference first. Read from the label's own span, so the `Reference` tag and
+ * the pin button beside it are not part of it, and the unit suffix is dropped.
+ */
+async function columnLabels(page: Page): Promise<string[]> {
+  return matrix(page)
+    .getByTestId('compare-column')
+    .evaluateAll((ths) =>
+      ths.map((th) => (th.querySelector('span[id]')?.textContent ?? '').replace(/\s\([^)]*\)$/, '')),
+    );
+}
+
+/**
+ * The `All requests` row's values, one per column, as each cell SHOWS its
+ * value — the change chip beside it excluded, a dash for a missing figure.
+ * Empty when the first row is anything else, so a caller comparing against
+ * expected values cannot pass on the wrong row.
+ */
+async function allRequestsRow(page: Page): Promise<string[]> {
+  // `evaluateAll`, which reads what is there NOW and never waits: this runs
+  // inside `expect.poll`, and a read that waited for a row would spend the
+  // poll's whole budget on one attempt.
+  return matrix(page)
+    .locator('tbody tr')
+    .evaluateAll((trs) => {
+      const tr = trs[0];
+      if (tr === undefined || tr.querySelector('th')?.textContent !== 'All requests') return [];
+      return Array.from(tr.querySelectorAll('td')).map(
+        (td) => td.querySelector(':scope > span > span')?.textContent ?? td.textContent ?? '',
+      );
+    });
+}
+
+/**
+ * The `All requests` row keyed by column label — or `{}` until every one of
+ * `columns` columns has drawn. Keyed rather than ordered, so an expectation
+ * built before the table settles cannot be built against the wrong order.
+ */
+async function allRequestsByLabel(page: Page, columns: number): Promise<Record<string, string>> {
+  const labels = await columnLabels(page);
+  const row = await allRequestsRow(page);
+  if (labels.length !== columns || row.length !== columns) return {};
+  return Object.fromEntries(labels.map((label, i) => [label, row[i]!]));
+}
+
+/** Every picker chip's run label, mapped to its run id. */
+async function runIdsByLabel(page: Page): Promise<Map<string, string>> {
+  const pairs = await page
+    .locator('[data-testid^="compare-run-"]')
+    .evaluateAll((chips) =>
+      chips.map((chip): [string, string] => [
+        (chip.getAttribute('aria-label') ?? '').split(' · ')[0]!,
+        (chip.getAttribute('data-testid') ?? '').slice('compare-run-'.length),
+      ]),
+    );
+  return new Map(pairs);
+}
+
+interface StatsJson {
+  readonly stats: readonly {
+    readonly scope: string;
+    readonly family: string;
+    readonly percentiles: Readonly<Record<string, number>>;
+  }[];
+}
+
+/**
+ * A run-scope percentile from the API itself, with the page's own session —
+ * the independent half of every "the table shows the right number" claim
+ * here. Exact runs answer an observed integer, which is how the table prints
+ * it; anything else is a fixture that cannot distinguish two answers.
+ */
+async function runPercentile(page: Page, runId: string, key: string, query = ''): Promise<number> {
+  const body = await apiJson<StatsJson>(page, `/v1/runs/${runId}/stats${query}`);
+  const row = body.stats.find((s) => s.scope === 'run' && s.family === 'response_time');
+  const value = row?.percentiles[key];
+  if (value === undefined) throw new Error(`/stats${query} for ${runId} carried no ${key}`);
+  expect(Number.isInteger(value), `${key} of an exact run is an observed integer`).toBe(true);
+  return value;
+}
+
+/** The longest run's duration among `ids`: the overlay slider's extent. */
+async function extentOf(page: Page, runId: string): Promise<number> {
+  const trends = await apiJson<{ runs: { id: string; durationMs: number | null }[] }>(
+    page,
+    `/v1/runs/${runId}/trends`,
+  );
+  return Math.max(...trends.runs.map((run) => run.durationMs ?? 0));
+}
+
+/**
+ * The overlay's slider, found in its own SVG — the same method
+ * `run-charts.spec.ts` uses for the run page's scrubber, and for the same
+ * reason: zrender emits it with no hooks, but in a KNOWN BAND at the bottom
+ * of the figure. The handles are its narrow, full-height nodes; the track is
+ * the widest node there. Measured in VIEWPORT coordinates, so the figure is
+ * scrolled into view first — `page.mouse` does not scroll.
+ *
+ * `getBoundingClientRect` on the handles is safe on every engine here because
+ * nothing below compares them to another node's edge within a pixel: Firefox
+ * inflates a stroked path's client rect by its stroke, which moves a handle's
+ * CENTRE by nothing and leaves a 6 px handle narrow.
+ */
+async function slider(page: Page): Promise<{
+  left: { x: number; y: number };
+  right: { x: number; y: number };
+  track: { left: number; right: number };
+}> {
+  const svg = plot(overlay(page));
+  await svg.scrollIntoViewIfNeeded();
+  const found = await svg.evaluate((el) => {
+    const root = el.getBoundingClientRect();
+    const band = Array.from(el.querySelectorAll('path, rect'))
+      .map((node) => node.getBoundingClientRect())
+      .filter((r) => r.width > 0 && r.height > 0 && r.top > root.bottom - 40);
+    const handles = band.filter((r) => r.width < 20 && r.height >= 10).sort((a, b) => a.left - b.left);
+    const track = band.reduce((widest, r) => (r.width > widest.width ? r : widest), band[0]!);
+    const centre = (r: DOMRect) => ({ x: r.left + r.width / 2, y: r.top + r.height / 2 });
+    return handles.length < 2 || track === undefined
+      ? null
+      : {
+          left: centre(handles[0]!),
+          right: centre(handles.at(-1)!),
+          track: { left: track.left, right: track.right },
+        };
+  });
+  expect(found, 'expected the overlay slider’s two handles and its track').not.toBeNull();
+  return found!;
+}
+
+async function drag(page: Page, from: { x: number; y: number }, toX: number): Promise<void> {
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move(toX, from.y, { steps: 6 });
+  await page.mouse.up();
+}
+
+/**
+ * A drag a reader actually makes: several moves with a beat between them.
+ *
+ * ECharts throttles the slider's `datazoom` reports (100 ms by default), so a
+ * drag that is over inside one throttle window reports ONCE whatever the page
+ * does with it — and a "written once" assertion over it proves nothing about
+ * the settle. Pausing ~130 ms per move makes each move its own report while
+ * staying well inside the 250 ms settle, which is the gesture the settle
+ * exists for. The page timestamps the moves, so the caller can check the beat
+ * held rather than trust the runner's clock.
+ */
+async function slowDrag(page: Page, from: { x: number; y: number }, toX: number): Promise<void> {
+  await page.evaluate(() => {
+    const moves: number[] = [];
+    (window as unknown as { __moves: number[] }).__moves = moves;
+    document.addEventListener('mousemove', () => moves.push(performance.now()), true);
+  });
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  const segments = 5;
+  for (let i = 1; i <= segments; i += 1) {
+    await page.mouse.move(from.x + ((toX - from.x) * i) / segments, from.y);
+    if (i < segments) await page.waitForTimeout(130);
+  }
+  await page.mouse.up();
+}
+
+/** `from`/`to` off the current URL, `null` where absent. */
+function windowParams(page: Page): { from: number | null; to: number | null } {
+  const params = new URL(page.url()).searchParams;
+  const read = (key: string) => (params.has(key) ? Number(params.get(key)) : null);
+  return { from: read('from'), to: read('to') };
+}
+
+/** One view-state write the page made: its (from, to) pair and when. */
+interface WindowWrite {
+  /** `"<from>-<to>"`, or `''` when the URL carries no window. */
+  readonly pair: string;
+  /** `performance.now()` in the page. */
+  readonly at: number;
+}
+
+/**
+ * Records every write the page makes to its address, before it loads.
+ *
+ * Every view-state write on Compare goes through React Router's `replace`,
+ * i.e. `history.replaceState`, so wrapping the history API sees each one —
+ * timestamped in the page's own clock, so a case can ask what was written
+ * BETWEEN two of the reader's actions rather than trusting a mirrored timer.
+ */
+async function recordWindowWrites(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const writes: { pair: string; at: number }[] = [];
+    (window as unknown as { __windowWrites: typeof writes }).__windowWrites = writes;
+    const record = (url: string | URL | null | undefined) => {
+      if (url == null) return;
+      const params = new URL(String(url), location.href).searchParams;
+      const pair =
+        params.has('from') || params.has('to') ? `${params.get('from')}-${params.get('to')}` : '';
+      writes.push({ pair, at: performance.now() });
+    };
+    const replace = history.replaceState.bind(history);
+    history.replaceState = (data, unused, url) => {
+      record(url);
+      replace(data, unused, url);
+    };
+    const push = history.pushState.bind(history);
+    history.pushState = (data, unused, url) => {
+      record(url);
+      push(data, unused, url);
+    };
+  });
+}
+
+async function windowWrites(page: Page): Promise<WindowWrite[]> {
+  return page.evaluate(() => (window as unknown as { __windowWrites: WindowWrite[] }).__windowWrites);
+}
+
+/**
+ * The distinct windows written, in order: a re-write of the window already in
+ * the address is not a second window.
+ */
+function distinctWindows(writes: readonly WindowWrite[]): string[] {
+  return writes.reduce<string[]>(
+    (seen, write) => (seen.at(-1) === write.pair ? seen : [...seen, write.pair]),
+    [],
+  );
+}
+
 /** Seeds a cohort of two and returns the newer run's id. */
 async function cohortOfTwo(): Promise<{ admin: Awaited<ReturnType<typeof seedAdmin>>; runId: string }> {
   const admin = await seedAdmin();
@@ -95,8 +352,13 @@ test('is reachable at its own URL and overlays both runs', async ({ page }) => {
   // statistics have arrived, and the unit harness answers `/stats` with a body
   // that fails its schema — so a jsdom assertion that the tile is absent would
   // pass against a summary that never rendered at all.
+  //
+  // AND THE DELTA IS AGAINST THE REFERENCE, which is what the tile says now:
+  // pinned on the current run it states the first other run against it, so a
+  // label naming the current run as the subject would be false.
   const summary = page.getByRole('region', { name: 'Comparison summary' });
-  await expect(summary.getByText('Current vs baseline')).toBeVisible();
+  await expect(summary.getByText('Change against the reference', { exact: true })).toBeVisible();
+  await expect(summary.getByText(/baseline/i)).toHaveCount(0);
   await expect(summary.getByText('Selected runs')).toHaveCount(0);
 });
 
@@ -184,40 +446,60 @@ test('ticking a run keeps the analysis window, there and back', async ({ page })
   await expect(page.getByTestId('window-from')).toHaveValue('0');
 });
 
-test('the per-request matrix has a column per run and a row per request', async ({ page }) => {
+/**
+ * ═══ THE TABLE LEADS WITH THE REFERENCE AND MEASURES THE REST AGAINST IT ═══
+ *
+ * Gatling Enterprise's comparison table, not the old two-run grid with a
+ * trailing Change column: the reference is the FIRST data column, every other
+ * column carries its own change beside its value, and the summary rows come
+ * before the requests. Each of those is a claim a layout can drop while still
+ * drawing a table, so each is asserted rather than the table's existence.
+ */
+test('the matrix leads with the reference and measures the other run against it', async ({ page }) => {
   const { admin, runId } = await cohortOfTwo();
   await signIn(page, admin);
 
   await page.goto(runComparePath(runId));
   await drawn(page);
 
-  const table = page.getByRole('table', { name: /request/i });
-  await expect(table).toHaveCount(1);
+  // The table lives in its own scroll region, so a wide comparison scrolls
+  // there rather than dragging the page sideways.
+  const region = page.getByRole('region', { name: 'Reference comparison', exact: true });
+  await expect(region.getByRole('table', { name: MATRIX, exact: true })).toHaveCount(1);
 
-  // One label column, one per selected run, and the Change column that spares
-  // the reader the arithmetic (review.md finding 18). Retrying, for the same
-  // reason the overlay's helper does: the table renders as each /stats resolves.
-  await expect(table.locator('thead th')).toHaveCount(4);
-  const headers = await table.locator('thead th').allTextContents();
-  expect(headers[0]).toBe('Request');
-  // LAST, after the values it is derived from — asserted by position, because
-  // a change column between two run columns would read as belonging to one of
-  // them, and a bare `toContain` could not tell the two layouts apart.
-  expect(headers.at(-1)).toBe('Change');
+  const table = matrix(page);
+  // The label column and one column per selected run — NO change column. A
+  // change belongs to the run it measures, not to a column of its own.
+  // Retrying, because each column appears as its run's /stats resolves.
+  await expect(table.getByTestId('compare-column')).toHaveCount(2);
+  await expect(table.locator('thead th')).toHaveCount(3);
+  await expect(table.locator('thead th').first()).toHaveText('Request');
 
-  // Every request the reference bundle produces gets a row, and each row has a
-  // cell per run plus its change.
+  // FIRST is the reference, and its header SAYS so in its accessible name —
+  // the word a screen-reader user hears with every cell beneath it.
+  const columns = table.getByTestId('compare-column');
+  await expect(columns.first()).toHaveAttribute('data-reference', 'true');
+  await expect(columns.first()).toHaveAccessibleName(/Reference$/);
+  await expect(columns.nth(1)).not.toHaveAttribute('data-reference', 'true');
+  // The reference is the one column without a pin: it is already pinned.
+  await expect(columns.first().getByRole('button')).toHaveCount(0);
+  await expect(columns.nth(1).getByRole('button', { name: /^Set .+ as reference$/ })).toHaveCount(1);
+
+  // The summary row comes first, then a row per request.
   const rows = table.locator('tbody tr');
-  expect(await rows.count()).toBeGreaterThan(1);
-  await expect(rows.first().locator('td')).toHaveCount(3);
+  await expect(rows.first().getByRole('rowheader')).toHaveText('All requests');
+  expect(await rows.count()).toBeGreaterThan(2);
+  await expect(rows.first().locator('td')).toHaveCount(2);
 
-  /* AND THE CHANGE IS REAL, not an empty column. `cohortOfTwo` ingests the same
-     bundle twice, so most requests move by nothing at all — a comparison of a
-     run with its twin is precisely where a fabricated delta would hide. What
-     must be true is that the cell states a change rather than a dash: the two
-     runs both HAVE these requests, so "no measurement" is the one answer that
-     would be wrong. */
-  await expect(rows.first().getByTestId('compare-change')).toHaveCount(1);
+  /* AND THE CHANGE IS REAL, AND ON THE RIGHT SIDE. `cohortOfTwo` ingests the
+     same bundle twice, so most rows move by nothing — a comparison of a run
+     with its twin is exactly where a fabricated delta would hide. What must be
+     true is that the measured column STATES a change (both runs have these
+     requests, so "no measurement" is the one wrong answer) and that the
+     reference, which is what the change is measured FROM, states none. */
+  const cells = rows.first().locator('td');
+  await expect(cells.nth(1).getByTestId('compare-change')).toHaveCount(1);
+  await expect(cells.first().getByTestId('compare-change')).toHaveCount(0);
 });
 
 test('a run outside the cohort is dropped, and the page says so', async ({ page }) => {
@@ -370,10 +652,41 @@ test('overlays five runs and says why it will not take a sixth', async ({ page }
   const refused = page.locator('[data-testid^="compare-run-"][aria-pressed="false"]').first();
   await expect(refused).toBeDisabled();
   await expect(refused).toHaveAttribute('aria-describedby', 'compare-cap');
+
+  /* ═══ AND FIVE COLUMNS OF VALUES AND CHANGES FIT THE PAGE ═══
+   *
+   * The widest the comparison table gets, and the one width no unit case can
+   * measure: every non-reference header carries a pin and every cell a change
+   * chip beside its value. Whatever the table's own width, the PAGE must not
+   * scroll sideways — the table scrolls inside its region, which is what that
+   * region is for. Measured at the suite's own viewport. */
+  await expect(matrix(page).getByTestId('compare-column')).toHaveCount(5);
+  const region = page.getByRole('region', { name: 'Reference comparison', exact: true });
+  await region.scrollIntoViewIfNeeded();
+  const layout = await region.evaluate((el) => {
+    const box = el.getBoundingClientRect();
+    const table = el.querySelector('table')!.getBoundingClientRect();
+    return {
+      documentScroll: document.documentElement.scrollWidth,
+      viewport: document.documentElement.clientWidth,
+      regionRight: box.right,
+      regionScroll: el.scrollWidth,
+      tableWidth: table.width,
+      overflowX: getComputedStyle(el).overflowX,
+    };
+  });
+  expect(layout.documentScroll, 'the page itself does not scroll sideways').toBeLessThanOrEqual(
+    layout.viewport,
+  );
+  expect(layout.regionRight).toBeLessThanOrEqual(layout.viewport);
+  expect(layout.overflowX, 'a wider table scrolls inside its region').toBe('auto');
+  // The table is held by the region: all of it lies within what the region
+  // can scroll to, so nothing of it spills onto the page.
+  expect(layout.tableWidth).toBeLessThanOrEqual(layout.regionScroll);
 });
 
 /**
- * ═══ CURRENT AND BASELINE, NAMED, ON A REAL COHORT (review.md 17) ═══
+ * ═══ CURRENT AND REFERENCE, NAMED, ON A REAL COHORT (review.md 17) ═══
  *
  * WHAT ONLY THIS LAYER CAN PROVE. `RunCompare.test.tsx` hands the picker a
  * cohort of its own making, so it shows the chips render what they are given.
@@ -384,9 +697,9 @@ test('overlays five runs and says why it will not take a sixth', async ({ page }
  *
  * Both roles are asserted because either alone passes against the wrong page: a
  * picker that marked every chip Current satisfies the first, and one that
- * marked every chip Baseline satisfies the second.
+ * marked every chip Reference satisfies the second.
  */
-test('the picker names which run is current and which is the baseline', async ({ page }) => {
+test('the picker names which run is current and which is the reference', async ({ page }) => {
   const { admin, runId } = await cohortOfTwo();
   await signIn(page, admin);
 
@@ -395,10 +708,328 @@ test('the picker names which run is current and which is the baseline', async ({
 
   await expect(page.getByTestId(`compare-role-${runId}`)).toHaveText('Current');
 
-  // Exactly one Baseline, and it is NOT the run the page was opened from —
-  // which is the whole claim. `compareSummary` divides by that run, so a
-  // picker naming a different one would be labelling the wrong evidence.
-  const baseline = page.locator('[data-testid^="compare-role-"]', { hasText: 'Baseline' });
-  await expect(baseline).toHaveCount(1);
-  await expect(page.getByTestId(`compare-role-${runId}`)).not.toHaveText('Baseline');
+  // Exactly one Reference, and with nothing pinned it is NOT the run the page
+  // was opened from — and it is the run the table leads with, because the
+  // chip, the tiles and the table are all built from one `resolveReference`
+  // answer. A chip naming a different run would be labelling the wrong
+  // evidence.
+  const reference = page.locator('[data-testid^="compare-role-"]', { hasText: 'Reference' });
+  await expect(reference).toHaveCount(1);
+  await expect(page.getByTestId(`compare-role-${runId}`)).not.toContainText('Reference');
+  await expect(page.locator('[data-testid^="compare-role-"]', { hasText: 'Baseline' })).toHaveCount(0);
+
+  const referenceId = (await reference.getAttribute('data-testid'))!.slice('compare-role-'.length);
+  const byLabel = await runIdsByLabel(page);
+  await expect.poll(async () => byLabel.get((await columnLabels(page))[0] ?? '')).toBe(referenceId);
+});
+
+/**
+ * ═══ A RANK THE PROJECT DOES NOT STORE, ANSWERED EXACTLY ═══
+ *
+ * p99.9 is not in the project's percentile set, so `/stats` carries it only
+ * when the page asks for it with `?percentiles=`. Without the ask, the cell is
+ * a dash — never a guess. What the browser proves here and nothing else can:
+ * that the page really asks, and that the figure it then shows is the run's
+ * OWN p99.9, the one the API answers for that run alone.
+ *
+ * Compared per COLUMN, through each column's label, because the table orders
+ * columns by reference first rather than by selection.
+ */
+test('p99.9 on Compare equals the run’s own /stats p99.9', async ({ page }) => {
+  const { admin, runId } = await cohortOfTwo();
+  await signIn(page, admin);
+
+  await page.goto(runComparePath(runId));
+  await drawn(page);
+
+  await page.getByLabel('Metric', { exact: true }).selectOption({ label: '99.9th percentile' });
+  await expect(page).toHaveURL(/[?&]metric=p99\.9(&|$)/);
+
+  // BOTH runs' chips, or the expectation below is `{}` — and so is the
+  // table's answer until it settles, which would pass the poll at once.
+  const byLabel = await runIdsByLabel(page);
+  expect(byLabel.size, 'one label per run in the cohort').toBe(2);
+  const expected: Record<string, string> = {};
+  for (const [label, id] of byLabel) {
+    expected[label] = String(await runPercentile(page, id, 'p99.9', '?percentiles=99.9'));
+  }
+
+  // Retried as a whole: the columns are rebuilt as each run's re-asked /stats
+  // lands, and a one-shot read could sample the p95 table on its way out.
+  await expect.poll(() => allRequestsByLabel(page, 2)).toEqual(expected);
+});
+
+/**
+ * ═══ A PIN IS PART OF THE QUESTION, SO IT IS IN THE URL ═══
+ *
+ * Pinning the CURRENT run — the one run that is never the reference by
+ * default, so the move is visible — puts its column first, names it Reference
+ * in the header and in the picker (where it is both, and says both), and
+ * writes `ref=` so a pasted link measures from the same run. The reload is the
+ * proof that the pin lives in the address and not in component state.
+ */
+test('pinning a run moves it first and keeps it in the URL', async ({ page }) => {
+  const { admin, runId } = await cohortOfTwo();
+  await signIn(page, admin);
+
+  await page.goto(runComparePath(runId));
+  await drawn(page);
+  await expect(matrix(page).getByTestId('compare-column')).toHaveCount(2);
+
+  const byLabel = await runIdsByLabel(page);
+  const currentLabel = [...byLabel].find(([, id]) => id === runId)![0];
+  // Not already first, or the pin would move nothing.
+  expect((await columnLabels(page))[0]).not.toBe(currentLabel);
+
+  await matrix(page)
+    .getByRole('button', { name: `Set ${currentLabel} as reference`, exact: true })
+    .click();
+
+  const expectPinned = async () => {
+    await expect(page).toHaveURL(new RegExp(`[?&]ref=${runId}(&|$)`));
+    await expect.poll(async () => (await columnLabels(page))[0]).toBe(currentLabel);
+    const first = matrix(page).getByTestId('compare-column').first();
+    await expect(first).toHaveAttribute('data-reference', 'true');
+    await expect(first.getByTestId('compare-reference')).toHaveText('Reference');
+    await expect(page.getByTestId(`compare-role-${runId}`)).toHaveText('Current · Reference');
+  };
+
+  await expectPinned();
+  await page.reload();
+  await drawn(page);
+  await expectPinned();
+});
+
+/**
+ * ═══ A TYPED WINDOW NARROWS THE TABLE, AND THE ADDRESS KEEPS IT ═══
+ *
+ * The fields are the keyboard path to the window, and the exact one. What only
+ * a browser can show is the whole loop: the window reaches the URL in
+ * milliseconds, every run's /stats is re-read for it, and the table then
+ * carries THAT window's figures — the same ones the API answers for the same
+ * window — rather than the whole run's.
+ *
+ * "Differs from the whole run for at least one run" is the vacuity guard: a
+ * window the figures happened not to move under would let a page that ignored
+ * the window pass the equality.
+ */
+test('a time range narrows the table and survives a reload', async ({ page }) => {
+  const { admin, runId } = await cohortOfTwo();
+  await signIn(page, admin);
+
+  await page.goto(runComparePath(runId));
+  await drawn(page);
+
+  const byLabel = await runIdsByLabel(page);
+  const whole: Record<string, string> = {};
+  const windowed: Record<string, string> = {};
+  for (const [label, id] of byLabel) {
+    whole[label] = String(await runPercentile(page, id, 'p95'));
+    windowed[label] = String(await runPercentile(page, id, 'p95', '?from=10000&to=40000'));
+  }
+  expect(
+    [...byLabel.keys()].some((label) => whole[label] !== windowed[label]),
+    'the window must move p95 for at least one run, or this case proves nothing',
+  ).toBe(true);
+  // And the page starts on the whole run, so the move below is the window's.
+  await expect.poll(() => allRequestsByLabel(page, 2)).toEqual(whole);
+
+  await page.getByTestId('compare-window-from').fill('10');
+  await page.getByTestId('compare-window-to').fill('40');
+  await page.getByTestId('compare-window-apply').click();
+  await expect(page).toHaveURL(/[?&]from=10000(&|$)/);
+  await expect(page).toHaveURL(/[?&]to=40000(&|$)/);
+
+  const expectWindowed = () => expect.poll(() => allRequestsByLabel(page, 2)).toEqual(windowed);
+
+  await expectWindowed();
+  await page.reload();
+  await drawn(page);
+  await expect(page.getByTestId('compare-window-from')).toHaveValue('10');
+  await expect(page.getByTestId('compare-window-to')).toHaveValue('40');
+  await expectWindowed();
+});
+
+/**
+ * ═══ THE OVERLAY'S SLIDER, DRIVEN BY A REAL POINTER ═══
+ *
+ * jsdom cannot drive an ECharts slider, so every claim about the gesture is a
+ * claim only this layer can check: that a drag SETTLES before it is written
+ * (one write for the whole gesture, not one per animation frame — each write
+ * re-reads every run), and that the window it writes narrows all three
+ * readers of it — the overlay, the table and the tiles.
+ *
+ * WRITES ARE COUNTED AT THE HISTORY API (`recordWindowWrites`), as distinct
+ * (from, to) pairs in order: a re-write of the same window is not a second
+ * window.
+ */
+test('a drag on the overlay settles into one window that narrows the chart, table and tiles', async ({
+  page,
+}) => {
+  const { admin, runId } = await cohortOfTwo();
+  await signIn(page, admin);
+  await recordWindowWrites(page);
+
+  await page.goto(runComparePath(runId));
+  await drawn(page);
+  // The overlay's data table: one row per elapsed second, both runs drawn.
+  const overlayTable = page.getByTestId('chart-data-compare-overlay');
+  const overlayRows = overlayTable.locator('tbody tr');
+  const firstElapsed = async () => Number(await overlayRows.first().locator('th').textContent());
+  await expect(runsInTable(page)).toHaveCount(3);
+  const wholeFirst = await firstElapsed();
+  // Polled, not read once: `count()` is an immediate read with no waiting,
+  // and a table still filling in would make the narrowing below compare
+  // against a short baseline. The overlay draws only once every run's read
+  // has answered, so a non-empty count here is the whole run's.
+  await expect.poll(() => overlayRows.count()).toBeGreaterThan(0);
+  const wholeRows = await overlayRows.count();
+
+  const { left, track } = await slider(page);
+  await slowDrag(page, left, track.left + (track.right - track.left) * 0.35);
+
+  // THE GESTURE WAS THE ONE THE SETTLE IS FOR: long enough to span several of
+  // ECharts' report windows, and never still for a whole settle — a machine
+  // that stalled mid-drag would legitimately write twice, and is reported as
+  // such here rather than as a product defect below.
+  const moves = await page.evaluate(() => (window as unknown as { __moves: number[] }).__moves);
+  const gaps = moves.slice(1).map((t, i) => t - moves[i]!);
+  expect(moves.at(-1)! - moves[0]!, 'the drag spans several report windows').toBeGreaterThan(400);
+  expect(Math.max(...gaps), 'the drag never paused for a whole settle').toBeLessThan(SETTLE_MS);
+
+  await expect(page).toHaveURL(/[?&]from=\d+/, { timeout: 5_000 });
+
+  // ONE window for the whole gesture, and nothing more once it has settled.
+  // The wait is longer than a settle, so a late second write would land here.
+  await page.waitForTimeout(SETTLE_MS * 4);
+  const { from, to } = windowParams(page);
+
+  /* AND IT IS THE WINDOW THE GESTURE ENDED ON. A page that wrote on every
+     report would write the FIRST move's window, and that write redraws the
+     overlay under the pointer and ends the drag — so it, too, writes exactly
+     once. What tells the two apart is where the window starts: the drag
+     ended 35% of the way along a track spanning the whole run (the axis is
+     pinned to it), and only a settled write carries that. */
+  const extent = await extentOf(page, runId);
+  expect(Math.abs(from! - extent * 0.35), `from=${from} against 35% of ${extent}`).toBeLessThan(
+    extent * 0.05,
+  );
+  expect(to).toBe(extent);
+
+  const writes = distinctWindows(await windowWrites(page));
+  expect(writes.filter((pair) => pair !== ''), 'the drag was written exactly once').toEqual([
+    `${from}-${to}`,
+  ]);
+
+  // THE CHART: its first plotted bucket moved from the run's start to where
+  // the window starts — the first whole-second bucket at or after `from`,
+  // because a windowed /series selects the buckets that START inside it.
+  await expect.poll(firstElapsed).toBeGreaterThan(wholeFirst);
+  expect(Math.abs((await firstElapsed()) * 1000 - from!)).toBeLessThan(1000);
+  expect(await overlayRows.count()).toBeLessThan(wholeRows);
+
+  // THE TABLE: each run's figures for this window, as the API answers them.
+  // Both runs named first, or `{}` would match a table that has not settled.
+  const byLabel = await runIdsByLabel(page);
+  expect(byLabel.size, 'one label per run in the cohort').toBe(2);
+  const windowed: Record<string, string> = {};
+  for (const [label, id] of byLabel) {
+    windowed[label] = String(await runPercentile(page, id, 'p95', `?from=${from}&to=${to}`));
+  }
+  await expect.poll(() => allRequestsByLabel(page, 2)).toEqual(windowed);
+
+  // THE TILES: the best p95 is the lowest of those same windowed figures.
+  await expect(page.getByTestId('compare-best')).toHaveText(
+    new RegExp(`^${Math.min(...Object.values(windowed).map(Number))} ms$`),
+  );
+});
+
+/**
+ * ═══ APPLY DURING A SETTLING DRAG KEEPS THE DRAG ═══
+ *
+ * The fields hold the window from BEFORE the gesture. Pressing Apply inside
+ * the settle used to commit those stale fields and cancel the drag — the
+ * reader's last gesture silently undone. Started from a window, so the stale
+ * answer (10–40 s) is distinguishable from the dragged one.
+ *
+ * The guard is what keeps this honest: Apply has to land BEFORE the drag's own
+ * write, or the drag commits first and the case proves nothing about the
+ * race. It is read off the history recorder, in the page's clock: until the
+ * click, nothing but the opening 10–40 s window may have been written. So it
+ * needs no copy of the product's settle and cannot drift from it — and it
+ * covers the whole gesture, not only the gap after the release, because a
+ * short settle can commit while the pointer is still down (measured: at a
+ * 20 ms settle the drag wrote 40 ms BEFORE its own mouseup).
+ */
+test('Apply pressed right after a drag commits the dragged window', async ({ page }) => {
+  const { admin, runId } = await cohortOfTwo();
+  await signIn(page, admin);
+  await recordWindowWrites(page);
+
+  await page.goto(`${runComparePath(runId)}?from=10000&to=40000`);
+  await drawn(page);
+  await expect(page.getByTestId('compare-window-from')).toHaveValue('10');
+
+  const apply = page.getByTestId('compare-window-apply');
+  await apply.scrollIntoViewIfNeeded();
+  await page.evaluate(() => {
+    const clicked = { at: 0 };
+    (window as unknown as { __applyClicked: typeof clicked }).__applyClicked = clicked;
+    document
+      .querySelector('[data-testid="compare-window-apply"]')!
+      .addEventListener('click', () => (clicked.at = performance.now()), true);
+  });
+
+  const { left, track } = await slider(page);
+  await drag(page, left, track.left + (track.right - track.left) * 0.03);
+  await apply.click();
+
+  const applyAt = await page.evaluate(
+    () => (window as unknown as { __applyClicked: { at: number } }).__applyClicked.at,
+  );
+  expect(applyAt, 'the Apply click was recorded').toBeGreaterThan(0);
+  const beforeApply = (await windowWrites(page)).filter(
+    (write) => write.at < applyAt && write.pair !== '10000-40000',
+  );
+  expect(beforeApply, 'Apply must land before the drag’s own write').toEqual([]);
+
+  // The dragged window, not the fields' 10–40 s, once everything has settled.
+  await expect.poll(() => windowParams(page).from, { timeout: 5_000 }).not.toBe(10_000);
+  await page.waitForTimeout(SETTLE_MS * 4);
+  const { from, to } = windowParams(page);
+  expect(from === null || from < 10_000, `dragged left of 10 s, got from=${from}`).toBe(true);
+  expect(to).toBe(40_000);
+});
+
+/**
+ * ═══ THE AXIS STAYS WHOLE, SO A NARROWED WINDOW CAN WIDEN AGAIN ═══
+ *
+ * The overlay's data is read for the window, so its own extent is only the
+ * window. Left to auto-scale, the slider's track would shrink to the slice
+ * and its handles would sit at the track's ends — no gesture could reach past
+ * them. Pinning the axis to `[0, extent]` keeps the map whole while the
+ * territory narrows: dragging each handle out to its end widens the window
+ * back to the whole run.
+ */
+test('the overlay slider widens a narrowed window back to the whole run', async ({ page }) => {
+  const { admin, runId } = await cohortOfTwo();
+  await signIn(page, admin);
+
+  await page.goto(`${runComparePath(runId)}?from=10000&to=40000`);
+  await drawn(page);
+  const extent = await extentOf(page, runId);
+  expect(extent).toBeGreaterThan(40_000);
+
+  // Right handle out to the track's end: the window reaches the run's end.
+  const before = await slider(page);
+  await drag(page, before.right, before.track.right + 4);
+  await expect.poll(() => windowParams(page).to, { timeout: 5_000 }).toBe(extent);
+  expect(windowParams(page).from).toBe(10_000);
+
+  // Then the left handle out to the start: the whole run, which the URL
+  // carries as no window at all.
+  const after = await slider(page);
+  await drag(page, after.left, after.track.left - 4);
+  await expect(page).not.toHaveURL(/[?&]from=/, { timeout: 5_000 });
+  await expect(page).not.toHaveURL(/[?&]to=/);
 });

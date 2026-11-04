@@ -1,10 +1,16 @@
-import type { StatsResponse } from '@perfportal/contracts';
-import { isChangeGood, type CompareMetric } from '../charts/transforms/compare';
-import { figureIsExact, metricValue, type CompareStats } from '../tables/buildCompareMatrix';
+import { compareUnit, isChangeGood, type CompareMetric } from '../charts/transforms/compare';
+import { figureIsExact, toCompareMatrix, type CompareStats } from '../tables/buildCompareMatrix';
 
 export interface CompareSummaryModel {
   readonly selectedCount: number;
+  /**
+   * The run the delta is stated FOR: the run being read, unless the reader
+   * pinned it as the reference — then the first other selected run, so the
+   * tile states a change rather than a self-comparison of 0%.
+   */
   readonly currentLabel: string;
+  /** The REFERENCE's label (the run the table measures every change against).
+   *  The name predates the reference; it is kept so callers did not churn. */
   readonly baselineLabel: string | null;
   readonly currentValue: number | null;
   readonly baselineValue: number | null;
@@ -23,9 +29,39 @@ export interface CompareSummaryModel {
    * delta is real.
    */
   readonly deltaUnavailable: 'no-baseline' | 'not-measured' | 'zero-baseline' | null;
+  /**
+   * Whether the delta is an improvement — the table's own cell `good` for the
+   * same comparison, so the tile and the table cannot colour it differently.
+   *
+   * `null` MEANS "NO JUDGEMENT", AND IT HAS THREE CAUSES THAT ALL RENDER THE
+   * SAME: no delta at all (`deltaUnavailable` says why, and the tile's text
+   * differs), no change (an unchanged figure is not an improvement — the
+   * table's muted `=`), and a metric with no direction (users, CPU;
+   * `directional` says which). All three draw the delta in the muted colour,
+   * and none needs telling apart by colour, so the type does not split them;
+   * `directional` and `deltaUnavailable` carry the difference where the tile
+   * needs it. A zero baseline is NOT among them: 0 → 12 failed has no
+   * percentage and still has a direction, and the table colours it.
+   */
   readonly deltaGood: boolean | null;
+  /**
+   * Whether the metric has a better and a worse at all (`isChangeGood`).
+   * `false` for users and CPU: more users or more CPU is not an improvement or
+   * a regression, so there is no "best" run — `bestLabel`/`bestValue` are
+   * `null` for that reason rather than for want of figures.
+   */
+  readonly directional: boolean;
+  /** The best selected run by the metric's direction, read off the same first
+   *  row; `null` when no run has a figure, or the metric has no direction. */
   readonly bestLabel: string | null;
   readonly bestValue: number | null;
+  /**
+   * The unit of the tiles' values — the first table row's, not the overlay's.
+   * The same as `compareUnit` except for errors, whose first row is `Count`
+   * (failed requests), where the overlay plots KO per second: "/s" beside a
+   * count would be a false label.
+   */
+  readonly unit: string;
   /**
    * Whether the delta's figures are exact: BOTH the current run's and the
    * baseline's (`figureIsExact`), since a difference is no more exact than
@@ -40,70 +76,85 @@ export interface CompareSummaryModel {
 }
 
 /**
- * The run-scope row's value for one metric.
+ * The summary tiles, stated off the comparison table.
  *
- * THE PER-METRIC MEANING IS `metricValue`'s, NOT A SECOND COPY OF IT. This
- * function used to restate all four branches — including
- * `throughputRps * errorRate` for "Errors" — beside the matrix that already
- * declares them, which is exactly the divergence `buildCompareMatrix`'s own
- * docstring argues against: the same word above the overlay, the matrix and
- * these tiles has to mean the same number in all three. All that is left
- * here is WHICH ROW to read.
+ * EACH RUN'S VALUE IS ITS CELL IN `toCompareMatrix`'S FIRST ROW, and the
+ * delta is that cell's change against `referenceRunId` — the same reference
+ * the table is built with. The tiles used to compare "the first other run"
+ * whatever the reader had pinned, and read the run row themselves, so after a
+ * pin the table and the tiles directly above it described two different
+ * comparisons, and for errors two different quantities (a count against a
+ * rate). One source makes that unrepresentable.
+ *
+ * `referenceRunId` is `resolveReference`'s answer and REQUIRED, for the
+ * matrix's reason: an id not among `runs` (or `null`) is no reference and no
+ * delta, never a delta against a guess.
  */
-export function runMetricValue(stats: StatsResponse, metric: CompareMetric): number | null {
-  const row = stats.stats.find((candidate) => candidate.scope === 'run');
-  return row === undefined ? null : metricValue(row, metric);
-}
-
 export function buildCompareSummary(
   runs: readonly CompareStats[],
   currentRunId: string,
+  referenceRunId: string | null,
   metric: CompareMetric,
 ): CompareSummaryModel {
-  const values = runs.map((run) => ({ ...run, value: runMetricValue(run.stats, metric) }));
-  const current = values.find((run) => run.id === currentRunId) ?? values[0] ?? null;
-  const baseline = values.find((run) => run.id !== current?.id) ?? null;
-  const comparable = values.filter((run): run is typeof run & { value: number } => run.value !== null);
-  const best = comparable.sort((a, b) => betterScore(a.value, b.value, metric))[0] ?? null;
-  const currentValue = current?.value ?? null;
-  const baselineValue = baseline?.value ?? null;
+  const matrix = toCompareMatrix(runs, metric, referenceRunId);
+  const firstRow = matrix.rows[0];
+  const cellOf = (run: CompareStats) => {
+    const column = matrix.columns.findIndex((col) => col.id === run.id);
+    return firstRow?.cells[column] ?? null;
+  };
+
+  const reference = runs.find((run) => run.id === referenceRunId) ?? null;
+  // The current run, unless it IS the reference — then the first other run.
+  const subject =
+    runs.find((run) => run.id === currentRunId && run !== reference) ??
+    runs.find((run) => run !== reference) ??
+    null;
+  // With nothing to compare it against, the reference is not a baseline.
+  const baseline = subject === null ? null : reference;
+
+  const subjectCell = subject === null ? null : cellOf(subject);
+  const currentValue = subjectCell?.value ?? null;
+  const baselineValue = baseline === null ? null : cellOf(baseline)?.value ?? null;
+  const change = subjectCell?.change ?? null;
+
   const deltaUnavailable: CompareSummaryModel['deltaUnavailable'] =
     baseline === null
       ? 'no-baseline'
-      : currentValue === null || baselineValue === null
+      : change === null
         ? 'not-measured'
-        : baselineValue === 0
+        : change.percent === null
           ? 'zero-baseline'
           : null;
 
-  const deltaPercent =
-    deltaUnavailable !== null
+  /* The direction rule is `isChangeGood`'s alone: asked of a rise of one, it
+     answers whether higher is better, lower is better, or neither. */
+  const higherIsBetter = isChangeGood(1, metric);
+  const comparable = runs
+    .map((run) => ({ run, value: cellOf(run)?.value ?? null }))
+    .filter((entry): entry is { run: CompareStats; value: number } => entry.value !== null);
+  const best =
+    higherIsBetter === null
       ? null
-      : ((currentValue! - baselineValue!) / baselineValue!) * 100;
+      : (comparable.sort((a, b) => (higherIsBetter ? b.value - a.value : a.value - b.value))[0] ?? null);
 
   return {
     selectedCount: runs.length,
-    currentLabel: current?.label ?? 'Current run',
+    currentLabel: subject?.label ?? 'Current run',
     baselineLabel: baseline?.label ?? null,
     currentValue,
     baselineValue,
-    deltaPercent,
+    deltaPercent: deltaUnavailable === null ? change!.percent : null,
     deltaUnavailable,
-    deltaGood: deltaPercent === null ? null : isChangeGood(deltaPercent, metric),
-    bestLabel: best?.label ?? null,
+    deltaGood: change?.good ?? null,
+    directional: higherIsBetter !== null,
+    bestLabel: best?.run.label ?? null,
     bestValue: best?.value ?? null,
+    unit: metric === 'errors' ? 'failed' : compareUnit(metric),
     deltaExact:
       deltaUnavailable === 'no-baseline' ||
       deltaUnavailable === 'not-measured' ||
-      ((current === null || figureIsExact(current.exact, metric)) &&
+      ((subject === null || figureIsExact(subject.exact, metric)) &&
         (baseline === null || figureIsExact(baseline.exact, metric))),
-    bestExact: best === null || figureIsExact(best.exact, metric),
+    bestExact: best === null || figureIsExact(best.run.exact, metric),
   };
 }
-
-function betterScore(a: number, b: number, metric: CompareMetric): number {
-  if (metric === 'throughput') return b - a;
-  return a - b;
-}
-
-

@@ -1,6 +1,8 @@
 import type { SVGProps } from 'react';
 import {
   Activity,
+  ArrowDownRight,
+  ArrowUpRight,
   Box,
   ChartArea,
   ChartSpline,
@@ -23,6 +25,7 @@ import {
   LoaderCircle,
   LockKeyhole,
   LogOut,
+  MapPin,
   Maximize2,
   Minimize2,
   Monitor,
@@ -162,6 +165,17 @@ export const CopyIcon = icon(Clipboard);
 export const CheckIcon = icon(Check);
 export const DownloadIcon = icon(Download);
 export const FilterIcon = icon(Funnel);
+
+/* --- Compare's table (see `tables/CompareMatrix.tsx`) --- */
+
+/** Make this run the reference every other column is measured against. */
+export const PinIcon = icon(MapPin);
+/** A change that went up — north-east, Gatling Enterprise's own arrow. Whether
+ *  up is GOOD is the metric's question (`isChangeGood`), carried by colour and
+ *  words beside it, never by the arrow. */
+export const ChangeUpIcon = icon(ArrowUpRight);
+/** A change that went down — south-east. */
+export const ChangeDownIcon = icon(ArrowDownRight);
 
 /* --- A chart card's own view controls (see `charts/ChartActions.tsx`) --- */
 

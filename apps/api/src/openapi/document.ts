@@ -146,6 +146,35 @@ const parameters: Record<string, ParameterObject> = {
       'matches no rows rather than being rejected, so the response\'s "stats" array comes back empty.',
     schema: { type: 'string', enum: ['run', 'scenario', 'group', 'request'] },
   },
+  StatsPercentiles: {
+    name: 'percentiles',
+    in: 'query',
+    description:
+      'Ranks to answer instead of the project\'s configured set, computed from the stored ' +
+      'histograms — for example "90,99.9,99.99". Every row\'s "percentiles" map then holds ' +
+      'exactly these ranks (keys "p90", "p99.9", "p99.99"), on the whole run and under a ' +
+      '"from"/"to" window alike; indicator bands and every other field are unchanged. A row ' +
+      'whose statistics are estimated answers only the requested ranks it stored, and omits ' +
+      'the rest rather than guessing them. One to twelve comma-separated decimal numbers ' +
+      'of at most six decimal places, strictly between 0 and 100, given once; anything ' +
+      'else is a 400 INVALID_QUERY.',
+    schema: { type: 'string' },
+  },
+  SeriesPercentiles: {
+    name: 'percentiles',
+    in: 'query',
+    description:
+      'Ranks to add to every bucket beside the ones it stored, computed from that bucket\'s ' +
+      'stored histograms — for example "99.9,99.99". Each bucket\'s "percentiles", ' +
+      '"percentilesOk" and "percentilesKo" maps gain these ranks (keys "p99.9", "p99.99"), ' +
+      'from the merged, OK and KO histogram respectively; the ranks a bucket stored are ' +
+      'unchanged. A bucket whose histograms are not exact (ingested before 2026-10-15) gains ' +
+      'nothing, and an empty population (a bucket with no OK requests, say) gains no key ' +
+      'rather than a 0. One to twelve comma-separated decimal numbers of at most six ' +
+      'decimal places, strictly between 0 and 100, given once; anything else is a 400 ' +
+      'INVALID_QUERY.',
+    schema: { type: 'string' },
+  },
   StatsFamily: {
     name: 'family',
     in: 'query',
@@ -704,7 +733,8 @@ const responses: Record<string, ResponseObject> = {
       'A path or query parameter was malformed (e.g. "id" or "cursor" is not a UUID), or ' +
       '(code RUN_FILTER_INVALID, on the run list routes) "status" or "verdict" named a value ' +
       'outside its enum, or (code INVALID_QUERY, on the run list routes) a parameter was given ' +
-      'more than once, or (codes UNKNOWN_REMOTE / UNKNOWN_HOSTNAME, on the agent routes) ' +
+      'more than once, or (code INVALID_QUERY, on the run series route) "percentiles" was not ' +
+      'a list of one to twelve ranks strictly between 0 and 100, or (codes UNKNOWN_REMOTE / UNKNOWN_HOSTNAME, on the agent routes) ' +
       '"remote" or "hostname" named one the run does not have. application/problem+json with ' +
       'a required "remediation" that says what a valid value looks like.',
     content: problem(),
@@ -742,8 +772,9 @@ const responses: Record<string, ResponseObject> = {
       '"indicators" setting cannot be used to compute indicator bands for this run — either ' +
       'the setting itself is structurally invalid (e.g. lowerMs >= higherMs), or its ' +
       '"higherMs" sits above the histogram\'s overflow cap while this run has overflow ' +
-      'observations. application/problem+json with a required "remediation" naming the setting ' +
-      'to fix.',
+      'observations, or (code INVALID_QUERY) "percentiles" was not a list of one to twelve ' +
+      'ranks strictly between 0 and 100. application/problem+json with a required ' +
+      '"remediation" naming what to fix.',
     content: problem(),
   },
   BundleTooLarge: {
@@ -1224,7 +1255,7 @@ const paths: Record<string, PathItemObject> = {
         'top-level "indicators") are folded from the run\'s stored histogram at the project\'s ' +
         'current "indicators" bounds — see "configurable" and "bounds" on the response. ' +
         'Percentiles are recomputed exactly from each row\'s stored histograms at the project\'s ' +
-        'current percentile set. A run whose statistics are estimated (ingested before ' +
+        'current percentile set, or at the ranks "percentiles" names. A run whose statistics are estimated (ingested before ' +
         '2026-10-15 and not yet recomputed from its raw log) answers only the ranks it stored, ' +
         'each clamped to the row\'s minMs and maxMs; a rank it never stored is omitted, not zero.',
       parameters: [
@@ -1234,6 +1265,7 @@ const paths: Record<string, PathItemObject> = {
         parameters['StatsFamily']!,
         parameters['WindowFrom']!,
         parameters['WindowTo']!,
+        parameters['StatsPercentiles']!,
       ],
       responses: {
         '200': { description: 'Statistics for this run, optionally filtered.', content: json(schemaRef('StatsResponse')) },
@@ -1429,6 +1461,7 @@ const paths: Record<string, PathItemObject> = {
         parameters['SeriesFamily']!,
         parameters['WindowFrom']!,
         parameters['WindowTo']!,
+        parameters['SeriesPercentiles']!,
       ],
       responses: {
         '200': { description: 'Time-series buckets.', content: json(schemaRef('SeriesResponse')) },

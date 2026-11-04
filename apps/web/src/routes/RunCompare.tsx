@@ -1,20 +1,29 @@
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { seriesQuery, statsQuery, trendsQuery } from '../api/metrics';
+import type { Window } from '@perfportal/contracts';
+import { agentInjectorsQuery } from '../api/agent';
+import { seriesQuery, statsQuery, telemetryQuery, trendsQuery, usersQuery } from '../api/metrics';
 import CompareChart from '../charts/CompareChart';
 import {
-  COMPARE_METRICS,
-  compareUnit,
+  STATS_RANKS,
+  cpuPoints,
   runLabels,
+  seriesPoints,
+  usersPoints,
   type CompareMetric,
+  type ComparePoint,
   type CompareRun,
 } from '../charts/transforms/compare';
 import { runMinuteLabel } from '../charts/transforms/runLabel';
 import { formatCell } from '../charts/DataTable';
-import { EmptyState } from '../components/States';
+import { EmptyState, LoadingState } from '../components/States';
 import CompareMatrix from '../tables/CompareMatrix';
-import type { CompareStats } from '../tables/buildCompareMatrix';
+import {
+  resolveReference,
+  toCompareMatrix,
+  type CompareStats,
+} from '../tables/buildCompareMatrix';
 import type { TrendRun } from '@perfportal/contracts';
 import { VERDICT } from './marks';
 import { Payload, type Slot } from './payload';
@@ -28,9 +37,12 @@ import {
   DEFAULT_COMPARE_METRIC,
   MAX_COMPARE,
   parseCompareMetric,
+  parseCompareReference,
   parseCompareSelection,
   serialiseCompareSelection,
 } from './compareSelection';
+import { parseWindow, serialiseWindow } from './window';
+import { peakConcurrentUsers } from './runUsers';
 import { buildCompareSummary, type CompareSummaryModel } from './compareSummary';
 import { isExact } from './statsMethod';
 import { Approx } from '../components/Approx';
@@ -76,6 +88,53 @@ function conditionsOf(run: TrendRun): string {
 
 const OVERLAY: Slot = { id: 'compare-overlay', title: 'Comparison' };
 
+/**
+ * The ranks a bucket does not store and the overlay has to ask `/series` for.
+ * Both together for either metric, so switching between the two reuses one
+ * cached read. Every other percentile the overlay offers — p90 among them —
+ * is in the stored bucket bands (`BUCKET_PERCENTILES`).
+ */
+const SERIES_EXTRA_RANKS: readonly number[] = [99.9, 99.99];
+
+/** Which overlay source a metric reads. */
+const overlaySource = (metric: CompareMetric): 'series' | 'users' | 'cpu' =>
+  metric === 'users' ? 'users' : metric === 'cpu' ? 'cpu' : 'series';
+
+/**
+ * A run's load-generator CPU summarised for the table: the mean and the
+ * maximum of its samples. `null` for a run that recorded none — or none in
+ * the window — never a zero, which would read as an idle generator.
+ */
+function cpuSummary(
+  points: readonly ComparePoint[] | null,
+): { readonly mean: number; readonly max: number } | null {
+  if (points === null || points.length === 0) return null;
+  const values = points.map(([, value]) => value);
+  return {
+    mean: values.reduce((sum, value) => sum + value, 0) / values.length,
+    max: Math.max(...values),
+  };
+}
+
+/**
+ * One selected run's slice of the comparison window.
+ *
+ * `ended` is a run that FINISHED BEFORE THE WINDOW BEGAN, detected explicitly
+ * and before any clamping: `parseWindow` answers `null` both for "the whole
+ * run" and for an empty clamped range, and reading the second as the first
+ * would show that run's whole-run figures under a window it was never in —
+ * exactly what narrowing must not do. Such a run is asked for nothing.
+ *
+ * Otherwise `window` is the comparison window held to this run's own
+ * duration, so the page never asks the API for time a shorter run did not
+ * have.
+ */
+interface RunScope {
+  readonly id: string;
+  readonly ended: boolean;
+  readonly window: Window | null;
+}
+
 export default function RunCompare() {
   const { runId } = useParams<{ runId: string }>();
   const [params, setParams] = useSearchParams();
@@ -91,10 +150,12 @@ export default function RunCompare() {
    * in the URL at all) and `from`/`to` (the analysis window, which
    * `useWindowSuffix` reads back out of the params to build the tab links).
    *
-   * The window loss was the quiet one: the brush is deliberately withheld on
-   * Compare, so nothing on screen changed at the moment it went.
+   * The window loss was the quiet one: Compare drew no brush then, so nothing
+   * on screen changed at the moment it went. It draws one now, and the window
+   * is one of this page's own writers.
    *
-   * One definition, both callers, and the drift is now unrepresentable here.
+   * One definition, every caller — the metric, the runs, the reference pin and
+   * the window — and the drift is now unrepresentable here.
    */
   const refine = (mutate: (next: URLSearchParams) => void) => {
     const updated = new URLSearchParams(params);
@@ -152,6 +213,48 @@ export default function RunCompare() {
     [params, cohortIds, runId],
   );
 
+  /* ═══ THE TIME RANGE, IN THE URL AS `from`/`to` ═══
+   *
+   * The run page's own parameters, so the window travels between tabs as it
+   * already does and a shared comparison keeps it. The EXTENT is the longest
+   * selected run's duration: a window has to be able to reach the end of
+   * every run in the comparison, and a shorter run is clamped to itself
+   * below rather than limiting the others. */
+  const durationOf = (id: string): number | null =>
+    cohort.data?.runs.find((run) => run.id === id)?.durationMs ?? null;
+  const durations = selected
+    .map(durationOf)
+    .filter((ms): ms is number => ms !== null);
+  const extentMs = durations.length === 0 ? null : Math.max(...durations);
+  /* MEMOISED ON ITS INPUTS: the window control re-syncs its fields whenever
+     this object changes, so a fresh one per render would wipe the reader's
+     typing on every one (`useWindowControl`). */
+  const rawFrom = params.get('from');
+  const rawTo = params.get('to');
+  const window = useMemo(
+    () => (extentMs === null ? null : parseWindow(rawFrom, rawTo, extentMs)),
+    [rawFrom, rawTo, extentMs],
+  );
+  const setWindow = (next: Window | null) =>
+    refine((updated) => {
+      updated.delete('from');
+      updated.delete('to');
+      const { from, to } = serialiseWindow(next);
+      if (from !== undefined) updated.set('from', from);
+      if (to !== undefined) updated.set('to', to);
+    });
+
+  const scopes: RunScope[] = selected.map((id) => {
+    if (window === null) return { id, ended: false, window: null };
+    const duration = durationOf(id);
+    if (duration !== null && window.fromMs >= duration) return { id, ended: true, window: null };
+    return {
+      id,
+      ended: false,
+      window: parseWindow(String(window.fromMs), String(window.toMs), duration ?? window.toMs),
+    };
+  });
+
   /**
    * SELECTION CHANGES GO TO THE URL, not to component state.
    *
@@ -168,11 +271,54 @@ export default function RunCompare() {
     refine((updated) => updated.set('runs', serialiseCompareSelection(next)));
   }
 
-  const seriesResults = useQueries({
-    queries: selected.map((id) => ({ ...seriesQuery(id), enabled: true })),
-  });
+  /* ═══ ONLY THE SELECTED METRIC'S READS ═══
+   *
+   * Every run's `/stats` is read for the table and the tiles. A percentile
+   * metric asks for its own exact rank (`STATS_RANKS`) and no other — even one
+   * the project's set usually carries, because that set can omit it, and a
+   * rank left to it would read `—` on an exact run. A non-percentile metric
+   * asks for nothing extra, and so shares the cache entry its run page reads.
+   * The overlay's source is read only for the metric on screen: `/series`,
+   * `/users`, or the two CPU sources.
+   *
+   * `terminal` on every one, the rule every run section follows: a live run's
+   * figures endpoints answer 202, and `selected` being empty until the
+   * cohort arrives is a property of today's code, not a gate. */
+  const statsRank = STATS_RANKS[metric];
+  const statsRanks: readonly number[] = statsRank === undefined ? [] : [statsRank];
+  const seriesRanks: readonly number[] =
+    metric === 'p99.9' || metric === 'p99.99' ? SERIES_EXTRA_RANKS : [];
+  const source = overlaySource(metric);
+
   const statsResults = useQueries({
-    queries: selected.map((id) => ({ ...statsQuery(id), enabled: true })),
+    queries: scopes.map((scope) => ({
+      ...statsQuery(scope.id, scope.window, statsRanks),
+      enabled: terminal && !scope.ended,
+    })),
+  });
+  const seriesResults = useQueries({
+    queries: scopes.map((scope) => ({
+      ...seriesQuery(scope.id, 'run', '', 'response_time', scope.window, seriesRanks),
+      enabled: terminal && !scope.ended && source === 'series',
+    })),
+  });
+  const usersResults = useQueries({
+    queries: scopes.map((scope) => ({
+      ...usersQuery(scope.id, scope.window),
+      enabled: terminal && !scope.ended && source === 'users',
+    })),
+  });
+  const injectorsResults = useQueries({
+    queries: scopes.map((scope) => ({
+      ...agentInjectorsQuery(scope.id, scope.window),
+      enabled: terminal && !scope.ended && source === 'cpu',
+    })),
+  });
+  const telemetryResults = useQueries({
+    queries: scopes.map((scope) => ({
+      ...telemetryQuery(scope.id, scope.window),
+      enabled: terminal && !scope.ended && source === 'cpu',
+    })),
   });
 
   /**
@@ -196,22 +342,38 @@ export default function RunCompare() {
   const labelFor = (id: string): string => labels.get(id) ?? id.slice(0, 8);
 
   /**
-   * Which selected run the deltas are measured against.
-   *
-   * `compareSummary` defines it as the first OTHER selected run and the summary
-   * tiles read it that way, so the picker has to answer the same question with
-   * the same expression: a chip labelled Baseline that is not the run the tiles
-   * divided by would be worse than no label, because it reads as evidence.
-   *
-   * review.md 17 asks for Current and Baseline to be "explicitly identified".
-   * Current is the run the page was opened from — already `disabled`, which is
-   * a state and not a name.
+   * Each run's CPU points, or `undefined` while either source is still being
+   * read. BOTH sources settle first: the agent's machine collector wins over
+   * the telemetry agent (`cpuPoints`), so drawing telemetry while the agent
+   * read is in flight would draw one source and then swap it for another. A
+   * source that failed counts as absent — the failure itself is named below.
    */
-  const baselineId = selected.find((id) => id !== runId) ?? null;
+  const cpuOf = (i: number): readonly ComparePoint[] | null | undefined => {
+    const injectors = injectorsResults[i];
+    const telemetry = telemetryResults[i];
+    if (injectors === undefined || telemetry === undefined) return undefined;
+    if (injectors.isPending || telemetry.isPending) return undefined;
+    return cpuPoints(injectors.data ?? null, telemetry.data ?? null);
+  };
 
-  const overlayRuns: CompareRun[] = selected.flatMap((id, i) => {
+  const overlayRuns: CompareRun[] = scopes.flatMap((scope, i): CompareRun[] => {
+    const { id } = scope;
+    const label = labelFor(id);
+    // Not running during the window: recorded, and nothing in this span —
+    // `[]`, not `null`, which would say the metric was never recorded.
+    if (scope.ended) return [{ id, label, points: [], bucketWidthMs: null, ended: true }];
+    if (source === 'users') {
+      const data = usersResults[i]?.data;
+      return data === undefined ? [] : [{ id, label, points: usersPoints(data), bucketWidthMs: null }];
+    }
+    if (source === 'cpu') {
+      const points = cpuOf(i);
+      return points === undefined ? [] : [{ id, label, points, bucketWidthMs: null }];
+    }
     const data = seriesResults[i]?.data;
-    return data === undefined ? [] : [{ id, label: labelFor(id), series: data }];
+    return data === undefined
+      ? []
+      : [{ id, label, points: seriesPoints(data, metric), bucketWidthMs: data.bucketWidthMs }];
   });
 
   /**
@@ -223,12 +385,29 @@ export default function RunCompare() {
    */
   const statsMethodOf = (id: string) => cohort.data?.runs.find((run) => run.id === id)?.statsMethod;
 
-  const matrixRuns: CompareStats[] = selected.flatMap((id, i) => {
+  const matrixRuns: CompareStats[] = scopes.flatMap((scope, i): CompareStats[] => {
+    const { id } = scope;
+    const identity = { id, label: labelFor(id), exact: isExact(statsMethodOf(id)) };
+    // No figures for a window the run was not running in: its whole column
+    // is dashes (`CompareStats.stats`), never its whole-run figures.
+    if (scope.ended) return [{ ...identity, stats: null, peakUsers: null, cpu: null }];
     const data = statsResults[i]?.data;
-    return data === undefined
-      ? []
-      : [{ id, label: labelFor(id), exact: isExact(statsMethodOf(id)), stats: data }];
+    if (data === undefined) return [];
+    const users = source === 'users' ? usersResults[i]?.data : undefined;
+    return [
+      {
+        ...identity,
+        stats: data,
+        // Read only while their metric is on screen, so a dash elsewhere is
+        // "not asked", which no row then shows.
+        peakUsers: users === undefined ? null : peakConcurrentUsers(users),
+        cpu: source === 'cpu' ? cpuSummary(cpuOf(i) ?? null) : null,
+      },
+    ];
   });
+
+  /** The selected runs that finished before the window began, named under it. */
+  const endedBefore = scopes.filter((scope) => scope.ended).map((scope) => scope.id);
 
   /**
    * RUNS WHOSE DATA FAILED TO LOAD, NAMED.
@@ -245,10 +424,67 @@ export default function RunCompare() {
    * the comparison is the whole story.
    */
   const failed = selected.filter(
-    (_, i) => seriesResults[i]?.isError === true || statsResults[i]?.isError === true,
+    (_, i) =>
+      statsResults[i]?.isError === true ||
+      (source === 'series' && seriesResults[i]?.isError === true) ||
+      (source === 'users' && usersResults[i]?.isError === true) ||
+      (source === 'cpu' &&
+        (injectorsResults[i]?.isError === true || telemetryResults[i]?.isError === true)),
   );
 
-  const metricLabel = COMPARE_METRICS.find((m) => m.value === metric)?.label ?? metric;
+  /**
+   * ═══ A QUERY THAT HAS NOT ANSWERED HAS SEEN NOTHING ═══
+   *
+   * The two `flatMap`s above drop a run whose read has no data yet, and every
+   * window change, Whole run, and switch to a metric needing an extra rank
+   * changes those reads' keys — so for the length of one round trip every
+   * `data` is `undefined`. Drawn from that, the table said "No statistics for
+   * the selected runs" and the overlay "Select at least one run to compare"
+   * over two pressed chips, and a pinned reference whose stats were still in
+   * flight fell back to another run, so the chip and every change described a
+   * comparison against the wrong run until it landed.
+   *
+   * So the page knows when it is still asking, from exactly the reads it
+   * needs: every non-ended run's `/stats`, and the overlay's own source for
+   * the metric on screen. While any is pending the summary and the table are a
+   * loading state, the overlay says it is loading, and NO REFERENCE IS
+   * RESOLVED. Not `keepPreviousData`: that would draw the previous window's
+   * figures under the new window's handles, which is the worse lie. A read
+   * that FAILED is not pending — it is named in the alert above, and the
+   * comparison is drawn from what did load.
+   *
+   * TWO FLAGS, BECAUSE THE OVERLAY READS LESS THAN THE TABLE. `overlayPending`
+   * is the overlay's own source alone; `pending` adds every run's `/stats`.
+   * A percentile switch re-keys `/stats` (each metric asks its own rank) while
+   * the overlay's series is usually already cached, so handing the chart the
+   * page-wide flag blanked a line that was ready to draw for a round trip.
+   */
+  const overlayPending = scopes.some(
+    (scope, i) =>
+      !scope.ended &&
+      ((source === 'series' && seriesResults[i]?.isPending === true) ||
+        (source === 'users' && usersResults[i]?.isPending === true) ||
+        (source === 'cpu' && cpuOf(i) === undefined)),
+  );
+  const pending =
+    overlayPending ||
+    scopes.some((scope, i) => !scope.ended && statsResults[i]?.isPending === true);
+
+  /* The reference every other column is measured against: the pinned run
+     (`ref`) while it is among the runs whose figures loaded FOR THIS WINDOW,
+     else the first such run other than this one. A run that ended before the
+     window has a column of dashes, and changes measured against it would be
+     changes against nothing. Resolved only once every read has answered:
+     against a partial set, a pin still loading would read as absent. */
+  const referenceRunId = pending
+    ? null
+    : resolveReference(
+        matrixRuns.filter((run) => run.stats !== null),
+        parseCompareReference(params.get('ref')),
+        runId ?? '',
+      );
+  const matrix = toCompareMatrix(matrixRuns, metric, referenceRunId);
+  const setReference = (id: string) => refine((next) => next.set('ref', id));
 
   // AFTER the hooks, never before one: an early return above a `useQueries`
   // would change the hook count between renders the moment the viewport
@@ -370,8 +606,18 @@ export default function RunCompare() {
                     {data.runs.map((run) => {
                       const on = selected.includes(run.id);
                       const atCap = !on && selected.length >= MAX_COMPARE;
-                      const role =
-                        run.id === runId ? 'Current' : run.id === baselineId ? 'Baseline' : null;
+                      /* ═══ THE SAME REFERENCE AS THE TILES AND THE TABLE ═══
+                         `referenceRunId` — `resolveReference`'s answer, the
+                         one both are built with — so a pin moves this chip
+                         too. A chip naming a run the table does not measure
+                         from would be worse than no label: it reads as
+                         evidence. The run the page was opened from can be
+                         both, and then says both. */
+                      const roles = [
+                        run.id === runId ? 'Current' : null,
+                        run.id === referenceRunId ? 'Reference' : null,
+                      ].filter((part): part is string => part !== null);
+                      const role = roles.length === 0 ? null : roles.join(' · ');
                       const mark = VERDICT[run.verdict ?? 'none'];
                       const conditions = conditionsOf(run);
                       // A numbered chip is NAMED by its number; the start time
@@ -426,7 +672,7 @@ export default function RunCompare() {
                           /* The whole chip named in one string rather than left
                              to the reading order of four nodes, so a screen
                              reader hears "Run 12 · 09-13 11:31 · failed ·
-                             Baseline · production · main" instead of a glyph. */
+                             Reference · production · main" instead of a glyph. */
                           aria-label={[labelFor(run.id), startedLine, mark.label, role, conditions]
                             .filter((part) => part != null && part !== '')
                             .join(' · ')}
@@ -487,21 +733,56 @@ export default function RunCompare() {
                   )}
                 />
 
-                {matrixRuns.length > 0 && (
-                  <CompareSummary
-                    summary={buildCompareSummary(matrixRuns, runId ?? '', metric)}
-                    unit={compareUnit(metric)}
-                  />
+                {/* A run that finished before the window began has no figures
+                    for it, and its column and line are empty for that reason.
+                    Named, because an empty column alone reads as a run whose
+                    data failed to load. */}
+                {endedBefore.length > 0 && (
+                  <p data-testid="compare-ended" className="text-[0.8125rem] text-muted">
+                    {endedBefore.map((id) => `${labelFor(id)} ended before this window.`).join(' ')}
+                  </p>
                 )}
 
-                <CompareChart runs={overlayRuns} metric={metric} onMetricChange={setMetric} />
+                {/* While a read is still answering, a loading line in place of
+                    the tiles and the table rather than a conclusion drawn from
+                    whatever has arrived (see `pending`). The overlay stays
+                    MOUNTED — it carries the metric selector and the window
+                    fields the reader is in the middle of using — and says it
+                    is loading instead of drawing while its OWN reads are.
 
-                <CompareMatrix
-                  runs={matrixRuns}
+                    ONE LIVE REGION PER LOADING STATE. When the overlay is
+                    loading too, its own `role="status"` line announces it, so
+                    this line is plain text — two regions mounting together
+                    would be announced twice. */}
+                {pending ? (
+                  overlayPending ? (
+                    <p data-testid="compare-loading" className="text-muted">
+                      Loading the comparison…
+                    </p>
+                  ) : (
+                    <LoadingState label="Loading the comparison…" />
+                  )
+                ) : (
+                  matrixRuns.length > 0 && (
+                    <CompareSummary
+                      summary={buildCompareSummary(matrixRuns, runId ?? '', referenceRunId, metric)}
+                    />
+                  )
+                )}
+
+                <CompareChart
+                  runs={overlayRuns}
+                  pending={overlayPending}
                   metric={metric}
-                  metricLabel={metricLabel}
-                  currentRunId={runId ?? ''}
+                  onMetricChange={setMetric}
+                  window={window}
+                  extentMs={extentMs ?? 0}
+                  onWindow={setWindow}
                 />
+
+                {!pending && (
+                  <CompareMatrix matrix={matrix} metric={metric} onReference={setReference} />
+                )}
               </>
             )}
           </>
@@ -526,22 +807,18 @@ function countRequested(raw: string | null, current: string): number {
   return new Set([current, ...asked]).size;
 }
 
-function CompareSummary({
-  summary,
-  unit,
-}: {
-  readonly summary: CompareSummaryModel;
-  /** The METRIC's own unit, for the two tiles that print a measurement. The
-   *  metric's NAME went with the count tile: the chart's selector states it,
-   *  and every value here carries this unit beside it. */
-  readonly unit: string;
-}) {
+function CompareSummary({ summary }: { readonly summary: CompareSummaryModel }) {
+  /* The unit is the MODEL's: the tiles' values are the table's first row, and
+     for errors that row is a count, where the metric's own unit ("/s") is the
+     overlay's. The metric's NAME went with the count tile: the chart's
+     selector states it, and every value here carries this unit beside it. */
+  const { unit } = summary;
   /* Each reason reads differently, because they are different facts. A zero
      baseline in particular is NOT a missing one: 0 → 2/s is the regression an
      engineer most needs to see, and "Waiting for baseline" hid it. */
   const deltaText =
     summary.deltaUnavailable === 'no-baseline'
-      ? 'Select a baseline run'
+      ? 'Select a reference run'
       : summary.deltaUnavailable === 'not-measured'
         ? 'Not measured'
         : summary.deltaUnavailable === 'zero-baseline'
@@ -563,16 +840,20 @@ function CompareSummary({
           tile's unit already carries. It spent a third of the row restating the
           controls, which is why the principal delta was not the first thing
           here. */}
+      {/* NOT "Current vs baseline": pinned on the current run, the tile states
+          the first other run against it (`compareSummary`), so a label naming
+          the current run as the subject would be false. The detail line names
+          both runs either way. */}
       <CompareSummaryTile
-        label="Current vs baseline"
+        label="Change against the reference"
         testId="compare-delta"
         value={deltaText}
-        // ≈ only over a figure: "Select a baseline run" and "Not measured"
+        // ≈ only over a figure: "Select a reference run" and "Not measured"
         // state no number, which `deltaExact` already says.
         exact={summary.deltaExact}
         detail={
           summary.baselineLabel === null
-            ? 'Select another run to establish a baseline'
+            ? 'Select another run to measure against'
             : `${summary.currentLabel} against ${summary.baselineLabel}`
         }
         colour={deltaColour}
@@ -582,7 +863,13 @@ function CompareSummary({
         testId="compare-best"
         value={summary.bestValue === null ? '-' : `${formatCell(summary.bestValue)} ${unit}`}
         exact={summary.bestExact}
-        detail={summary.bestLabel ?? 'Waiting for run statistics'}
+        // Users and CPU have no better or worse, so no run is best — which is
+        // a fact about the metric, not a wait for figures.
+        detail={
+          !summary.directional
+            ? 'This metric has no better or worse, so no run is best'
+            : (summary.bestLabel ?? 'Waiting for run statistics')
+        }
       />
     </section>
   );

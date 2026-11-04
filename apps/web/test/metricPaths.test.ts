@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { Window } from '@perfportal/contracts';
 import * as paths from '../src/api/metricPaths';
+import { liveSeriesKey } from '../src/api/live';
+import { seriesQuery, statsQuery, statsQueryKey } from '../src/api/metrics';
 
 /**
  * THE DEFECT THESE GUARD. `scripts/capture-chart-fixture.mjs` used to spell
@@ -133,5 +135,58 @@ describe('every metrics URL has one definition', () => {
       expect(src, `${file} no longer imports the shared builders`).toContain('metricPaths');
       expect(strip(src).match(banned) ?? [], `${file} hand-writes a metrics URL`).toEqual([]);
     }
+  });
+});
+
+/**
+ * `?percentiles=` — the extra ranks Compare asks for (p90, p99.9, p99.99).
+ *
+ * LAST, after the window, so a URL carrying both still has one query string;
+ * omitted when no rank is asked for, so every existing read is the same
+ * request it was.
+ */
+describe('the percentiles parameter', () => {
+  const RANKS = [99.9, 99.99];
+
+  it('ends a stats URL with the ranks asked for', () => {
+    const url = paths.statsPath(ID, null, [99.9]);
+    expect(url.endsWith(`percentiles=${[99.9].join(',')}`), url).toBe(true);
+    expect((url.match(/\?/g) ?? []).length, url).toBe(1);
+  });
+
+  it('joins after the window on stats', () => {
+    const url = paths.statsPath(ID, WINDOW, RANKS);
+    expect(url).toContain('from=1000&to=5000');
+    expect(url.endsWith(`percentiles=${RANKS.join(',')}`), url).toBe(true);
+    expect((url.match(/\?/g) ?? []).length, url).toBe(1);
+  });
+
+  it('ends a series URL with the ranks asked for, windowed or not', () => {
+    for (const w of [null, WINDOW]) {
+      const url = paths.seriesPath(ID, 'run', '', 'response_time', w, RANKS);
+      expect(url.endsWith(`percentiles=${RANKS.join(',')}`), url).toBe(true);
+      expect((url.match(/\?/g) ?? []).length, url).toBe(1);
+    }
+  });
+
+  it('asks for nothing extra when no rank is named', () => {
+    expect(paths.statsPath(ID, WINDOW, [])).toBe(paths.statsPath(ID, WINDOW));
+    expect(paths.seriesPath(ID, 'run', '', 'response_time', null, [])).toBe(paths.seriesPath(ID));
+  });
+
+  /**
+   * A response for different ranks is a different response, so it caches
+   * under a different key — and a read naming none keeps the key it always
+   * had, which `api/live.ts` writes live deltas into by spelling it out.
+   */
+  it('keys a read by its ranks, and leaves a rankless key exactly as it was', () => {
+    expect(statsQuery(ID, null, RANKS).queryKey).not.toEqual(statsQuery(ID, null).queryKey);
+    expect(statsQuery(ID, WINDOW).queryKey).toEqual(statsQueryKey(ID, WINDOW));
+    expect(seriesQuery(ID, 'run', '', 'response_time', null, RANKS).queryKey).not.toEqual(
+      seriesQuery(ID).queryKey,
+    );
+    // The key the live socket writes into, read from `api/live.ts` itself
+    // rather than spelled out again here.
+    expect(seriesQuery(ID).queryKey).toEqual(liveSeriesKey(ID));
   });
 });

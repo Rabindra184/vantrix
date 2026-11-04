@@ -74,8 +74,27 @@ export const runPath = (id: string): string => `/v1/runs/${encodeURIComponent(id
  * default moves. This is also what the captured fixture's `_capture.endpoints`
  * block records, so the provenance in that file names the real call.
  */
-export const statsPath = (id: string, window: Window | null = null): string =>
-  `${runPath(id)}/stats${rangeSuffix(window)}`;
+/**
+ * `&percentiles=99.9,99.99` (or `?…` on a bare path) — the extra ranks to
+ * answer beyond the run's stored set; `''` when none is asked for, so every
+ * read that names none is byte-for-byte the request it always was.
+ *
+ * LAST, after the window, and the join character is decided here beside the
+ * query string it follows, for the reason `rangeSuffix` argues. The commas are
+ * literal: a finite number's `String` form carries only digits, `.`, `e` and
+ * `-` (an exponent), none of which needs escaping, and the server splits on `,`.
+ */
+const percentilesSuffix = (ranks: readonly number[], join: '?' | '&'): string =>
+  ranks.length === 0 ? '' : `${join}percentiles=${ranks.join(',')}`;
+
+export const statsPath = (
+  id: string,
+  window: Window | null = null,
+  percentiles: readonly number[] = [],
+): string => {
+  const range = rangeSuffix(window);
+  return `${runPath(id)}/stats${range}${percentilesSuffix(percentiles, range === '' ? '?' : '&')}`;
+};
 
 export const seriesPath = (
   id: string,
@@ -83,10 +102,12 @@ export const seriesPath = (
   name = '',
   family = 'response_time',
   window: Window | null = null,
+  percentiles: readonly number[] = [],
 ): string =>
   `${runPath(id)}/series?scope=${encodeURIComponent(scope)}` +
   `&name=${encodeURIComponent(name)}&family=${encodeURIComponent(family)}` +
-  rangeSuffix(window, '&');
+  rangeSuffix(window, '&') +
+  percentilesSuffix(percentiles, '&');
 
 export const usersPath = (id: string, window: Window | null = null): string =>
   `${runPath(id)}/users${rangeSuffix(window)}`;

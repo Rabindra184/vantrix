@@ -275,8 +275,12 @@ function errorsResponseFrom(runId: string, envelope: LiveDelta['errors']): Error
  * nulls below are exactly what `seriesQuery(id, 'run', '', 'response_time',
  * null).queryKey` would produce, written out directly rather than importing
  * `seriesQuery` for a `queryFn` this file never calls.
+ *
+ * Exported for `metricPaths.test.ts` alone, which holds it equal to the key
+ * `seriesQuery` builds — a test that re-derived it by hand would agree with
+ * itself and miss this one drifting.
  */
-function liveSeriesKey(runId: string) {
+export function liveSeriesKey(runId: string) {
   return [...seriesQueryKey(runId, 'run', '', 'response_time'), null, null] as const;
 }
 

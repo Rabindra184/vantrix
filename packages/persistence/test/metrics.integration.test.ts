@@ -1,7 +1,7 @@
 import { bandsFrom, bucketLatency, Histogram, HISTOGRAM_KIND, mergedHistogram, percentilesOf, runEngine, storedPercentiles } from '@perfportal/statistics';
 import type { CanonicalEvent } from '@perfportal/core';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { createPool, createPrisma, ERROR_SERIES_SQL, MetricReader, MetricWriter, SERIES_SQL, MAX_OFFSET_MS, USER_SERIES_SQL, WINDOWED_BUCKETS_SQL } from '../src/index.js';
+import { createPool, createPrisma, ERROR_SERIES_SQL, MetricReader, MetricWriter, SERIES_HISTOGRAMS_SQL, SERIES_SQL, MAX_OFFSET_MS, USER_SERIES_SQL, WINDOWED_BUCKETS_SQL } from '../src/index.js';
 import { requireDatabaseUrl, resetDatabase } from './support/db.js';
 
 const url = requireDatabaseUrl();
@@ -283,6 +283,54 @@ describe('MetricWriter / MetricReader', () => {
     // a single pruned partition and mask a real pruning failure the same way.
     const scanned = new Set(plan.match(/run_series_bucket_2026_\d\d/g) ?? []).size;
     expect(scanned).toBe(1);
+  });
+
+  /**
+   * Compare's p99.9 and p99.99 per bucket are computed from these, so they
+   * must be the SAME buckets `series()` answers, keyed so the controller can
+   * join one onto the other. Checked against the engine's own buckets (their
+   * start-edge histograms) rather than against the reader itself.
+   */
+  it('seriesHistograms returns one entry per stored bucket, keyed by start offset', async () => {
+    const ctx = await seedRun();
+    const result = await persist(ctx);
+    const reader = new MetricReader(pool);
+    const tenant = { orgId: ctx.orgId, projectId: ctx.projectId };
+    const sel = { scope: 'run', name: '', family: 'response_time' };
+
+    const buckets = await reader.series(tenant, ctx.runId, STARTED_ON, sel);
+    const histograms = await reader.seriesHistograms(tenant, ctx.runId, STARTED_ON, sel);
+    expect(buckets.length).toBeGreaterThan(3);
+    expect([...histograms.keys()]).toEqual(buckets.map((b) => b.startOffsetMs));
+
+    const engine = [...result.series.values()].find((v) => v.scope === 'run')!;
+    for (const b of engine.buckets) {
+      const entry = histograms.get(b.startOffsetMs);
+      expect(entry, String(b.startOffsetMs)).not.toBeNull();
+      expect(entry!.ok.total).toBe(b.startedOkCount);
+      expect(entry!.ko.total).toBe(b.startedKoCount);
+    }
+
+    // A bucket missing either column answers null, never a half-pair.
+    const first = buckets[0]!.startOffsetMs;
+    await pool.query(
+      `UPDATE run_series_bucket SET histogram_ko = NULL
+        WHERE run_id = $1 AND scope = 'run' AND family = 'response_time' AND start_offset_ms = $2`,
+      [ctx.runId, first],
+    );
+    const after = await reader.seriesHistograms(tenant, ctx.runId, STARTED_ON, sel);
+    expect(after.get(first)).toBeNull();
+    expect(after.size).toBe(buckets.length);
+
+    // Same predicate and ordering as SERIES_SQL, so it prunes the same way.
+    const tail = (sql: string) => sql.slice(sql.indexOf('FROM run_series_bucket'));
+    expect(tail(SERIES_HISTOGRAMS_SQL)).toBe(tail(SERIES_SQL));
+    const { rows } = await pool.query<{ 'QUERY PLAN': string }>(
+      `EXPLAIN ${SERIES_HISTOGRAMS_SQL}`,
+      [STARTED_ON, ctx.runId, ctx.orgId, ctx.projectId, 'run', '', 'response_time'],
+    );
+    const plan = rows.map((r) => r['QUERY PLAN']).join('\n');
+    expect(new Set(plan.match(/run_series_bucket_2026_\d\d/g) ?? []).size).toBe(1);
   });
 
   it('keeps family second-from-last in the series primary key', async () => {

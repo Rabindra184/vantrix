@@ -128,10 +128,10 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **292 files / 4766 tests**, it
+`nvm use` first, and if a run reports fewer than **294 files / 4838 tests**, it
 did not run everything — nor did an integration run reporting fewer than
-**273 files / 4277 tests**, an e2e run fewer than **217**, or a
-`pnpm test:e2e:cross` run fewer than **651** (217 on each of three engines).
+**275 files / 4341 tests**, an e2e run fewer than **223**, or a
+`pnpm test:e2e:cross` run fewer than **669** (223 on each of three engines).
 (Update those numbers when a sub-project adds suites, or the next reader
 calibrates against a stale floor and a silently-skipped run looks like a
 pass.)
@@ -150,6 +150,347 @@ still Chromium and still 102; `pnpm test:e2e:cross` was 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The compare-parity branch (`feat/compare-parity`, gap #2 of
+`docs/superpowers/research/2026-11-03-ge-page-parity/README.md`, spec
+`docs/superpowers/specs/2026-11-03-compare-parity-design.md`, ledger
+`.superpowers/sdd/2026-11-03-compare-parity/progress.md`) added TWO unit files
+— `apps/api/test/percentile-list.test.ts` (16) and
+`apps/web/test/useWindowControl.test.tsx` (2) — and rewrote or grew
+`buildCompareMatrix` (18 to 25), `CompareMatrix` (7 to 15),
+`transforms.compare` (26 to 40), `RunCompare` (17 to 35), `compareSummary`
+(9 to 17), `metricPaths` (4 to 9), `compareSelection` (19 to 22) and `Chart`
+(+1), 82 cases in all, each count read off `vitest list` at both ends: unit
+**292 / 4766 to 294 / 4848**. Integration gains `percentile-list` and
+`apps/api/test/compare-percentiles.integration.test.ts` (12), 1 case in
+persistence's `metrics.integration`, 2 in `openapi.integration` and the 37
+`.ts` web cases: **273 / 4277 to 275 / 4345**. **e2e 217 to 223**
+(`run-compare.spec.ts` 10 to 16, 48 on three engines);
+`test:e2e:cross` **669** by arithmetic, the compare spec alone run on three
+engines (48 / 48).
+
+**COMPARE ASKS THE QUESTIONS GATLING ENTERPRISE ASKS, AND EVERY ANSWER IS AN
+EXACT RANK.** Eleven metrics in GE's order — Concurrent users, CPU usage,
+Errors, p50, p90, p95, p99, p99.9, p99.99, max, Throughput — with p95 still
+the default. The table has GE's rows per metric: `All requests` then one row
+per request for a percentile or max, `Value` for throughput, `Count` and
+`Ratio` for errors, `Max` for users, `Mean` and `Max` for CPU. A reference run
+is pinned (`?ref=`, button `Set <run label> as reference`), drawn first and
+tagged **Reference**, and every other column carries its own change chip. A
+time range above the overlay (`?from=`/`?to=`) narrows the chart, the table
+and the tiles at once. No rank is ever guessed, and none is left to the
+project's configured set: every percentile metric, p50, p95 and p99
+included, asks `/stats` for its own rank (`STATS_RANKS`), because a project
+set lacking p95 read `—` on an exact run while the overlay drew the line.
+`GET /v1/runs/:id/stats` and `/series` take `?percentiles=` (1–12 ranks in the
+open interval (0, 100), at most six decimal places, else 400 `INVALID_QUERY`;
+repeated is `singleValue`'s refusal) and answer them
+from the stored `sparse-ms-v2` histograms — `/stats` REPLACES the project's
+set, `/series` ADDS to each bucket's stored bands and leaves a non-exact
+bucket alone. A legacy estimated row gets nothing it never stored, so its cell
+reads `—`.
+
+**`/series` ADDS AND `/stats` REPLACES, AND THEY ARE TWO PARAMETERS IN THE
+DOCUMENT FOR THAT REASON.** `StatsPercentiles` and `SeriesPercentiles` share
+only the parser. A bucket keeps the bands the engine stored (the time charts
+read them) and gains the asked ranks beside them, merged, OK and KO each from
+its own histogram; an empty population gains no key. `SERIES_HISTOGRAMS_SQL`
+is textually `SERIES_SQL`'s tail, asserted, so the second read hits the same
+partition.
+
+**THE PARSER CHECKS THE TEXT BEFORE IT CALLS `Number`.** `Number('')` is 0,
+`Number('0x10')` is 16, `Number('1e1')` is 10 and `Number(' 90')` is 90, so a
+trailing comma or a typo would have asked for a real rank. Each item must
+match `^\d+(\.\d{1,6})?$` first — six places because the answer is keyed
+`p${rank}` off the parsed number, and `String(0.0000001)` is `1e-7`, a key
+the caller never sent — and four cases (`1e1`, `0x10`, ` 90`, `0.0000001`)
+are all that guard the pattern: removing it fails exactly those.
+
+**ONE WINDOW CONTROL, BECAUSE THE COPY HAD ALREADY DRIFTED.** The compare
+overlay's From/To fields and drag settle were first a copy of `TimeBrush`'s,
+and the copy routed Apply through `clearTimeout`: a drag followed by Apply
+inside 250 ms committed the PRE-drag window. `useWindowControl`
+(`apps/web/src/charts/useWindowControl.ts`) is the one implementation now —
+the 250 ms settle, the edited-field rule, the rounded-extent rule, both
+refusals, an `apply` that lets a settling drag land and a `navigate` that
+cancels it. `TimeBrush.test.tsx` did not change and passes whole.
+
+**A RUN THAT ENDED BEFORE THE WINDOW IS NAMED, NEVER READ AS THE WHOLE RUN.**
+`parseWindow` answers `null` for "whole run" AND for "nothing selected", so
+`RunCompare` detects `window.fromMs >= run.durationMs` BEFORE clamping (Ruling
+2): that run gets no request, `<label> ended before this window.`, `null` in
+every cell, and cannot be the reference. A longer window on a shorter run is
+that run's own clamped slice (`parseWindow(from, to, run.durationMs)`).
+
+**THE SUMMARY READS THE MATRIX, SO THE TILES CANNOT DISAGREE WITH THE TABLE.**
+`buildCompareSummary` takes a REQUIRED `referenceRunId` (no default, this
+file's rule for a parameter whose wrong value is silent), builds
+`toCompareMatrix` and reads its first row: the delta is the subject cell's own
+`change`. When the reference IS the current run, the subject is the first
+other run, never a 0% self-comparison; when `ref` names the only run, there is
+no subject. Users and CPU have no direction (`isChangeGood` answers `null`),
+so they name no best run and colour no chip. An unchanged figure is `=` and
+muted, not an improvement — `isChangeGood` returns `true` for a zero change,
+and `cohortOfTwo` ingests one bundle twice, so a page of green `=` chips would
+have been the ordinary case.
+
+**CPU HAS TWO SOURCES, AND A MAC-RECORDED RUN HAS NEITHER.** `cpuPoints` takes the
+Gatling agent's `user + sys` when `/agent/injectors` has `machine.available`,
+else telemetry averaged over hosts, else `null` — and `null` is named under
+the chart per run while the table reads `—`. Measured below: on macOS the
+agent records heap and GC and no machine figure, and nothing else reports CPU,
+so that note is what a Mac-recorded run shows. A source that is available
+and has no reading in the window (telemetry samples every 3 s under a 1 s
+window) answers `[]`, which is recorded and empty, not unrecorded: the chart
+names it in its own words (`… has no reading for Run 2 in this span.`), says
+so instead of drawing bare axes when no run has a reading, and leaves a run
+that ended before the window to the page's own sentence.
+
+**TWO GUARDS IN THE BROWSER SPEC WERE VACUOUS UNTIL A MUTATION SAID SO.**
+`SETTLE_MS = 0` survived the drag case twice: a fast drag yields one throttled
+datazoom report, and with no settle the FIRST move's window commits, redraws,
+and ends the drag under the pointer — also exactly one write. `slowDrag`
+(five moves ~130 ms apart, timed in the page) and an assertion on the window
+the gesture ENDED on (35% of the extent) are what fail it now. And the Apply
+race guard compared a mouseup with the Apply click, which IS a mouseup, so it
+measured ~0 ms; it reads the history recorder's write order instead (no window
+written between page load and the click but the opening one). **A guard
+tied to a restated constant is one constant edit from vacuous**, and the
+first version also documented the drift direction backwards.
+
+**AND jsdom's NAME COMPUTATION HID THE PIN AGAIN.** "keeps the pin out of the
+column header's name" passed with `aria-labelledby` removed — this file's
+trap (jsdom ignores a descendant's `aria-label`). The case asserts the
+mechanism too now: one labelled-by id, reading exactly `Run 2 (ms)`, holding
+no button.
+
+**RED-VERIFIED** from committed checkpoints, anchor counts asserted, each
+restored with `git checkout HEAD --` (the task reports beside the ledger hold
+every row):
+
+```
+  T1  decimal pattern removed                  the exponent, hex and padding cases alone
+      windowed read gets `settings`, not the set the windowed case alone
+      bands use other bounds under a list       "leaves every other field identical" alone
+  T2  exact-histogram check removed             the non-exact bucket case alone
+      OK map from the merged histogram          the failed-only bucket case alone (a mixed
+                                                bucket's p99.9 is an OK maximum, so the
+                                                every-bucket case could not see it)
+      reader pairs a null `histogram_ko`        the seriesHistograms case
+  T3  users/CPU judged                          `judges neither direction` alone
+      no CPU source answers `[]`                `no source yields null` alone
+      rank read from the OK map                 the extra-rank case + 3 population cases
+  T4  reference not ordered first               orders the reference first
+      a missing reference cell read as 0        a null cell has no change chip
+      unchanged judged by isChangeGood          an unchanged figure is neither good nor bad
+      `aria-labelledby` dropped                 the pin-out-of-the-name case (after it was
+                                                made to assert the mechanism)
+  T5  reference ignored                         pinned reference, reference is the current run
+      best ranked with no direction check       neutral for users alone
+  T6  ended detection removed                   the clamps case
+      reference resolved over ended runs        SURVIVED 28/28; case added (1f93b8f7);
+                                                the new case now fails under it alone
+      Apply cancels a settling drag             the hook's Apply case + CompareChart's
+  T7  ref ignored                               the pin case (Received "Run 1")
+      window dropped from statsQuery            time-range and drag cases (654 vs 662 / 653)
+      no ranks sent                             p99.9 case (`—` for both, Expected 2503)
+      `SETTLE_MS = 20`                          the Apply case, at its write-order guard
+```
+
+**WHAT WAS RUN**, Node v22.19.0, `perfportal_compare`, Redis db 9 flushed
+through `infra-redis-1`, bucket `perfportal-compare`: on `cf8cac67`, `pnpm
+build`, `typecheck` and `lint` exit 0 by their own exit codes; `test:unit`
+**294 / 4838**, exit 0, zero `Errors` lines; `test:integration`
+**275 / 4341, exit 0, zero failures** (1353 s);
+`pnpm test:e2e --workers=2` read back `Running 223 tests using 2 workers` and
+failed ONE, the overlay drag case, at its own stall guard — "the drag never
+paused for a whole settle", a 306 ms gap between `slowDrag`'s moves against the
+250 ms settle — as the load climbed from 18 to 47 mid-run. That is the guard
+refusing to judge a gesture the machine could not deliver, the outcome Task 7
+predicted, not a product verdict: `run-compare.spec.ts` alone at
+`--repeat-each=3` then passed **48 / 48** at load 51, and a second full run
+read back `Running 223 tests using 2 workers`, **223 passed, exit 0**.
+**THE LOAD GATE NEVER OPENED** — two waits, 75 minutes, never 1-min < 8 with
+5-min < 10 — so integration started at 22.5 / 25.1 and e2e at 18.2 / 17.6
+(46.5 / 37.8 for the second run), swap 7.7 of 9.2 GB, the host disk at 99%,
+the load macOS's own (`mediaanalysisd`, `apfsd`, `mds`) and the Docker VM.
+Every number above is a pass on a loaded machine, recorded as one.
+
+**THE REAL CHECK**, on a stack of its own so no gate could truncate it —
+`perfportal_compare_real`, Redis db 13, bucket `perfportal-compare-real`, API
+:3860 and the worker from `dist`, the plugin `0.3.0-SNAPSHOT` from Maven
+local: `ParitySimulation` twice through the Gradle plugin into one test
+(`compare-real/compare-parity/example-paritysimulation`), runs `1e38f0e7`
+(Run 1, 63,032 ms) and `cc653fcc` (Run 2, 61,641 ms), both `complete`,
+`verified`, 895 requests each, Gatling exiting 1 on its own deliberately
+failing `Search` p95. An independent oracle decoded the local
+`simulation.log` Gatling wrote (`parseSimulationLog`, integer nearest rank)
+and every figure the endpoints behind Compare answer agreed with it, value
+for value:
+
+```
+                              Run 1          Run 2          oracle
+  /stats  ?percentiles=99.9   2509           2504           equal (n 895)
+          ?percentiles=90     556            592            equal
+  windowed 0–10 s  (p90/p99.9) 589 / 1740 n 85   654 / 2164 n 89   equal
+  windowed 20–30 s             561 / 2228 n 146  611 / 2503 n 146  equal
+  windowed 40–63 s             538 / 2506 n 377  582 / 2296 n 373  equal (Run 2's
+                                                                   window clamped to 62 s)
+  /series ?percentiles=99.9,99.99  63 of 63 request-carrying buckets   61 of 61
+                                                                   equal per bucket
+```
+
+**p99.9 OVER 895 REQUESTS IS THE MAXIMUM**, rank ⌈0.999 × 895⌉ = 895, so the
+whole-run check alone cannot tell p99.9 from max — which is why p90 and the
+0–10 s window ride with it: there the window's p99.9 (1740, 2164) is not the
+run's maximum (2509, 2504). **CPU reports no source on both runs**:
+`/agent/injectors` is `available: true` with `machine.available: false`
+("machine figures are collected on Linux only (os.name=Mac OS X)"), 64 and 62
+buckets carrying heap and none carrying CPU, and `/telemetry` is
+`available: false` with no host — so `cpuPoints` is `null` and the chart names
+both runs as not recorded. And for Run 2 a window starting at 62 s
+(past its end) answers `/stats` 200 with no row, which is why the page decides
+"ended before this window" from the run's duration and sends nothing. The
+signed-in BROWSER half was the user's (Ruling 9), on the final fix-wave build at
+:3860, signing in themselves: `?metric=p99.9` read `All requests` **2504 / 2509**,
+`&from=0&to=10000` read **2164 / 1740**, CPU named as not recorded for both runs,
+and pinning Run 1 then reloading kept both the pin and the window. Both tokens
+were revoked and the processes stopped by PID.
+
+**RULINGS** (the ledger's 1–10): (1) every task leaves typecheck, lint and unit
+green, adapting call sites outside its list; (2) "ended before the window" is
+`window.fromMs >= durationMs` checked before clamping, and `parseWindow`'s
+`null` means whole run only; (3) `PinIcon = icon(MapPin)` in `icons.tsx`; (4)
+floors are measured, not taken from the headline; (5) Compare's labels stay
+ordinal ("99.9th percentile"), the spec's `p99.9 response time` read as
+illustrative; (6) the default stays p95 — the spec's "Default p99" describes
+GE; (7) the interim state between T3 and T6 was accepted and T6 closed it; (8)
+`run-compare.spec.ts` was knowingly red from T4 until T7 rewrote it; (9) the
+real check's browser half waits for the user to sign in.
+(10) the final fix wave took the Important, the six Minors and every FIX NOW
+row of the whole-branch review in one pass, and left every LEAVE row alone.
+
+**THE FINAL FIX WAVE, AND ITS ONE IMPORTANT WAS THE M12 CLASS AGAIN: A QUERY
+THAT HAS NOT ANSWERED HAS SEEN NOTHING.** A window change, Whole run, or a
+switch to a metric needing an extra rank re-keys every run's `/stats` (and
+`/series` for those metrics), and with no placeholder each `data` was
+`undefined` for one round trip — so the table said "No statistics for the
+selected runs", the overlay "Select at least one run to compare." over two
+pressed chips, the tiles vanished, and a `?ref=` whose run was still loading
+fell back to another, the chip and every change naming the wrong reference
+until it landed. The branch put that moment on every interaction it added.
+`RunCompare` derives one `pending` from exactly the reads it needs — every
+non-ended run's `/stats` and the overlay's own source — and while it is set
+the tiles and the table are a loading line, the overlay says it is loading,
+and no reference is resolved. **The overlay stays mounted**, unlike the
+review's sketch: it holds the metric selector and the window fields the reader
+is in the middle of using, so `CompareChart` takes a REQUIRED `pending` and
+swaps only its drawing. Not `keepPreviousData`, which would draw the previous
+window's figures under the new handles — the worse lie. A FAILED read is not
+pending; it stays named in the alert.
+
+**AND THE CHART WAITS ON ITS OWN READS ONLY, WHICH THE RE-REVIEW CAUGHT.**
+Handed the page-wide flag, the overlay blanked on every percentile switch:
+each percentile asks `/stats` its own rank, so the switch re-keys `/stats`
+while the series is one cached read for p50, p90, p95 and p99. The chart
+takes `overlayPending` (its `/series`, `/users` or CPU sources alone) and the
+tiles, table and reference keep `pending`, which adds `/stats`. And when both
+wait, the page's line is plain text beside the chart's `role="status"` one, so
+a screen reader hears the load once rather than two regions mounting together.
+
+**AND THE REST.** m1 above (`EXTRA_RANKS` is `STATS_RANKS` now, every
+percentile); m2/m3 the CPU paragraph's `[]` sentence; m6 the six-place rule;
+m4 and m5 two comments (`Reference`, not `Baseline`; a number's `String` form
+can carry `-`). From the triage: `liveSeriesKey` is exported from
+`api/live.ts` so `metricPaths.test` holds `seriesQuery`'s key to it rather
+than to a hand-written copy; the neutral summary case is an `it.each` over
+users AND CPU; a run that ends INSIDE the window has its case (a 50 s run under
+40–60 s asks `to=50000`); the drag case polls its baseline row count; and the
+spec's `SETTLE_MS` docstring says what the Apply case actually uses it for.
+
+**RED-VERIFIED** from committed checkpoints (`866ee617`, `f24b0bf4`,
+`e7e834c0`, and the re-review's two from its own fix commit), anchor counts asserted, each restored with `git checkout HEAD --`:
+
+```
+  chart handed the page-wide flag          the cached-overlay percentile case alone
+  the page's line always a live region     the announced-once case alone
+  pending never set (the before-state)     both loading cases — at "No statistics
+                                           for the selected runs" and at the wrong
+                                           run's Reference chip
+  reference resolved while pending         the pinned-reference case alone
+  p95 left out of STATS_RANKS              the p95 request case + the every-rank case
+  `[]` runs not named                      the no-reading case alone
+  all-empty overlay not said               the same case, at its second half
+  ended runs named twice                   the same case, at `not.toContain`
+  no clamp to the run's own duration       the ends-inside-the-window case alone
+  live series key drifts                   the rankless-key case alone (the old
+                                           hand-written copy would have passed)
+  CPU judged                               `neutral for cpu` alone
+  seven decimal places accepted            the six-place case alone
+  range check loosened to 101              the 100 and 100.5 cases
+  decimal pattern removed                  1e1, 0x10, ` 90` and 0.0000001 alone
+```
+
+**WHAT WAS RUN FOR THE WAVE**, Node v22.19.0, the same scratch stores (`perfportal_compare`, Redis db 9
+flushed through `infra-redis-1`, bucket `perfportal-compare`), e2e on port
+3870 because the real check's API held 3860: `typecheck` and `lint` exit 0 by
+their own exit codes; `test:unit` **294 / 4846**, exit 0, zero `Errors` lines,
+the prediction from per-file deltas exactly, and **294 / 4848** after the
+re-review's two `RunCompare` cases (`run-compare.spec.ts` **16 / 16** again); the three API files the parser
+change reaches (`percentile-list`, `compare-percentiles.integration`,
+`openapi.integration`) **3 / 64** alone; `run-compare.spec.ts` on Chromium
+**16 / 16**. `test:integration` COLLECTED **275 / 4345**, the prediction
+exactly, and exited 1 on TWO cases in files this wave cannot reach — the
+padded-provenance POST returning no run id at 5.9 s (Prisma's connect
+timeout) and `visibility.integration`'s fourth list answering 500 — at a
+start load of 27.5 / 30.6 (1328 s); the two files then passed **30 / 30**
+alone. `pnpm test:e2e --workers=2` read back `Running 223 tests using 2
+workers`, **223 passed, exit 0** (start load 16.1). One process slip is
+recorded rather than hidden: a five-second mutation of `validation.ts` (the
+pattern-guard measurement above) ran while that integration suite was live;
+every file the parser reaches passed in it.
+
+**KNOWN AND LEFT:**
+
+  - API: a malformed `percentiles` is refused before the run lookup, so a
+    missing run answers 400 not 404 (`uuidParam`'s order too); "stored keys
+    win" in `/series`' join is unobservable on exact data; `/series` with
+    `?percentiles=` is two round trips on one partition; the shared
+    `BadRequest` description keeps gaining route clauses; the
+    `withExtraRanks` call is one ~120-character line; `99.900000` is accepted
+    and answered as `p99.9`, a key spelled unlike the text sent.
+  - API tests: `compare-percentiles.integration` builds a fresh app and a full
+    ingest per case (slow, obliterates the ingest queue); its windowed case
+    asserts the run row only.
+  - Figures: `cpuPoints` would plot a partial sum if exactly one of
+    `cpuUserPct`/`cpuSysPct` were null, which `buildAgentFigures` never
+    files (user, sys and total land together); CPU `Mean` is unweighted and
+    does not say so; the errors "best" tile is a raw KO count beside an
+    overlay plotting KO/s under the same word; p50, p95 and p99 no longer
+    share the run page's `/stats` cache entry (`STATS_RANKS`).
+  - Matrix: the Ratio chip is relative % for a non-zero reference and pp for a
+    zero one, two conventions on one row; an estimated `=` renders `≈=`;
+    `absolute === 0` is exact float equality, so 1e-12 of window noise draws a
+    coloured `+0.0%`; the errors unit special case lives in both
+    `compareSummary.ts` and `CompareMatrix.tsx`; `deltaGood: null` means both
+    "no delta" and "neutral metric".
+  - Web tests: the best-tile "no better or worse" detail is untested; the
+    loading cases hold a read open for 20 ms of real time before looking.
+  - Code shape: `window` shadows the browser global in `RunCompare.tsx` and
+    `CompareChart.tsx`; the settle timer captures `onWindow` from the last
+    drag frame's render (`TimeBrush` shares it); the `/comparison/i` region
+    regex now matches two regions (no query uses it).
+  - e2e: the five-run `tableWidth <= regionScroll` is a tautology at 1280
+    (942 px in 950), so "scrolls inside its region" rests on containment and
+    `overflow-x: auto`; `cohortOfTwo` ingests one bundle twice, so swapped
+    columns are undetectable in the p99.9, range and drag cases; prose pins
+    remain (`Change against the reference`, `Current · Reference`);
+    `SETTLE_MS` is restated in the spec (the source module's extensionless
+    import fails `nodenext`); and the drag and Apply cases' page-timed guards fail
+    under load by design (one did here, at a 306 ms gap) — a red there names
+    a stall, and `run-compare.spec.ts` alone is the re-check.
+  - The time range is in the URL and GE's is not; the 2–5 selection is too.
+    Both deliberate.
 
 The AI run analysis UI branch (`feat/ai-run-analysis-ui`, PR 2 of
 `docs/superpowers/specs/2026-11-02-ai-run-analysis-design.md`, ledger

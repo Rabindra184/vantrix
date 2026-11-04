@@ -1,14 +1,16 @@
 import '@testing-library/jest-dom/vitest';
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Chart from '../src/charts/Chart.js';
 import CompareChart from '../src/charts/CompareChart.js';
+import { seriesPoints } from '../src/charts/transforms/compare.js';
 import { CATEGORICAL } from '../src/charts/theme.js';
 import { clockStepMs } from '../src/charts/timeTicks.js';
 import type { ChartData } from '../src/charts/types.js';
 import { ElapsedOnly, TimeAxisProvider, useTimeAxis } from '../src/charts/TimeAxisContext.js';
 import { TIME_AXIS_STORAGE_KEY } from '../src/timeAxisPreference.js';
 import fixture from './fixtures/reference-run.json';
+import { SETTLE_MS } from '../src/charts/useWindowControl.js';
 
 /**
  * `Chart`'s behaviour that never reaches ECharts.
@@ -992,9 +994,20 @@ describe('Chart — the time axis follows the viewer’s mode', () => {
     render(
       <TimeAxisProvider anchor={ANCHOR}>
         <CompareChart
-          runs={[{ id: 'a', label: 'Run a', series: fixture.series as never }]}
+          runs={[
+            {
+              id: 'a',
+              label: 'Run a',
+              points: seriesPoints(fixture.series as never, 'p95'),
+              bucketWidthMs: fixture.series.bucketWidthMs,
+            },
+          ]}
+          pending={false}
           metric="p95"
           onMetricChange={() => undefined}
+          window={null}
+          extentMs={fixture.series.bucketWidthMs * fixture.series.buckets.length}
+          onWindow={() => undefined}
         />
       </TimeAxisProvider>,
     );
@@ -1116,5 +1129,46 @@ describe('Chart — an elapsed axis steps like a clock', () => {
     );
     const [zoom] = lastOption()['dataZoom'] as { labelFormatter?: unknown }[];
     expect(zoom!.labelFormatter).toBeUndefined();
+  });
+});
+
+/**
+ * ═══ APPLY LEAVES A SETTLING DRAG TO LAND (task 6 review) ═══
+ *
+ * The overlay's window controls were first a copy of `TimeBrush`'s, and the
+ * copy routed Apply through the cancel a navigation makes. In the 250 ms a
+ * drag takes to settle the fields still hold the window from BEFORE it, so a
+ * drag followed by Apply committed the old fields and threw the drag away.
+ * Both charts now share `useWindowControl`; this pins the overlay's wiring.
+ */
+describe('CompareChart — the time range', () => {
+  it('commits the DRAGGED window when Apply is pressed while the drag settles', async () => {
+    const onWindow = vi.fn();
+    getOptionSpy.mockReturnValue({ dataZoom: [{ startValue: 10_000, endValue: 20_000 }] });
+    render(
+      <CompareChart
+        runs={[
+          {
+            id: 'a',
+            label: 'Run a',
+            points: seriesPoints(fixture.series as never, 'p95'),
+            bucketWidthMs: fixture.series.bucketWidthMs,
+          },
+        ]}
+        pending={false}
+        metric="p95"
+        onMetricChange={() => undefined}
+        window={null}
+        extentMs={63_161}
+        onWindow={onWindow}
+      />,
+    );
+
+    const drag = onSpy.mock.calls.find(([event]) => event === 'datazoom')![1] as () => void;
+    drag();
+    fireEvent.click(screen.getByRole('button', { name: 'Apply window' }));
+    await act(() => new Promise((resolve) => setTimeout(resolve, SETTLE_MS + 50)));
+
+    expect(onWindow).toHaveBeenLastCalledWith({ fromMs: 10_000, toMs: 20_000, bucketWidthMs: 0 });
   });
 });

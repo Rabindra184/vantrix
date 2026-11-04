@@ -482,6 +482,29 @@ describe('OpenAPI document', () => {
     expect(names).toEqual(expect.arrayContaining(['id', 'scope', 'name', 'family']));
   });
 
+  // GET /v1/runs/{id}/stats reads "percentiles" (Compare's p90/p99.9/p99.99
+  // ranks), and a generated client that cannot send it gets the project's
+  // configured set back with a 200 and no sign the ranks it wanted are absent.
+  it('declares the percentiles list GET /v1/runs/{id}/stats reads', async () => {
+    const doc = await fetchDoc();
+    const names = (
+      (doc.paths?.['/v1/runs/{id}/stats']?.get as { parameters?: { name: string }[] } | undefined)
+        ?.parameters ?? []
+    ).map((p) => p.name);
+    expect(names).toEqual(expect.arrayContaining(['id', 'from', 'to', 'percentiles']));
+  });
+
+  // GET /v1/runs/{id}/series reads "percentiles" too (Compare's p99.9 and
+  // p99.99 per bucket); undeclared, a generated client cannot ask for them.
+  it('declares the percentiles list GET /v1/runs/{id}/series reads', async () => {
+    const doc = await fetchDoc();
+    const names = (
+      (doc.paths?.['/v1/runs/{id}/series']?.get as { parameters?: { name: string }[] } | undefined)
+        ?.parameters ?? []
+    ).map((p) => p.name);
+    expect(names).toEqual(expect.arrayContaining(['id', 'from', 'to', 'percentiles']));
+  });
+
   it('declares GET /v1/projects and its response schema', async () => {
     const doc = await fetchDoc();
     expect(doc.paths?.['/v1/projects']?.['get']).toBeTruthy();

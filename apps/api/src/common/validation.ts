@@ -333,3 +333,64 @@ export function singleValue(name: string, value: unknown): string | undefined {
   }
   return value;
 }
+
+/** The most ranks one `?percentiles=` list may name — a compare chart plots one each. */
+const PERCENTILE_LIST_MAX = 12;
+
+/**
+ * A rank is written in plain decimal: digits, optionally a point and more
+ * digits. Checked BEFORE `Number()`, because `Number` reads far more than a
+ * caller means — `Number('')` and `Number(' ')` are 0, `Number('0x10')` is 16
+ * and `Number('1e1')` is 10 — and an empty item is exactly what a trailing
+ * comma (`?percentiles=50,`) produces.
+ *
+ * AT MOST SIX DECIMAL PLACES, because the answer is keyed `p${rank}` from the
+ * parsed NUMBER, and `String` writes a number below 1e-6 in exponent form:
+ * `0.0000001` would be answered under `p1e-7`, a key that is not the decimal
+ * the caller sent, and `nearestRankIndex` would read its precision from that
+ * exponent form too. Six places is the most `String` keeps in plain decimal
+ * (`0.000001`), and far finer than any rank a report asks for.
+ */
+const PERCENTILE_ITEM = /^\d+(\.\d{1,6})?$/;
+
+/**
+ * `?percentiles=90,99.9,99.99` — ranks a read answers INSTEAD of the
+ * project's configured set (`settings.percentiles`).
+ *
+ * `null` when the parameter is absent, so the caller falls back to that set
+ * with `??`. Otherwise one to twelve finite numbers in the OPEN interval
+ * (0, 100), comma-separated, answered sorted ascending and de-duplicated —
+ * `99.9,90,90` is `[90, 99.9]`, and `90.0` is `90`, so the response's
+ * `p${rank}` keys cannot carry the same rank twice under two spellings.
+ * Anything else is 400 INVALID_QUERY naming the parameter, never a silently
+ * shorter list: a dropped rank would leave a reader's chart missing a line
+ * with nothing saying why.
+ *
+ * 0 and 100 are refused because they are the minimum and maximum, which the
+ * row already carries exactly as `minMs` and `maxMs` — the same bound the
+ * project settings schema applies to its own set.
+ */
+export function parsePercentileList(name: string, raw: unknown): number[] | null {
+  const value = singleValue(name, raw);
+  if (value === undefined) return null;
+
+  const refuse = (why: string) =>
+    badRequest(
+      'INVALID_QUERY',
+      `"${name}" ${why}, not "${value}".`,
+      `Send 1 to ${PERCENTILE_LIST_MAX} comma-separated ranks between 0 and 100 (both exclusive), `
+        + `for example ?${name}=90,99.9,99.99.`,
+    );
+
+  const items = value.split(',');
+  if (items.length > PERCENTILE_LIST_MAX) throw refuse(`may name at most ${PERCENTILE_LIST_MAX} ranks`);
+
+  const ranks = items.map((item) => {
+    if (!PERCENTILE_ITEM.test(item)) throw refuse('must be comma-separated decimal numbers');
+    const p = Number(item);
+    if (!(Number.isFinite(p) && p > 0 && p < 100)) throw refuse('must name ranks strictly between 0 and 100');
+    return p;
+  });
+
+  return [...new Set(ranks)].sort((a, b) => a - b);
+}

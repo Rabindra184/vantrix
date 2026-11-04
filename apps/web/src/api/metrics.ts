@@ -88,6 +88,19 @@ import {
  * stats — indicator bands ③, the request-count donut ④, the statistics table ⑤
  * -------------------------------------------------------------------- */
 
+/**
+ * The extra ranks a read asked for (`?percentiles=`), as a trailing key
+ * element — and NO element at all when none was asked for.
+ *
+ * A response for different ranks is a different response, so it must cache
+ * under a different key. But a rankless read has to keep EXACTLY the key it
+ * always had: `api/live.ts` writes live deltas into the series cache by
+ * spelling that key out (`liveSeriesKey`), and an always-present trailing
+ * `null` would silently move every chart off the entry live writes to.
+ */
+const ranksKey = (percentiles: readonly number[]): readonly string[] =>
+  percentiles.length === 0 ? [] : [percentiles.join(',')];
+
 export const statsQueryKey = (id: string, window: Window | null) =>
   ['run', id, 'stats', window?.fromMs ?? null, window?.toMs ?? null] as const;
 
@@ -113,9 +126,13 @@ export const statsQueryKey = (id: string, window: Window | null) =>
  * cache instead of firing again — see this file's top-level comment for why
  * that is correct for a completed run's stats specifically.
  */
-export const statsQuery = (id: string, window: Window | null = null) => ({
-  queryKey: statsQueryKey(id, window),
-  queryFn: () => apiFetch(StatsResponseSchema, statsPath(id, window)),
+export const statsQuery = (
+  id: string,
+  window: Window | null = null,
+  percentiles: readonly number[] = [],
+) => ({
+  queryKey: [...statsQueryKey(id, window), ...ranksKey(percentiles)] as const,
+  queryFn: () => apiFetch(StatsResponseSchema, statsPath(id, window, percentiles)),
   staleTime: Infinity,
 });
 
@@ -140,9 +157,16 @@ export const seriesQuery = (
   name = '',
   family = 'response_time',
   window: Window | null = null,
+  percentiles: readonly number[] = [],
 ) => ({
-  queryKey: [...seriesQueryKey(id, scope, name, family), window?.fromMs ?? null, window?.toMs ?? null] as const,
-  queryFn: () => apiFetch(SeriesResponseSchema, seriesPath(id, scope, name, family, window)),
+  queryKey: [
+    ...seriesQueryKey(id, scope, name, family),
+    window?.fromMs ?? null,
+    window?.toMs ?? null,
+    ...ranksKey(percentiles),
+  ] as const,
+  queryFn: () =>
+    apiFetch(SeriesResponseSchema, seriesPath(id, scope, name, family, window, percentiles)),
   staleTime: Infinity,
 });
 

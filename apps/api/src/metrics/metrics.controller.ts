@@ -20,13 +20,15 @@ import {
   type IndicatorBands,
   bandsFrom,
   inferBucketWidthMs,
+  mergedHistogram,
+  percentilesOf,
   rollupFromHistograms,
   storedPercentiles,
   toTelemetrySeries,
 } from '@perfportal/statistics';
 import type { Request } from 'express';
 import { Scopes } from '../auth/scopes.decorator.js';
-import { badRequest, parseLimit, uuidParam } from '../common/validation.js';
+import { badRequest, parseLimit, parsePercentileList, uuidParam } from '../common/validation.js';
 import { inRange, resolveRange, snapWindow } from '../common/window.js';
 import { runNotFound } from '../common/validation.js';
 import { Requires } from '../auth/access.decorator.js';
@@ -198,7 +200,11 @@ export class MetricsController {
     @Query('family') family?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
+    @Query('percentiles') percentiles?: unknown,
   ): Promise<StatsResponse> {
+    // Parsed before anything is read, so a malformed list is the same 400
+    // whatever the run's state. `null` means "the project's own set".
+    const requested = parsePercentileList('percentiles', percentiles);
     const run = await this.#run(req, id);
 
     // parseProjectSettings throws (a ZodError) on stored settings that are
@@ -222,10 +228,21 @@ export class MetricsController {
       );
     }
 
+    /**
+     * THE RANKS THIS RESPONSE ANSWERS: the caller's `?percentiles=` when it
+     * named any, else the project's configured set. Compare plots p90, p99.9
+     * and p99.99 for runs whose project configures none of them, and every
+     * one is still computed from the stored histograms by the paths below —
+     * `storedPercentiles` unwindowed, `rollupFromHistograms` windowed — never
+     * by a second percentile computation here. Indicator bands keep the
+     * project's bounds: the parameter is about ranks and nothing else.
+     */
+    const set = requested ?? settings.percentiles;
+
     const range = await resolveRange(this.reader, run, from, to);
     const tenant = { orgId: run.orgId, projectId: run.projectId };
     if (range !== null) {
-      return this.#windowedStats(run, tenant, range, settings, scope, name, family);
+      return this.#windowedStats(run, tenant, range, { ...settings, percentiles: set }, scope, name, family);
     }
 
     const all = await this.reader.stats({ orgId: run.orgId, projectId: run.projectId }, run.id);
@@ -257,7 +274,7 @@ export class MetricsController {
       stddevMs: s.stddevMs,
       throughputRps: s.throughputRps,
       // Exact for rows written since 2026-10-15; a legacy row answers its stored ranks, clamped — see storedPercentiles.
-      percentiles: storedPercentiles(s, settings.percentiles),
+      percentiles: storedPercentiles(s, set),
       indicators: s.histogramOk
         ? bandsOrRefuse(s.histogramOk, s.koCount, settings.indicators)
         : { under: 0, between: 0, over: 0, failed: s.koCount },
@@ -285,20 +302,25 @@ export class MetricsController {
     @Query('family') family = 'response_time',
     @Query('from') from?: string,
     @Query('to') to?: string,
+    @Query('percentiles') percentiles?: unknown,
   ): Promise<SeriesResponse> {
+    // Parsed before anything is read, as on /stats. `null` means "only the
+    // ranks each bucket stored".
+    const requested = parsePercentileList('percentiles', percentiles);
     const run = await this.#run(req, id);
     const range = await resolveRange(this.reader, run, from, to);
-    const all = await this.reader.series(
-      { orgId: run.orgId, projectId: run.projectId },
-      run.id,
-      run.startedOn,
-      { scope, name, family },
-    );
+    const tenant = { orgId: run.orgId, projectId: run.projectId };
+    const sel = { scope, name, family };
+    const all = await this.reader.series(tenant, run.id, run.startedOn, sel);
     // Filtered here rather than in SQL: the width has to be inferred from the
     // WHOLE series, or a narrow window over a coalesced run would infer its
     // own gap as the bucket width and scale every rate wrongly.
     const bucketWidthMs = inferBucketWidthMs(all.map((b) => b.startOffsetMs));
-    const buckets = all.filter((b) => inRange(b.startOffsetMs, range));
+    const inWindow = all.filter((b) => inRange(b.startOffsetMs, range));
+    const buckets =
+      requested === null
+        ? inWindow
+        : withExtraRanks(inWindow, await this.reader.seriesHistograms(tenant, run.id, run.startedOn, sel), requested);
     return {
       runId: run.id,
       scope: scope as SeriesResponse['scope'],
@@ -701,6 +723,46 @@ function bandsOrRefuse(
         + 'editing surface yet, so this needs a direct settings update.',
     );
   }
+}
+
+/**
+ * `/series?percentiles=` — adds the requested ranks to each bucket's three
+ * maps, from that bucket's OWN histograms: the merge for `percentiles`, OK for
+ * `percentilesOk`, KO for `percentilesKo`. One walk per histogram
+ * (`percentilesOf`), never a second percentile computation.
+ *
+ * What a bucket cannot answer exactly it does not answer: a bucket with no
+ * histograms, or a legacy (`sparse-ms-v1`) one, gains nothing, and an empty
+ * population gains no key (never 0) — `percentilesOf` omits it. A requested
+ * rank the bucket already stored keeps the stored value, byte for byte.
+ */
+function withExtraRanks<B extends {
+  startOffsetMs: number;
+  percentiles: Record<string, number>;
+  percentilesOk: Record<string, number>;
+  percentilesKo: Record<string, number>;
+}>(
+  buckets: B[],
+  histograms: Map<number, { ok: Histogram; ko: Histogram } | null>,
+  set: readonly number[],
+): B[] {
+  return buckets.map((b) => {
+    const h = histograms.get(b.startOffsetMs);
+    if (!h || !h.ok.exact || !h.ko.exact) return b;
+    return {
+      ...b,
+      percentiles: joined(b.percentiles, percentilesOf(mergedHistogram(h.ok, h.ko), set)),
+      percentilesOk: joined(b.percentilesOk, percentilesOf(h.ok, set)),
+      percentilesKo: joined(b.percentilesKo, percentilesOf(h.ko, set)),
+    };
+  });
+}
+
+/** The stored map, untouched and first, plus every computed rank it lacks. */
+function joined(stored: Record<string, number>, computed: Record<string, number>): Record<string, number> {
+  const out = { ...stored };
+  for (const [key, value] of Object.entries(computed)) if (!(key in out)) out[key] = value;
+  return out;
 }
 
 function message(err: unknown): string {
