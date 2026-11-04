@@ -184,8 +184,8 @@ none); a request outside the named group is unknown and reads as no request.
 | Table view | that request's row | the group's subtree |
 
 The chart titles do not change; the section bar states the pick, and each
-chart's data table and accessible description carry it, so a figure copied out
-of the page still says what it was narrowed to. A narrowed empty chart says
+narrowed chart's ⓘ names it ("Narrowed to the group Cart."), so the trigger's
+accessible description carries it too. A narrowed empty chart says
 "for this request" or "for this group", never "for this run" (the scoped-empty
 rule recorded in `CLAUDE.md`), and combined with a window it names both.
 
