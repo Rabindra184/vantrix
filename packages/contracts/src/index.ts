@@ -6,6 +6,7 @@ export * from './run-number.js';
 export * from './run-events.js';
 export * from './project.js';
 export * from './metrics.js';
+export * from './groups.js';
 export * from './settings.js';
 export * from './tokens.js';
 export * from './access.js';
