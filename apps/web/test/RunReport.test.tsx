@@ -5,12 +5,15 @@ import { cleanup, render, screen, waitFor, within } from '@testing-library/react
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Outlet, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AgentStatusResponseSchema, AgentSummaryResponseSchema } from '@perfportal/contracts';
+import { AgentStatusResponseSchema, AgentSummaryResponseSchema, StatsResponseSchema, requestsInGroup } from '@perfportal/contracts';
 import type { RunResponse } from '@perfportal/contracts';
 import agentRun from './fixtures/agent-run.json';
 import reference from './fixtures/reference-run.json';
 import { runQueryKey } from '../src/api/run';
+import { toIndicators, toRequestCounts } from '../src/charts/transforms/indicators';
+import type { ChartData } from '../src/charts/types';
 import RunReport from '../src/routes/RunReport';
+import { narrowStats } from '../src/routes/report/narrow';
 import type { RunWindowContext } from '../src/routes/useRunWindow';
 import { UNKNOWN_ACCESS } from './support/access';
 import useIsCompact from '../src/useIsCompact';
@@ -118,18 +121,59 @@ interface AgentBodies {
   readonly status?: unknown;
 }
 
+interface RequestsBodies {
+  /** What a WINDOWED `/stats` (one carrying `from`) answers; the whole-run body otherwise. */
+  readonly windowedStats?: unknown;
+  /** Holds every `/stats` answer until it resolves. */
+  readonly statsGate?: Promise<unknown>;
+  /** How a group read (`?group=`) answers: with its echo (the default), without
+   *  one (an API older than the pickers), or 409 `GROUP_NOT_MERGEABLE`. */
+  readonly group?: 'echo' | 'no-echo' | 'not-mergeable';
+}
+
+const json = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': status < 300 ? 'application/json' : 'application/problem+json' },
+  });
+
 /** Answers each endpoint from the captured fixture; anything else is a 404,
  *  which `Payload` renders as an undrawn slot — still a figure with its id. */
 function stubFetch(
   statsBody: unknown = reference.stats,
   telemetryBody: unknown = NO_TELEMETRY,
   agent: AgentBodies = {},
+  requests: RequestsBodies = {},
 ): string[] {
   const seen: string[] = [];
   vi.stubGlobal('fetch', (input: RequestInfo | URL) => {
     const url = String(input);
     seen.push(url);
-    const path = new URL(url, 'http://x').pathname;
+    const parsed = new URL(url, 'http://x');
+    const path = parsed.pathname;
+    const group = parsed.searchParams.get('group');
+    if (group !== null && (path.endsWith('/series') || path.endsWith('/distribution'))) {
+      const body = path.endsWith('/series') ? reference.series : reference.distribution;
+      if (requests.group === 'not-mergeable') {
+        return Promise.resolve(
+          json(
+            { status: 409, title: 'Conflict', code: 'GROUP_NOT_MERGEABLE', detail: 'A member has no exact histogram.', remediation: 'Recompute the run.' },
+            409,
+          ),
+        );
+      }
+      // An older API ignores `group` and answers the run's own body, echoing nothing.
+      if (requests.group === 'no-echo') return Promise.resolve(json(body));
+      return Promise.resolve(json({ ...body, scope: 'request', name: '', group }));
+    }
+    if (path.endsWith('/stats')) {
+      const windowed = parsed.searchParams.has('from') && requests.windowedStats !== undefined;
+      const answer = () =>
+        statsBody === null && !windowed
+          ? json({ status: 404, title: 'Not Found', code: 'NOT_FOUND', detail: 'stub', remediation: 'stub' }, 404)
+          : json(windowed ? requests.windowedStats : statsBody);
+      return requests.statsGate === undefined ? Promise.resolve(answer()) : requests.statsGate.then(answer);
+    }
     if (path.endsWith('/agent')) {
       const summary = agent.summary === undefined ? NO_AGENT_SUMMARY : agent.summary;
       if (summary === 'hold') return new Promise<Response>(() => {});
@@ -151,11 +195,9 @@ function stubFetch(
         ? reference.series
         : path.endsWith('/distribution')
           ? reference.distribution
-          : path.endsWith('/stats')
-            ? statsBody
-            : path.endsWith('/telemetry')
-              ? telemetryBody
-              : null;
+          : path.endsWith('/telemetry')
+            ? telemetryBody
+            : null;
     return Promise.resolve(
       body === null
         ? new Response(JSON.stringify({ status: 404, title: 'Not Found', code: 'NOT_FOUND', detail: 'stub', remediation: 'stub' }), {
@@ -175,8 +217,11 @@ function renderReport({
   telemetry,
   agent,
   run,
+  requests,
 }: {
   url?: string;
+  /** How the Requests section's narrowed reads answer. */
+  requests?: RequestsBodies;
   /** What the agent reads answer; defaults to a run with no agent file. */
   agent?: AgentBodies;
   /** Fields of the run's identity to override — `statsMethod` among them. */
@@ -187,7 +232,7 @@ function renderReport({
   /** What `/telemetry` answers; defaults to no agent having reported. */
   telemetry?: unknown;
 } = {}) {
-  const seen = stubFetch(stats, telemetry, agent);
+  const seen = stubFetch(stats, telemetry, agent, requests);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   client.setQueryData(runQueryKey(RUN_ID), { state: 'ready', run: readyRun(run) });
   render(
@@ -206,6 +251,11 @@ function renderReport({
   );
   return seen;
 }
+
+const path = (url: string) => new URL(url, 'http://x').pathname;
+
+/** The pickers' names read (ruling R13): `/stats` with no window. */
+const isWholeRunStats = (url: string) => path(url).endsWith('/stats') && !/[?&]from=/.test(url);
 
 /** GE's sections in GE's order — DNS between Connections and Load generators. */
 const SECTIONS = ['Requests', 'Groups', 'Virtual users', 'Connections', 'DNS', 'Load generators'];
@@ -318,11 +368,20 @@ describe('RunReport — GE’s sections', () => {
   it('narrows every Requests query to the window', async () => {
     const seen = renderReport({ window: { fromMs: 10_000, toMs: 20_000, bucketWidthMs: 1_000 } });
     await screen.findByTestId('chart-requests-and-responses');
+    // The figure reads wait for the pickers' names, so wait for them in turn.
+    await waitFor(() => expect(seen.some((u) => u.includes('/agent/status'))).toBe(true));
     const metric = seen.filter((u) => /\/(series|stats|distribution|errors\/series|agent\/status)/.test(u));
+    // ONE read is whole-run on purpose: the pickers' names (ruling R13). It is
+    // left out by its exact shape, and the charts' own `/stats` must still be
+    // windowed — an unwindowed one would share the names' key, become the same
+    // request, and pass the loop below unseen.
+    const names = metric.filter(isWholeRunStats);
+    expect(names, 'the pickers’ names are the one whole-run read').toHaveLength(1);
+    expect(metric.some((u) => path(u).endsWith('/stats') && /[?&]from=10000/.test(u)), 'the charts’ /stats').toBe(true);
     // The status chart reads the agent file through the same window.
     expect(metric.some((u) => u.includes('/agent/status'))).toBe(true);
     expect(metric.length).toBeGreaterThan(4);
-    for (const url of metric) expect(url).toMatch(/[?&]from=10000/);
+    for (const url of metric.filter((u) => !isWholeRunStats(u))) expect(url).toMatch(/[?&]from=10000/);
   });
 
   // The test above reads the Charts view only. Every OTHER consumer reaches the
@@ -330,9 +389,18 @@ describe('RunReport — GE’s sections', () => {
   // the telemetry sections — and a section that forgot it would draw the whole
   // run under a window the reader selected, so each one is opened.
   it('narrows the table, the groups, the users and the telemetry to the window too', async () => {
-    const seen = renderReport({ window: { fromMs: 10_000, toMs: 20_000, bucketWidthMs: 1_000 } });
+    // The windowed `/stats` lacks Search, so a table that read the whole run
+    // instead — its key the pickers' names', and so one request with them —
+    // would show it.
+    const seen = renderReport({
+      window: { fromMs: 10_000, toMs: 20_000, bucketWidthMs: 1_000 },
+      requests: { windowedStats: { ...reference.stats, stats: reference.stats.stats.filter((s) => s.name !== 'Search') } },
+    });
     await screen.findByTestId('chart-requests-and-responses');
     await userEvent.click(within(screen.getByTestId('section-requests')).getByRole('button', { name: 'Table' }));
+    const rows = await within(screen.getByTestId('section-requests')).findAllByTestId('stat-row');
+    expect(rows.map((r) => r.getAttribute('data-path'))).toContain('Place Order');
+    expect(rows.map((r) => r.getAttribute('data-path'))).not.toContain('Search');
     for (const title of ['Groups', 'Virtual users', 'Connections']) {
       await userEvent.click(screen.getByRole('button', { name: title }));
     }
@@ -343,7 +411,9 @@ describe('RunReport — GE’s sections', () => {
     const metric = seen.filter((u) => kinds.some((k) => new URL(u, 'http://x').pathname.endsWith(k)));
     // Every kind really was asked for, or the loop below proves less than it says.
     for (const kind of kinds) expect(metric.some((u) => new URL(u, 'http://x').pathname.endsWith(kind)), kind).toBe(true);
-    for (const url of metric) expect(url).toMatch(/[?&]from=10000/);
+    // The pickers' names, and only they, are whole-run (ruling R13).
+    expect(metric.filter(isWholeRunStats)).toHaveLength(1);
+    for (const url of metric.filter((u) => !isWholeRunStats(u))) expect(url).toMatch(/[?&]from=10000/);
   });
 
   it('lists the run’s groups, each linked to its own page', async () => {
@@ -480,6 +550,238 @@ describe('RunReport — GE’s sections', () => {
     await userEvent.click(screen.getByRole('button', { name: title }));
     expect(within(screen.getByTestId(`section-${id}`)).getByTestId('desktop-only')).toBeVisible();
     expect(seen.some((u) => u.includes(path))).toBe(false);
+  });
+});
+
+/**
+ * ═══ THE REQUESTS SECTION'S GROUP AND REQUEST PICK ═══
+ * (docs/superpowers/specs/2026-11-04-report-pickers-design.md, sections 5-7)
+ *
+ * Every expectation is read off the captured payload: the groups and requests
+ * are the reference run's own rows, a group's members are `requestsInGroup`'s,
+ * and the narrowed figures are what `narrowStats` and the transforms make of
+ * them. The copy the plan pins (the whole-run notes, the unsupported and 409
+ * sentences) is asserted verbatim; everything else as a claim.
+ */
+describe('RunReport — the Requests pickers', () => {
+  const STATS = StatsResponseSchema.parse(reference.stats);
+  const REQUESTS = STATS.stats.filter((r) => r.scope === 'request' && r.family === 'response_time').map((r) => r.name);
+  const GROUPS = STATS.stats.filter((r) => r.scope === 'group' && r.family === 'group_cumulated').map((r) => r.name);
+  const ADD_TO_CART = 'Cart/Add To Cart';
+  const requests = () => screen.getByTestId('section-requests');
+  const groupPicker = () => within(requests()).getByTestId('requests-group-picker');
+  const requestPicker = () => within(requests()).getByTestId('requests-request-picker');
+  const options = (select: HTMLElement) => [...select.querySelectorAll('option')].map((o) => o.textContent);
+  /** The run's own `/<endpoint>` reads — `/series` is not `/errors/series`. */
+  const atPath = (seen: readonly string[], endpoint: string) =>
+    seen.filter((u) => path(u) === `/v1/runs/${RUN_ID}${endpoint}`);
+  /** A chart's data table as [label, ...values], values in their unrounded form. */
+  const tableOf = (id: string) =>
+    [...screen.getByTestId(`chart-data-${id}`).querySelectorAll('tbody tr')].map((tr) => [
+      tr.querySelector('th')?.textContent?.trim(),
+      ...[...tr.querySelectorAll('td')].map((td) => td.getAttribute('data-value')),
+    ]);
+  const rowsOf = (data: ChartData) => data.rows.map((r) => [r.label, ...r.values.map((v) => (v === null ? null : String(v)))]);
+
+  it('draws Group and Request beside Charts | Table', async () => {
+    renderReport();
+    const bar = within(requests()).getByTestId('requests-bar');
+    expect(within(bar).getByRole('group', { name: 'Requests view' })).toBeInTheDocument();
+    const group = await within(groupPicker()).findByLabelText('Group');
+    expect(bar).toContainElement(group);
+    // All groups first, then the run's groups as a reader reads them, then (no group).
+    expect(GROUPS).toEqual(['Cart', 'Catalog', 'Catalog/Recommendations']);
+    expect(options(group)).toEqual(['All groups', 'Cart', 'Catalog', 'Catalog / Recommendations', '(no group)']);
+    // The Request control waits for a group, and says so in text.
+    const request = within(requestPicker()).getByLabelText('Request');
+    expect(bar).toContainElement(request);
+    expect(request).toBeDisabled();
+    expect(request).toHaveAccessibleDescription('Pick a group first.');
+  });
+
+  it('a group pick reads the group’s series and distribution, never the run’s', async () => {
+    const seen = renderReport({ url: `/runs/${RUN_ID}/report?requests-group=Cart` });
+    await waitFor(() => expect(atPath(seen, '/distribution')).not.toHaveLength(0));
+    await waitFor(() => expect(atPath(seen, '/series')).not.toHaveLength(0));
+    const reads = [...atPath(seen, '/series'), ...atPath(seen, '/distribution')].map((u) => new URL(u, 'http://x').searchParams);
+    for (const params of reads) {
+      expect(params.get('scope')).toBe('request');
+      expect(params.get('group')).toBe('Cart');
+      expect(params.has('name')).toBe(false);
+    }
+    expect(within(groupPicker()).getByLabelText('Group')).toHaveValue('Cart');
+  });
+
+  it('a request pick reads that request’s series and distribution', async () => {
+    const seen = renderReport({
+      url: `/runs/${RUN_ID}/report?requests-group=Cart&requests-request=${encodeURIComponent(ADD_TO_CART)}`,
+    });
+    await waitFor(() => expect(atPath(seen, '/distribution')).not.toHaveLength(0));
+    await waitFor(() => expect(atPath(seen, '/series')).not.toHaveLength(0));
+    for (const url of [...atPath(seen, '/series'), ...atPath(seen, '/distribution')]) {
+      expect(url).toContain('scope=request&name=Cart%2FAdd%20To%20Cart');
+      expect(new URL(url, 'http://x').searchParams.has('group')).toBe(false);
+    }
+  });
+
+  it('ranges and number of requests read the group’s narrowed stats', async () => {
+    renderReport({ url: `/runs/${RUN_ID}/report?requests-group=Cart` });
+    const narrowed = { kind: 'group', name: 'Cart' } as const;
+    const stats = narrowStats(STATS, requestsInGroup(REQUESTS, GROUPS, 'Cart'));
+    const ranges = rowsOf(toIndicators(stats, { windowSelected: false, narrowed }));
+    const counts = rowsOf(toRequestCounts(stats, { windowSelected: false, narrowed }));
+    // The group's figures are not the run's, or this proves nothing.
+    expect(ranges).not.toEqual(rowsOf(toIndicators(STATS, { windowSelected: false })));
+    await waitFor(() => expect(tableOf('indicators')).toEqual(ranges));
+    expect(tableOf('request-counts')).toEqual(counts);
+  });
+
+  it('names a picked request as the picker lists it', async () => {
+    renderReport({ url: `/runs/${RUN_ID}/report?requests-group=Cart&requests-request=${encodeURIComponent(ADD_TO_CART)}` });
+    const about = await within(requests()).findByRole('button', { name: 'About Response time ranges' });
+    expect(about).toHaveAccessibleDescription(/Narrowed to the request Cart \/ Add To Cart\./);
+  });
+
+  it('errors per second and responses by status carry their whole-run notes under a pick', async () => {
+    renderReport({ url: `/runs/${RUN_ID}/report?requests-group=Cart` });
+    const notes = await within(requests()).findAllByTestId('whole-run-note');
+    expect(notes.map((n) => n.textContent)).toEqual([
+      'Shows the whole run: errors are not recorded per request.',
+      'Shows the whole run: status codes are not recorded per request.',
+    ]);
+    // Each line sits with the chart it describes, above it.
+    expect(notes[0]!.parentElement).toContainElement(within(requests()).getByTestId('chart-errors-over-time'));
+    expect(notes[1]!.parentElement).toContainElement(within(requests()).getByTestId('chart-agent-status'));
+  });
+
+  it('carries no whole-run note without a pick', async () => {
+    renderReport();
+    await within(requests()).findByLabelText('Group');
+    await waitFor(() => expect(within(requests()).getByTestId('chart-errors-over-time')).toBeInTheDocument());
+    expect(within(requests()).queryByTestId('whole-run-note')).toBeNull();
+  });
+
+  it('says once that the server cannot narrow by group, and draws no group chart under it', async () => {
+    renderReport({ url: `/runs/${RUN_ID}/report?requests-group=Cart`, requests: { group: 'no-echo' } });
+    const sentence = await within(requests()).findByText('This server cannot narrow by group yet.');
+    expect(sentence).toBeVisible();
+    expect(within(requests()).getAllByText('This server cannot narrow by group yet.')).toHaveLength(1);
+    for (const id of ['requests-and-responses', 'percentiles', 'distribution', 'percentile-distribution']) {
+      expect(within(requests()).queryByTestId(`chart-${id}`), id).toBeNull();
+    }
+    // What the browser narrows itself still draws.
+    expect(within(requests()).getByTestId('chart-indicators')).toBeInTheDocument();
+  });
+
+  it('says a run’s group figures cannot be merged in each chart they feed', async () => {
+    renderReport({ url: `/runs/${RUN_ID}/report?requests-group=Cart`, requests: { group: 'not-mergeable' } });
+    for (const id of ['requests-and-responses', 'percentiles', 'distribution', 'percentile-distribution']) {
+      await waitFor(() =>
+        expect(within(within(requests()).getByTestId(`chart-${id}`)).getByRole('status')).toHaveTextContent(
+          "This run's group figures cannot be merged: it predates exact statistics.",
+        ),
+      );
+    }
+    // The section's words, not the server's.
+    expect(requests().textContent).not.toContain('A member has no exact histogram.');
+  });
+
+  async function openTable() {
+    await userEvent.click(within(requests()).getByRole('button', { name: 'Table' }));
+    return within(requests()).findAllByTestId('stat-row');
+  }
+
+  it('the Table view lists only a picked request’s own row, with no All Requests row', async () => {
+    renderReport({ url: `/runs/${RUN_ID}/report?requests-group=Cart&requests-request=${encodeURIComponent(ADD_TO_CART)}` });
+    const rows = await openTable();
+    expect(rows.map((r) => r.getAttribute('data-path'))).toEqual([ADD_TO_CART]);
+    expect(within(requests()).queryByTestId('stat-row-total')).toBeNull();
+  });
+
+  it('the Table view lists a picked group’s subtree and nothing above it', async () => {
+    renderReport({ url: `/runs/${RUN_ID}/report?requests-group=Catalog` });
+    await openTable();
+    await userEvent.click(within(requests()).getByRole('button', { name: /expand Catalog/ }));
+    await userEvent.click(within(requests()).getByRole('button', { name: /expand Recommendations/ }));
+    const shown = within(requests()).getAllByTestId('stat-row').map((r) => r.getAttribute('data-path'));
+    expect(shown.sort()).toEqual(['Catalog', 'Catalog/Recommendations', ...requestsInGroup(REQUESTS, GROUPS, 'Catalog')].sort());
+    expect(within(requests()).queryByTestId('stat-row-total')).toBeNull();
+  });
+
+  it('the Table view under a nested group’s one request carries no ancestor row', async () => {
+    renderReport({ url: `/runs/${RUN_ID}/report?requests-group=${encodeURIComponent('Catalog/Recommendations')}` });
+    const rows = await openTable();
+    const paths = rows.map((r) => r.getAttribute('data-path'));
+    expect(paths).not.toContain('Catalog');
+    expect(paths).toEqual(requestsInGroup(REQUESTS, GROUPS, 'Catalog/Recommendations'));
+  });
+
+  it('says the pick held nothing in the window, not that no request ran', async () => {
+    renderReport({
+      url: `/runs/${RUN_ID}/report?requests-group=&requests-request=Search`,
+      window: { fromMs: 10_000, toMs: 20_000, bucketWidthMs: 1_000 },
+      requests: { windowedStats: { ...reference.stats, stats: reference.stats.stats.filter((s) => s.name !== 'Search') } },
+    });
+    await userEvent.click(within(requests()).getByRole('button', { name: 'Table' }));
+    expect(await within(requests()).findByText(/Nothing was recorded for this request in the selected window/)).toBeVisible();
+    expect(within(requests()).queryByText(/No requests ran in the selected window/)).toBeNull();
+  });
+
+  it('asks for no figure until /stats has answered', async () => {
+    let release!: (value?: unknown) => void;
+    const statsGate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const seen = renderReport({ url: `/runs/${RUN_ID}/report?requests-group=Cart`, requests: { statsGate } });
+    await waitFor(() => expect(atPath(seen, '/stats')).not.toHaveLength(0));
+    // Long enough for any effect the first render scheduled to have fetched.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const figures = () => seen.filter((u) => /\/(series|distribution|errors\/series|agent\/status)$/.test(path(u)));
+    expect(figures()).toEqual([]);
+    release();
+    await waitFor(() => expect(atPath(seen, '/series')).not.toHaveLength(0));
+    // And the first figure asked for is the PICK's, never the run's first.
+    for (const url of [...atPath(seen, '/series'), ...atPath(seen, '/distribution')]) {
+      expect(new URL(url, 'http://x').searchParams.get('group')).toBe('Cart');
+    }
+  });
+
+  it('shows (no group) read-only and the Request picker usable in a run with no groups', async () => {
+    renderReport({ stats: { ...reference.stats, stats: reference.stats.stats.filter((s) => s.scope !== 'group') } });
+    const group = groupPicker();
+    expect(await within(group).findByText('(no group)')).toBeVisible();
+    expect(within(group).queryByRole('combobox')).toBeNull();
+    const request = within(requestPicker()).getByLabelText('Request');
+    expect(request).toBeEnabled();
+    expect(requests().textContent).not.toContain('Pick a group first.');
+    expect(options(request)).toEqual(['All requests', ...REQUESTS]);
+  });
+
+  // The pick drives both views, so on a phone it waits behind the same gate as
+  // they do — and opening either view opens the pickers with it.
+  it('keeps the pickers behind the phone’s gate, and the Table’s offer to open', async () => {
+    vi.mocked(useIsCompact).mockReturnValue(true);
+    const seen = renderReport({ url: `/runs/${RUN_ID}/report?requests-group=Cart` });
+    await userEvent.click(within(requests()).getByRole('button', { name: 'Table' }));
+    const open = await within(requests()).findByRole('button', { name: 'Open detailed table' });
+    expect(within(requests()).queryByTestId('requests-group-picker')).toBeNull();
+    expect(seen.filter(isWholeRunStats)).toHaveLength(1);
+    expect(seen.some((u) => /\/(series|distribution)$/.test(path(u)))).toBe(false);
+    await userEvent.click(open);
+    expect(await within(groupPicker()).findByLabelText('Group')).toHaveValue('Cart');
+    const rows = await within(requests()).findAllByTestId('stat-row');
+    expect(rows.map((r) => r.getAttribute('data-path')).sort()).toEqual(['Cart']);
+  });
+
+  it('offers a request the selected window holds no traffic for (ruling R13)', async () => {
+    renderReport({
+      url: `/runs/${RUN_ID}/report?requests-group=`,
+      window: { fromMs: 10_000, toMs: 20_000, bucketWidthMs: 1_000 },
+      requests: { windowedStats: { ...reference.stats, stats: reference.stats.stats.filter((s) => s.name !== 'Search') } },
+    });
+    const request = await within(requestPicker()).findByLabelText('Request');
+    expect(options(request)).toEqual(['All requests', ...requestsInGroup(REQUESTS, GROUPS, '')]);
+    expect(options(request)).toContain('Search');
   });
 });
 

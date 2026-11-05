@@ -13,8 +13,9 @@ import type {
   UsersResponse,
 } from '@perfportal/contracts';
 import agentRun from './fixtures/agent-run.json';
+import reference from './fixtures/reference-run.json';
 import { runQueryKey } from '../src/api/run';
-import { seriesQuery, usersQuery } from '../src/api/metrics';
+import { seriesQuery, statsQuery, usersQuery } from '../src/api/metrics';
 import type { LiveRunState } from '../src/api/live';
 import RunReport from '../src/routes/RunReport';
 import type { RunWindowContext } from '../src/routes/useRunWindow';
@@ -93,11 +94,17 @@ const EMPTY_SERIES: SeriesResponse = {
 function renderCharts({
   live,
   status = 'running',
+  url = `/runs/${RUN_ID}/report`,
+  seed,
 }: {
   readonly live: LiveRunState | null;
   readonly status?: RunProcessing['status'];
+  readonly url?: string;
+  /** Extra cache entries, written before the first render. */
+  readonly seed?: (client: QueryClient) => void;
 }) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  seed?.(client);
   const run: RunProcessing = { id: RUN_ID, status, statusUrl: `/v1/runs/${RUN_ID}` };
   client.setQueryData(runQueryKey(RUN_ID), { state: 'processing', run });
   // The two caches `useLiveRun`'s `applyDelta` would have written directly —
@@ -109,7 +116,7 @@ function renderCharts({
 
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={[`/runs/${RUN_ID}/report`]}>
+      <MemoryRouter initialEntries={[url]}>
         <Routes>
           <Route
             path="/runs/:runId"
@@ -167,6 +174,31 @@ describe('RunReport — live', () => {
       'chart-user-start-rate',
       'chart-user-end-rate',
       'chart-concurrent-users',
+    ]);
+  });
+
+  /**
+   * The live wire carries run-scope series only, so a streaming run has nothing
+   * to narrow (spec section 5). The run's whole-run `/stats` is SEEDED here, as
+   * if a reader had it cached: a live run never fetches it, so without the seed
+   * the pickers would have no names and draw nothing whatever the gate did, and
+   * this case would hold against a section that forgot the gate.
+   */
+  it('a streaming run shows no pickers, even for a link naming a pick', () => {
+    renderCharts({
+      live: liveWith({ count: 1200 }),
+      url: `/runs/${RUN_ID}/report?requests-group=Cart`,
+      seed: (client) => client.setQueryData(statsQuery(RUN_ID, null).queryKey, reference.stats),
+    });
+    const requests = screen.getByTestId('section-requests');
+    expect(within(requests).getByRole('group', { name: 'Requests view' })).toBeInTheDocument();
+    expect(within(requests).queryByTestId('requests-group-picker')).toBeNull();
+    expect(within(requests).queryByTestId('requests-request-picker')).toBeNull();
+    expect(within(requests).queryByRole('combobox')).toBeNull();
+    // And the live charts still read the run's own series, which the delta writes.
+    expect(within(requests).getAllByRole('figure').map((f) => f.getAttribute('data-testid'))).toEqual([
+      'chart-requests-and-responses',
+      'chart-percentiles',
     ]);
   });
 
