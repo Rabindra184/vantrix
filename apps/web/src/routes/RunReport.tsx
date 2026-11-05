@@ -736,15 +736,19 @@ function VirtualUsersSection({ runId }: { readonly runId: string }) {
       </DesktopOnly>
     );
   }
-  const draw = (data: UsersResponse, narrowedTo: Narrowed) => (
+  const draw = (data: UsersResponse) => (
     <>
       {/* GE's measured order: Arrival Rate, Termination Rate, Concurrent Users. */}
-      <UserStartRateChart users={data} group={RUN_TIME_GROUP} domainMs={domainMs} warmupMs={warmupMs} windowSelected={windowSelected} narrowed={narrowedTo} />
-      <UserEndRateChart users={data} group={RUN_TIME_GROUP} domainMs={domainMs} warmupMs={warmupMs} windowSelected={windowSelected} narrowed={narrowedTo} />
-      <ConcurrentUsersChart users={data} group={RUN_TIME_GROUP} domainMs={domainMs} warmupMs={warmupMs} windowSelected={windowSelected} narrowed={narrowedTo} />
+      <UserStartRateChart users={data} group={RUN_TIME_GROUP} domainMs={domainMs} warmupMs={warmupMs} windowSelected={windowSelected} narrowed={narrowed} />
+      <UserEndRateChart users={data} group={RUN_TIME_GROUP} domainMs={domainMs} warmupMs={warmupMs} windowSelected={windowSelected} narrowed={narrowed} />
+      <ConcurrentUsersChart users={data} group={RUN_TIME_GROUP} domainMs={domainMs} warmupMs={warmupMs} windowSelected={windowSelected} narrowed={narrowed} />
     </>
   );
-  if (!terminal) return <div className={REPORT_GRID}>{users.data !== undefined && draw(users.data, null)}</div>;
+  // ONE rule keeps a streaming run whole: `narrowed` is null until the run is
+  // terminal (`useScenarioPick`), so this draws the delta's users as written.
+  // Not a second `null` here as well — two guards that agree on every state
+  // mask each other, and neither could then be shown to matter.
+  if (!terminal) return <div className={REPORT_GRID}>{narrowedUsers !== undefined && draw(narrowedUsers)}</div>;
   return (
     <div className="flex flex-col gap-4">
       {pick.failed ? (
@@ -765,7 +769,7 @@ function VirtualUsersSection({ runId }: { readonly runId: string }) {
       <div className={REPORT_GRID}>
         {pick.settled ? (
           <Payload query={users} slots={USERS_SLOTS}>
-            {(data) => draw(narrowedUsers ?? data, narrowed)}
+            {(data) => draw(narrowedUsers ?? data)}
           </Payload>
         ) : (
           // `Payload`'s own pending wording: no chart may draw until the pick
