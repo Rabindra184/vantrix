@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react';
 import Chart from './Chart';
 import { ControlBar, ControlGroup, Segmented } from './ChartControls';
 import type { MarkRole } from './theme';
+import type { Narrowed } from './transforms/narrowed';
 import { toPercentileDistribution } from './transforms/percentileDistribution';
 import type { Outcome } from './transforms/percentiles';
 
@@ -42,6 +43,7 @@ export default function PercentileDistributionChart({
   id = 'percentile-distribution',
   title = 'Response time percentiles distribution',
   windowSelected,
+  narrowed,
 }: {
   readonly distribution: DistributionResponse;
   readonly id?: string;
@@ -54,12 +56,20 @@ export default function PercentileDistributionChart({
    * `window !== null`; the Summary and the drill-downs pass `false`.
    */
   readonly windowSelected: boolean;
+  /**
+   * The Report's pick, when one is applied (`transforms/narrowed.ts`): an empty
+   * chart says "for this group" rather than "for this run", and a drawn one
+   * names the pick behind its ⓘ. Optional — the Summary and the drill-downs
+   * never narrow — so `ChartWindowSelected.test.tsx` is what catches a chart
+   * that takes it and does not pass it on.
+   */
+  readonly narrowed?: Narrowed;
 }) {
   const [outcome, setOutcome] = useState<Outcome>('ok');
 
   const data = useMemo(
-    () => toPercentileDistribution(distribution, outcome, { windowSelected }),
-    [distribution, outcome, windowSelected],
+    () => toPercentileDistribution(distribution, outcome, { windowSelected, narrowed }),
+    [distribution, outcome, windowSelected, narrowed],
   );
 
   // In the option effect's dependency list, so it must not be a fresh array

@@ -1,6 +1,6 @@
 import type { SeriesResponse } from '@perfportal/contracts';
 import { describe, expect, it } from 'vitest';
-import { expectAboutTheRun, expectAboutTheWindow } from './support/emptySentence';
+import { expectAboutThePick, expectAboutTheRun, expectAboutTheWindow } from './support/emptySentence';
 import { toRequestRate, toRequestsAndResponses, toResponseRate } from '../src/charts/transforms/rates';
 import type { ChartData } from '../src/charts/types';
 import fixture from './fixtures/reference-run.json';
@@ -533,5 +533,46 @@ describe('toRequestsAndResponses — a window that selects no requests', () => {
       toRequestsAndResponses(none, { windowSelected: false }).empty,
       /no request or response rates to show/i,
     );
+  });
+});
+
+/**
+ * A CHART NARROWED TO A PICK THAT DREW NOTHING IS NOT A RUN THAT RECORDED
+ * NOTHING. The Report's Requests section reads this chart off one group's or
+ * one request's series under a pick, and an empty one says "for this group",
+ * never "this run" — with a window as well, it names both. A drawn one names
+ * the pick behind its ⓘ, beside whatever it already said there.
+ */
+describe('toRequestsAndResponses — narrowed to a pick', () => {
+  const none = { ...series, buckets: [] };
+  const narrowed = { kind: 'group', name: 'Cart' } as const;
+
+  it('names the pick, not the run, and keeps the tail', () => {
+    expectAboutThePick(
+      toRequestsAndResponses(none, { windowSelected: false, narrowed }).empty,
+      'for this group',
+      /no request or response rates to show/i,
+    );
+  });
+
+  it('names the pick and the window together', () => {
+    expectAboutThePick(
+      toRequestsAndResponses(none, { windowSelected: true, narrowed }).empty,
+      'for this group in the selected window',
+      /no request or response rates to show/i,
+    );
+  });
+
+  it('names the pick behind its ⓘ, joined to the resolution note', () => {
+    expect(toRequestsAndResponses(series, { windowSelected: false, narrowed }).limitation).toBe(
+      'Narrowed to the group Cart.',
+    );
+    const wide = toRequestsAndResponses({ ...series, bucketWidthMs: 2000 }, { windowSelected: false, narrowed });
+    expect(wide.limitation).toContain('Narrowed to the group Cart.');
+    expect(wide.limitation).toMatch(/2000 ms/);
+  });
+
+  it('names nothing when nothing was picked', () => {
+    expect(toRequestsAndResponses(series, { windowSelected: false, narrowed: null }).limitation).toBeUndefined();
   });
 });

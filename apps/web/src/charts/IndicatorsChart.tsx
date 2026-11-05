@@ -2,6 +2,7 @@ import type { StatRow, StatsResponse } from '@perfportal/contracts';
 import { useMemo } from 'react';
 import Chart from './Chart';
 import { BAND_ROLES, toIndicators, toRowIndicators } from './transforms/indicators';
+import type { Narrowed } from './transforms/narrowed';
 
 /**
  * §13.2 ③ — the response-time indicator bands (Appendix A G-06…G-09).
@@ -26,6 +27,7 @@ export default function IndicatorsChart({
   label,
   noun,
   windowSelected,
+  narrowed,
 }: {
   readonly stats: StatsResponse;
   /** A specific row's bands. Absent on the run's own overview, which folds the
@@ -48,13 +50,21 @@ export default function IndicatorsChart({
    * and `toRowIndicators` takes no such argument.
    */
   readonly windowSelected: boolean;
+  /**
+   * The Report's pick, when one is applied (`transforms/narrowed.ts`): an empty
+   * chart says "for this group" rather than "for this run", and a drawn one
+   * names the pick behind its ⓘ. Optional — the Summary and the drill-downs
+   * never narrow — so `ChartWindowSelected.test.tsx` is what catches a chart
+   * that takes it and does not pass it on.
+   */
+  readonly narrowed?: Narrowed;
 }) {
   const data = useMemo(
     () =>
       label === undefined
-        ? toIndicators(stats, { windowSelected })
+        ? toIndicators(stats, { windowSelected, narrowed })
         : toRowIndicators(stats, row, label, noun ?? 'request'),
-    [stats, row, label, noun, windowSelected],
+    [stats, row, label, noun, windowSelected, narrowed],
   );
 
   return (

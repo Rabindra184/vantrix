@@ -1,6 +1,7 @@
 import type { StatsResponse } from '@perfportal/contracts';
 import { describe, expect, it } from 'vitest';
-import { expectAboutTheRun, expectAboutTheWindow } from './support/emptySentence';
+import { expectAboutThePick, expectAboutTheRun, expectAboutTheWindow } from './support/emptySentence';
+import { narrowStats } from '../src/routes/report/narrow';
 import {
   BAND_ROLES,
   OUTCOME_ROLES,
@@ -425,5 +426,81 @@ describe('toIndicators / toRequestCounts — a window that selects no requests',
 
   it.each(donutStates)('still names the run on the donut when no window is selected (%s)', (_state, payload) => {
     expectAboutTheRun(toRequestCounts(payload, { windowSelected: false }).empty);
+  });
+});
+
+/**
+ * ═══ NARROWED TO A PICK ═══
+ *
+ * Under a group or request pick the Requests section hands these two charts
+ * `narrowStats`' payload: the members' request rows, the response's
+ * `indicators` summed over them, and NO run row — a pick is not the whole run.
+ * An empty chart then names the pick, never "this run" (and the pick and the
+ * window together under a window), and a drawn one names the pick behind its ⓘ.
+ *
+ * THE DONUT COUNTS THE REQUEST ROWS UNDER A PICK, because the run row it reads
+ * otherwise is exactly what `narrowStats` drops: read as before, every narrowed
+ * donut would have said there was nothing to count. Expectations are the
+ * payload's own rows summed, never written down.
+ */
+describe('toIndicators / toRequestCounts — narrowed to a pick', () => {
+  const narrowed = { kind: 'group', name: 'Cart' } as const;
+  const members = stats.stats
+    .filter((r) => r.scope === 'request' && r.name.startsWith('Cart/'))
+    .map((r) => r.name);
+  const cart = narrowStats(stats, members);
+  const nobody = narrowStats(stats, []);
+
+  it('the fixture has members to narrow to (vacuity guard)', () => {
+    expect(members.length).toBeGreaterThan(1);
+    expect(cart.stats.some((r) => r.scope === 'run')).toBe(false);
+  });
+
+  it('names the pick on the bands, not the run, and keeps the tail', () => {
+    expectAboutThePick(
+      toIndicators(nobody, { windowSelected: false, narrowed }).empty,
+      'for this group',
+      /no response-time bands to show/i,
+    );
+    expectAboutThePick(
+      toIndicators(nobody, { windowSelected: true, narrowed }).empty,
+      'for this group in the selected window',
+      /no response-time bands to show/i,
+    );
+  });
+
+  it('names the pick behind the bands’ ⓘ, beside the fixed-bands caveat', () => {
+    expect(toIndicators(cart, { windowSelected: false, narrowed }).limitation).toBe('Narrowed to the group Cart.');
+    const frozen = toIndicators({ ...cart, configurable: false }, { windowSelected: false, narrowed });
+    expect(frozen.limitation).toContain('Narrowed to the group Cart.');
+    expect(frozen.limitation).toMatch(/fixed at/i);
+    expect(toIndicators(stats, { windowSelected: false }).limitation).toBeUndefined();
+  });
+
+  it('names the pick on the donut, not the run', () => {
+    expectAboutThePick(toRequestCounts(nobody, { windowSelected: false, narrowed }).empty, 'for this group', /to count/i);
+    expectAboutThePick(
+      toRequestCounts(nobody, { windowSelected: true, narrowed }).empty,
+      'for this group in the selected window',
+      /to count/i,
+    );
+  });
+
+  it('counts the narrowed request rows, which have no run row above them', () => {
+    const rows = cart.stats.filter((r) => r.scope === 'request' && r.family === 'response_time');
+    const ok = rows.reduce((n, r) => n + r.okCount, 0);
+    const ko = rows.reduce((n, r) => n + r.koCount, 0);
+    const d = toRequestCounts(cart, { windowSelected: false, narrowed });
+    expect(d.empty).toBeUndefined();
+    expect(d.series[0]!.data).toEqual([ok, ko]);
+    expect(d.rows.at(-1)!.values[0]).toBe(ok + ko);
+    expect(d.limitation).toBe('Narrowed to the group Cart.');
+  });
+
+  it('still reads the run row when nothing was picked', () => {
+    const run = stats.stats.find((r) => r.scope === 'run' && r.family === 'response_time')!;
+    const d = toRequestCounts(stats, { windowSelected: false, narrowed: null });
+    expect(d.series[0]!.data).toEqual([run.okCount, run.koCount]);
+    expect(d.limitation).toBeUndefined();
   });
 });

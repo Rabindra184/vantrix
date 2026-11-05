@@ -1,6 +1,6 @@
 import type { DistributionResponse } from '@perfportal/contracts';
 import { describe, expect, it } from 'vitest';
-import { expectAboutTheRun, expectAboutTheWindow } from './support/emptySentence';
+import { expectAboutThePick, expectAboutTheRun, expectAboutTheWindow } from './support/emptySentence';
 import { toPercentileDistribution } from '../src/charts/transforms/percentileDistribution';
 import fixture from './fixtures/reference-run.json';
 
@@ -213,5 +213,40 @@ describe('toPercentileDistribution — a window that selects no responses', () =
     ['all', nothingBinned],
   ] as const)('still names the run when no window is selected (%s)', (outcome, payload) => {
     expectAboutTheRun(toPercentileDistribution(payload, outcome, { windowSelected: false }).empty, /no curve to draw/i);
+  });
+});
+
+/** Narrowed to a pick: the same pair, about the pick instead of the window. */
+describe('toPercentileDistribution — narrowed to a pick', () => {
+  const narrowed = { kind: 'group', name: 'Cart' } as const;
+  const zeroed = (n: number) => new Array<number>(n).fill(0);
+  const noLabels = { ...distribution, labels: [], okCount: [], koCount: [] };
+  const noKo = { ...distribution, koCount: zeroed(distribution.koCount.length) };
+
+  it('names the pick, not the run, when there are no bins at all', () => {
+    expectAboutThePick(
+      toPercentileDistribution(noLabels, 'ok', { windowSelected: false, narrowed }).empty,
+      'for this group',
+      /no curve to draw/i,
+    );
+  });
+
+  it('names the pick, the window and the outcome together', () => {
+    const empty = toPercentileDistribution(noKo, 'ko', { windowSelected: true, narrowed }).empty;
+    expectAboutThePick(empty, 'for this group in the selected window', /no curve to draw/i);
+    expect(empty).toMatch(/failed responses/i);
+  });
+
+  it('names the pick behind its ⓘ on a drawn curve', () => {
+    expect(toPercentileDistribution(distribution, 'ok', { windowSelected: false, narrowed }).limitation).toBe(
+      'Narrowed to the group Cart.',
+    );
+    expect(toPercentileDistribution(distribution, 'ok', { windowSelected: false }).limitation).toBeUndefined();
+  });
+
+  it('keeps the overflow note beside the pick', () => {
+    const d = toPercentileDistribution({ ...distribution, overflowCount: 3 }, 'all', { windowSelected: false, narrowed });
+    expect(d.limitation).toContain('Narrowed to the group Cart.');
+    expect(d.limitation).toMatch(/3 response times exceeded/);
   });
 });

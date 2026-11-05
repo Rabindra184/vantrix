@@ -2,6 +2,7 @@ import type { DistributionResponse } from '@perfportal/contracts';
 import { useMemo } from 'react';
 import Chart from './Chart';
 import { DISTRIBUTION_ROLES, toDistribution } from './transforms/distribution';
+import type { Narrowed } from './transforms/narrowed';
 
 /**
  * §13.2 ⑧ — the response-time distribution (Appendix A G-20/G-21).
@@ -29,6 +30,7 @@ export default function DistributionChart({
   id = 'distribution',
   title = 'Response time distribution',
   windowSelected,
+  narrowed,
 }: {
   readonly distribution: DistributionResponse;
   readonly id?: string;
@@ -41,8 +43,19 @@ export default function DistributionChart({
    * `window !== null`; the Summary and the drill-downs pass `false`.
    */
   readonly windowSelected: boolean;
+  /**
+   * The Report's pick, when one is applied (`transforms/narrowed.ts`): an empty
+   * chart says "for this group" rather than "for this run", and a drawn one
+   * names the pick behind its ⓘ. Optional — the Summary and the drill-downs
+   * never narrow — so `ChartWindowSelected.test.tsx` is what catches a chart
+   * that takes it and does not pass it on.
+   */
+  readonly narrowed?: Narrowed;
 }) {
-  const data = useMemo(() => toDistribution(distribution, { windowSelected }), [distribution, windowSelected]);
+  const data = useMemo(
+    () => toDistribution(distribution, { windowSelected, narrowed }),
+    [distribution, windowSelected, narrowed],
+  );
 
   return (
     <Chart

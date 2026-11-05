@@ -1,5 +1,6 @@
 import type { UsersResponse } from '@perfportal/contracts';
 import type { ChartData, ChartSeries, ChartTableRow } from '../types';
+import { scopePhrase, withNarrowedLine, type Narrowed } from './narrowed';
 
 /**
  * `GET /v1/runs/:id/users` → the two charts §13.2 draws from it: concurrent
@@ -87,6 +88,12 @@ function inferBucketWidthMs(offsets: readonly number[]): number {
  */
 export interface UsersOptions {
   readonly windowSelected: boolean;
+  /**
+   * The Virtual users section's scenario pick, when one is applied — and then
+   * `u` is `narrowUsers`' payload, so only the sentences and the ⓘ change here
+   * (`narrowed.ts`). Optional: nothing else narrows these charts.
+   */
+  readonly narrowed?: Narrowed;
   readonly x?: 'index' | 'ms';
 }
 
@@ -104,6 +111,11 @@ interface Spec {
    * template over a bare noun reads worse than three finished sentences.
    */
   readonly empty: { readonly run: string; readonly window: string };
+  /**
+   * What the chart has none of — the tail of every sentence above, and the
+   * whole of what a pick's sentence says after where it looked (`scopePhrase`).
+   */
+  readonly tail: string;
 }
 
 /**
@@ -149,7 +161,13 @@ function usersChart(u: UsersResponse, spec: Spec, opts: UsersOptions): ChartData
       // Not a flat zero line: "nobody was running" and "this run has not been
       // parsed yet" are different facts a reader acts on differently, and an
       // empty chart cannot tell them apart.
-      empty: opts.windowSelected ? spec.empty.window : spec.empty.run,
+      empty:
+        opts.narrowed != null
+          ? `No user activity was recorded ${scopePhrase(opts)}, so ${spec.tail}.`
+          : opts.windowSelected
+            ? spec.empty.window
+            : spec.empty.run,
+      limitation: withNarrowedLine(undefined, opts.narrowed),
     };
   }
 
@@ -218,8 +236,10 @@ function usersChart(u: UsersResponse, spec: Spec, opts: UsersOptions): ChartData
     axisLabels: offsets.map((offset) => offset / 1000),
     columns,
     rows,
-    limitation:
+    limitation: withNarrowedLine(
       spec.perSecond && widthMs !== 1000 ? widthNote(widthMs, spec.measure) : undefined,
+      opts.narrowed,
+    ),
   };
 }
 
@@ -272,6 +292,7 @@ export function toConcurrentUsers(u: UsersResponse, opts: UsersOptions): ChartDa
       run: 'No user activity was recorded for this run, so there are no concurrent users to show.',
       window: 'No user activity fell in the selected window, so there are no concurrent users to show.',
     },
+    tail: 'there are no concurrent users to show',
   }, opts);
 }
 
@@ -293,6 +314,7 @@ export function toUserStartRate(u: UsersResponse, opts: UsersOptions): ChartData
       run: 'No user activity was recorded for this run, so there is no arrival rate to show.',
       window: 'No user activity fell in the selected window, so there is no arrival rate to show.',
     },
+    tail: 'there is no arrival rate to show',
   }, opts);
 }
 
@@ -309,5 +331,6 @@ export function toUserEndRate(u: UsersResponse, opts: UsersOptions): ChartData {
       run: 'No user activity was recorded for this run, so there is no termination rate to show.',
       window: 'No user activity fell in the selected window, so there is no termination rate to show.',
     },
+    tail: 'there is no termination rate to show',
   }, opts);
 }

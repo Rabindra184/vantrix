@@ -9,6 +9,7 @@ import {
   toRequestsAndResponses,
   toResponseRate,
 } from './transforms/rates';
+import type { Narrowed } from './transforms/narrowed';
 import type { ChartData, TimeDomainMs } from './types';
 
 /**
@@ -149,6 +150,7 @@ export function RequestsAndResponsesChart({
   domainMs,
   warmupMs,
   windowSelected,
+  narrowed,
 }: {
   readonly series: SeriesResponse;
   readonly domainMs?: TimeDomainMs;
@@ -161,8 +163,19 @@ export function RequestsAndResponsesChart({
    * `window !== null`; the Summary and the drill-downs pass `false`.
    */
   readonly windowSelected: boolean;
+  /**
+   * The Report's pick, when one is applied (`transforms/narrowed.ts`): an empty
+   * chart says "for this group" rather than "for this run", and a drawn one
+   * names the pick behind its ⓘ. Optional — the Summary and the drill-downs
+   * never narrow — so `ChartWindowSelected.test.tsx` is what catches a chart
+   * that takes it and does not pass it on.
+   */
+  readonly narrowed?: Narrowed;
 }) {
-  const data = useMemo(() => toRequestsAndResponses(series, { windowSelected }), [series, windowSelected]);
+  const data = useMemo(
+    () => toRequestsAndResponses(series, { windowSelected, narrowed }),
+    [series, windowSelected, narrowed],
+  );
   return (
     <Chart
       id="requests-and-responses"

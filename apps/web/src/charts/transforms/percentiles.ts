@@ -1,5 +1,6 @@
 import type { SeriesResponse } from '@perfportal/contracts';
 import type { ChartData, ChartSeries, ChartTableRow } from '../types';
+import { scopePhrase, withNarrowedLine, type Narrowed } from './narrowed';
 
 /**
  * The percentile bands, in the order Gatling draws them.
@@ -214,6 +215,8 @@ export function toPercentiles(
      * `false`.
      */
     readonly windowSelected: boolean;
+    /** The Report's pick, when one is applied — see `narrowed.ts`. */
+    readonly narrowed?: Narrowed;
     readonly bands?: readonly Band[];
     readonly outcome?: Outcome;
     readonly x?: 'index' | 'ms';
@@ -233,9 +236,14 @@ export function toPercentiles(
       rows: [],
       // A window that selects nothing reads the same payload, and "recorded
       // for this run" is then false of a run that recorded plenty elsewhere.
-      empty: opts.windowSelected
-        ? 'No response times fall in the selected window.'
-        : 'No response times were recorded for this run.',
+      // So is a pick, of a run whose other requests ran.
+      empty:
+        opts.narrowed != null
+          ? `No response times were recorded ${scopePhrase(opts)}.`
+          : opts.windowSelected
+            ? 'No response times fall in the selected window.'
+            : 'No response times were recorded for this run.',
+      limitation: withNarrowedLine(undefined, opts.narrowed),
     };
   }
 
@@ -298,6 +306,6 @@ export function toPercentiles(
       selected.length === 0
         ? 'No percentile bands are selected, so there is nothing to draw. Choose at least one band above.'
         : undefined,
-    limitation: notes.join(' '),
+    limitation: withNarrowedLine(notes.join(' '), opts.narrowed),
   };
 }
