@@ -4,7 +4,8 @@ import { FRAGMENT_IN_PLACE } from '../../fragmentInPlace';
 
 /**
  * The Report's remote and hostname filters, as GE spells them (`?remote=`,
- * `?hostname=`), read from and written to the URL.
+ * `?hostname=`), and Virtual users' scenario (`?users-scenario=`), read from
+ * and written to the URL.
  *
  * ═══ IN THE URL, BECAUSE A FILTER IS PART OF THE VIEW (AC-DASH-4) ═══
  *
@@ -42,32 +43,55 @@ import { FRAGMENT_IN_PLACE } from '../../fragmentInPlace';
  * filter that is not filtering.
  */
 export default function useReportFilter(
-  param: 'remote' | 'hostname',
+  param: 'remote' | 'hostname' | 'users-scenario',
   known: readonly string[] | undefined,
   /** The section's `id`, written as the URL's fragment so a shared link reopens it. */
   sectionId: string,
 ): readonly [value: string, set: (v: string) => void, named: string | null] {
   const location = useLocation();
-  const navigate = useNavigate();
   const raw = new URLSearchParams(location.search).get(param);
   const value = raw !== null && known !== undefined && known.includes(raw) ? raw : '*';
   // Only once the run has said what it has: before then, nothing is known to be missing.
   const named = raw !== null && known !== undefined && value === '*' ? raw : null;
 
-  const { search } = location;
+  const write = useSectionParams(sectionId);
   const set = useCallback(
-    (next: string) => {
+    (next: string) =>
+      write((p) => {
+        if (next === '*') p.delete(param);
+        else p.set(param, next);
+      }),
+    [param, write],
+  );
+
+  return [value, set, named] as const;
+}
+
+/**
+ * How a section filter writes the URL, once, so every filter on the Report
+ * writes it the same way: `replace: true`, every parameter the edit does not
+ * touch kept, the section's `#hash` carried, and that hash marked
+ * `FRAGMENT_IN_PLACE` (see `useReportFilter`).
+ *
+ * `edit` changes the parameters in place, and may change several in ONE
+ * navigation — the Requests section's Group pick sets `requests-group` and
+ * deletes `requests-request` together (`useRequestsPick`). Two writes in a row
+ * would not do: each reads `search` from the render it was made in, so the
+ * second would put back what the first had just removed.
+ */
+export function useSectionParams(sectionId: string): (edit: (params: URLSearchParams) => void) => void {
+  const { search } = useLocation();
+  const navigate = useNavigate();
+  return useCallback(
+    (edit: (params: URLSearchParams) => void) => {
       const p = new URLSearchParams(search);
-      if (next === '*') p.delete(param);
-      else p.set(param, next);
+      edit(p);
       const query = p.toString();
       navigate(
         { search: query === '' ? '' : `?${query}`, hash: `#${sectionId}` },
         { replace: true, state: FRAGMENT_IN_PLACE },
       );
     },
-    [param, search, sectionId, navigate],
+    [search, sectionId, navigate],
   );
-
-  return [value, set, named] as const;
 }
