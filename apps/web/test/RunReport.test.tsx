@@ -3,17 +3,18 @@ import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter, Outlet, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Outlet, Route, Routes, useLocation, type Location } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AgentStatusResponseSchema, AgentSummaryResponseSchema, StatsResponseSchema, requestsInGroup } from '@perfportal/contracts';
-import type { RunResponse } from '@perfportal/contracts';
+import { AgentStatusResponseSchema, AgentSummaryResponseSchema, StatsResponseSchema, UsersResponseSchema, requestsInGroup } from '@perfportal/contracts';
+import type { RunResponse, UsersResponse } from '@perfportal/contracts';
 import agentRun from './fixtures/agent-run.json';
 import reference from './fixtures/reference-run.json';
 import { runQueryKey } from '../src/api/run';
 import { toIndicators, toRequestCounts } from '../src/charts/transforms/indicators';
+import { toConcurrentUsers, toUserEndRate, toUserStartRate } from '../src/charts/transforms/users';
 import type { ChartData } from '../src/charts/types';
 import RunReport from '../src/routes/RunReport';
-import { narrowStats } from '../src/routes/report/narrow';
+import { narrowStats, narrowUsers } from '../src/routes/report/narrow';
 import type { RunWindowContext } from '../src/routes/useRunWindow';
 import { UNKNOWN_ACCESS } from './support/access';
 import useIsCompact from '../src/useIsCompact';
@@ -131,6 +132,18 @@ interface RequestsBodies {
   readonly group?: 'echo' | 'no-echo' | 'not-mergeable';
 }
 
+/** How `/users` answers: the whole run (no `from`) and a window apart, as the
+ *  API does — its windowed body holds only the scenarios with a bucket inside
+ *  the range (`ParityController.users`). */
+interface UsersBodies {
+  /** The whole-run body; `null` is a 404. Defaults to the reference run's. */
+  readonly body?: unknown;
+  /** What a WINDOWED `/users` answers; the whole-run body otherwise. */
+  readonly windowed?: unknown;
+  /** Holds the whole-run answer until it resolves. */
+  readonly gate?: Promise<unknown>;
+}
+
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
     status,
@@ -144,6 +157,7 @@ function stubFetch(
   telemetryBody: unknown = NO_TELEMETRY,
   agent: AgentBodies = {},
   requests: RequestsBodies = {},
+  users: UsersBodies = {},
 ): string[] {
   const seen: string[] = [];
   vi.stubGlobal('fetch', (input: RequestInfo | URL) => {
@@ -174,6 +188,16 @@ function stubFetch(
           : json(windowed ? requests.windowedStats : statsBody);
       return requests.statsGate === undefined ? Promise.resolve(answer()) : requests.statsGate.then(answer);
     }
+    if (path.endsWith('/users')) {
+      const windowed = parsed.searchParams.has('from');
+      if (windowed && users.windowed !== undefined) return Promise.resolve(json(users.windowed));
+      const body = users.body === undefined ? reference.users : users.body;
+      const answer = () =>
+        body === null
+          ? json({ status: 404, title: 'Not Found', code: 'NOT_FOUND', detail: 'stub', remediation: 'stub' }, 404)
+          : json(body);
+      return windowed || users.gate === undefined ? Promise.resolve(answer()) : users.gate.then(answer);
+    }
     if (path.endsWith('/agent')) {
       const summary = agent.summary === undefined ? NO_AGENT_SUMMARY : agent.summary;
       if (summary === 'hold') return new Promise<Response>(() => {});
@@ -189,8 +213,6 @@ function stubFetch(
     }
     const body = path.endsWith('/agent/status')
       ? (agent.status ?? statusUnavailable('not_collected', null))
-      : path.endsWith('/users')
-      ? reference.users
       : path.endsWith('/series')
         ? reference.series
         : path.endsWith('/distribution')
@@ -218,8 +240,11 @@ function renderReport({
   agent,
   run,
   requests,
+  users,
 }: {
   url?: string;
+  /** How `/users` answers, whole-run and windowed. */
+  users?: UsersBodies;
   /** How the Requests section's narrowed reads answer. */
   requests?: RequestsBodies;
   /** What the agent reads answer; defaults to a run with no agent file. */
@@ -232,7 +257,7 @@ function renderReport({
   /** What `/telemetry` answers; defaults to no agent having reported. */
   telemetry?: unknown;
 } = {}) {
-  const seen = stubFetch(stats, telemetry, agent, requests);
+  const seen = stubFetch(stats, telemetry, agent, requests, users);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   client.setQueryData(runQueryKey(RUN_ID), { state: 'ready', run: readyRun(run) });
   render(
@@ -243,7 +268,15 @@ function renderReport({
             path="/runs/:runId"
             element={<Outlet context={{ window, durationMs: 63161, liveDurationMs: null, warmupMs: null, live: null, projectAccess: UNKNOWN_ACCESS } satisfies RunWindowContext} />}
           >
-            <Route path="report" element={<RunReport />} />
+            <Route
+              path="report"
+              element={
+                <>
+                  <RunReport />
+                  <LocationProbe />
+                </>
+              }
+            />
           </Route>
         </Routes>
       </MemoryRouter>
@@ -252,10 +285,20 @@ function renderReport({
   return seen;
 }
 
+/** Where the page's last navigation left the URL, for the cases that read a write. */
+let lastLocation: Location | null = null;
+function LocationProbe() {
+  lastLocation = useLocation();
+  return null;
+}
+
 const path = (url: string) => new URL(url, 'http://x').pathname;
 
 /** The pickers' names read (ruling R13): `/stats` with no window. */
 const isWholeRunStats = (url: string) => path(url).endsWith('/stats') && !/[?&]from=/.test(url);
+
+/** Virtual users' scenario list: `/users` with no window. */
+const isWholeRunUsers = (url: string) => path(url).endsWith('/users') && !/[?&]from=/.test(url);
 
 /** GE's sections in GE's order — DNS between Connections and Load generators. */
 const SECTIONS = ['Requests', 'Groups', 'Virtual users', 'Connections', 'DNS', 'Load generators'];
@@ -423,9 +466,14 @@ describe('RunReport — GE’s sections', () => {
     const metric = seen.filter((u) => kinds.some((k) => new URL(u, 'http://x').pathname.endsWith(k)));
     // Every kind really was asked for, or the loop below proves less than it says.
     for (const kind of kinds) expect(metric.some((u) => new URL(u, 'http://x').pathname.endsWith(kind)), kind).toBe(true);
-    // The pickers' names, and only they, are whole-run (ruling R13).
+    // The pickers' names, and only they, are whole-run (ruling R13): the
+    // Requests section's from `/stats`, Virtual users' scenarios from `/users`.
     expect(metric.filter(isWholeRunStats)).toHaveLength(1);
-    for (const url of metric.filter((u) => !isWholeRunStats(u))) expect(url).toMatch(/[?&]from=10000/);
+    expect(metric.filter(isWholeRunUsers)).toHaveLength(1);
+    // And the users charts' own read is windowed: an unwindowed one would share
+    // the scenarios' key, become the same request, and pass the loop unseen.
+    expect(metric.some((u) => path(u).endsWith('/users') && /[?&]from=10000/.test(u)), 'the users charts’ /users').toBe(true);
+    for (const url of metric.filter((u) => !isWholeRunStats(u) && !isWholeRunUsers(u))) expect(url).toMatch(/[?&]from=10000/);
   });
 
   it('lists the run’s groups, each linked to its own page', async () => {
@@ -1007,3 +1055,253 @@ describe('RunReport — the agent sections', () => {
   });
 });
 
+
+/**
+ * ═══ VIRTUAL USERS NARROWS TO A SCENARIO ═══
+ * (docs/superpowers/specs/2026-11-04-report-pickers-design.md, sections 1 and 5)
+ *
+ * No new request: `/users` already carries one series per scenario, and the
+ * browser narrows the payload it holds (`narrowUsers`). Every expectation is
+ * read off the captured payload through the same transforms the charts use,
+ * and each case pins a claim rather than wording, except the control's own
+ * label and "All scenarios", which the plan names.
+ *
+ * The scenarios a reader may pick come from the WHOLE-RUN `/users`, never the
+ * window's: the API's windowed body holds only the scenarios with a bucket
+ * inside the range, so under a brush a scenario that had not started yet would
+ * leave the picker, and a link for it would be named as never recorded — false
+ * (the R13 lesson, one section over).
+ */
+describe('RunReport — the Virtual users scenario pick', () => {
+  const USERS: UsersResponse = UsersResponseSchema.parse(reference.users);
+  const SCENARIOS = USERS.scenarios.map((s) => s.scenario);
+  const BROWSE = { kind: 'scenario', name: 'Browse' } as const;
+  const section = () => screen.getByTestId('section-virtual-users');
+  const picker = () => within(section()).getByTestId('users-scenario-picker');
+  const options = (select: HTMLElement) => [...select.querySelectorAll('option')].map((o) => o.textContent);
+  const atPath = (seen: readonly string[], endpoint: string) =>
+    seen.filter((u) => path(u) === `/v1/runs/${RUN_ID}${endpoint}`);
+  const tableOf = (id: string) =>
+    [...screen.getByTestId(`chart-data-${id}`).querySelectorAll('tbody tr')].map((tr) => [
+      tr.querySelector('th')?.textContent?.trim(),
+      ...[...tr.querySelectorAll('td')].map((td) => td.getAttribute('data-value')),
+    ]);
+  const headersOf = (id: string) =>
+    [...screen.getByTestId(`chart-data-${id}`).querySelectorAll('thead th')].map((th) => th.textContent?.trim());
+  const rowsOf = (data: ChartData) => data.rows.map((r) => [r.label, ...r.values.map((v) => (v === null ? null : String(v)))]);
+  /** The three users charts, each with the transform that draws it. */
+  const CHARTS = [
+    ['user-start-rate', toUserStartRate],
+    ['user-end-rate', toUserEndRate],
+    ['concurrent-users', toConcurrentUsers],
+  ] as const;
+
+  /**
+   * `/users` under a window, built as the API builds it: the buckets whose
+   * start falls in `[fromMs, toMs)`, and only the scenarios that kept one.
+   */
+  function windowUsers(users: UsersResponse, fromMs: number, toMs: number): UsersResponse {
+    const inRange = (offset: number) => offset >= fromMs && offset < toMs;
+    return {
+      ...users,
+      window: { fromMs, toMs, bucketWidthMs: 1_000 },
+      scenarios: users.scenarios
+        .map((s) => ({ ...s, buckets: s.buckets.filter((b) => inRange(b.startOffsetMs)) }))
+        .filter((s) => s.buckets.length > 0),
+      total: users.total.filter((b) => inRange(b.startOffsetMs)),
+    };
+  }
+
+  it('draws Scenario with All scenarios, Browse and Checkout', async () => {
+    renderReport({ url: `/runs/${RUN_ID}/report#virtual-users` });
+    expect(SCENARIOS).toEqual(['Browse', 'Checkout']);
+    const select = await within(picker()).findByLabelText('Scenario');
+    expect(options(select)).toEqual(['All scenarios', ...SCENARIOS]);
+    expect(select).toHaveValue('*');
+    // No pick, no narrowing: the run's own users, total included.
+    await waitFor(() =>
+      expect(tableOf('concurrent-users')).toEqual(rowsOf(toConcurrentUsers(USERS, { x: 'ms', windowSelected: false }))),
+    );
+  });
+
+  /**
+   * `narrowUsers` makes the scenario's buckets the total, and the charts drop
+   * the "All users" line ONLY when told the pick (Task 6, keyed on
+   * `narrowed.kind`). So both halves are pinned here: un-narrowed data under a
+   * pick draws two scenario lines, and narrowed data with no pick draws a
+   * second line named "All users" over Browse's.
+   */
+  it('a scenario pick draws only that scenario’s users', async () => {
+    renderReport({ url: `/runs/${RUN_ID}/report?users-scenario=Browse#virtual-users` });
+    const narrowed = narrowUsers(USERS, 'Browse');
+    for (const [id, transform] of CHARTS) {
+      const expected = rowsOf(transform(narrowed, { x: 'ms', windowSelected: false, narrowed: BROWSE }));
+      // Browse's figures are not the run's, or this proves nothing.
+      expect(expected, id).not.toEqual(rowsOf(transform(USERS, { x: 'ms', windowSelected: false })));
+      await waitFor(() => expect(tableOf(id), id).toEqual(expected));
+      expect(headersOf(id).slice(1), id).toEqual(['Browse']);
+    }
+    expect(within(picker()).getByLabelText('Scenario')).toHaveValue('Browse');
+    expect(within(section()).queryByTestId('users-names-unavailable')).toBeNull();
+  });
+
+  it('a scenario pick names the scenario behind each chart’s ⓘ', async () => {
+    renderReport({ url: `/runs/${RUN_ID}/report?users-scenario=Browse#virtual-users` });
+    for (const title of ['Users started per second', 'Users ended per second', 'Concurrent users over time']) {
+      const about = await within(section()).findByRole('button', { name: `About ${title}` });
+      expect(about, title).toHaveAccessibleDescription(/Narrowed to the scenario Browse\./);
+    }
+  });
+
+  it('one scenario shows a read-only Scenario field', async () => {
+    const one = narrowUsers(USERS, 'Browse');
+    renderReport({ url: `/runs/${RUN_ID}/report#virtual-users`, users: { body: one } });
+    const field = picker();
+    expect(await within(field).findByText('Browse')).toBeVisible();
+    expect(within(field).getByText('Scenario')).toBeVisible();
+    expect(within(section()).queryByRole('combobox')).toBeNull();
+  });
+
+  it('the pick is written as users-scenario=Browse with #virtual-users', async () => {
+    renderReport({
+      url: `/runs/${RUN_ID}/report?from=10000&to=20000#virtual-users`,
+      window: { fromMs: 10_000, toMs: 20_000, bucketWidthMs: 1_000 },
+    });
+    const select = await within(picker()).findByLabelText('Scenario');
+    await waitFor(() => expect(options(select)).toEqual(['All scenarios', ...SCENARIOS]));
+    await userEvent.selectOptions(select, 'Browse');
+    const written = new URLSearchParams(lastLocation!.search);
+    expect(written.get('users-scenario')).toBe('Browse');
+    // Every other parameter kept: the window above all.
+    expect(written.get('from')).toBe('10000');
+    expect(written.get('to')).toBe('20000');
+    expect(lastLocation!.hash).toBe('#virtual-users');
+    expect(within(picker()).getByLabelText('Scenario')).toHaveValue('Browse');
+
+    // "All" deletes the key rather than writing a filter that does not filter.
+    await userEvent.selectOptions(within(picker()).getByLabelText('Scenario'), '*');
+    expect(new URLSearchParams(lastLocation!.search).has('users-scenario')).toBe(false);
+    expect(lastLocation!.hash).toBe('#virtual-users');
+  });
+
+  it('a link naming a scenario the run lacks reads as All, and says so', async () => {
+    renderReport({ url: `/runs/${RUN_ID}/report?users-scenario=Nope#virtual-users` });
+    const note = await within(picker()).findByTestId('filter-unknown');
+    expect(note.textContent).toContain('Nope');
+    expect(note.textContent).toMatch(/never/);
+    expect(note.textContent).toMatch(/all scenarios/);
+    expect(within(picker()).getByLabelText('Scenario')).toHaveValue('*');
+    // What it says is what draws: every scenario, and the run's total.
+    await waitFor(() =>
+      expect(tableOf('concurrent-users')).toEqual(rowsOf(toConcurrentUsers(USERS, { x: 'ms', windowSelected: false }))),
+    );
+  });
+
+  /** A window before Checkout's first arrival: the API's windowed body has Browse alone. */
+  const EARLY = { fromMs: 0, toMs: 5_000, bucketWidthMs: 1_000 };
+
+  it('offers a scenario the selected window holds no users for', async () => {
+    const windowed = windowUsers(USERS, EARLY.fromMs, EARLY.toMs);
+    expect(windowed.scenarios.map((s) => s.scenario), 'the window drops Checkout').toEqual(['Browse']);
+    renderReport({ url: `/runs/${RUN_ID}/report#virtual-users`, window: EARLY, users: { windowed } });
+    // Waited on as a whole: the control can exist before the names do.
+    await waitFor(() => expect(options(within(picker()).getByLabelText('Scenario'))).toEqual(['All scenarios', ...SCENARIOS]));
+  });
+
+  it('a pick of a scenario the window holds nothing for says so for this scenario, and names nothing', async () => {
+    const windowed = windowUsers(USERS, EARLY.fromMs, EARLY.toMs);
+    const seen = renderReport({
+      url: `/runs/${RUN_ID}/report?users-scenario=Checkout#virtual-users`,
+      window: EARLY,
+      users: { windowed },
+    });
+    const checkout = { kind: 'scenario', name: 'Checkout' } as const;
+    const empty = toConcurrentUsers(narrowUsers(windowed, 'Checkout'), { x: 'ms', windowSelected: true, narrowed: checkout }).empty;
+    expect(empty).toMatch(/for this scenario in the selected window/);
+    await waitFor(() =>
+      expect(within(within(section()).getByTestId('chart-concurrent-users')).getByRole('status')).toHaveTextContent(empty!),
+    );
+    expect(within(picker()).getByLabelText('Scenario')).toHaveValue('Checkout');
+    expect(within(section()).queryByTestId('filter-unknown')).toBeNull();
+    // The charts read the window; only the scenario list is whole-run.
+    expect(atPath(seen, '/users').some((u) => /[?&]from=0/.test(u))).toBe(true);
+  });
+
+  /**
+   * Until the run's scenarios are known no chart is drawn: under a window the
+   * figures' read can answer first, and drawing it then would put every
+   * scenario on screen under a link for one, to be replaced a moment later.
+   */
+  it('draws no users chart until the run’s scenarios are known', async () => {
+    let release!: (value?: unknown) => void;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const seen = renderReport({
+      url: `/runs/${RUN_ID}/report?users-scenario=Browse#virtual-users`,
+      window: { fromMs: 10_000, toMs: 20_000, bucketWidthMs: 1_000 },
+      users: { gate },
+    });
+    await waitFor(() => expect(atPath(seen, '/users').some((u) => /[?&]from=10000/.test(u))).toBe(true));
+    // Long enough for the windowed answer to have landed and been drawn, if it were.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // The figure stands in its place saying it is loading, with no row drawn.
+    expect(within(section()).getByTestId('chart-concurrent-users')).toHaveTextContent('Loading…');
+    expect(tableOf('concurrent-users')).toEqual([]);
+    release();
+    const expected = rowsOf(toConcurrentUsers(narrowUsers(USERS, 'Browse'), { x: 'ms', windowSelected: true, narrowed: BROWSE }));
+    await waitFor(() => expect(tableOf('concurrent-users')).toEqual(expected));
+  });
+
+  /**
+   * ═══ THE SCENARIOS COULD NOT BE LOADED ═══
+   *
+   * Ruling R14's construction, for this section: a window, a whole-run
+   * `/users` answering 404 and a windowed one answering 200. No pick can be
+   * checked, so the charts draw unnarrowed, and the picker's place says what
+   * that means for the link the reader followed.
+   */
+  const namesFail = (search: string) =>
+    renderReport({
+      url: `/runs/${RUN_ID}/report${search}#virtual-users`,
+      window: { fromMs: 10_000, toMs: 20_000, bucketWidthMs: 1_000 },
+      users: { body: null, windowed: USERS },
+    });
+
+  it('says a link’s scenario could not be checked when the scenarios fail, and narrows nothing', async () => {
+    namesFail('?users-scenario=Browse');
+    const line = await within(section()).findByTestId('users-names-unavailable');
+    expect(line.textContent).toMatch(/link.*could not be checked/);
+    expect(line.textContent).toMatch(/not narrowed/);
+    expect(line.textContent).not.toMatch(/unavailable/);
+    expect(line).not.toHaveAttribute('role');
+    expect(within(section()).queryByTestId('users-scenario-picker')).toBeNull();
+    // What it says is what draws: every scenario, and the total.
+    await waitFor(() =>
+      expect(tableOf('concurrent-users')).toEqual(rowsOf(toConcurrentUsers(USERS, { x: 'ms', windowSelected: true }))),
+    );
+  });
+
+  it('says the scenario pick is unavailable when the scenarios fail and the link named none', async () => {
+    namesFail('');
+    const line = await within(section()).findByTestId('users-names-unavailable');
+    expect(line.textContent).toMatch(/pick is unavailable/);
+    expect(line.textContent).toMatch(/scenarios could not be loaded/);
+    expect(line.textContent).not.toMatch(/link/);
+  });
+
+  // UNDER A WINDOW, because only there is the scenario list a read of its own:
+  // with none it is the charts' own `/users`, one key and one request.
+  it('keeps the picker behind the phone’s gate, and fetches nothing for it', async () => {
+    vi.mocked(useIsCompact).mockReturnValue(true);
+    const seen = renderReport({
+      url: `/runs/${RUN_ID}/report?users-scenario=Browse#virtual-users`,
+      window: { fromMs: 10_000, toMs: 20_000, bucketWidthMs: 1_000 },
+    });
+    const open = within(section()).getByRole('button', { name: 'Open the virtual-user charts' });
+    expect(within(section()).queryByTestId('users-scenario-picker')).toBeNull();
+    expect(atPath(seen, '/users')).toEqual([]);
+    await userEvent.click(open);
+    expect(await within(picker()).findByLabelText('Scenario')).toHaveValue('Browse');
+  });
+});

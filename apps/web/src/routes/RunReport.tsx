@@ -2,7 +2,7 @@ import { useId, useMemo, useState, type ReactNode } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, type QueryKey, type UseQueryResult } from '@tanstack/react-query';
 import { displayPath } from '@perfportal/contracts';
-import type { DistributionResponse, RunResponse, SeriesResponse, StatsResponse, Window } from '@perfportal/contracts';
+import type { DistributionResponse, RunResponse, SeriesResponse, StatsResponse, UsersResponse, Window } from '@perfportal/contracts';
 import CollapsibleSection from '../components/CollapsibleSection';
 import SectionHeading from '../components/SectionHeading';
 import { EmptyState, ErrorState, LoadingState } from '../components/States';
@@ -40,8 +40,9 @@ import ConnectionsSection from './report/ConnectionsSection';
 import DnsSection from './report/DnsSection';
 import { REPORT_GRID } from './report/grid';
 import LoadGeneratorsSection from './report/LoadGeneratorsSection';
-import { narrowStats } from './report/narrow';
+import { narrowStats, narrowUsers } from './report/narrow';
 import ReportFilterControl from './report/ReportFilterControl';
+import useReportFilter from './report/useReportFilter';
 import useRequestsPick, { requestLabel, type RequestsNames } from './report/useRequestsPick';
 import WholeRunNote from './report/WholeRunNote';
 import { PERCENTILES, REQUESTS_AND_RESPONSES } from './runSlots';
@@ -683,6 +684,25 @@ function GroupsSection({ runId, exact }: { readonly runId: string; readonly exac
   return <ErrorState title="This run’s groups could not be loaded" detail={explain(stats.error, 'table')} />;
 }
 
+const USERS_SLOTS: readonly Slot[] = [USER_START_RATE, USER_END_RATE, CONCURRENT_USERS];
+
+/**
+ * GE's three Virtual users charts, narrowed to one scenario
+ * (`?users-scenario=`, spec sections 1 and 5).
+ *
+ * NO NEW REQUEST: `/users` already carries one series per scenario, so the
+ * browser narrows the payload it holds (`narrowUsers`), and every chart is
+ * told the pick (`narrowed`) — which is what drops their "All users" line,
+ * since that keys on the pick and not on the payload. The two travel together:
+ * the payload alone under a pick would draw the scenario and a second,
+ * identical line named "All users"; the pick alone would draw every scenario
+ * under a chart saying it was narrowed to one.
+ *
+ * The picker sits behind the same phone gate as the charts it drives, and is
+ * not drawn while the run streams: the live wire writes the run's users whole,
+ * and nothing is narrowed until the run is terminal (the Requests section's
+ * rule).
+ */
 function VirtualUsersSection({ runId }: { readonly runId: string }) {
   const { terminal } = useRunTerminal(runId);
   const window = useWindowFromShell();
@@ -693,9 +713,16 @@ function VirtualUsersSection({ runId }: { readonly runId: string }) {
   const warmupMs = useWarmupFromShell() ?? undefined;
   const compact = useIsCompact();
   const [shown, setShown] = useState(false);
+  const [params] = useSearchParams();
   const on = (!compact || shown) && terminal;
   // Read even while live: the live delta writes this same cache key.
   const users = useQuery({ ...usersQuery(runId, window), enabled: on });
+  const pick = useScenarioPick(runId, terminal, on);
+  const { narrowed } = pick;
+  const narrowedUsers = useMemo(
+    () => (users.data === undefined || narrowed === null ? users.data : narrowUsers(users.data, narrowed.name)),
+    [users.data, narrowed],
+  );
 
   if (compact && !shown) {
     return (
@@ -709,18 +736,120 @@ function VirtualUsersSection({ runId }: { readonly runId: string }) {
       </DesktopOnly>
     );
   }
-  const draw = (data: NonNullable<typeof users.data>) => (
+  const draw = (data: UsersResponse, narrowedTo: Narrowed) => (
     <>
       {/* GE's measured order: Arrival Rate, Termination Rate, Concurrent Users. */}
-      <UserStartRateChart users={data} group={RUN_TIME_GROUP} domainMs={domainMs} warmupMs={warmupMs} windowSelected={windowSelected} />
-      <UserEndRateChart users={data} group={RUN_TIME_GROUP} domainMs={domainMs} warmupMs={warmupMs} windowSelected={windowSelected} />
-      <ConcurrentUsersChart users={data} group={RUN_TIME_GROUP} domainMs={domainMs} warmupMs={warmupMs} windowSelected={windowSelected} />
+      <UserStartRateChart users={data} group={RUN_TIME_GROUP} domainMs={domainMs} warmupMs={warmupMs} windowSelected={windowSelected} narrowed={narrowedTo} />
+      <UserEndRateChart users={data} group={RUN_TIME_GROUP} domainMs={domainMs} warmupMs={warmupMs} windowSelected={windowSelected} narrowed={narrowedTo} />
+      <ConcurrentUsersChart users={data} group={RUN_TIME_GROUP} domainMs={domainMs} warmupMs={warmupMs} windowSelected={windowSelected} narrowed={narrowedTo} />
     </>
   );
-  if (!terminal) return <div className={REPORT_GRID}>{users.data !== undefined && draw(users.data)}</div>;
+  if (!terminal) return <div className={REPORT_GRID}>{users.data !== undefined && draw(users.data, null)}</div>;
   return (
-    <div className={REPORT_GRID}>
-      <Payload query={users} slots={[USER_START_RATE, USER_END_RATE, CONCURRENT_USERS]}>{draw}</Payload>
+    <div className="flex flex-col gap-4">
+      {pick.failed ? (
+        <ScenariosUnavailable linked={params.has('users-scenario')} />
+      ) : (
+        <div data-testid="users-scenario-picker">
+          <ReportFilterControl
+            label="Scenario"
+            allLabel="All scenarios"
+            values={pick.scenarios}
+            value={pick.scenario}
+            onChange={pick.setScenario}
+            named={pick.named}
+            verb="recorded"
+          />
+        </div>
+      )}
+      <div className={REPORT_GRID}>
+        {pick.settled ? (
+          <Payload query={users} slots={USERS_SLOTS}>
+            {(data) => draw(narrowedUsers ?? data, narrowed)}
+          </Payload>
+        ) : (
+          // `Payload`'s own pending wording: no chart may draw until the pick
+          // has been checked, or a link for one scenario would show them all
+          // first (see `useScenarioPick`).
+          USERS_SLOTS.map((slot) => <Undrawn key={slot.id} slot={slot} reason="Loading…" />)
+        )}
+      </div>
     </div>
+  );
+}
+
+/** What Virtual users' scenario pick narrows its charts to. */
+interface ScenarioPick {
+  /** The run's scenarios, whole-run, in the payload's order; empty until known. */
+  readonly scenarios: readonly string[];
+  /** `useReportFilter`'s answer: one of `scenarios`, or `*`. */
+  readonly scenario: string;
+  readonly setScenario: (next: string) => void;
+  /** A scenario the link named that the run never recorded, or null. */
+  readonly named: string | null;
+  /** The scenario list has answered, or failed, so a chart may be drawn. */
+  readonly settled: boolean;
+  /** The scenario list FAILED, so no pick can be checked (`ScenariosUnavailable`). */
+  readonly failed: boolean;
+  /** What each chart is told, memoised; `null` for no pick and while live. */
+  readonly narrowed: Narrowed;
+}
+
+const NO_SCENARIOS: readonly string[] = [];
+
+/**
+ * The scenario pick, checked against the run's own scenarios.
+ *
+ * ═══ THE SCENARIOS ARE WHOLE-RUN, NEVER THE WINDOW'S ═══
+ *
+ * `usersQuery(runId, null)`, whatever the window: the API builds a windowed
+ * `/users` from the buckets inside the range ALONE, so a scenario with no
+ * bucket there — one that had not started yet, or had already finished — is
+ * absent from it. Read from the window, it would leave the picker under a
+ * brush, and a link for it would read as All and be named as never recorded,
+ * which is false (ruling R13's lesson, for the Requests names). The charts
+ * still read the window's `/users`; with no window the two are one key and
+ * one request.
+ *
+ * The CHARTS wait for this read (`settled`), although it fetches nothing new
+ * for them: under a window the figures' read can answer first, and drawing it
+ * then would put every scenario on screen under a link for one.
+ *
+ * While the run streams nothing is narrowed, whatever the URL holds: this key
+ * is the one the live delta writes.
+ */
+function useScenarioPick(runId: string, terminal: boolean, enabled: boolean): ScenarioPick {
+  const names = useQuery({ ...usersQuery(runId, null), enabled });
+  const known = useMemo(() => names.data?.scenarios.map((s) => s.scenario), [names.data]);
+  const [scenario, setScenario, named] = useReportFilter('users-scenario', known, 'virtual-users');
+  const narrowed = useMemo<Narrowed>(
+    () => (terminal && scenario !== '*' ? { kind: 'scenario', name: scenario } : null),
+    [terminal, scenario],
+  );
+  return {
+    scenarios: known ?? NO_SCENARIOS,
+    scenario,
+    setScenario,
+    named,
+    settled: !names.isPending,
+    failed: names.isError && names.data === undefined,
+    narrowed,
+  };
+}
+
+/**
+ * The picker's place when the run's scenarios could not be loaded (ruling
+ * R14, for this section). The charts then draw unnarrowed — or say they could
+ * not be loaded, with no window, where the scenario list IS their read — so
+ * the sentence claims only what is true either way: nothing here is narrowed
+ * to the link's scenario. Plain text, not a live region.
+ */
+function ScenariosUnavailable({ linked }: { readonly linked: boolean }) {
+  return (
+    <p data-testid="users-names-unavailable" className="text-[0.75rem] text-muted">
+      {linked
+        ? 'This link’s scenario could not be checked, because this run’s scenarios could not be loaded, so these charts are not narrowed to it.'
+        : 'The scenario pick is unavailable, because this run’s scenarios could not be loaded.'}
+    </p>
   );
 }

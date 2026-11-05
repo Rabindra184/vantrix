@@ -4,7 +4,7 @@ import { act, cleanup, render, screen, waitFor, within } from '@testing-library/
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Outlet, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AgentStatusResponseSchema } from '@perfportal/contracts';
+import { AgentStatusResponseSchema, UsersResponseSchema } from '@perfportal/contracts';
 import type {
   LiveDelta,
   RunProcessing,
@@ -96,10 +96,13 @@ function renderCharts({
   status = 'running',
   url = `/runs/${RUN_ID}/report`,
   seed,
+  users = EMPTY_USERS,
 }: {
   readonly live: LiveRunState | null;
   readonly status?: RunProcessing['status'];
   readonly url?: string;
+  /** What the live delta has written to the users cache. */
+  readonly users?: UsersResponse;
   /** Extra cache entries, written before the first render. */
   readonly seed?: (client: QueryClient) => void;
 }) {
@@ -110,7 +113,7 @@ function renderCharts({
   // The two caches `useLiveRun`'s `applyDelta` would have written directly —
   // this SAME key (`window` is always `null` for a live view) is what the
   // component's own `users`/`series` queries read despite `enabled: false`.
-  client.setQueryData(usersQuery(RUN_ID, null).queryKey, EMPTY_USERS);
+  client.setQueryData(usersQuery(RUN_ID, null).queryKey, users);
   client.setQueryData(seriesQuery(RUN_ID, 'run', '', 'response_time', null).queryKey, EMPTY_SERIES);
   vi.stubGlobal('fetch', () => Promise.resolve(new Response(JSON.stringify(run), { status: 202 })));
 
@@ -200,6 +203,31 @@ describe('RunReport — live', () => {
       'chart-requests-and-responses',
       'chart-percentiles',
     ]);
+  });
+
+  /**
+   * Virtual users' scenario pick is withheld while the run streams, for the
+   * Requests section's reason: nothing is narrowed until the run is terminal.
+   * The live delta writes the WHOLE-RUN users key, which is the scenario
+   * list's own key, so it is seeded with two scenarios here — with the empty
+   * default the picker would have no scenarios and draw nothing whatever the
+   * gate did, and this case would hold against a section that forgot it.
+   */
+  it('a streaming run shows no scenario picker, and narrows nothing, even for a link naming one', () => {
+    const users = UsersResponseSchema.parse(reference.users);
+    expect(users.scenarios.length).toBeGreaterThan(1);
+    renderCharts({
+      live: liveWith({ count: 1200 }),
+      url: `/runs/${RUN_ID}/report?users-scenario=Browse#virtual-users`,
+      users,
+    });
+    const section = screen.getByTestId('section-virtual-users');
+    expect(within(section).getAllByRole('figure').map((f) => f.getAttribute('data-testid'))).toContain('chart-concurrent-users');
+    expect(within(section).queryByTestId('users-scenario-picker')).toBeNull();
+    expect(within(section).queryByRole('combobox')).toBeNull();
+    // Every scenario and the run's total, as the delta wrote them.
+    const headers = [...screen.getByTestId('chart-data-concurrent-users').querySelectorAll('thead th')].map((th) => th.textContent?.trim());
+    expect(headers.slice(1)).toEqual([...users.scenarios.map((s) => s.scenario), 'All users']);
   });
 
   it('shows the waiting panel before any delta has arrived', () => {
