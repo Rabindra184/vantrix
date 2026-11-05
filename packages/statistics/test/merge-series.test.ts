@@ -268,4 +268,18 @@ describe('mergeMemberSeries', () => {
     expect(merged.buckets.map((x) => x.startOffsetMs)).toEqual([0, 2000, 10000, 20000]);
     expect(merged.buckets.map((x) => x.startedCount)).toEqual([3, 1, 1, 1]);
   });
+
+  it('reads a member with one bucket as 1 s, even away from offset 0', () => {
+    // A request called once, four seconds in. Its offset alone allows a 4 s
+    // series, but a series left with one bucket never coalesced (short of a
+    // maxBucketsEndpoint of 1), and sizing it by that divisor would put the
+    // whole group at 4 s for one call.
+    const once = [bucketAt(4000, [10])];
+    const dense = [bucketAt(0, [20]), bucketAt(1000, [30]), bucketAt(2000, [40])];
+
+    const merged = mergeMemberSeries([once, dense]);
+
+    expect(merged.widthMs).toBe(1000);
+    expect(merged.buckets.map((x) => x.startOffsetMs)).toEqual([0, 1000, 2000, 4000]);
+  });
 });
