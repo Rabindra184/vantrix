@@ -138,6 +138,35 @@ describe('a narrowed chart re-rendered with an equal pick', () => {
     });
   });
 
+  /*
+   * ONE FIELD AT A TIME. The case above changes the name and the label
+   * together, so a memo keyed on `name` alone passes it while a label-only
+   * change — a request picked by its display label — or a kind-only change —
+   * a group and a request of one name — would keep the stale pick on screen.
+   * Each of the three keys has a case that changes it alone.
+   */
+  it.each(CASES)('%s re-runs its transform when only the label changes', (_name, transform, chart) => {
+    const spy = transform as Mock;
+    const { rerender } = render(chart({ kind: 'group', name: 'Cart', label: 'Cart' }));
+    const first = spy.mock.calls.length;
+    rerender(chart({ kind: 'group', name: 'Cart', label: 'Shopping cart' }));
+    expect(spy.mock.calls.length, 'a new label must re-run it').toBe(first + 1);
+    expect(spy.mock.calls.at(-1)![spy.mock.calls.at(-1)!.length - 1]).toMatchObject({
+      narrowed: { kind: 'group', name: 'Cart', label: 'Shopping cart' },
+    });
+  });
+
+  it.each(CASES)('%s re-runs its transform when only the kind changes', (_name, transform, chart) => {
+    const spy = transform as Mock;
+    const { rerender } = render(chart({ kind: 'group', name: 'Cart', label: 'Cart' }));
+    const first = spy.mock.calls.length;
+    rerender(chart({ kind: 'request', name: 'Cart', label: 'Cart' }));
+    expect(spy.mock.calls.length, 'a new kind must re-run it').toBe(first + 1);
+    expect(spy.mock.calls.at(-1)![spy.mock.calls.at(-1)!.length - 1]).toMatchObject({
+      narrowed: { kind: 'request', name: 'Cart', label: 'Cart' },
+    });
+  });
+
   it('covers all nine narrowable charts', () => {
     expect(new Set(CASES.map(([name]) => name)).size).toBe(9);
     for (const [, transform] of CASES) expect(vi.isMockFunction(transform)).toBe(true);
