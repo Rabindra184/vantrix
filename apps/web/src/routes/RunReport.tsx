@@ -611,10 +611,23 @@ function RequestsTable({
   const { terminal } = useRunTerminal(runId);
   const window = useWindowFromShell();
   const stats = useQuery({ ...statsQuery(runId, window), enabled: terminal });
-  const { names, settled, narrowed, kept } = narrowing;
+  const { names, settled, narrowed, kept, groupNames } = narrowing;
   const view = useMemo(
     () => (stats.data === undefined || kept === null || narrowed === null ? stats.data : pickTable(stats.data, kept, narrowed)),
     [stats.data, kept, narrowed],
+  );
+  // A group pick's table is that group's subtree, which would open on its one
+  // collapsed row and hide the members the pick is about (Task 8 review M3):
+  // the group opens, and so does every subgroup under it, on the path to the
+  // members inside them. From the run's whole-run group paths, so the list
+  // moves with the pick and not with the window; the table opens only the
+  // rows it holds.
+  const openGroups = useMemo(
+    () =>
+      narrowed?.kind === 'group' && narrowed.name !== ''
+        ? [narrowed.name, ...groupNames.filter((g) => g.startsWith(`${narrowed.name}/`))]
+        : NO_GROUPS,
+    [narrowed, groupNames],
   );
   // The table needs per-endpoint rows the live wire excludes on every path.
   if (!terminal) return <LiveNotice kind="withheld" subject="Statistics" />;
@@ -643,6 +656,7 @@ function RequestsTable({
                   windowSelected={window !== null}
                   exact={exact}
                   headingLevel={3}
+                  openGroups={openGroups}
                 />
               )
             }

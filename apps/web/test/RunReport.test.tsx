@@ -792,12 +792,45 @@ describe('RunReport — the Requests pickers', () => {
 
   it('the Table view lists a picked group’s subtree and nothing above it', async () => {
     renderReport({ url: `/runs/${RUN_ID}/report?requests-group=Catalog` });
+    // Open on arrival, the subgroup on the path to its one request included
+    // (Task 8 review M3), so every row of the subtree is on screen unclicked.
     await openTable();
-    await userEvent.click(within(requests()).getByRole('button', { name: /expand Catalog/ }));
-    await userEvent.click(within(requests()).getByRole('button', { name: /expand Recommendations/ }));
-    const shown = within(requests()).getAllByTestId('stat-row').map((r) => r.getAttribute('data-path'));
-    expect(shown.sort()).toEqual(['Catalog', 'Catalog/Recommendations', ...requestsInGroup(REQUESTS, GROUPS, 'Catalog')].sort());
+    const shown = () => within(requests()).getAllByTestId('stat-row').map((r) => r.getAttribute('data-path'));
+    await waitFor(() =>
+      expect(shown().sort()).toEqual(['Catalog', 'Catalog/Recommendations', ...requestsInGroup(REQUESTS, GROUPS, 'Catalog')].sort()),
+    );
     expect(within(requests()).queryByTestId('stat-row-total')).toBeNull();
+  });
+
+  /*
+   * Task 8 review M3: a group pick's table is that group's subtree, and opened
+   * collapsed it was one row — the group — with the members the pick is about
+   * a click away. It opens on them, and stays the reader's to close.
+   */
+  it('the Table view under a Cart pick shows Cart’s request rows without a click', async () => {
+    renderReport({ url: `/runs/${RUN_ID}/report?requests-group=Cart` });
+    const members = requestsInGroup(REQUESTS, GROUPS, 'Cart');
+    expect(members.length, 'Cart holds more than one request').toBeGreaterThan(1);
+    expect(GROUPS.some((g) => g.startsWith('Cart/')), 'Cart has no subgroup').toBe(false);
+    const rows = await openTable();
+    expect(rows.map((r) => r.getAttribute('data-path')).sort()).toEqual(['Cart', ...members].sort());
+    const toggle = within(requests()).getByRole('button', { name: 'collapse Cart' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    // Opened, not held open: the reader can still close it.
+    await userEvent.click(toggle);
+    expect(within(requests()).getAllByTestId('stat-row').map((r) => r.getAttribute('data-path'))).toEqual(['Cart']);
+  });
+
+  // The table stays mounted while the reader changes the pick, so a new pick
+  // opens its own group too, rather than only the pick the page arrived with.
+  it('the Table view opens a group picked after arrival', async () => {
+    renderReport({ url: `/runs/${RUN_ID}/report?requests-group=Cart` });
+    await openTable();
+    await userEvent.selectOptions(within(groupPicker()).getByLabelText('Group'), 'Catalog');
+    const shown = () => within(requests()).getAllByTestId('stat-row').map((r) => r.getAttribute('data-path'));
+    await waitFor(() =>
+      expect(shown().sort()).toEqual(['Catalog', 'Catalog/Recommendations', ...requestsInGroup(REQUESTS, GROUPS, 'Catalog')].sort()),
+    );
   });
 
   it('the Table view under a nested group’s one request carries no ancestor row', async () => {
@@ -963,7 +996,8 @@ describe('RunReport — the Requests pickers', () => {
     await userEvent.click(open);
     expect(await within(groupPicker()).findByLabelText('Group')).toHaveValue('Cart');
     const rows = await within(requests()).findAllByTestId('stat-row');
-    expect(rows.map((r) => r.getAttribute('data-path')).sort()).toEqual(['Cart']);
+    // Cart's subtree, open on arrival (Task 8 review M3).
+    expect(rows.map((r) => r.getAttribute('data-path')).sort()).toEqual(['Cart', ...requestsInGroup(REQUESTS, GROUPS, 'Cart')].sort());
   });
 
   it('offers a request the selected window holds no traffic for (ruling R13)', async () => {
