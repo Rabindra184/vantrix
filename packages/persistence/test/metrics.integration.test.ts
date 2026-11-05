@@ -784,6 +784,13 @@ describe('group member reads', () => {
     expect(await reader.memberSeries(
       { orgId: ctx.orgId, projectId: NOBODY }, ctx.runId, STARTED_ON, MEMBERS, FAMILY)).toEqual([]);
     expect(await reader.memberSeries(tenant, ctx.runId, STARTED_ON, [], FAMILY)).toEqual([]);
+
+    // One member of two answers that member alone. Without this the name
+    // filter rests on the empty list, and every request row in this fixture
+    // is a member, so a read that ignored the names would pass the rest.
+    const one = await reader.memberSeries(tenant, ctx.runId, STARTED_ON, [MEMBERS[0]!], FAMILY);
+    expect(one.length).toBeGreaterThan(0);
+    expect(new Set(one.map((r) => r.name))).toEqual(new Set([MEMBERS[0]]));
   });
 
   it('prunes partitions — the member series query plan touches one partition', async () => {
@@ -808,6 +815,9 @@ describe('group member reads', () => {
     // '' is the run-scope row's name: request scope only, so it is absent too.
     const map = await reader.memberHistograms(tenant, ctx.runId, ['', ...MEMBERS, 'GET /nope'], FAMILY);
     expect([...map.keys()]).toEqual(MEMBERS);
+    // The fixture's request rows are exactly MEMBERS, so the keys above say
+    // nothing about the name filter; one member of two does.
+    expect([...(await reader.memberHistograms(tenant, ctx.runId, [MEMBERS[0]!], FAMILY)).keys()]).toEqual([MEMBERS[0]]);
     for (const name of MEMBERS) {
       const engine = result.stats.find((s) => s.scope === 'request' && s.name === name && s.family === FAMILY)!;
       const entry = map.get(name);
@@ -832,5 +842,36 @@ describe('group member reads', () => {
     expect((await reader.memberHistograms(
       { orgId: ctx.orgId, projectId: NOBODY }, ctx.runId, MEMBERS, FAMILY)).size).toBe(0);
     expect((await reader.memberHistograms(tenant, ctx.runId, MEMBERS, 'group_cumulated')).size).toBe(0);
+  });
+
+  it('reads a member stored in the pre-exact format as non-exact, from both reads', async () => {
+    // The signal Task 4's 409 rests on for a member it cannot merge exactly:
+    // the bytes carry their version and no column does, so the decoded
+    // histogram has to say so itself rather than read as an ordinary one.
+    const ctx = await seedRun();
+    await persist(ctx);
+    const reader = new MetricReader(pool);
+    const tenant = { orgId: ctx.orgId, projectId: ctx.projectId };
+    const legacy = Buffer.from(Histogram.legacyV1ForTests([100, 200, 300]));
+    await pool.query(
+      `UPDATE run_series_bucket SET histogram_ok = $3
+        WHERE run_id = $1 AND scope = 'request' AND name = $2 AND family = 'response_time'`,
+      [ctx.runId, MEMBERS[0], legacy],
+    );
+    await pool.query(
+      `UPDATE run_stat SET histogram_ok = $3
+        WHERE run_id = $1 AND scope = 'request' AND name = $2 AND family = 'response_time'`,
+      [ctx.runId, MEMBERS[0], legacy],
+    );
+
+    const rows = await reader.memberSeries(tenant, ctx.runId, STARTED_ON, MEMBERS, FAMILY);
+    const legacyRows = rows.filter((r) => r.name === MEMBERS[0]);
+    expect(legacyRows.length).toBeGreaterThan(0);
+    expect(legacyRows.every((r) => r.histogramOk !== null && !r.histogramOk.exact)).toBe(true);
+    expect(rows.filter((r) => r.name === MEMBERS[1]).every((r) => r.histogramOk!.exact)).toBe(true);
+
+    const map = await reader.memberHistograms(tenant, ctx.runId, MEMBERS, FAMILY);
+    expect(map.get(MEMBERS[0]!)!.ok.exact).toBe(false);
+    expect(map.get(MEMBERS[1]!)!.ok.exact).toBe(true);
   });
 });

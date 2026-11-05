@@ -109,6 +109,10 @@ export interface StoredMemberBucket extends StoredBucket {
    * before the histograms existed. Never a half-pair silently completed: the
    * caller refuses to merge a member it cannot merge exactly (409
    * `GROUP_NOT_MERGEABLE`), and it can only do that if it sees the hole.
+   *
+   * Null is not the only unmergeable answer: a histogram decoded from the
+   * pre-exact bytes is non-null and reads `exact === false` (the version byte
+   * says so; no column does). The caller checks `.exact` as well as null.
    */
   histogramOk: Histogram | null;
   histogramKo: Histogram | null;
@@ -525,6 +529,8 @@ export class MetricReader {
    * to a half-pair, as `histograms()` and `seriesHistograms()` do; a name with
    * no row at all is ABSENT. The two are different answers: null is "this
    * member exists and cannot be merged exactly", absence is "no such request".
+   * A non-null entry can be unmergeable too: one decoded from the pre-exact
+   * bytes reads `exact === false`, so the caller checks `.exact` as well.
    */
   async memberHistograms(
     scope: ProjectScope,
