@@ -253,23 +253,36 @@ test('a group, then a request, narrow the charts and survive a reload', async ({
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
 
-  // Every /series request the page makes, so the case can say WHICH read the
-  // narrowed table came from, not only that its numbers agree.
-  const seriesReads: URL[] = [];
-  page.on('request', (request) => {
-    const url = new URL(request.url());
-    if (url.pathname === `/v1/runs/${runId}/series`) seriesReads.push(url);
-  });
-
   await openRequests(page, runReportPath(runId));
   const runSeries = await apiJson<SeriesPayload>(page, runSeriesPath(runId));
   // Before any pick the chart is the run's own: the baseline a pick must leave.
   await expectPercentiles(page, runSeries, 'with no pick, the run’s own percentiles');
 
   /* ---- the group ---- */
+  // The /series read the pick makes, so the case can say WHICH read the
+  // narrowed table came from, not only that its numbers agree: the group read
+  // the spec defines — request scope, the group, and no `name` (the server
+  // refuses `group` beside one). Armed before the pick and awaited before the
+  // case's own `apiJson` reads, which fetch from the page too and would
+  // otherwise answer for it.
+  const groupRead = page
+    .waitForRequest(
+      (request) => {
+        const url = new URL(request.url());
+        return (
+          url.pathname === `/v1/runs/${runId}/series` &&
+          url.searchParams.get('scope') === 'request' &&
+          url.searchParams.get('group') === 'Cart' &&
+          !url.searchParams.has('name')
+        );
+      },
+      { timeout: 15_000 },
+    )
+    .catch(() => null);
   await groupSelect(page).selectOption({ label: 'Cart' });
   await expect.poll(() => param(page, 'requests-group'), { message: 'the group in the URL' }).toBe('Cart');
   expect(hash(page), 'the pick writes the section’s fragment').toBe('#requests');
+  expect(await groupRead, 'the page read /series?scope=request&group=Cart').not.toBeNull();
 
   const cart = await apiJson<SeriesPayload>(page, groupSeriesPath(runId, 'Cart'));
   // The premise: the group's merged series is not the run's, so a chart still
@@ -290,17 +303,6 @@ test('a group, then a request, narrow the charts and survive a reload', async ({
   );
   expect(distributionRows(cartDistribution)).not.toEqual(distributionRows(runDistribution));
   await expectDistribution(page, cartDistribution, 'under Cart, the distribution table is the group read’s');
-  // It came from the group read the spec defines: request scope, the group,
-  // and no `name` (the server refuses `group` beside one).
-  expect(
-    seriesReads.some(
-      (url) =>
-        url.searchParams.get('scope') === 'request' &&
-        url.searchParams.get('group') === 'Cart' &&
-        !url.searchParams.has('name'),
-    ),
-    'the page read /series?scope=request&group=Cart',
-  ).toBe(true);
   // And the chart says what it is narrowed to, behind its ⓘ.
   const percentiles = page.getByTestId('chart-percentiles');
   await expect(percentiles.getByRole('button', { name: /^About / })).toHaveAccessibleDescription(
@@ -450,13 +452,6 @@ test('a one-request group selects its request', async ({ page }) => {
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  // Every /series request the page makes: the drawn table cannot say which
-  // read it came from (below), the request the page sent can.
-  const seriesReads: URL[] = [];
-  page.on('request', (request) => {
-    const url = new URL(request.url());
-    if (url.pathname === `/v1/runs/${runId}/series`) seriesReads.push(url);
-  });
   await openRequests(page, runReportPath(runId));
 
   // The premise, from the run's own rows: Catalog/Recommendations holds
@@ -467,8 +462,30 @@ test('a one-request group selects its request', async ({ page }) => {
   );
   expect(members.map((row) => row.name)).toEqual(['Catalog/Recommendations/Related Items']);
 
+  // The read the pick makes, armed before the pick and awaited before this
+  // case fetches anything itself: `apiJson` fetches from the page too, so a
+  // request seen after the oracle's own read of the same URL would prove
+  // nothing about the page. Bounded, so a read that never comes fails here.
+  const requestRead = page
+    .waitForRequest(
+      (request) => {
+        const url = new URL(request.url());
+        return (
+          url.pathname === `/v1/runs/${runId}/series` &&
+          url.searchParams.get('scope') === 'request' &&
+          url.searchParams.get('name') === 'Catalog/Recommendations/Related Items' &&
+          !url.searchParams.has('group')
+        );
+      },
+      { timeout: 15_000 },
+    )
+    .catch(() => null);
   await groupSelect(page).selectOption({ label: 'Catalog / Recommendations' });
   await expect.poll(() => param(page, 'requests-group')).toBe('Catalog/Recommendations');
+  expect(
+    await requestRead,
+    'the page read /series?scope=request&name=Catalog/Recommendations/Related Items, with no group',
+  ).not.toBeNull();
 
   // A labelled value, not a control: a select whose every option drew the same
   // data would do nothing. Read off the `dl` the field renders.
@@ -478,21 +495,12 @@ test('a one-request group selects its request', async ({ page }) => {
   await expect(requestPicker(page).locator('select')).toHaveCount(0);
   // Selected for the charts too. The table proves they draw that request's
   // figures — and no more than that, since a one-member group's merged read
-  // answers the same rows. What proves they read the REQUEST is the request
-  // the page made: its name, and no `group`.
+  // answers the same rows. What proves they read the REQUEST is the read the
+  // pick made, above: its name, and no `group`.
   const runSeries = await apiJson<SeriesPayload>(page, runSeriesPath(runId));
   const related = await apiJson<SeriesPayload>(page, requestSeriesPath(runId, 'Catalog/Recommendations/Related Items'));
   expect(percentileRows(related)).not.toEqual(percentileRows(runSeries));
   await expectPercentiles(page, related, 'a one-request group’s charts draw its request’s figures');
-  expect(
-    seriesReads.some(
-      (url) =>
-        url.searchParams.get('scope') === 'request' &&
-        url.searchParams.get('name') === 'Catalog/Recommendations/Related Items' &&
-        !url.searchParams.has('group'),
-    ),
-    'the page read /series?scope=request&name=Catalog/Recommendations/Related Items, with no group',
-  ).toBe(true);
   // Selected without being written: the URL names the group the reader chose,
   // and nothing they did not — checked after the charts drew the pick.
   await expectParamStaysAbsent(page, 'requests-request', 'a one-request group writes no request');
