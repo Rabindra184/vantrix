@@ -11,7 +11,8 @@ import { useId, type ReactNode } from 'react';
  *             (ruling R10a): recorded, or "(no group)" in a run where every
  *             request sits in a group
  *   outside   a request the run recorded that is not in `group`, the group
- *             the link named (a stored path; `''` is no group)
+ *             the link named and the run offers (a stored path; `''` is no
+ *             group)
  *
  * `within`, when present, is the group (a stored path) the control's values
  * are narrowed to — the Request picker under a picked group — so the note can
@@ -33,22 +34,33 @@ export type NamedValue = { readonly value: string; readonly within?: string } & 
  * (a group with a single request answers that request), else every value in
  * the group it is narrowed to, else every value. "(no group)" is a set of
  * requests, not a group (ruling R9), so it is never called "the group (no
- * group)" or put after "not in".
+ * group)" or put after "not in". And where "(no group)" is the control's ONE
+ * value — a run with no groups, whose Group field reads "(no group)" — what
+ * is shown is the requests in no group: "all groups" there would name groups
+ * the run does not have.
  */
 function noteText(
   named: string | NamedValue,
-  ctx: { readonly value: string; readonly allLabel: string; readonly verb: string; readonly labelOf: (v: string) => string },
+  ctx: {
+    readonly value: string;
+    readonly values: readonly string[];
+    readonly allLabel: string;
+    readonly verb: string;
+    readonly labelOf: (v: string) => string;
+  },
 ): string {
   const n: NamedValue = typeof named === 'string' ? { value: named, reason: 'unknown' } : named;
   const all = ctx.allLabel.toLowerCase();
   const instead =
     ctx.value !== '*'
       ? ctx.labelOf(ctx.value)
-      : n.within === undefined
-        ? all
-        : n.within === ''
-          ? 'the requests in no group'
-          : `${all} in ${displayPath(n.within)}`;
+      : ctx.values.length === 1 && ctx.values[0] === ''
+        ? 'the requests in no group'
+        : n.within === undefined
+          ? all
+          : n.within === ''
+            ? 'the requests in no group'
+            : `${all} in ${displayPath(n.within)}`;
   const why =
     n.reason === 'unknown'
       ? `which this run never ${ctx.verb}`
@@ -146,7 +158,7 @@ export default function ReportFilterControl({
   const note =
     named === null ? null : (
       <p data-testid="filter-unknown" className="text-[0.75rem] text-muted">
-        {noteText(named, { value, allLabel, verb, labelOf })}
+        {noteText(named, { value, values, allLabel, verb, labelOf })}
       </p>
     );
   return (

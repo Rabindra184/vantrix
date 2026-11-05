@@ -56,7 +56,11 @@ import { useSectionParams } from './useReportFilter';
  *   - A request named WITH a group must be one of that group's requests; one
  *     outside it, or one the run does not have, reads as All and is named. A
  *     group that is unknown or memberless holds nothing, so a request beside
- *     it reads as All too.
+ *     it reads as All too — and is named only if the run never recorded it:
+ *     that group's place shows All, the whole run, so a request the run did
+ *     record is among what is shown, and the group's own note already says
+ *     why the link's pick was not applied ("not in Nope" would judge it
+ *     against a group nobody is shown).
  *   - A group with exactly one request answers that request, with nothing
  *     written: "a group with one request selects it", and the Request
  *     control is then a read-only field naming it.
@@ -64,10 +68,10 @@ import { useSectionParams } from './useReportFilter';
  * A named value says WHY it is named (`NamedValue`, ruling R12), because the
  * control's line has to be true: a group is `unknown` to the run or `empty`
  * (it holds no requests); a request is `unknown` to the run or `outside` the
- * group the link named, which the run may well have recorded. A request note
- * also carries `within`, the group shown in its place, so the line says what
- * is shown instead ("all requests in Cart", or the one request a one-request
- * group answers) rather than "all requests".
+ * group the link named — one the run offers — which the run may well have
+ * recorded. A request note also carries `within`, the group shown in its
+ * place, so the line says what is shown instead ("all requests in Cart", or
+ * the one request a one-request group answers) rather than "all requests".
  *
  * ═══ CHANGING THE GROUP DROPS THE REQUEST (Review Focus 4) ═══
  *
@@ -101,7 +105,9 @@ export interface RequestsPick {
    *  (`unknown` | `empty`); or null. */
   readonly namedGroup: NamedValue | null;
   /** A request the URL asked for that is not shown, and why (`unknown` |
-   *  `outside`), with the group shown instead as `within`; or null. */
+   *  `outside`), with the group shown instead as `within`; or null — null too
+   *  for a request the run recorded beside a group it cannot offer, whose
+   *  place shows the whole run. */
   readonly namedRequest: NamedValue | null;
 }
 
@@ -157,10 +163,12 @@ function resolve(names: RequestsNames | undefined, rawGroup: string | null, rawR
   let namedRequest: NamedValue | null = null;
   if (rawRequest !== null && request !== rawRequest) {
     const within = group === '*' ? undefined : group;
-    namedRequest =
-      rawGroup !== null && requests.includes(rawRequest)
-        ? { value: rawRequest, reason: 'outside', group: rawGroup, within }
-        : { value: rawRequest, reason: 'unknown', within };
+    const recorded = requests.includes(rawRequest);
+    // A named group the run cannot offer shows All in its place, so the
+    // request is judged against the run, not against that group.
+    const groupShown = rawGroup !== null && group !== '*';
+    if (groupShown && recorded) namedRequest = { value: rawRequest, reason: 'outside', group: rawGroup, within };
+    else if (!recorded) namedRequest = { value: rawRequest, reason: 'unknown', within };
   }
 
   return { group, request, members, groups, namedGroup, namedRequest };

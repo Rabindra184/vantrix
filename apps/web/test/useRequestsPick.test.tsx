@@ -228,8 +228,9 @@ describe('useRequestsPick', () => {
 
   it('in a run with no groups, a link naming a group the run cannot offer holds no request', () => {
     // The Request control is usable here (one offerable group), so the named
-    // group must not be read as "no group named": a request beside it is
-    // outside it, and both are named.
+    // group must not be read as "no group named": the request beside it is
+    // not picked. Nor is it named: the group's place shows the whole run,
+    // which the run's request is part of, and the group's note says why.
     const names = { requests: REQUESTS, groups: [] };
     const request = REQUESTS[0]!;
     const { pick } = mount(`/r?requests-group=nope&requests-request=${enc(request)}`, { names }).result.current;
@@ -237,7 +238,39 @@ describe('useRequestsPick', () => {
     expect(pick.group).toBe('*');
     expect(pick.request).toBe('*');
     expect(pick.namedGroup).toEqual({ value: 'nope', reason: 'unknown' });
-    expect(pick.namedRequest).toEqual({ value: request, reason: 'outside', group: 'nope', within: undefined });
+    expect(pick.namedRequest).toBeNull();
+  });
+
+  /*
+   * A request beside a group the run cannot offer is judged against the RUN,
+   * since All is what that group's place shows: one the run never recorded is
+   * `unknown`, one it did record is not named. Never `outside` a group nobody
+   * is shown.
+   */
+  it('beside a group the run never recorded, names a request the run lacks as unknown, never outside', () => {
+    const { flat } = shape();
+    const unknownGroup = `${flat}x`;
+    const unknownRequest = `${flat}/nope`;
+    expect(GROUPS).not.toContain(unknownGroup);
+    expect(REQUESTS).not.toContain(unknownRequest);
+    const { pick } = mount(`/r?requests-group=${enc(unknownGroup)}&requests-request=${enc(unknownRequest)}`).result.current;
+    expect(pick.group).toBe('*');
+    expect(pick.request).toBe('*');
+    expect(pick.namedRequest).toEqual({ value: unknownRequest, reason: 'unknown', within: undefined });
+  });
+
+  it('beside a memberless group, names no request the run recorded', () => {
+    shape();
+    // "(no group)" in a run where every request sits in a group: recorded,
+    // and holding nothing.
+    const grouped = REQUESTS.filter((r) => innermostGroup(r, GROUPS) !== '');
+    const { pick } = mount(`/r?requests-group=&requests-request=${enc(grouped[0]!)}`, {
+      names: { requests: grouped, groups: GROUPS },
+    }).result.current;
+    expect(pick.group).toBe('*');
+    expect(pick.request).toBe('*');
+    expect(pick.namedGroup).toEqual({ value: '', reason: 'empty' });
+    expect(pick.namedRequest).toBeNull();
   });
 
   it('setRequest drops a group the run cannot offer, so the pick holds', () => {
@@ -447,17 +480,44 @@ describe('the note beside a pick', () => {
     expect(request).toMatch(new RegExp(`showing .*in ${displayPath(flat)}`));
   });
 
-  it('a request beside a group the run never recorded: the request "not in" that group, the group "never"', () => {
+  it('a request the run recorded beside a group it never recorded: no request note, the group "never"', () => {
     const { flat, flatMembers } = shape();
     const unknownGroup = `${flat}x`;
     expect(GROUPS).not.toContain(unknownGroup);
+    expect(REQUESTS).toContain(flatMembers[0]);
     const { request, group } = notes(`/r?requests-group=${enc(unknownGroup)}&requests-request=${enc(flatMembers[0]!)}`);
-    if (request === null || group === null) throw new Error('both notes must show');
-    expect(request).toMatch(new RegExp(`not in ${unknownGroup}`));
-    expect(request).not.toMatch(/never/);
-    expect(request).toMatch(/showing all requests/);
+    if (group === null) throw new Error('the group note is missing');
+    // The group's place shows the whole run, which holds this request: there is
+    // nothing true to say of it but what the group's note already says.
+    expect(request).toBeNull();
     expect(group).toMatch(/never recorded/);
     expect(group).toMatch(/showing all groups/);
+  });
+
+  it('a request the run never recorded beside a group it never recorded: "never", not "not in"', () => {
+    const { flat } = shape();
+    const unknownGroup = `${flat}x`;
+    const unknownRequest = `${flat}/nope`;
+    expect(GROUPS).not.toContain(unknownGroup);
+    expect(REQUESTS).not.toContain(unknownRequest);
+    const { request, group } = notes(`/r?requests-group=${enc(unknownGroup)}&requests-request=${enc(unknownRequest)}`);
+    if (request === null || group === null) throw new Error('both notes must show');
+    expect(request).toMatch(/never recorded/);
+    expect(request).not.toMatch(/not in/);
+    expect(request).toMatch(/showing all requests/);
+    expect(group).toMatch(/never recorded/);
+  });
+
+  it('in a run with no groups, a group the run never recorded: "showing the requests in no group", never "all groups"', () => {
+    const names = { requests: REQUESTS, groups: [] };
+    const { group, request } = notes('/r?requests-group=nope', names);
+    if (group === null) throw new Error('the group note is missing');
+    // The Group field reads "(no group)", alone: that is what is shown, and
+    // the run has no groups for "all groups" to mean.
+    expect(group).toMatch(/never recorded/);
+    expect(group).toMatch(/showing the requests in no group\./);
+    expect(group).not.toMatch(/all groups/);
+    expect(request).toBeNull();
   });
 
   it('a group the run never recorded: "never", not "holds no requests"', () => {
