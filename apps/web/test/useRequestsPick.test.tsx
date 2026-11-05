@@ -1,9 +1,10 @@
-import { innermostGroup, requestsInGroup } from '@perfportal/contracts';
-import { act, cleanup, renderHook } from '@testing-library/react';
+import { displayPath, innermostGroup, requestsInGroup } from '@perfportal/contracts';
+import { act, cleanup, render, renderHook, screen, within } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { MemoryRouter, useLocation, useNavigationType } from 'react-router-dom';
 import { afterEach, describe, expect, it } from 'vitest';
 import { isFragmentInPlace } from '../src/fragmentInPlace';
+import ReportFilterControl from '../src/routes/report/ReportFilterControl';
 import useRequestsPick, { requestLabel } from '../src/routes/report/useRequestsPick';
 import fixture from './fixtures/reference-run.json';
 
@@ -125,7 +126,7 @@ describe('useRequestsPick', () => {
     expect(pick.group).toBe('*');
     expect(pick.request).toBe('*');
     expect(pick.members).toEqual([]);
-    expect(pick.namedGroup).toBe(unknown);
+    expect(pick.namedGroup).toEqual({ value: unknown, reason: 'unknown' });
   });
 
   it('reads a request outside the named group as All and names it', () => {
@@ -134,7 +135,8 @@ describe('useRequestsPick', () => {
     expect(pick.group).toBe(flat);
     expect(pick.members).toEqual(flatMembers);
     expect(pick.request).toBe('*');
-    expect(pick.namedRequest).toBe(outside);
+    // Recorded by the run, so `outside` the group, never `unknown`.
+    expect(pick.namedRequest).toEqual({ value: outside, reason: 'outside', group: flat, within: flat });
     expect(pick.namedGroup).toBeNull();
   });
 
@@ -145,7 +147,7 @@ describe('useRequestsPick', () => {
     const { pick } = mount(`/r?requests-request=${enc(unknown)}`).result.current;
     expect(pick.group).toBe('*');
     expect(pick.request).toBe('*');
-    expect(pick.namedRequest).toBe(unknown);
+    expect(pick.namedRequest).toEqual({ value: unknown, reason: 'unknown', within: undefined });
   });
 
   it('answers All while the names are not yet known', () => {
@@ -163,7 +165,12 @@ describe('useRequestsPick', () => {
 
   it('offers the groups in payload order, with (no group) last', () => {
     shape();
-    expect(mount('/r').result.current.pick.groups).toEqual([...GROUPS, '']);
+    // The fixture's groups arrive sorted, so they cannot tell payload order
+    // from a sort: the same names, reversed, can.
+    const unsorted = [...GROUPS].reverse();
+    expect([...unsorted].sort(), 'the list must not already be sorted').not.toEqual(unsorted);
+    const names = { requests: REQUESTS, groups: unsorted };
+    expect(mount('/r', { names }).result.current.pick.groups).toEqual([...unsorted, '']);
   });
 
   it('offers only the groups that hold requests', () => {
@@ -179,7 +186,8 @@ describe('useRequestsPick', () => {
     const names = { requests: REQUESTS.filter((r) => !flatMembers.includes(r)), groups: GROUPS };
     const { pick } = mount(`/r?requests-group=${enc(flat)}`, { names }).result.current;
     expect(pick.group).toBe('*');
-    expect(pick.namedGroup).toBe(flat);
+    // The run recorded the group: it holds no requests, which is `empty`.
+    expect(pick.namedGroup).toEqual({ value: flat, reason: 'empty' });
   });
 
   it('in a run where every request sits in a group, offers no (no group) and names a link to it', () => {
@@ -191,7 +199,7 @@ describe('useRequestsPick', () => {
     expect(pick.groups).toEqual(GROUPS);
     expect(pick.groups).not.toContain('');
     expect(pick.group).toBe('*');
-    expect(pick.namedGroup).toBe('');
+    expect(pick.namedGroup).toEqual({ value: '', reason: 'empty' });
   });
 
   it('in a run with no groups, offers (no group) alone and its requests straight away', () => {
@@ -228,15 +236,15 @@ describe('useRequestsPick', () => {
     expect(pick.members).toEqual(REQUESTS);
     expect(pick.group).toBe('*');
     expect(pick.request).toBe('*');
-    expect(pick.namedGroup).toBe('nope');
-    expect(pick.namedRequest).toBe(request);
+    expect(pick.namedGroup).toEqual({ value: 'nope', reason: 'unknown' });
+    expect(pick.namedRequest).toEqual({ value: request, reason: 'outside', group: 'nope', within: undefined });
   });
 
   it('setRequest drops a group the run cannot offer, so the pick holds', () => {
     const names = { requests: REQUESTS, groups: [] };
     const request = REQUESTS[0]!;
     const { result } = mount('/r?requests-group=nope', { names });
-    expect(result.current.pick.namedGroup).toBe('nope');
+    expect(result.current.pick.namedGroup).toEqual({ value: 'nope', reason: 'unknown' });
     act(() => result.current.pick.setRequest(request));
     const p = params(result.current.location.search);
     expect(p.has('requests-group')).toBe(false);
@@ -329,5 +337,157 @@ describe('requestLabel', () => {
     expect(requestLabel('Cart/Add To Cart', groups)).toBe('Cart / Add To Cart');
     expect(requestLabel('Catalog/Recommendations/Related Items', groups)).toBe('Catalog / Recommendations / Related Items');
     expect(requestLabel('Cart/order/1005', groups)).toBe('Cart / order/1005');
+  });
+
+  it('never reads a bare prefix of a name as its group', () => {
+    // `Cartography/x` beside a group `Cart` is in no group: membership is
+    // `Cart` and a `/`, never `Cart` alone.
+    expect(requestLabel('Cartography/x', ['Cart'])).toBe('Cartography/x');
+  });
+});
+
+/**
+ * ═══ THE NOTE BESIDE A PICK SAYS WHY, AND WHAT IS SHOWN INSTEAD (ruling R12) ═══
+ *
+ * The hook names a link's value for more than one reason, and the control's
+ * line has to say the true one. Each case renders the two controls the way the
+ * Requests section does and asserts the CLAIM as an exclusive pair — the true
+ * reason present, the false one absent ("never" wherever the run recorded the
+ * value) — plus what the line says is shown in its place. Never the sentence
+ * verbatim: the words stay rewritable, the claims may not.
+ */
+function Pickers({ names }: { readonly names: { readonly requests: readonly string[]; readonly groups: readonly string[] } }) {
+  const pick = useRequestsPick(names);
+  return (
+    <>
+      <div data-testid="group-picker">
+        <ReportFilterControl
+          label="Group"
+          allLabel="All groups"
+          values={pick.groups}
+          value={pick.group}
+          onChange={pick.setGroup}
+          named={pick.namedGroup}
+          verb="recorded"
+          labelOf={displayPath}
+        />
+      </div>
+      <div data-testid="request-picker">
+        <ReportFilterControl
+          label="Request"
+          allLabel="All requests"
+          values={pick.members}
+          value={pick.request}
+          onChange={pick.setRequest}
+          named={pick.namedRequest}
+          verb="recorded"
+          labelOf={(r) => requestLabel(r, names.groups)}
+        />
+      </div>
+    </>
+  );
+}
+
+function notes(entry: string, names: { readonly requests: readonly string[]; readonly groups: readonly string[] } = NAMES) {
+  render(
+    <MemoryRouter initialEntries={[entry]}>
+      <Pickers names={names} />
+    </MemoryRouter>,
+  );
+  const note = (id: string) => within(screen.getByTestId(id)).queryByTestId('filter-unknown')?.textContent ?? null;
+  return { group: note('group-picker'), request: note('request-picker') };
+}
+
+describe('the note beside a pick', () => {
+  it('a request the run recorded, outside the picked group: "not in" that group, never "never", showing the group\'s requests', () => {
+    const { flat, outside } = shape();
+    expect(REQUESTS).toContain(outside);
+    const { request, group } = notes(`/r?requests-group=${enc(flat)}&requests-request=${enc(outside)}`);
+    if (request === null) throw new Error('the request note is missing');
+    expect(request).toContain(requestLabel(outside, GROUPS));
+    expect(request).toMatch(new RegExp(`not in ${displayPath(flat)}`));
+    expect(request).not.toMatch(/never/);
+    // What is shown in its place is the group's requests, not every request.
+    expect(request).toMatch(new RegExp(`showing .*in ${displayPath(flat)}`));
+    expect(group).toBeNull();
+  });
+
+  it('a request outside a one-request group: "not in" that group, never "never", showing that group\'s one request', () => {
+    const { nested, deep, outside } = shape();
+    expect(members(nested)).not.toContain(outside);
+    const { request } = notes(`/r?requests-group=${enc(nested)}&requests-request=${enc(outside)}`);
+    if (request === null) throw new Error('the request note is missing');
+    expect(request).toMatch(new RegExp(`not in ${displayPath(nested)}`));
+    expect(request).not.toMatch(/never/);
+    // The one request is what is shown — the read-only field names it — so
+    // "showing all requests" would be false.
+    expect(request).toMatch(new RegExp(`showing ${requestLabel(deep, GROUPS)}`));
+    expect(request).not.toMatch(/showing all/);
+  });
+
+  it('a grouped request beside (no group): not one of the requests in no group, never "never", never "not in (no group)"', () => {
+    const { flatMembers } = shape();
+    const { request } = notes(`/r?requests-group=&requests-request=${enc(flatMembers[0]!)}`);
+    if (request === null) throw new Error('the request note is missing');
+    expect(request).toMatch(/not one of the requests in no group/);
+    expect(request).not.toMatch(/never/);
+    // "(no group)" is a set of requests, not a group (ruling R9).
+    expect(request).not.toContain(`not in ${displayPath('')}`);
+    expect(request).toMatch(/showing the requests in no group/);
+  });
+
+  it('a request the run never recorded: "never", not "not in", showing the picked group\'s requests', () => {
+    const { flat } = shape();
+    const unknown = `${flat}/nope`;
+    expect(REQUESTS).not.toContain(unknown);
+    const { request } = notes(`/r?requests-group=${enc(flat)}&requests-request=${enc(unknown)}`);
+    if (request === null) throw new Error('the request note is missing');
+    expect(request).toMatch(/never recorded/);
+    expect(request).not.toMatch(/not in/);
+    expect(request).toMatch(new RegExp(`showing .*in ${displayPath(flat)}`));
+  });
+
+  it('a request beside a group the run never recorded: the request "not in" that group, the group "never"', () => {
+    const { flat, flatMembers } = shape();
+    const unknownGroup = `${flat}x`;
+    expect(GROUPS).not.toContain(unknownGroup);
+    const { request, group } = notes(`/r?requests-group=${enc(unknownGroup)}&requests-request=${enc(flatMembers[0]!)}`);
+    if (request === null || group === null) throw new Error('both notes must show');
+    expect(request).toMatch(new RegExp(`not in ${unknownGroup}`));
+    expect(request).not.toMatch(/never/);
+    expect(request).toMatch(/showing all requests/);
+    expect(group).toMatch(/never recorded/);
+    expect(group).toMatch(/showing all groups/);
+  });
+
+  it('a group the run never recorded: "never", not "holds no requests"', () => {
+    const { flat } = shape();
+    const unknownGroup = `${flat}x`;
+    const { group } = notes(`/r?requests-group=${enc(unknownGroup)}`);
+    if (group === null) throw new Error('the group note is missing');
+    expect(group).toMatch(/never recorded/);
+    expect(group).not.toMatch(/holds no requests/);
+    expect(group).toMatch(/showing all groups/);
+  });
+
+  it('a group the run recorded that holds no requests: "holds no requests", never "never"', () => {
+    const { flat, flatMembers } = shape();
+    expect(GROUPS).toContain(flat);
+    const names = { requests: REQUESTS.filter((r) => !flatMembers.includes(r)), groups: GROUPS };
+    const { group } = notes(`/r?requests-group=${enc(flat)}`, names);
+    if (group === null) throw new Error('the group note is missing');
+    expect(group).toContain(displayPath(flat));
+    expect(group).toMatch(/holds no requests/);
+    expect(group).not.toMatch(/never/);
+  });
+
+  it('(no group) in a run where every request sits in a group: "holds no requests", never "never"', () => {
+    shape();
+    const names = { requests: REQUESTS.filter((r) => innermostGroup(r, GROUPS) !== ''), groups: GROUPS };
+    const { group } = notes('/r?requests-group=', names);
+    if (group === null) throw new Error('the group note is missing');
+    expect(group).toContain(displayPath(''));
+    expect(group).toMatch(/holds no requests/);
+    expect(group).not.toMatch(/never/);
   });
 });

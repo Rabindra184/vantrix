@@ -1,4 +1,64 @@
+import { displayPath } from '@perfportal/contracts';
 import { useId, type ReactNode } from 'react';
+
+/**
+ * Why a value a link asked for is not what the control shows (ruling R12).
+ * A plain string is the first reason, which is all a remote or a hostname can
+ * have.
+ *
+ *   unknown   the run never recorded it
+ *   empty     a group the run cannot offer because it holds no requests
+ *             (ruling R10a): recorded, or "(no group)" in a run where every
+ *             request sits in a group
+ *   outside   a request the run recorded that is not in `group`, the group
+ *             the link named (a stored path; `''` is no group)
+ *
+ * `within`, when present, is the group (a stored path) the control's values
+ * are narrowed to — the Request picker under a picked group — so the note can
+ * say what is shown in the value's place rather than "all requests".
+ */
+export type NamedValue = { readonly value: string; readonly within?: string } & (
+  | { readonly reason: 'unknown' }
+  | { readonly reason: 'empty' }
+  | { readonly reason: 'outside'; readonly group: string }
+);
+
+/**
+ * The note's sentence: what the link named, the true reason it is not shown,
+ * and what is shown instead. A plain-string `named` on a filter with nothing
+ * narrowed reads exactly as it always has, so Connections and DNS are
+ * unchanged.
+ *
+ * What is shown instead is the value the control does show when it shows one
+ * (a group with a single request answers that request), else every value in
+ * the group it is narrowed to, else every value. "(no group)" is a set of
+ * requests, not a group (ruling R9), so it is never called "the group (no
+ * group)" or put after "not in".
+ */
+function noteText(
+  named: string | NamedValue,
+  ctx: { readonly value: string; readonly allLabel: string; readonly verb: string; readonly labelOf: (v: string) => string },
+): string {
+  const n: NamedValue = typeof named === 'string' ? { value: named, reason: 'unknown' } : named;
+  const all = ctx.allLabel.toLowerCase();
+  const instead =
+    ctx.value !== '*'
+      ? ctx.labelOf(ctx.value)
+      : n.within === undefined
+        ? all
+        : n.within === ''
+          ? 'the requests in no group'
+          : `${all} in ${displayPath(n.within)}`;
+  const why =
+    n.reason === 'unknown'
+      ? `which this run never ${ctx.verb}`
+      : n.reason === 'empty'
+        ? 'which holds no requests in this run'
+        : n.group === ''
+          ? 'which is not one of the requests in no group'
+          : `which is not in ${displayPath(n.group)}`;
+  return `This link named ${ctx.labelOf(n.value)}, ${why}; showing ${instead}.`;
+}
 
 /**
  * A labelled value that is not a control: the one remote, the one hostname,
@@ -31,7 +91,10 @@ export function ReadOnlyField({ label, children }: { readonly label: string; rea
  * `named` is a value the URL asked for that the run never had
  * (`useReportFilter`). The hook reads it as every remote, so the charts are
  * right — but a reader who followed a link for one remote and sees all of
- * them deserves to be told why, in one line beside the control.
+ * them deserves to be told why, in one line beside the control. The Requests
+ * pickers can name a value for other reasons than that (`NamedValue`), and
+ * the line says the true one: a request the run recorded is "not in Cart",
+ * never "never recorded".
  *
  * Two additions for the Requests section's Group and Request pickers
  * (`useRequestsPick`):
@@ -70,8 +133,9 @@ export default function ReportFilterControl({
   /** `useReportFilter`'s answer: one of `values`, or `*`. */
   readonly value: string;
   readonly onChange: (value: string) => void;
-  /** A value the link named that the run does not have, or null. */
-  readonly named: string | null;
+  /** A value the link named that the control does not show, or null; a
+   *  string is one the run never recorded. */
+  readonly named: string | NamedValue | null;
   /** What the run would have had to do with it: "contacted", "resolved". */
   readonly verb: string;
   /** How a stored value reads; the value itself when absent. */
@@ -82,7 +146,7 @@ export default function ReportFilterControl({
   const note =
     named === null ? null : (
       <p data-testid="filter-unknown" className="text-[0.75rem] text-muted">
-        This link named {labelOf(named)}, which this run never {verb}; showing {allLabel.toLowerCase()}.
+        {noteText(named, { value, allLabel, verb, labelOf })}
       </p>
     );
   return (

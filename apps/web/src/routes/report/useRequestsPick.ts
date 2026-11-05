@@ -1,6 +1,7 @@
 import { displayPath, innermostGroup, requestsInGroup } from '@perfportal/contracts';
 import { useCallback, useMemo } from 'react';
 import { useLocation } from 'react-router-dom';
+import type { NamedValue } from './ReportFilterControl';
 import { useSectionParams } from './useReportFilter';
 
 /**
@@ -27,10 +28,18 @@ import { useSectionParams } from './useReportFilter';
  *
  * ═══ WHAT A LINK ASKS FOR IS CHECKED AGAINST THE RUN'S OWN NAMES ═══
  *
- * `names` is the section's own `/stats` rows (request-scope `response_time`
- * and group-scope `group_cumulated`). Until it has answered (`undefined`)
- * nothing is checked, so the answer is All for both and nothing is named —
- * and the caller fires no figure read until then (Review Focus 3).
+ * `names` is the run's own WHOLE-RUN `/stats` rows (request-scope
+ * `response_time` and group-scope `group_cumulated`) — `statsQuery(runId,
+ * null)`, never the window's (ruling R13). A windowed `/stats` builds its rows
+ * only from the buckets inside the window, so under a brush a request with no
+ * traffic there would drop out of the names: a pick of it would read as All
+ * and be named as never recorded, which is false, and every re-keyed window
+ * would blank the pickers while its `/stats` loads. The errors filter's
+ * request list is whole-run for the same reason (`CLAUDE.md`, M15).
+ *
+ * Until `names` has answered (`undefined`) nothing is checked, so the answer
+ * is All for both and nothing is named — and the caller fires no figure read
+ * until then (Review Focus 3).
  *
  *   - A group is OFFERED only when it holds requests (ruling R10a). A group
  *     with none, "(no group)" in a run where every request sits in a group
@@ -52,6 +61,14 @@ import { useSectionParams } from './useReportFilter';
  *     written: "a group with one request selects it", and the Request
  *     control is then a read-only field naming it.
  *
+ * A named value says WHY it is named (`NamedValue`, ruling R12), because the
+ * control's line has to be true: a group is `unknown` to the run or `empty`
+ * (it holds no requests); a request is `unknown` to the run or `outside` the
+ * group the link named, which the run may well have recorded. A request note
+ * also carries `within`, the group shown in its place, so the line says what
+ * is shown instead ("all requests in Cart", or the one request a one-request
+ * group answers) rather than "all requests".
+ *
  * ═══ CHANGING THE GROUP DROPS THE REQUEST (Review Focus 4) ═══
  *
  * `setGroup` deletes `requests-request` in the same navigation. Left behind,
@@ -68,8 +85,9 @@ export interface RequestsPick {
    * What the Request control lists: the picked group's requests, in payload
    * order. With no group picked, the one offerable group's requests when there
    * is only one (its Group control is read-only, so the Request control is
-   * usable straight away), and `[]` otherwise — the Request control is then
-   * disabled with "Pick a group first.".
+   * usable straight away), and `[]` otherwise. "Pick a group first." belongs
+   * only where the Group control offers a choice (`groups.length > 1`): a run
+   * with no request rows has `[]` here and no Group control at all.
    */
   readonly members: readonly string[];
   /** The groups the Group control offers: payload order, `''` last and only
@@ -79,10 +97,12 @@ export interface RequestsPick {
   readonly setGroup: (next: string) => void;
   /** Writes the request (`'*'` deletes it), with the group the reader was shown. */
   readonly setRequest: (next: string) => void;
-  /** A group the URL asked for that this run cannot offer, or null. */
-  readonly namedGroup: string | null;
-  /** A request the URL asked for that this run, or the named group, lacks; or null. */
-  readonly namedRequest: string | null;
+  /** A group the URL asked for that this run cannot offer, and why
+   *  (`unknown` | `empty`); or null. */
+  readonly namedGroup: NamedValue | null;
+  /** A request the URL asked for that is not shown, and why (`unknown` |
+   *  `outside`), with the group shown instead as `within`; or null. */
+  readonly namedRequest: NamedValue | null;
 }
 
 export type RequestsNames = { readonly requests: readonly string[]; readonly groups: readonly string[] };
@@ -96,8 +116,8 @@ interface Resolved {
   readonly request: string;
   readonly members: readonly string[];
   readonly groups: readonly string[];
-  readonly namedGroup: string | null;
-  readonly namedRequest: string | null;
+  readonly namedGroup: NamedValue | null;
+  readonly namedRequest: NamedValue | null;
 }
 
 const NOTHING_KNOWN: Resolved = { group: '*', request: '*', members: [], groups: [], namedGroup: null, namedRequest: null };
@@ -126,14 +146,24 @@ function resolve(names: RequestsNames | undefined, rawGroup: string | null, rawR
   let request = rawRequest !== null && pool.includes(rawRequest) ? rawRequest : '*';
   if (request === '*' && group !== '*' && members.length === 1) request = members[0]!;
 
-  return {
-    group,
-    request,
-    members,
-    groups,
-    namedGroup: rawGroup !== null && !groups.includes(rawGroup) ? rawGroup : null,
-    namedRequest: rawRequest !== null && request !== rawRequest ? rawRequest : null,
-  };
+  let namedGroup: NamedValue | null = null;
+  if (rawGroup !== null && !groups.includes(rawGroup)) {
+    // '' is never in `groupNames`, yet it is recorded whenever the run has
+    // requests: what it lacks is members, like a group whose requests left.
+    const recorded = rawGroup === '' ? requests.length > 0 : groupNames.includes(rawGroup);
+    namedGroup = { value: rawGroup, reason: recorded ? 'empty' : 'unknown' };
+  }
+
+  let namedRequest: NamedValue | null = null;
+  if (rawRequest !== null && request !== rawRequest) {
+    const within = group === '*' ? undefined : group;
+    namedRequest =
+      rawGroup !== null && requests.includes(rawRequest)
+        ? { value: rawRequest, reason: 'outside', group: rawGroup, within }
+        : { value: rawRequest, reason: 'unknown', within };
+  }
+
+  return { group, request, members, groups, namedGroup, namedRequest };
 }
 
 export default function useRequestsPick(names: RequestsNames | undefined): RequestsPick {
