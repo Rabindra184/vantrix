@@ -329,6 +329,37 @@ describe('mergeMemberSeries', () => {
     expect(merged.buckets.map((x) => x.startOffsetMs)).toEqual([0, 1000, 2000, 3000]);
   });
 
+  it('reads a fractional cap by its integer part, as the writer coalesces at floor(cap) + 1', () => {
+    // A cap of 5.5 coalesces at six buckets (BucketSeries compares size > cap),
+    // and one halving leaves three: so three buckets can be a coalesced
+    // series. Read without its floor, the cap would ask for
+    // ceil((5.5 + 1) / 2) = 4 and file this real 2 s member at 1 s.
+    const six: Request[] = Array.from({ length: 6 }, (_, i) => ({ startMs: i * 1000 + 100, endMs: i * 1000 + 300, ok: true }));
+    const coalesced = seriesOf(six, 5.5);
+    expect(coalesced.widthMs).toBe(2000);
+    expect(coalesced.buckets().map((b) => b.startOffsetMs)).toEqual([0, 2000, 4000]);
+
+    const merged = mergeMemberSeries([coalesced.buckets()], 5.5);
+
+    expect(merged.widthMs).toBe(2000);
+    expect(merged.buckets).toEqual(coalesced.buckets().map(expectedOf));
+  });
+
+  it('reads every member as 1 s under a NaN cap, which never coalesces a series', () => {
+    // size > NaN is false, so the writer never halves: ten requests a second
+    // apart stay at 1 s. A member's offsets on a 2 s grid then prove nothing,
+    // and without the NaN guard the floor itself would be NaN, which no count
+    // falls below, and the member would be read by its divisor at 2 s.
+    const ten: Request[] = Array.from({ length: 10 }, (_, i) => ({ startMs: i * 1000 + 100, endMs: i * 1000 + 300, ok: true }));
+    expect(seriesOf(ten, Number.NaN).widthMs).toBe(1000);
+    const onGrid = [bucketAt(0, [10]), bucketAt(2000, [20]), bucketAt(4000, [30])];
+
+    const merged = mergeMemberSeries([onGrid], Number.NaN);
+
+    expect(merged.widthMs).toBe(1000);
+    expect(merged.buckets.map((x) => x.startOffsetMs)).toEqual([0, 2000, 4000]);
+  });
+
   it('pins the known limit at a cap of 1: a lone, possibly coalesced bucket reads as 1 s', () => {
     // At a cap of 1 every series holds one bucket, and a lone bucket at 4 s
     // may be a coalesced one at least 4 s wide. Its offsets cannot say, so it
