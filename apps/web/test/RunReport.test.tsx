@@ -790,9 +790,10 @@ describe('RunReport — the Requests pickers', () => {
       window: { fromMs: 10_000, toMs: 20_000, bucketWidthMs: 1_000 },
       requests: { windowedStats: { ...reference.stats, stats: reference.stats.stats.filter((s) => s.name !== 'Search') } },
     });
-    const request = await within(requestPicker()).findByLabelText('Request');
-    expect(options(request)).toEqual(['All requests', ...requestsInGroup(REQUESTS, GROUPS, '')]);
-    expect(options(request)).toContain('Search');
+    // Waited on as a whole: the control can exist before the names do.
+    const members = requestsInGroup(REQUESTS, GROUPS, '');
+    expect(members).toContain('Search');
+    await waitFor(() => expect(options(within(requestPicker()).getByLabelText('Request'))).toEqual(['All requests', ...members]));
   });
 });
 
