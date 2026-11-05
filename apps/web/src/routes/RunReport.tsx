@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useId, useMemo, useState, type ReactNode } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, type QueryKey, type UseQueryResult } from '@tanstack/react-query';
 import { displayPath } from '@perfportal/contracts';
@@ -196,7 +196,12 @@ function RequestsSection({
             </button>
           ))}
         </div>
-        {terminal && drawn && <RequestsPickers narrowing={narrowing} />}
+        {terminal && drawn &&
+          (narrowing.failed ? (
+            <NamesUnavailable linked={params.has('requests-group') || params.has('requests-request')} />
+          ) : (
+            <RequestsPickers narrowing={narrowing} />
+          ))}
       </div>
       {view === 'charts' ? (
         <RequestsCharts runId={runId} drawn={drawn} onShow={() => setShown(true)} narrowing={narrowing} />
@@ -219,13 +224,19 @@ interface Narrowing {
   /** The run's WHOLE-RUN `/stats`, which the pick is checked against. */
   readonly names: UseQueryResult<StatsResponse>;
   /**
-   * That read has answered — or failed, which reads every pick as All — so a
-   * figure may be asked for. Until then none is (Review Focus 3): before the
-   * names are known every pick reads as All, and asking then would fetch the
-   * run's figures under a link that named a group, to be thrown away when the
-   * pick resolves (and drawn meanwhile with nothing saying they are not it).
+   * That read has answered — or failed — so a figure may be asked for. Until
+   * then none is (Review Focus 3): before the names are known every pick reads
+   * as All, and asking then would fetch the run's figures under a link that
+   * named a group, to be thrown away when the pick resolves (and drawn
+   * meanwhile with nothing saying they are not it).
    */
   readonly settled: boolean;
+  /**
+   * The names read FAILED, so no pick can be checked (ruling R14). Every pick
+   * reads as All and the figures draw unnarrowed — which is honest only
+   * because the pickers' place then says so (`NamesUnavailable`).
+   */
+  readonly failed: boolean;
   readonly pick: ReturnType<typeof useRequestsPick>;
   /** The run's group paths, for a request's label. */
   readonly groupNames: readonly string[];
@@ -280,7 +291,36 @@ function useRequestsNarrowing(runId: string, terminal: boolean, enabled: boolean
     if (narrowed === null) return null;
     return narrowed.kind === 'request' ? [narrowed.name] : members;
   }, [narrowed, members]);
-  return { names, settled: !names.isPending, pick, groupNames, narrowed, kept };
+  return {
+    names,
+    settled: !names.isPending,
+    failed: names.isError && names.data === undefined,
+    pick,
+    groupNames,
+    narrowed,
+    kept,
+  };
+}
+
+/**
+ * The pickers' place when the run's names could not be loaded (ruling R14).
+ *
+ * Holding the figures until the names arrive would leave a section of
+ * "Loading…" over a read that is not coming; drawing them unnarrowed with
+ * nothing said would drop a link's pick silently. So they draw, and this one
+ * line says what that means: a link that named a group or a request was not
+ * checked, and every request is shown; with no pick asked for, only that the
+ * picks are unavailable. Plain text, not a live region: it describes the
+ * section the reader arrived at, nothing that changed under them.
+ */
+function NamesUnavailable({ linked }: { readonly linked: boolean }) {
+  return (
+    <p data-testid="requests-names-unavailable" className="text-[0.75rem] text-muted">
+      {linked
+        ? 'This link’s group or request could not be checked, because this run’s request names could not be loaded, so every request is shown.'
+        : 'Group and request picks are unavailable, because this run’s request names could not be loaded.'}
+    </p>
+  );
 }
 
 /**
@@ -385,9 +425,15 @@ function PickPayload<T>({
   );
 }
 
-/** The two charts that cannot narrow, as spec section 6 words them. */
-const ERRORS_WHOLE_RUN = 'Shows the whole run: errors are not recorded per request.';
-const STATUS_WHOLE_RUN = 'Shows the whole run: status codes are not recorded per request.';
+/**
+ * The two charts that cannot narrow (spec section 6). A DELIBERATE DEVIATION
+ * from the spec's "Shows the whole run: …" (ruling R15): under a window these
+ * charts show that window, across every request, so "the whole run" would be
+ * false of exactly the reader who brushed one. "Every request" is true with a
+ * window or without.
+ */
+const ERRORS_WHOLE_RUN = 'Shows every request: errors are not recorded per request.';
+const STATUS_WHOLE_RUN = 'Shows every request: status codes are not recorded per request.';
 
 function RequestsCharts({
   runId,
@@ -616,9 +662,10 @@ function RequestsTable({
  * the charts beside it word it (`scopePhrase`).
  */
 function PickEmpty({ windowSelected, narrowed }: { readonly windowSelected: boolean; readonly narrowed: Narrowed }) {
+  const headingId = useId();
   return (
-    <section className="flex flex-col gap-3">
-      <SectionHeading level={3} overline="Run telemetry">
+    <section aria-labelledby={headingId} className="flex flex-col gap-3">
+      <SectionHeading id={headingId} level={3} overline="Run telemetry">
         Statistics
       </SectionHeading>
       <EmptyState title={`Nothing was recorded ${scopePhrase({ windowSelected, narrowed })}`} />

@@ -389,12 +389,20 @@ describe('RunReport — GE’s sections', () => {
   // the telemetry sections — and a section that forgot it would draw the whole
   // run under a window the reader selected, so each one is opened.
   it('narrows the table, the groups, the users and the telemetry to the window too', async () => {
-    // The windowed `/stats` lacks Search, so a table that read the whole run
-    // instead — its key the pickers' names', and so one request with them —
-    // would show it.
+    // The windowed `/stats` lacks Search and the Catalog/Recommendations group,
+    // so a table or a groups list that read the whole run instead would show
+    // them. Read off the screen, because an unwindowed read here is the
+    // pickers' names' key: served from that entry, it is never fetched, and no
+    // URL in `seen` could give it away.
+    const nested = 'Catalog/Recommendations';
     const seen = renderReport({
       window: { fromMs: 10_000, toMs: 20_000, bucketWidthMs: 1_000 },
-      requests: { windowedStats: { ...reference.stats, stats: reference.stats.stats.filter((s) => s.name !== 'Search') } },
+      requests: {
+        windowedStats: {
+          ...reference.stats,
+          stats: reference.stats.stats.filter((s) => s.name !== 'Search' && !(s.scope === 'group' && s.name === nested)),
+        },
+      },
     });
     await screen.findByTestId('chart-requests-and-responses');
     await userEvent.click(within(screen.getByTestId('section-requests')).getByRole('button', { name: 'Table' }));
@@ -404,6 +412,10 @@ describe('RunReport — GE’s sections', () => {
     for (const title of ['Groups', 'Virtual users', 'Connections']) {
       await userEvent.click(screen.getByRole('button', { name: title }));
     }
+    const groups = screen.getByTestId('section-groups');
+    expect(await within(groups).findByRole('link', { name: 'Cart' })).toBeInTheDocument();
+    expect(reference.stats.stats.some((s) => s.scope === 'group' && s.name === nested), 'the whole run has it').toBe(true);
+    expect(within(groups).queryByRole('link', { name: nested })).toBeNull();
     await waitFor(() => expect(seen.some((u) => u.includes('/telemetry'))).toBe(true));
     await waitFor(() => expect(seen.some((u) => u.includes('/users'))).toBe(true));
 
@@ -646,8 +658,8 @@ describe('RunReport — the Requests pickers', () => {
     renderReport({ url: `/runs/${RUN_ID}/report?requests-group=Cart` });
     const notes = await within(requests()).findAllByTestId('whole-run-note');
     expect(notes.map((n) => n.textContent)).toEqual([
-      'Shows the whole run: errors are not recorded per request.',
-      'Shows the whole run: status codes are not recorded per request.',
+      'Shows every request: errors are not recorded per request.',
+      'Shows every request: status codes are not recorded per request.',
     ]);
     // Each line sits with the chart it describes, above it.
     expect(notes[0]!.parentElement).toContainElement(within(requests()).getByTestId('chart-errors-over-time'));
@@ -723,8 +735,11 @@ describe('RunReport — the Requests pickers', () => {
       requests: { windowedStats: { ...reference.stats, stats: reference.stats.stats.filter((s) => s.name !== 'Search') } },
     });
     await userEvent.click(within(requests()).getByRole('button', { name: 'Table' }));
-    expect(await within(requests()).findByText(/Nothing was recorded for this request in the selected window/)).toBeVisible();
+    const empty = await within(requests()).findByText(/Nothing was recorded for this request in the selected window/);
+    expect(empty).toBeVisible();
     expect(within(requests()).queryByText(/No requests ran in the selected window/)).toBeNull();
+    // A region named by its own heading, as the table it stands in for is.
+    expect(within(requests()).getByRole('region', { name: /Statistics/ })).toContainElement(empty);
   });
 
   it('asks for no figure until /stats has answered', async () => {
@@ -762,10 +777,90 @@ describe('RunReport — the Requests pickers', () => {
   // at all, so a disabled Request control telling the reader to pick from it
   // would point at nothing.
   it('draws no picker, and asks for no group, in a run with no request rows', async () => {
-    renderReport({ stats: { ...reference.stats, stats: reference.stats.stats.filter((s) => s.scope === 'run') } });
-    await waitFor(() => expect(within(requests()).getByTestId('requests-request-picker')).toBeInTheDocument());
+    const seen = renderReport({ stats: { ...reference.stats, stats: reference.stats.stats.filter((s) => s.scope === 'run') } });
+    // The figures are asked for only once the names have answered, so this is
+    // the state AFTER they arrived — not the first render, where the picker's
+    // box exists before anything is known.
+    await waitFor(() => expect(atPath(seen, '/series')).not.toHaveLength(0));
+    await waitFor(() => expect(atPath(seen, '/distribution')).not.toHaveLength(0));
     expect(within(requests()).queryByRole('combobox')).toBeNull();
     expect(requests().textContent).not.toContain('Pick a group first.');
+    for (const url of [...atPath(seen, '/series'), ...atPath(seen, '/distribution')]) {
+      const params = new URL(url, 'http://x').searchParams;
+      expect(params.get('scope')).toBe('run');
+      expect(params.has('group')).toBe(false);
+    }
+  });
+
+  // `''` is "(no group)", a real group path: an empty value, never a missing
+  // one. A truthiness check would read it as All — the run's figures, the
+  // run's ranges and the full table under a link for the requests in no group.
+  it('a (no group) pick reads group= with an empty value and narrows to the requests in no group', async () => {
+    const seen = renderReport({ url: `/runs/${RUN_ID}/report?requests-group=` });
+    await waitFor(() => expect(atPath(seen, '/series')).not.toHaveLength(0));
+    await waitFor(() => expect(atPath(seen, '/distribution')).not.toHaveLength(0));
+    for (const url of [...atPath(seen, '/series'), ...atPath(seen, '/distribution')]) {
+      const params = new URL(url, 'http://x').searchParams;
+      expect(params.get('scope')).toBe('request');
+      expect(params.get('group')).toBe('');
+      expect(params.has('name')).toBe(false);
+    }
+    const members = requestsInGroup(REQUESTS, GROUPS, '');
+    expect(members.length).toBeGreaterThan(1);
+    const narrowed = { kind: 'group', name: '' } as const;
+    const ranges = rowsOf(toIndicators(narrowStats(STATS, members), { windowSelected: false, narrowed }));
+    await waitFor(() => expect(tableOf('indicators')).toEqual(ranges));
+    const rows = await openTable();
+    expect(rows.map((r) => r.getAttribute('data-path')).sort()).toEqual([...members].sort());
+    expect(within(requests()).queryByTestId('stat-row-total')).toBeNull();
+  });
+
+  /**
+   * ═══ THE NAMES COULD NOT BE LOADED (ruling R14) ═══
+   *
+   * The review's construction: a window, a whole-run `/stats` answering 404
+   * and a windowed one answering 200. No pick can be checked, so the figures
+   * draw unnarrowed — and the pickers' place says what that means for the link
+   * the reader followed. Each case is an exclusive pair: the true claim, and
+   * not the other one.
+   */
+  const namesFail = (url: string) =>
+    renderReport({
+      url: `/runs/${RUN_ID}/report${url}`,
+      window: { fromMs: 10_000, toMs: 20_000, bucketWidthMs: 1_000 },
+      stats: null,
+      requests: { windowedStats: reference.stats },
+    });
+
+  it('says a link’s pick could not be checked when the names fail, and shows every request', async () => {
+    const seen = namesFail('?requests-group=Cart');
+    const line = await within(requests()).findByTestId('requests-names-unavailable');
+    expect(line.textContent).toMatch(/link.*could not be checked/);
+    expect(line.textContent).toMatch(/every request/);
+    expect(line.textContent).not.toMatch(/unavailable/);
+    // Not a live region: it describes the section, nothing that changed.
+    expect(line).not.toHaveAttribute('role');
+    expect(within(requests()).queryByTestId('requests-group-picker')).toBeNull();
+    // What it says is what draws: the run's figures, unnarrowed.
+    await waitFor(() => expect(atPath(seen, '/series')).not.toHaveLength(0));
+    for (const url of [...atPath(seen, '/series'), ...atPath(seen, '/distribution')]) {
+      expect(new URL(url, 'http://x').searchParams.get('scope')).toBe('run');
+    }
+  });
+
+  it('says the picks are unavailable when the names fail and the link named none', async () => {
+    namesFail('');
+    const line = await within(requests()).findByTestId('requests-names-unavailable');
+    expect(line.textContent).toMatch(/picks are unavailable/);
+    expect(line.textContent).toMatch(/request names could not be loaded/);
+    expect(line.textContent).not.toMatch(/link/);
+    expect(within(requests()).queryByTestId('requests-request-picker')).toBeNull();
+  });
+
+  it('draws no names line when the names answer', async () => {
+    renderReport({ url: `/runs/${RUN_ID}/report?requests-group=Cart` });
+    expect(await within(groupPicker()).findByLabelText('Group')).toHaveValue('Cart');
+    expect(within(requests()).queryByTestId('requests-names-unavailable')).toBeNull();
   });
 
   // The pick drives both views, so on a phone it waits behind the same gate as
