@@ -86,6 +86,35 @@ describe('narrowStats', () => {
     narrowStats(stats, membersOf('Catalog'));
     expect(stats).toEqual(before);
   });
+
+  /**
+   * Two rules the reference run cannot exercise: its group names share no
+   * prefix with a top-level request, and every request row is response_time.
+   * A synthetic payload built from its own rows gives both something to get
+   * wrong.
+   */
+  it('matches a group by its whole path segment, and sums only response_time bands', () => {
+    const request = rowsNamed(membersOf('Cart'))[0]!;
+    const group = stats.stats.find((r) => r.scope === 'group' && r.name === 'Cart')!;
+    const row = (over: Partial<StatRow>): StatRow => ({ ...request, ...over });
+    const bands = { under: 1, between: 2, over: 3, failed: 4 };
+    const synthetic: StatsResponse = {
+      ...stats,
+      stats: [
+        { ...group },
+        row({ name: 'Cartoon/x', indicators: bands }),
+        // The same request again under another family: present, but not summed.
+        row({ name: 'Cartoon/x', family: 'latency' as StatRow['family'], indicators: { under: 100, between: 100, over: 100, failed: 100 } }),
+      ],
+    };
+
+    const narrowed = narrowStats(synthetic, ['Cartoon/x']);
+
+    // 'Cartoon/x' does not sit inside 'Cart': a bare prefix match would bring it.
+    expect(narrowed.stats.some((r) => r.scope === 'group')).toBe(false);
+    expect(narrowed.stats.filter((r) => r.name === 'Cartoon/x')).toHaveLength(2);
+    expect(narrowed.indicators).toEqual(bands);
+  });
 });
 
 describe('narrowUsers', () => {

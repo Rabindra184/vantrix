@@ -359,7 +359,11 @@ export const groupDistributionQueryKey = (id: string, group: string, window: Win
  *      run has — so it answers 404 to EVERY group distribution read, windowed
  *      or not.
  *   2. This server answers 404 for a group it does not know (no members),
- *      which the picker cannot offer: its names come from `/stats`.
+ *      which the picker MUST NOT offer. Its names come from `/stats`, but that
+ *      alone does not keep a memberless group out: in a run where every
+ *      request sits in a group, (no group) has no members, and this server
+ *      answers it 404 — read here as "cannot narrow" on a server that can.
+ *      The picker offers only a group `requestsInGroup` gives members.
  *
  * A QUIET WINDOW IS NOT A 404 HERE, and that is the difference from
  * `distributionQuery` above, which turns a windowed 404 into an empty payload.

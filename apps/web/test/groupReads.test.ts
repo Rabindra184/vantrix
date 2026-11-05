@@ -131,6 +131,21 @@ describe('groupSeriesQuery — its cache entry', () => {
     expect(key).not.toEqual(groupSeriesQuery(RUN_ID, 'Cart', WINDOW).queryKey);
   });
 
+  /** The same for the distribution: under `staleTime: Infinity` a key that lost the group or the window serves one pick's answer for another. */
+  it('keys a group distribution by its group and its window, apart from every ordinary read', () => {
+    const key = groupDistributionQuery(RUN_ID, 'Cart', null).queryKey;
+    for (const scope of ['run', 'group', 'request']) {
+      for (const name of ['', 'Cart']) {
+        for (const w of [null, WINDOW]) {
+          expect(key).not.toEqual(distributionQuery(RUN_ID, scope, name, 'response_time', w).queryKey);
+        }
+      }
+    }
+    expect(key).not.toEqual(groupDistributionQuery(RUN_ID, '', null).queryKey);
+    expect(key).not.toEqual(groupDistributionQuery(RUN_ID, 'Catalog', null).queryKey);
+    expect(key).not.toEqual(groupDistributionQuery(RUN_ID, 'Cart', WINDOW).queryKey);
+  });
+
   it('sits under the run’s series prefix, so invalidating the run’s series reaches it', () => {
     expect(groupSeriesQuery(RUN_ID, 'Cart', null).queryKey.slice(0, 3)).toEqual(['run', RUN_ID, 'series']);
     expect(groupDistributionQuery(RUN_ID, 'Cart', null).queryKey.slice(0, 3)).toEqual([
@@ -163,7 +178,7 @@ describe('groupDistributionQuery — the echo, and what a 404 means', () => {
    * A 404 carries no echo. It is what EVERY group distribution read gets from
    * a server older than `group` (it reads request `''`, which no run has), and
    * this server answers it only for a group it does not know, which the
-   * picker cannot offer.
+   * picker must not offer (a group with no members, (no group) included).
    */
   it('reads an unwindowed 404 as a server that cannot narrow', async () => {
     answer(404, problem(404, 'NOT_FOUND'));
@@ -187,7 +202,7 @@ describe('groupDistributionQuery — the echo, and what a 404 means', () => {
 
   /** The quiet window as this server answers it: a 200 with no bins and the echo. */
   it('resolves a windowed 200 with no bins and the echo as an empty window', async () => {
-    answer(
+    const asked = answer(
       200,
       echoed(
         { ...DISTRIBUTION, labels: [], okCount: [], koCount: [], okPercent: [], koPercent: [], overflowCount: 0 },
@@ -195,6 +210,11 @@ describe('groupDistributionQuery — the echo, and what a 404 means', () => {
       ),
     );
     const d = await groupDistributionQuery(RUN_ID, 'Cart', WINDOW).queryFn();
+    // The window reaches the server: a read that dropped it would answer the
+    // whole run's distribution under the window's handles.
+    expect(asked).toEqual([groupDistributionPath(RUN_ID, 'Cart', 'response_time', WINDOW)]);
+    const params = new URL(asked[0]!, 'http://x').searchParams;
+    expect([params.get('from'), params.get('to')]).toEqual([String(WINDOW.fromMs), String(WINDOW.toMs)]);
     expect([d.labels, d.okCount, d.koCount]).toEqual([[], [], []]);
     expect([d.runId, d.scope, d.name, d.group, d.family]).toEqual([RUN_ID, 'request', '', 'Cart', 'response_time']);
   });
