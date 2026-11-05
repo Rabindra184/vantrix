@@ -310,15 +310,21 @@ function useRequestsNarrowing(runId: string, terminal: boolean, enabled: boolean
  * "Loading…" over a read that is not coming; drawing them unnarrowed with
  * nothing said would drop a link's pick silently. So they draw, and this one
  * line says what that means: a link that named a group or a request was not
- * checked, and every request is shown; with no pick asked for, only that the
- * picks are unavailable. Plain text, not a live region: it describes the
- * section the reader arrived at, nothing that changed under them.
+ * checked, and nothing here is narrowed to it; with no pick asked for, only
+ * that the picks are unavailable. Plain text, not a live region: it describes
+ * the section the reader arrived at, nothing that changed under them.
+ *
+ * "NOT NARROWED TO IT", NEVER "EVERY REQUEST IS SHOWN" (final review m1),
+ * because the second is true only under a window. With none, the names read
+ * and the charts' and Table's own `/stats` are one key, so the failure that
+ * draws this line is also Ranges', Number of requests' and the Table's, and
+ * they show their own error. Virtual users words the same case the same way.
  */
 function NamesUnavailable({ linked }: { readonly linked: boolean }) {
   return (
     <p data-testid="requests-names-unavailable" className="text-[0.75rem] text-muted">
       {linked
-        ? 'This link’s group or request could not be checked, because this run’s request names could not be loaded, so every request is shown.'
+        ? 'This link’s group or request could not be checked, because this run’s request names could not be loaded, so this section is not narrowed to it.'
         : 'Group and request picks are unavailable, because this run’s request names could not be loaded.'}
     </p>
   );
@@ -390,6 +396,9 @@ function distributionRead(runId: string, narrowed: Narrowed, window: Window | nu
   if (narrowed?.kind === 'group') return groupDistributionQuery(runId, narrowed.name, window);
   return distributionQuery(runId, 'run', '', 'response_time', window);
 }
+
+/** In the four group charts' place when this server cannot merge a group's requests (ruling R8). */
+const GROUP_UNSUPPORTED = 'The four response-time charts are not drawn, because this server cannot merge a group’s requests.';
 
 /** The spec's 409 state (section 7), in the section's words rather than the server's. */
 const NOT_MERGEABLE = "This run's group figures cannot be merged: it predates exact statistics.";
@@ -537,9 +546,13 @@ function RequestsCharts({
         // ONE sentence for the four charts a group read feeds (ruling R8), and
         // none of those charts: an older API answered the run's own figures, and
         // drawing anything under the pick — an empty distribution included —
-        // would read as the group's.
-        <p data-testid="group-unsupported" role="status" className="text-sm text-muted 2xl:col-span-2">
-          {series.error.message}
+        // would read as the group's. It names what is missing and why, not
+        // "this server cannot narrow": Ranges, Number of requests and the Table
+        // beside it ARE narrowed, from /stats. Plain text, not a status: it
+        // mounts holding its words, so a live region would be inserted, never
+        // announced.
+        <p data-testid="group-unsupported" className="text-sm text-muted 2xl:col-span-2">
+          {GROUP_UNSUPPORTED}
         </p>
       ) : (
         <>

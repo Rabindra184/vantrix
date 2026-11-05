@@ -130,6 +130,8 @@ interface RequestsBodies {
   readonly windowedStats?: unknown;
   /** Holds every `/stats` answer until it resolves. */
   readonly statsGate?: Promise<unknown>;
+  /** Holds only the UNWINDOWED `/stats` — the pickers' names read — until it resolves. */
+  readonly namesGate?: Promise<unknown>;
   /** How a group read (`?group=`) answers: with its echo (the default), without
    *  one (an API older than the pickers), or 409 `GROUP_NOT_MERGEABLE`. */
   readonly group?: 'echo' | 'no-echo' | 'not-mergeable';
@@ -194,7 +196,8 @@ function stubFetch(
         statsBody === null && !windowed
           ? json({ status: 404, title: 'Not Found', code: 'NOT_FOUND', detail: 'stub', remediation: 'stub' }, 404)
           : json(windowed ? requests.windowedStats : statsBody);
-      return requests.statsGate === undefined ? Promise.resolve(answer()) : requests.statsGate.then(answer);
+      const gate = requests.statsGate ?? (parsed.searchParams.has('from') ? undefined : requests.namesGate);
+      return gate === undefined ? Promise.resolve(answer()) : gate.then(answer);
     }
     if (path.endsWith('/users')) {
       const windowed = parsed.searchParams.has('from');
@@ -753,11 +756,15 @@ describe('RunReport — the Requests pickers', () => {
     expect(within(requests()).queryByTestId('whole-run-note')).toBeNull();
   });
 
-  it('says once that the server cannot narrow by group, and draws no group chart under it', async () => {
+  it('says once that the server cannot merge a group, and draws no group chart under it', async () => {
     renderReport({ url: `/runs/${RUN_ID}/report?requests-group=Cart`, requests: { group: 'no-echo' } });
-    const sentence = await within(requests()).findByText('This server cannot narrow by group yet.');
+    const words = 'The four response-time charts are not drawn, because this server cannot merge a group’s requests.';
+    const sentence = await within(requests()).findByText(words);
     expect(sentence).toBeVisible();
-    expect(within(requests()).getAllByText('This server cannot narrow by group yet.')).toHaveLength(1);
+    expect(within(requests()).getAllByText(words)).toHaveLength(1);
+    // Plain text: it mounts holding its words, so a live region would be
+    // inserted, never announced (final review m4).
+    expect(sentence).not.toHaveAttribute('role');
     for (const id of ['requests-and-responses', 'percentiles', 'distribution', 'percentile-distribution']) {
       expect(within(requests()).queryByTestId(`chart-${id}`), id).toBeNull();
     }
@@ -949,7 +956,7 @@ describe('RunReport — the Requests pickers', () => {
     const seen = namesFail('?requests-group=Cart');
     const line = await within(requests()).findByTestId('requests-names-unavailable');
     expect(line.textContent).toMatch(/link.*could not be checked/);
-    expect(line.textContent).toMatch(/every request/);
+    expect(line.textContent).toMatch(/not narrowed to it/);
     expect(line.textContent).not.toMatch(/unavailable/);
     // Not a live region: it describes the section, nothing that changed.
     expect(line).not.toHaveAttribute('role');
@@ -968,6 +975,55 @@ describe('RunReport — the Requests pickers', () => {
     expect(line.textContent).toMatch(/request names could not be loaded/);
     expect(line.textContent).not.toMatch(/link/);
     expect(within(requests()).queryByTestId('requests-request-picker')).toBeNull();
+  });
+
+  // WITH NO WINDOW the names read and the charts' and Table's `/stats` are one
+  // key, so the failure behind the line is theirs too: the Table shows its
+  // own error, and "every request is shown" would be false (final review m1).
+  // What the line says stays true: the section is not narrowed to the link.
+  it('says a link’s pick was not narrowed to with no window, where the Table shows its own error', async () => {
+    renderReport({ url: `/runs/${RUN_ID}/report?requests-group=Cart`, stats: null });
+    const line = await within(requests()).findByTestId('requests-names-unavailable');
+    expect(line.textContent).toMatch(/link.*could not be checked/);
+    expect(line.textContent).toMatch(/not narrowed to it/);
+    expect(line.textContent).not.toMatch(/every request is shown/);
+    await userEvent.click(within(requests()).getByRole('button', { name: 'Table' }));
+    expect(await within(requests()).findByRole('alert')).toHaveTextContent('Statistics could not be loaded');
+    expect(within(requests()).queryAllByTestId('stat-row')).toHaveLength(0);
+  });
+
+  it('says the picks are unavailable with no window when the link named none', async () => {
+    renderReport({ stats: null });
+    const line = await within(requests()).findByTestId('requests-names-unavailable');
+    expect(line.textContent).toMatch(/picks are unavailable/);
+    expect(line.textContent).toMatch(/request names could not be loaded/);
+    expect(line.textContent).not.toMatch(/link|every request/);
+  });
+
+  // Under a window the Table's own `/stats` is a different read from the
+  // names, and can answer first. Drawn then, it would be every row and All
+  // Requests under a link for Cart (final review m2).
+  it('the Table waits for the names before it draws a pick', async () => {
+    let release!: (value?: unknown) => void;
+    const namesGate = new Promise((resolve) => {
+      release = resolve;
+    });
+    renderReport({
+      url: `/runs/${RUN_ID}/report?requests-group=Cart`,
+      window: { fromMs: 10_000, toMs: 20_000, bucketWidthMs: 1_000 },
+      requests: { windowedStats: reference.stats, namesGate },
+    });
+    await userEvent.click(within(requests()).getByRole('button', { name: 'Table' }));
+    // The Groups list reads the same windowed `/stats` entry as the Table, so
+    // once it has drawn, the Table has had that payload to draw from too.
+    await userEvent.click(screen.getByRole('button', { name: 'Groups' }));
+    expect(await within(screen.getByTestId('section-groups')).findByRole('link', { name: 'Cart' })).toBeInTheDocument();
+    expect(within(requests()).queryAllByTestId('stat-row')).toHaveLength(0);
+    expect(within(requests()).queryByTestId('stat-row-total')).toBeNull();
+    release();
+    const rows = await within(requests()).findAllByTestId('stat-row');
+    for (const row of rows) expect(row.getAttribute('data-path')).toMatch(/^Cart(\/|$)/);
+    expect(within(requests()).queryByTestId('stat-row-total')).toBeNull();
   });
 
   it('draws no names line when the names answer', async () => {
