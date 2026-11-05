@@ -71,6 +71,15 @@ interface SeriesPayload {
   }[];
 }
 
+interface DistributionPayload {
+  readonly group?: string | null;
+  readonly labels: readonly number[];
+  readonly okPercent: readonly number[];
+  readonly koPercent: readonly number[];
+  readonly okCount: readonly number[];
+  readonly koCount: readonly number[];
+}
+
 interface StatsPayload {
   readonly stats: readonly { readonly scope: string; readonly family: string; readonly name: string }[];
 }
@@ -82,13 +91,22 @@ interface UsersPayload {
   }[];
 }
 
-/** The two reads a Requests chart makes under each pick, spelled as the spec's
+/** The reads a Requests chart makes under each pick, spelled as the spec's
  *  section 4 spells them — independently of the page's own path builders, so a
- *  builder that drifted cannot agree with itself here. */
+ *  builder that drifted cannot agree with itself here. A window is appended the
+ *  way `metricPaths.ts`' `rangeSuffix` appends one, `&from=…&to=…` after the
+ *  query, which is the request the page makes under that window. */
+interface Span {
+  readonly fromMs: number;
+  readonly toMs: number;
+}
+const range = (span: Span | null): string => (span === null ? '' : `&from=${span.fromMs}&to=${span.toMs}`);
 const runSeriesPath = (runId: string): string =>
   `/v1/runs/${runId}/series?scope=run&name=&family=response_time`;
-const groupSeriesPath = (runId: string, group: string): string =>
-  `/v1/runs/${runId}/series?scope=request&group=${encodeURIComponent(group)}&family=response_time`;
+const groupSeriesPath = (runId: string, group: string, span: Span | null = null): string =>
+  `/v1/runs/${runId}/series?scope=request&group=${encodeURIComponent(group)}&family=response_time${range(span)}`;
+const groupDistributionPath = (runId: string, group: string, span: Span | null = null): string =>
+  `/v1/runs/${runId}/distribution?scope=request&group=${encodeURIComponent(group)}&family=response_time${range(span)}`;
 const requestSeriesPath = (runId: string, name: string): string =>
   `/v1/runs/${runId}/series?scope=request&name=${encodeURIComponent(name)}&family=response_time`;
 
@@ -164,6 +182,41 @@ async function expectPercentiles(page: Page, series: SeriesPayload, message: str
   await expect.poll(() => readTable(page, 'percentiles'), { message, timeout: 15_000 }).toEqual(expected);
 }
 
+/** The distribution chart's rows for `d`: one per bin, its label then the OK
+ *  and KO percentages and counts, unrounded (`toDistribution`). */
+function distributionRows(d: DistributionPayload): string[][] {
+  return d.labels.map((label, i) => [
+    String(label),
+    String(d.okPercent[i]),
+    String(d.koPercent[i]),
+    String(d.okCount[i]),
+    String(d.koCount[i]),
+  ]);
+}
+
+/** Waits until the distribution chart's table holds exactly `d`'s bins. Its
+ *  header names the bin unit, which this does not restate. */
+async function expectDistribution(page: Page, d: DistributionPayload, message: string): Promise<void> {
+  await expect
+    .poll(async () => (await readTable(page, 'distribution'))?.rows, { message, timeout: 15_000 })
+    .toEqual(distributionRows(d));
+}
+
+/**
+ * `key` stays out of the URL for a short, bounded while, not merely at one
+ * instant: a single read passes an effect that writes the parameter a render
+ * later. One second, read every 100 ms; callers also make it AFTER a later
+ * positive event (the chart drew the pick), so the page has had its chance.
+ */
+async function expectParamStaysAbsent(page: Page, key: string, message: string): Promise<void> {
+  const until = Date.now() + 1_000;
+  for (;;) {
+    expect(param(page, key), message).toBeNull();
+    if (Date.now() >= until) return;
+    await page.waitForTimeout(100);
+  }
+}
+
 /** The concurrent-users table a pick of `scenario` must hold: one column for
  *  that scenario and NO "All users" — under a scenario pick the total would be a
  *  second, identical line (`usersChart`) — and one row per bucket of that
@@ -217,7 +270,6 @@ test('a group, then a request, narrow the charts and survive a reload', async ({
   await groupSelect(page).selectOption({ label: 'Cart' });
   await expect.poll(() => param(page, 'requests-group'), { message: 'the group in the URL' }).toBe('Cart');
   expect(hash(page), 'the pick writes the section’s fragment').toBe('#requests');
-  expect(param(page, 'requests-request'), 'a group pick names no request').toBeNull();
 
   const cart = await apiJson<SeriesPayload>(page, groupSeriesPath(runId, 'Cart'));
   // The premise: the group's merged series is not the run's, so a chart still
@@ -226,6 +278,18 @@ test('a group, then a request, narrow the charts and survive a reload', async ({
   expect(cart.group, 'the server echoes the group it merged').toBe('Cart');
   expect(percentileRows(cart)).not.toEqual(percentileRows(runSeries));
   await expectPercentiles(page, cart, 'under Cart, the percentiles table is the group read’s');
+  // After the chart drew the pick, so a request written by a later render fails.
+  await expectParamStaysAbsent(page, 'requests-request', 'a group pick names no request');
+  // The distribution's own group read, with its own echo, meets the real API
+  // too: its table is the merged bins `/distribution?…&group=Cart` answers.
+  const cartDistribution = await apiJson<DistributionPayload>(page, groupDistributionPath(runId, 'Cart'));
+  expect(cartDistribution.group, 'the server echoes the group it merged').toBe('Cart');
+  const runDistribution = await apiJson<DistributionPayload>(
+    page,
+    `/v1/runs/${runId}/distribution?scope=run&name=&family=response_time`,
+  );
+  expect(distributionRows(cartDistribution)).not.toEqual(distributionRows(runDistribution));
+  await expectDistribution(page, cartDistribution, 'under Cart, the distribution table is the group read’s');
   // It came from the group read the spec defines: request scope, the group,
   // and no `name` (the server refuses `group` beside one).
   expect(
@@ -284,6 +348,75 @@ test('a group, then a request, narrow the charts and survive a reload', async ({
 });
 
 /**
+ * A group pick UNDER A WINDOW: a shared link carrying both, opened fresh.
+ *
+ * The group's charts must read the group's merged buckets INSIDE the window
+ * (spec section 4: `from`/`to` "work as they do today"). Nothing else pins
+ * this: the window cases take no pick and the pick cases take no window, so
+ * handing either group read `null` for the window drew the whole run's group
+ * figures under a brushed selection while every other suite stayed green
+ * (Task 10 review). The oracle is the windowed group read itself, the request
+ * the page makes; the premise is that it differs from the whole-run group
+ * read, so a chart that dropped the window cannot satisfy it.
+ */
+test('a group pick under a window reads the group inside the window', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  const span = { fromMs: 10_000, toMs: 40_000 };
+  await openRequests(page, `${runReportPath(runId)}?from=${span.fromMs}&to=${span.toMs}&requests-group=Cart#requests`);
+  await expect(groupSelect(page)).toHaveValue('Cart');
+
+  const whole = await apiJson<SeriesPayload>(page, groupSeriesPath(runId, 'Cart'));
+  const windowed = await apiJson<SeriesPayload>(page, groupSeriesPath(runId, 'Cart', span));
+  expect(windowed.group, 'the server echoes the group it merged').toBe('Cart');
+  expect(percentileRows(windowed).length).toBeGreaterThan(0);
+  expect(percentileRows(windowed), 'the window narrows the group’s series').not.toEqual(percentileRows(whole));
+  await expectPercentiles(page, windowed, 'under a window, the percentiles table is the windowed group read’s');
+
+  // The distribution through the same window: its own group read.
+  const wholeDistribution = await apiJson<DistributionPayload>(page, groupDistributionPath(runId, 'Cart'));
+  const windowedDistribution = await apiJson<DistributionPayload>(page, groupDistributionPath(runId, 'Cart', span));
+  expect(windowedDistribution.group).toBe('Cart');
+  expect(distributionRows(windowedDistribution), 'the window narrows the group’s distribution').not.toEqual(
+    distributionRows(wholeDistribution),
+  );
+  await expectDistribution(page, windowedDistribution, 'under a window, the distribution table is the windowed group read’s');
+});
+
+/**
+ * "(no group)" is a real pick: `requests-group=` with an EMPTY value, never a
+ * missing one, and the server merges the requests that sit in no group
+ * (`Search`, `Place Order`). Written through the picker, read back by a
+ * reload, and answered by the real API with an echo of `''`, which a
+ * truthiness check anywhere on the path would turn into the run's own figures.
+ */
+test('a (no group) pick reads the requests in no group', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await openRequests(page, runReportPath(runId));
+
+  await groupSelect(page).selectOption({ label: '(no group)' });
+  await expect.poll(() => param(page, 'requests-group'), { message: 'an empty group in the URL' }).toBe('');
+  expect(hash(page)).toBe('#requests');
+
+  const runSeries = await apiJson<SeriesPayload>(page, runSeriesPath(runId));
+  const noGroup = await apiJson<SeriesPayload>(page, groupSeriesPath(runId, ''));
+  expect(noGroup.group, 'the server echoes the empty group').toBe('');
+  expect(percentileRows(noGroup)).not.toEqual(percentileRows(runSeries));
+  await expectPercentiles(page, noGroup, 'under (no group), the percentiles table is the group= read’s');
+  await expect(page.getByTestId('chart-percentiles').getByRole('button', { name: /^About / })).toHaveAccessibleDescription(
+    /Narrowed to the requests in no group\./,
+  );
+
+  await page.reload();
+  await expect(groupSelect(page)).toHaveValue('');
+  expect(param(page, 'requests-group')).toBe('');
+  await expectPercentiles(page, noGroup, 'after a reload, the percentiles table is still (no group)’s');
+});
+
+/**
  * Ruling R2. `setGroup` deletes `requests-request` in the same navigation
  * (`useRequestsPick`): left behind, the previous group's request would sit in
  * the URL under a group that does not hold it, read as All — so the control
@@ -309,6 +442,8 @@ test('changing the group drops the previous request', async ({ page }) => {
   await expect(requestSelect(page)).toHaveValue('*');
   await expect(requestSelect(page).locator('option:checked')).toHaveText('All requests');
   await expect(requestPicker(page).getByTestId('filter-unknown')).toHaveCount(0);
+  // And it stays gone once the section has settled on Catalog.
+  await expectParamStaysAbsent(page, 'requests-request', 'the previous group’s request stays out of the URL');
 });
 
 test('a one-request group selects its request', async ({ page }) => {
@@ -334,9 +469,14 @@ test('a one-request group selects its request', async ({ page }) => {
   await expect(field.locator('dt')).toHaveText('Request');
   await expect(field.locator('dd')).toHaveText('Catalog / Recommendations / Related Items');
   await expect(requestPicker(page).locator('select')).toHaveCount(0);
+  // Selected for the charts too: they read that one request's series.
+  const runSeries = await apiJson<SeriesPayload>(page, runSeriesPath(runId));
+  const related = await apiJson<SeriesPayload>(page, requestSeriesPath(runId, 'Catalog/Recommendations/Related Items'));
+  expect(percentileRows(related)).not.toEqual(percentileRows(runSeries));
+  await expectPercentiles(page, related, 'a one-request group’s charts read its request');
   // Selected without being written: the URL names the group the reader chose,
-  // and nothing they did not.
-  expect(param(page, 'requests-request')).toBeNull();
+  // and nothing they did not — checked after the charts drew the pick.
+  await expectParamStaysAbsent(page, 'requests-request', 'a one-request group writes no request');
 });
 
 /**
@@ -385,6 +525,9 @@ test('a stale link names what it asked for', async ({ page }) => {
 
   const note = groupPicker(page).getByTestId('filter-unknown');
   await expect(note).toContainText('Nope');
+  // The reason, which is the part a wrong `NamedValue` would get wrong: the run
+  // never recorded it (not, say, "holds no requests in this run").
+  await expect(note).toContainText(/never recorded/);
   await expect(note).toContainText(/showing all groups/i);
   // The Request control says nothing of its own: the link named no request.
   await expect(requestPicker(page).getByTestId('filter-unknown')).toHaveCount(0);

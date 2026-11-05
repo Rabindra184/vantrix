@@ -672,6 +672,29 @@ describe('RunReport — the Requests pickers', () => {
     expect(within(groupPicker()).getByLabelText('Group')).toHaveValue('Cart');
   });
 
+  // A group pick UNDER A WINDOW reads the window, on both of its reads. The
+  // window test above takes no pick and the pick test above takes no window,
+  // so handing either group read `null` for the window passed every case in
+  // this file (Task 10 review) — the whole run's group figures drawn under a
+  // brushed selection. Each read is checked on its own: a distribution that
+  // dropped the window while the series kept it is the same defect.
+  it('a group pick under a window reads the window on both group reads', async () => {
+    const seen = renderReport({
+      url: `/runs/${RUN_ID}/report?requests-group=Cart`,
+      window: { fromMs: 10_000, toMs: 20_000, bucketWidthMs: 1_000 },
+    });
+    await waitFor(() => expect(atPath(seen, '/distribution')).not.toHaveLength(0));
+    await waitFor(() => expect(atPath(seen, '/series')).not.toHaveLength(0));
+    for (const endpoint of ['/series', '/distribution']) {
+      for (const url of atPath(seen, endpoint)) {
+        const params = new URL(url, 'http://x').searchParams;
+        expect(params.get('group'), `${endpoint} is the group read`).toBe('Cart');
+        expect(params.get('from'), `${endpoint} carries the window's from`).toBe('10000');
+        expect(params.get('to'), `${endpoint} carries the window's to`).toBe('20000');
+      }
+    }
+  });
+
   it('a request pick reads that request’s series and distribution', async () => {
     const seen = renderReport({
       url: `/runs/${RUN_ID}/report?requests-group=Cart&requests-request=${encodeURIComponent(ADD_TO_CART)}`,
