@@ -436,6 +436,82 @@ describe('a member that cannot be merged exactly', () => {
   });
 });
 
+// ─── seeded runs ────────────────────────────────────────────────────────────
+
+function histogramOf(values: readonly number[]): Histogram {
+  const h = new Histogram();
+  for (const v of values) h.accept(v);
+  return h;
+}
+
+interface SeededMember {
+  readonly name: string;
+  readonly buckets: readonly { offset: number; ok: readonly number[]; ko: readonly number[] }[];
+}
+
+/**
+ * A complete run whose request buckets, `run_stat` rows and one group row
+ * are written straight to the tables, the way `window-bench` seeds them —
+ * for a group shape the reference bundle does not have. `engineOptions` is
+ * frozen on the run, as ingest freezes it: the merge reads its
+ * `maxBucketsEndpoint` from there.
+ */
+async function seedGroupRun(spec: {
+  engineOptions: Record<string, unknown>;
+  group: string;
+  members: readonly SeededMember[];
+}): Promise<string> {
+  const id = randomUUID();
+  const startedOn = new Date('2026-08-16T00:00:00Z');
+  await ctx.prisma.run.create({
+    data: {
+      id, orgId: ctx.orgId, projectId: ctx.projectId,
+      status: 'complete', verdict: 'passed', tool: 'gatling',
+      startedAt: startedOn, startedOn, durationMs: 40_000,
+      bundleKey: `k/${id}`, bundleSha256: 'z'.repeat(64), bundleBytes: BigInt(1),
+      engineOptions: spec.engineOptions as object,
+    },
+  });
+  for (const member of spec.members) {
+    const allOk = new Histogram();
+    const allKo = new Histogram();
+    for (const b of member.buckets) {
+      const ok = histogramOf(b.ok);
+      const ko = histogramOf(b.ko);
+      allOk.merge(ok);
+      allKo.merge(ko);
+      const n = ok.total + ko.total;
+      await ctx.pool.query(
+        `INSERT INTO run_series_bucket (run_started_on, run_id, org_id, project_id, scope, name, family,
+           start_offset_ms, started_count, ended_count, ok_count, ko_count, started_ok_count, started_ko_count,
+           min_ms, max_ms, mean_ms, percentiles, percentiles_ok, percentiles_ko, histogram_ok, histogram_ko)
+         VALUES ($1, $2, $3, $4, 'request', $5, 'response_time', $6, $7, $7, $8, $9, $8, $9,
+           0, 0, 0, '{}', '{}', '{}', $10, $11)`,
+        // The UTC day as text, never the Date — CLAUDE.md, "A date partition key".
+        ['2026-08-16', id, ctx.orgId, ctx.projectId, member.name, b.offset, n, ok.total, ko.total,
+          Buffer.from(ok.serialize()), Buffer.from(ko.serialize())],
+      );
+    }
+    await ctx.prisma.runStat.create({
+      data: {
+        runId: id, orgId: ctx.orgId, projectId: ctx.projectId, scope: 'request', name: member.name,
+        family: 'response_time', count: allOk.total + allKo.total, okCount: allOk.total, koCount: allKo.total,
+        errorRate: 0, minMs: 0, maxMs: 0, meanMs: 0, stddevMs: 0, throughputRps: 0, percentiles: {},
+        histogramOk: Buffer.from(allOk.serialize()), histogramKo: Buffer.from(allKo.serialize()),
+        histogramKind: 'sparse-ms-v2',
+      },
+    });
+  }
+  await ctx.prisma.runStat.create({
+    data: {
+      runId: id, orgId: ctx.orgId, projectId: ctx.projectId, scope: 'group', name: spec.group,
+      family: 'group_cumulated', count: 0, okCount: 0, koCount: 0, errorRate: 0, minMs: 0, maxMs: 0,
+      meanMs: 0, stddevMs: 0, throughputRps: 0, percentiles: {},
+    },
+  });
+  return id;
+}
+
 // ─── members of different widths (Review Focus 2) ───────────────────────────
 
 describe('a group whose members were bucketed at different widths', () => {
@@ -453,66 +529,24 @@ describe('a group whose members were bucketed at different widths', () => {
   const A = [3000, 7000, 11_000];
   const B = [2000, 6000, 10_000];
 
-  function histogramOf(values: readonly number[]): Histogram {
-    const h = new Histogram();
-    for (const v of values) h.accept(v);
-    return h;
-  }
   const okValues = (offset: number, salt: number) => [40 + salt, 50 + (offset / 1000) + salt, 60 + salt];
   const koValues = (offset: number) => (offset % 4000 === 2000 ? [300] : []);
 
-  async function seedMixedRun(): Promise<string> {
-    const id = randomUUID();
-    const startedOn = new Date('2026-08-16T00:00:00Z');
-    await ctx.prisma.run.create({
-      data: {
-        id, orgId: ctx.orgId, projectId: ctx.projectId,
-        status: 'complete', verdict: 'passed', tool: 'gatling',
-        startedAt: startedOn, startedOn, durationMs: 12_000,
-        bundleKey: `k/${id}`, bundleSha256: 'z'.repeat(64), bundleBytes: BigInt(1),
-        engineOptions: {},
-      },
-    });
-    const members = [['Seed/a', A, 1], ['Seed/b', B, 2]] as const;
-    for (const [name, offsets, salt] of members) {
-      const allOk = new Histogram();
-      const allKo = new Histogram();
-      for (const o of offsets) {
-        const ok = histogramOf(okValues(o, salt));
-        const ko = histogramOf(koValues(o));
-        allOk.merge(ok);
-        allKo.merge(ko);
-        const n = ok.total + ko.total;
-        await ctx.pool.query(
-          `INSERT INTO run_series_bucket (run_started_on, run_id, org_id, project_id, scope, name, family,
-             start_offset_ms, started_count, ended_count, ok_count, ko_count, started_ok_count, started_ko_count,
-             min_ms, max_ms, mean_ms, percentiles, percentiles_ok, percentiles_ko, histogram_ok, histogram_ko)
-           VALUES ($1, $2, $3, $4, 'request', $5, 'response_time', $6, $7, $7, $8, $9, $8, $9,
-             0, 0, 0, '{}', '{}', '{}', $10, $11)`,
-          // The UTC day as text, never the Date — CLAUDE.md, "A date partition key".
-          ['2026-08-16', id, ctx.orgId, ctx.projectId, name, o, n, ok.total, ko.total,
-            Buffer.from(ok.serialize()), Buffer.from(ko.serialize())],
-        );
-      }
-      await ctx.prisma.runStat.create({
-        data: {
-          runId: id, orgId: ctx.orgId, projectId: ctx.projectId, scope: 'request', name, family: 'response_time',
-          count: allOk.total + allKo.total, okCount: allOk.total, koCount: allKo.total, errorRate: 0,
-          minMs: 0, maxMs: 0, meanMs: 0, stddevMs: 0, throughputRps: 0, percentiles: {},
-          histogramOk: Buffer.from(allOk.serialize()), histogramKo: Buffer.from(allKo.serialize()),
-          histogramKind: 'sparse-ms-v2',
-        },
-      });
-    }
-    await ctx.prisma.runStat.create({
-      data: {
-        runId: id, orgId: ctx.orgId, projectId: ctx.projectId, scope: 'group', name: 'Seed', family: 'group_cumulated',
-        count: 0, okCount: 0, koCount: 0, errorRate: 0, minMs: 0, maxMs: 0, meanMs: 0, stddevMs: 0,
-        throughputRps: 0, percentiles: {},
-      },
-    });
-    return id;
-  }
+  /**
+   * UNDER A CAP OF 4, deliberately. `b`'s three buckets are then enough to
+   * have coalesced (ceil((4 + 1) / 2) = 3), so the merge may read its 2 s
+   * grid. Under the default cap of 300 three buckets never coalesced, and the
+   * merge reads both members at 1 s — right for such a run, and not the
+   * question this case asks.
+   */
+  const seedMixedRun = () => seedGroupRun({
+    engineOptions: { maxBucketsEndpoint: 4 },
+    group: 'Seed',
+    members: [
+      { name: 'Seed/a', buckets: A.map((o) => ({ offset: o, ok: okValues(o, 1), ko: koValues(o) })) },
+      { name: 'Seed/b', buckets: B.map((o) => ({ offset: o, ok: okValues(o, 2), ko: koValues(o) })) },
+    ],
+  });
 
   const startedAt = (offset: number, salt: number) => okValues(offset, salt).length + koValues(offset).length;
 
@@ -550,5 +584,50 @@ describe('a group whose members were bucketed at different widths', () => {
     expect(dist.window).toEqual({ fromMs: 2000, toMs: 12_000, bucketWidthMs: 2000 });
     const counted = dist.okCount.reduce((a, b) => a + b, 0) + dist.koCount.reduce((a, b) => a + b, 0);
     expect(counted).toBe(series.buckets.reduce((sum, b) => sum + b.startedCount, 0));
+  });
+});
+
+// ─── a sparse member beside a dense one (the final review's I1) ────────────
+
+describe('a group with a sparse member, under the default cap', () => {
+  /**
+   * `Sparse/dense` every second from 0 to 30 s, and `Sparse/rare` only at 8 s
+   * and 16 s — offsets all divisible by 8000. Read by divisor alone the group
+   * merged at 8000, and a 10-20 s window then selected [16000, 24000): nine
+   * requests, four of them after the window, against windowed /stats' eleven.
+   * Two buckets under the default cap never coalesced, so the group is at 1 s
+   * and every surface counts the same eleven.
+   */
+  it('counts the window as windowed /stats does, at 1 s', async () => {
+    const id = await seedGroupRun({
+      engineOptions: {},
+      group: 'Sparse',
+      members: [
+        { name: 'Sparse/dense', buckets: Array.from({ length: 31 }, (_, i) => ({ offset: i * 1000, ok: [40 + i], ko: [] })) },
+        { name: 'Sparse/rare', buckets: [{ offset: 8000, ok: [500], ko: [] }, { offset: 16_000, ok: [600], ko: [] }] },
+      ],
+    });
+    const window = 'from=10000&to=20000';
+
+    const stats = await get(`/v1/runs/${id}/stats?scope=request&${window}`);
+    expect(stats.status, JSON.stringify(stats.body).slice(0, 300)).toBe(200);
+    const members = (stats.body.stats as { name: string; count: number }[])
+      .filter((r) => r.name.startsWith('Sparse/'));
+    expect(members.map((r) => r.name).sort()).toEqual(['Sparse/dense', 'Sparse/rare']);
+    const statsCount = members.reduce((n, r) => n + r.count, 0);
+    expect(statsCount, 'ten dense seconds and the 16 s call').toBe(11);
+
+    const series = await get(`/v1/runs/${id}/series?scope=request&group=Sparse&family=response_time&${window}`);
+    expect(series.status, JSON.stringify(series.body).slice(0, 300)).toBe(200);
+    const body = SeriesResponseSchema.parse(series.body);
+    expect(body.bucketWidthMs).toBe(1000);
+    expect(body.window).toEqual({ fromMs: 10_000, toMs: 20_000, bucketWidthMs: 1000 });
+    expect(body.buckets.reduce((n, b) => n + b.startedCount, 0)).toBe(statsCount);
+
+    const dist = await get(`/v1/runs/${id}/distribution?scope=request&group=Sparse&family=response_time&${window}`);
+    expect(dist.status, JSON.stringify(dist.body).slice(0, 300)).toBe(200);
+    const d = DistributionResponseSchema.parse(dist.body);
+    expect(d.okCount.reduce((a, b) => a + b, 0) + d.koCount.reduce((a, b) => a + b, 0)).toBe(statsCount);
+    expect(d.window).toEqual(body.window);
   });
 });

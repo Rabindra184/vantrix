@@ -26,6 +26,14 @@ import { UserSeries, type UserBucket } from './users.js';
 export const BUCKET_PERCENTILES = [25, 50, 75, 80, 85, 90, 95, 99] as const;
 
 /**
+ * The cap a REQUEST series coalesces against when the run's engine options
+ * name none. One definition: the engine reads it below, and a group read
+ * (`mergeMemberSeries`, called by the API) needs the same number to tell a
+ * member that never coalesced from one that did.
+ */
+export const DEFAULT_MAX_BUCKETS_ENDPOINT = 300;
+
+/**
  * The label a failure is filed under.
  *
  * SHARED by the flat rollup and the time series deliberately. The two are read
@@ -198,7 +206,7 @@ export class LiveEngine {
     this.#percentiles = opts.percentiles ?? [50, 75, 95, 99];
     this.#maxEndpoints = opts.maxEndpoints ?? 2000;
     this.#maxBucketsRun = opts.maxBucketsRun ?? 1200;
-    this.#maxBucketsEndpoint = opts.maxBucketsEndpoint ?? 300;
+    this.#maxBucketsEndpoint = opts.maxBucketsEndpoint ?? DEFAULT_MAX_BUCKETS_ENDPOINT;
     this.#maxBucketsGroup = opts.maxBucketsGroup ?? 300;
     this.#maxBucketsUsers = opts.maxBucketsUsers ?? 1200;
   }

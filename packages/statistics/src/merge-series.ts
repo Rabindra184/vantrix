@@ -58,14 +58,35 @@ interface Accumulator {
  * function the engine writes them with, so a merged bucket cannot disagree
  * with a series the engine would have built from the union at that width.
  *
- * ═══ THE WIDTH: THE LARGEST REAL WIDTH EACH MEMBER'S OFFSETS ALLOW ═══
+ * ═══ THE WIDTH: 1000 FOR A MEMBER THAT NEVER COALESCED, ELSE THE LARGEST
+ *     REAL WIDTH ITS OFFSETS ALLOW ═══
  *
- * Nothing stores a series' width; it has to be read off its offsets. A
- * member's offsets are all `idx * w` for its real width `w = 1000 x 2^j`, so
- * the largest `1000 x 2^k` that divides EVERY offset is at least `w` — never
- * smaller, so merging at the maximum of those over the members puts no member
- * bucket across two merged ones. It is also never coarser than needed by that
- * evidence: it divides the member's smallest gap.
+ * Nothing stores a series' width; it has to be read off its offsets — and
+ * off the cap the series was coalesced against, `maxBucketsEndpoint`, which
+ * is why the caller must pass it (the run's FROZEN engine option).
+ *
+ * A request series coalesces only once its occupied bucket count EXCEEDS the
+ * cap (`BucketSeries.add`), and a halving leaves at least half of what it
+ * halved, rounded up: so a coalesced series holds at least
+ * `ceil((cap + 1) / 2)` buckets, and adding requests never lowers that. A
+ * member with FEWER distinct offsets than that never coalesced: its width is
+ * exactly 1000, whatever its offsets happen to be divisible by.
+ *
+ * That rule is what keeps a SPARSE member from coarsening its group. A
+ * request called only at 8 s and 16 s, beside one called every second, has
+ * offsets all divisible by 8000; read by divisor alone the group merged at
+ * 8000, and under `from=10000&to=20000` the series selected [16000, 24000)
+ * — four requests after the window — while windowed `/stats` (each member's
+ * own 1 s buckets) counted the window's eleven. The final review measured it.
+ *
+ * A member with at least that many offsets may have coalesced. Its offsets
+ * are then all `idx * w` for its real width `w = 1000 x 2^j`, so the largest
+ * `1000 x 2^k` dividing EVERY offset is at least `w` — never smaller, so
+ * merging at the maximum over the members puts no member bucket across two
+ * merged ones. It can be larger than `w` for a member whose occupied buckets
+ * happen to sit on a wider grid, and the merge is then coarser than needed:
+ * still exact, never splitting a bucket. Nothing else in the offsets can
+ * tell those apart.
  *
  * The smallest gap itself (`inferBucketWidthMs`) is not safe to merge at: a
  * request called every 3 s at 1 s buckets has no gap under 3000, and merged
@@ -75,23 +96,37 @@ interface Accumulator {
  * where 1000 is exact. Each width is a power-of-two multiple of 1000, so the
  * divisor rule reads the 3 s request as 1000 and keeps the group at 1 s.
  *
- * KNOWN LIMIT: a member with ONE bucket says nothing about its width and is
- * read as 1000 — the answer the single-request series read gives it too
- * (`inferBucketWidthMs`). That is wrong only for a single bucket whose series
- * coalesced, which needs a project's unvalidated `maxBucketsEndpoint` of 1:
- * a coalesce leaves at least two buckets once there were three to halve.
- * Sizing a lone bucket by its offset's divisor instead would coarsen a whole
- * group to 4 s for a request called once, four seconds in.
+ * KNOWN LIMIT, NOW ONLY FOR A CAP OF 1: there `ceil(2 / 2)` is 1, so every
+ * member may have coalesced, and a member with ONE bucket says nothing about
+ * its width — it is read as 1000 (`widestDividingWidth`), wrong whenever that
+ * lone bucket is a coalesced one. A cap of 1 is a project's unvalidated
+ * `maxBucketsEndpoint`; at any other cap a lone bucket never coalesced.
+ *
+ * The cap is read as `BucketSeries` reads it: below 1 is 1, a fraction counts
+ * by its integer part (a series coalesces at `floor(cap) + 1` buckets), and a
+ * NaN never triggers a coalesce, so every member is then 1000.
  *
  * A started count is `null` when any contributor's is, column by column: a
  * sum over an unknown is unknown, while the other column's sum stays exact.
  * The histograms merge into fresh `Histogram`s — a member's are the reader's,
  * and writing into the first would change what every other reader of it sees.
  */
-export function mergeMemberSeries(members: readonly (readonly MemberBucket[])[]): MergedSeries {
+export function mergeMemberSeries(
+  members: readonly (readonly MemberBucket[])[],
+  /**
+   * The cap every member's series was coalesced against: the run's frozen
+   * `maxBucketsEndpoint`, `DEFAULT_MAX_BUCKETS_ENDPOINT` when it set none.
+   * REQUIRED, with no default: a wrong cap reads a sparse member as wide, or
+   * a coalesced one as 1 s, and nothing would say so.
+   */
+  maxBucketsEndpoint: number,
+): MergedSeries {
+  const coalescedAtLeast = coalescedFloor(maxBucketsEndpoint);
   let widthMs = 1000;
   for (const member of members) {
-    widthMs = Math.max(widthMs, widestDividingWidth(member.map((b) => b.startOffsetMs)));
+    const offsets = member.map((b) => b.startOffsetMs);
+    if (new Set(offsets).size < coalescedAtLeast) continue;   // never coalesced: 1000
+    widthMs = Math.max(widthMs, widestDividingWidth(offsets));
   }
 
   const byOffset = new Map<number, Accumulator>();
@@ -132,6 +167,18 @@ export function mergeMemberSeries(members: readonly (readonly MemberBucket[])[])
     })),
     histograms: new Map(merged.map((acc) => [acc.startOffsetMs, { ok: acc.ok, ko: acc.ko }])),
   };
+}
+
+/**
+ * The fewest buckets a series coalesced against `cap` can hold:
+ * `ceil((cap + 1) / 2)`, with the cap read exactly as `BucketSeries` reads it
+ * — `Math.max(1, cap)`, compared by `size > cap`, so a fraction coalesces at
+ * `floor(cap) + 1` and a NaN never does (Infinity: no member coalesced).
+ */
+function coalescedFloor(cap: number): number {
+  const effective = Math.max(1, cap);
+  if (Number.isNaN(effective)) return Number.POSITIVE_INFINITY;
+  return Math.ceil((Math.floor(effective) + 1) / 2);
 }
 
 /**

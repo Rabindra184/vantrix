@@ -375,7 +375,7 @@ export class MetricsController {
    * ordinary read: 200, `buckets: []`.
    */
   async #groupSeries(
-    run: { id: string; startedOn: Date },
+    run: { id: string; startedOn: Date; engineOptions: Record<string, unknown> },
     tenant: { orgId: string; projectId: string },
     group: string,
     family: string,

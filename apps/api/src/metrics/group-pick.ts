@@ -1,7 +1,13 @@
 import type { ConflictException } from '@nestjs/common';
 import { displayPath, requestsInGroup } from '@perfportal/contracts';
 import type { MetricReader, ProjectScope, StoredMemberBucket } from '@perfportal/persistence';
-import { mergeMemberSeries, type Histogram, type MemberBucket, type MergedSeries } from '@perfportal/statistics';
+import {
+  DEFAULT_MAX_BUCKETS_ENDPOINT,
+  mergeMemberSeries,
+  type Histogram,
+  type MemberBucket,
+  type MergedSeries,
+} from '@perfportal/statistics';
 import { conflict } from '../common/validation.js';
 
 /**
@@ -70,6 +76,19 @@ export function notMergeable(
 }
 
 /**
+ * The cap this run's request series were coalesced against: its FROZEN
+ * `maxBucketsEndpoint`, never the project's current setting — the engine read
+ * `run.engineOptions` when it wrote these buckets, and a project changing the
+ * setting since must not change how they are read. Read exactly as the engine
+ * reads it (`opts.maxBucketsEndpoint ?? DEFAULT_MAX_BUCKETS_ENDPOINT`, the
+ * column unvalidated), then `Number`, which coerces as `BucketSeries`'
+ * `Math.max(1, cap)` does; `mergeMemberSeries` applies that floor itself.
+ */
+export function endpointCapOf(engineOptions: Record<string, unknown>): number {
+  return Number(engineOptions['maxBucketsEndpoint'] ?? DEFAULT_MAX_BUCKETS_ENDPOINT);
+}
+
+/**
  * Every member's WHOLE series, merged into one by `mergeMemberSeries`, after
  * refusing any member bucket that cannot be merged exactly.
  *
@@ -87,7 +106,7 @@ export function notMergeable(
 export async function mergedGroupSeries(
   reader: MetricReader,
   tenant: ProjectScope,
-  run: { id: string; startedOn: Date },
+  run: { id: string; startedOn: Date; engineOptions: Record<string, unknown> },
   members: readonly string[],
   family: string,
   endpoint: 'series' | 'distribution',
@@ -101,7 +120,7 @@ export async function mergedGroupSeries(
     if (!list) { list = []; byName.set(row.name, list); }
     list.push(memberBucket(row, row.histogramOk, row.histogramKo));
   }
-  return mergeMemberSeries([...byName.values()]);
+  return mergeMemberSeries([...byName.values()], endpointCapOf(run.engineOptions));
 }
 
 function memberBucket(row: StoredMemberBucket, histogramOk: Histogram, histogramKo: Histogram): MemberBucket {

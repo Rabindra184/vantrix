@@ -1,8 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import {
-  BucketSeries, Histogram, bucketLatency, mergeMemberSeries,
+  BucketSeries, DEFAULT_MAX_BUCKETS_ENDPOINT, Histogram, bucketLatency, mergeMemberSeries,
   type Bucket, type MemberBucket,
 } from '../src/index.js';
+
+/**
+ * The cap matters to the width (a series coalesced against `cap` holds at
+ * least ceil((cap + 1) / 2) buckets, and only such a member is read by its
+ * offsets' divisor), so every case names the one its members were built
+ * under. 4 is the small one: ceil(5/2) = 3, so a member needs three buckets
+ * before its offsets may speak for a wider width, and two do not.
+ */
+const DEFAULT = DEFAULT_MAX_BUCKETS_ENDPOINT;
+const SMALL_CAP = 4;
 
 const histOf = (values: readonly number[]): Histogram => {
   const h = new Histogram();
@@ -73,7 +83,7 @@ describe('mergeMemberSeries', () => {
       bucketAt(1000, [50, 60], [], { startedCount: 200, endedCount: 300, okCount: 100, koCount: 200, startedOkCount: 150, startedKoCount: 50 }),
     ];
 
-    const merged = mergeMemberSeries([a, b]);
+    const merged = mergeMemberSeries([a, b], DEFAULT);
 
     expect(merged.widthMs).toBe(1000);
     expect(merged.buckets.map((x) => x.startOffsetMs)).toEqual([0, 1000]);
@@ -95,18 +105,19 @@ describe('mergeMemberSeries', () => {
 
   it('re-buckets a finer member into a coarser one', () => {
     // Observation counts are powers of two, so every merged total says which
-    // member buckets went into it.
+    // member buckets went into it. Under a cap of 4, B's three buckets are
+    // enough to have coalesced, and A's four (at most the cap) are at 1 s.
     const n = (k: number) => Array.from({ length: k }, (_, i) => 10 + i);
     const a = [bucketAt(0, n(1)), bucketAt(1000, n(2)), bucketAt(2000, n(4)), bucketAt(3000, n(8))];
-    const b = [bucketAt(0, n(16)), bucketAt(2000, n(32))];
+    const b = [bucketAt(0, n(16)), bucketAt(2000, n(32)), bucketAt(4000, n(64))];
 
-    const merged = mergeMemberSeries([a, b]);
+    const merged = mergeMemberSeries([a, b], SMALL_CAP);
 
     expect(merged.widthMs).toBe(2000);
-    expect(merged.buckets.map((x) => x.startOffsetMs)).toEqual([0, 2000]);
-    // Bucket 0 holds A's 0 and 1000 plus B's 0; bucket 2000 the rest.
-    expect(merged.buckets[0]!.startedCount).toBe(1 + 2 + 16);
-    expect(merged.buckets[1]!.startedCount).toBe(4 + 8 + 32);
+    expect(merged.buckets.map((x) => x.startOffsetMs)).toEqual([0, 2000, 4000]);
+    // Bucket 0 holds A's 0 and 1000 plus B's 0; bucket 2000 A's 2000 and
+    // 3000 plus B's 2000; bucket 4000 B's alone.
+    expect(merged.buckets.map((x) => x.startedCount)).toEqual([1 + 2 + 16, 4 + 8 + 32, 64]);
     expect(merged.histograms.get(0)!.ok.total).toBe(19);
     expect(merged.histograms.get(2000)!.ok.total).toBe(44);
   });
@@ -115,15 +126,17 @@ describe('mergeMemberSeries', () => {
     // A is a request that stayed at 1 s buckets; B coalesced to 2 s, the way
     // a busy request does once its own series passes its bucket cap. Some of
     // each fail, and some end in a later bucket than they start.
-    const aRequests: Request[] = Array.from({ length: 40 }, (_, i) => ({
+    // Thirty, so A's starts and ends fill four 1 s buckets: under the shared
+    // cap of 4 it never coalesces, while B, busier, does.
+    const aRequests: Request[] = Array.from({ length: 30 }, (_, i) => ({
       startMs: i * 97, endMs: i * 97 + 40 + ((i * 53) % 700), ok: i % 7 !== 0,
     }));
     const bRequests: Request[] = Array.from({ length: 60 }, (_, i) => ({
       startMs: i * 113, endMs: i * 113 + 30 + ((i * 71) % 900), ok: i % 5 !== 3,
     }));
-    const a = seriesOf(aRequests, 100);
-    const b = seriesOf(bRequests, 4);
-    const union = seriesOf([...aRequests, ...bRequests], 4);
+    const a = seriesOf(aRequests, SMALL_CAP);
+    const b = seriesOf(bRequests, SMALL_CAP);
+    const union = seriesOf([...aRequests, ...bRequests], SMALL_CAP);
     // The fixture really has the shape the case is about.
     expect(a.widthMs).toBe(1000);
     expect(b.widthMs).toBe(2000);
@@ -131,7 +144,7 @@ describe('mergeMemberSeries', () => {
     expect(union.buckets().some((x) => x.startedCount !== x.endedCount)).toBe(true);
     expect(aRequests.some((r) => !r.ok) && bRequests.some((r) => !r.ok)).toBe(true);
 
-    const merged = mergeMemberSeries([a.buckets(), b.buckets()]);
+    const merged = mergeMemberSeries([a.buckets(), b.buckets()], SMALL_CAP);
 
     expect(merged.widthMs).toBe(union.widthMs);
     expect(merged.buckets).toEqual(union.buckets().map(expectedOf));
@@ -150,7 +163,7 @@ describe('mergeMemberSeries', () => {
     ];
     const b = [bucketAt(0, [30], [40]), bucketAt(1000, [30], [40]), bucketAt(2000, [30], [40, 50])];
 
-    const merged = mergeMemberSeries([a, b]);
+    const merged = mergeMemberSeries([a, b], DEFAULT);
 
     // A row written before the column existed makes the sum unknowable.
     expect(merged.buckets[0]).toMatchObject({ startedOkCount: null, startedKoCount: null });
@@ -164,7 +177,7 @@ describe('mergeMemberSeries', () => {
   it('answers an empty series for no members', () => {
     const cases: (readonly MemberBucket[])[][] = [[], [[], []]];
     for (const members of cases) {
-      const merged = mergeMemberSeries(members);
+      const merged = mergeMemberSeries(members, DEFAULT);
       expect({ widthMs: merged.widthMs, buckets: merged.buckets }).toEqual({ widthMs: 1000, buckets: [] });
       expect(merged.histograms.size).toBe(0);
     }
@@ -174,7 +187,7 @@ describe('mergeMemberSeries', () => {
     const a = [bucketAt(0, [10, 20], [300])];
     const b = [bucketAt(0, [30], [400])];
 
-    const merged = mergeMemberSeries([a, b]);
+    const merged = mergeMemberSeries([a, b], DEFAULT);
 
     expect(a[0]!.histogramOk.total).toBe(2);
     expect(a[0]!.histogramKo.total).toBe(1);
@@ -189,11 +202,12 @@ describe('mergeMemberSeries', () => {
 
   it('does not depend on the order members or their buckets arrive in', () => {
     // A 2 s member whose buckets arrive shuffled: read in that order its
-    // smallest positive gap is 4000, not its real 2000.
+    // smallest positive gap is 4000, not its real 2000. Three buckets under a
+    // cap of 4 are enough to have coalesced.
     const late = [bucketAt(2000, [10]), bucketAt(0, [20]), bucketAt(4000, [30])];
     const early = [bucketAt(0, [40]), bucketAt(1000, [50])];
 
-    const merged = mergeMemberSeries([late, early]);
+    const merged = mergeMemberSeries([late, early], SMALL_CAP);
 
     expect(merged.widthMs).toBe(2000);
     expect(merged.buckets.map((x) => x.startOffsetMs)).toEqual([0, 2000, 4000]);
@@ -209,12 +223,13 @@ describe('mergeMemberSeries', () => {
     const bRequests: Request[] = [100, 1100, 2100, 3500, 4100, 5100, 6100, 7100].map((t, i) => ({
       startMs: t, endMs: t + 150 + i * 10, ok: i !== 3,
     }));
-    const a = seriesOf(aRequests, 100);
-    const b = seriesOf(bRequests, 4);
+    const a = seriesOf(aRequests, SMALL_CAP);
+    const b = seriesOf(bRequests, SMALL_CAP);
     expect(a.buckets().map((x) => x.startOffsetMs)).toEqual([0, 3000, 6000]);
+    expect(a.widthMs).toBe(1000);
     expect(b.widthMs).toBe(2000);
 
-    const merged = mergeMemberSeries([a.buckets(), b.buckets()]);
+    const merged = mergeMemberSeries([a.buckets(), b.buckets()], SMALL_CAP);
 
     // The widest real width every member's offsets allow: A's 0/3000/6000 are
     // only all divisible by 1000, B's by 2000. Rounding A's 3000 gap up to a
@@ -249,20 +264,22 @@ describe('mergeMemberSeries', () => {
     expect(a.buckets().map((x) => x.startOffsetMs)).toEqual([0, 3000, 6000]);
     expect(union.widthMs).toBe(1000);
 
-    const merged = mergeMemberSeries([a.buckets(), b.buckets()]);
+    const merged = mergeMemberSeries([a.buckets(), b.buckets()], 100);
 
     expect(merged.widthMs).toBe(1000);
     expect(merged.buckets).toEqual(union.buckets().map(expectedOf));
   });
 
-  it('reads a member whose offsets are all divisible by a wider width at that width', () => {
-    // A request every 10 s: 0, 10000, 20000 are all divisible by 2000, so its
+  it('reads a member with enough buckets to have coalesced, all on a 2 s grid, at 2 s', () => {
+    // A request every 10 s: 0, 10000, 20000 are all divisible by 2000, and
+    // under a cap of 4 three buckets are enough to have coalesced, so its
     // series could really be at 2 s. Merging at 1 s would split a 2 s bucket,
     // so the group merges at 2 s — exact, if coarser than the dense member.
+    // Exactly ceil((4 + 1) / 2) = 3 buckets: one fewer and it never coalesced.
     const tenSecond = [bucketAt(0, [10]), bucketAt(10000, [20]), bucketAt(20000, [30])];
     const dense = [bucketAt(0, [40]), bucketAt(1000, [50]), bucketAt(2000, [60])];
 
-    const merged = mergeMemberSeries([tenSecond, dense]);
+    const merged = mergeMemberSeries([tenSecond, dense], SMALL_CAP);
 
     expect(merged.widthMs).toBe(2000);
     expect(merged.buckets.map((x) => x.startOffsetMs)).toEqual([0, 2000, 10000, 20000]);
@@ -277,9 +294,48 @@ describe('mergeMemberSeries', () => {
     const once = [bucketAt(4000, [10])];
     const dense = [bucketAt(0, [20]), bucketAt(1000, [30]), bucketAt(2000, [40])];
 
-    const merged = mergeMemberSeries([once, dense]);
+    const merged = mergeMemberSeries([once, dense], DEFAULT);
 
     expect(merged.widthMs).toBe(1000);
     expect(merged.buckets.map((x) => x.startOffsetMs)).toEqual([0, 1000, 2000, 4000]);
+  });
+
+  it('keeps a group at 1 s beside a sparse member whose offsets sit on a wide grid', () => {
+    // The final review's construction: one request every second from 0 to
+    // 30 s, and one called only at 8 s and 16 s. Both offsets of the second
+    // are divisible by 8000, and read by divisor alone the group merged at
+    // 8000 — so a 10-20 s window selected [16000, 24000), four requests after
+    // it. Two buckets under the default cap never coalesced: it is at 1 s.
+    const dense = Array.from({ length: 31 }, (_, i) => bucketAt(i * 1000, [40 + i]));
+    const sparse = [bucketAt(8000, [500]), bucketAt(16_000, [600])];
+
+    const merged = mergeMemberSeries([dense, sparse], DEFAULT);
+
+    expect(merged.widthMs).toBe(1000);
+    const inWindow = merged.buckets.filter((b) => b.startOffsetMs >= 10_000 && b.startOffsetMs < 20_000);
+    // Ten dense seconds and the 16 s call: what windowed /stats counts too.
+    expect(inWindow.reduce((n, b) => n + b.startedCount, 0)).toBe(11);
+  });
+
+  it('reads a member one bucket short of the coalesced floor at 1 s, on any grid', () => {
+    // Under a cap of 4 a coalesced series holds at least 3 buckets, so this
+    // member's two — both on a 2 s grid — say it never coalesced.
+    const twoOnGrid = [bucketAt(0, [10]), bucketAt(2000, [20])];
+    const dense = [bucketAt(0, [40]), bucketAt(1000, [50]), bucketAt(3000, [60])];
+
+    const merged = mergeMemberSeries([twoOnGrid, dense], SMALL_CAP);
+
+    expect(merged.widthMs).toBe(1000);
+    expect(merged.buckets.map((x) => x.startOffsetMs)).toEqual([0, 1000, 2000, 3000]);
+  });
+
+  it('pins the known limit at a cap of 1: a lone, possibly coalesced bucket reads as 1 s', () => {
+    // At a cap of 1 every series holds one bucket, and a lone bucket at 4 s
+    // may be a coalesced one at least 4 s wide. Its offsets cannot say, so it
+    // reads as 1000 — the recorded limit, not a claim it is right.
+    const merged = mergeMemberSeries([[bucketAt(4000, [10])], [bucketAt(0, [20])]], 1);
+
+    expect(merged.widthMs).toBe(1000);
+    expect(merged.buckets.map((x) => x.startOffsetMs)).toEqual([0, 4000]);
   });
 });
