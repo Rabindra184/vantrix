@@ -757,6 +757,17 @@ describe('RunReport — the Requests pickers', () => {
     expect(options(request)).toEqual(['All requests', ...REQUESTS]);
   });
 
+  // Review M1: "Pick a group first." belongs only where the Group control
+  // offers a choice. A run that recorded no request rows has no Group control
+  // at all, so a disabled Request control telling the reader to pick from it
+  // would point at nothing.
+  it('draws no picker, and asks for no group, in a run with no request rows', async () => {
+    renderReport({ stats: { ...reference.stats, stats: reference.stats.stats.filter((s) => s.scope === 'run') } });
+    await waitFor(() => expect(within(requests()).getByTestId('requests-request-picker')).toBeInTheDocument());
+    expect(within(requests()).queryByRole('combobox')).toBeNull();
+    expect(requests().textContent).not.toContain('Pick a group first.');
+  });
+
   // The pick drives both views, so on a phone it waits behind the same gate as
   // they do — and opening either view opens the pickers with it.
   it('keeps the pickers behind the phone’s gate, and the Table’s offer to open', async () => {
