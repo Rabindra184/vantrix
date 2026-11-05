@@ -769,14 +769,21 @@ describe('RunReport — the Requests pickers', () => {
   });
 
   // The pick drives both views, so on a phone it waits behind the same gate as
-  // they do — and opening either view opens the pickers with it.
+  // they do — and opening either view opens the pickers with it. UNDER A
+  // WINDOW, because only there are the names a read of their own: with none,
+  // the table's `/stats` is the names' key, and its fetch would answer a
+  // names read the phone never made, hiding a table left waiting on it.
   it('keeps the pickers behind the phone’s gate, and the Table’s offer to open', async () => {
     vi.mocked(useIsCompact).mockReturnValue(true);
-    const seen = renderReport({ url: `/runs/${RUN_ID}/report?requests-group=Cart` });
+    const seen = renderReport({
+      url: `/runs/${RUN_ID}/report?requests-group=Cart`,
+      window: { fromMs: 10_000, toMs: 20_000, bucketWidthMs: 1_000 },
+    });
     await userEvent.click(within(requests()).getByRole('button', { name: 'Table' }));
     const open = await within(requests()).findByRole('button', { name: 'Open detailed table' });
     expect(within(requests()).queryByTestId('requests-group-picker')).toBeNull();
-    expect(seen.filter(isWholeRunStats)).toHaveLength(1);
+    // Nothing the pickers or the charts would read has been asked for.
+    expect(seen.filter(isWholeRunStats)).toHaveLength(0);
     expect(seen.some((u) => /\/(series|distribution)$/.test(path(u)))).toBe(false);
     await userEvent.click(open);
     expect(await within(groupPicker()).findByLabelText('Group')).toHaveValue('Cart');
