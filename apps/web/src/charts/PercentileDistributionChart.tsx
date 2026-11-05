@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react';
 import Chart from './Chart';
 import { ControlBar, ControlGroup, Segmented } from './ChartControls';
 import type { MarkRole } from './theme';
+import useStableNarrowed from './useStableNarrowed';
 import type { Narrowed } from './transforms/narrowed';
 import { toPercentileDistribution } from './transforms/percentileDistribution';
 import type { Outcome } from './transforms/percentiles';
@@ -67,9 +68,11 @@ export default function PercentileDistributionChart({
 }) {
   const [outcome, setOutcome] = useState<Outcome>('ok');
 
+  // Keyed on the pick's primitives, not on the object — see `useStableNarrowed`.
+  const pick = useStableNarrowed(narrowed);
   const data = useMemo(
-    () => toPercentileDistribution(distribution, outcome, { windowSelected, narrowed }),
-    [distribution, outcome, windowSelected, narrowed],
+    () => toPercentileDistribution(distribution, outcome, { windowSelected, narrowed: pick }),
+    [distribution, outcome, windowSelected, pick],
   );
 
   // In the option effect's dependency list, so it must not be a fresh array

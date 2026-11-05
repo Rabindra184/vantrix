@@ -90,8 +90,9 @@ export interface UsersOptions {
   readonly windowSelected: boolean;
   /**
    * The Virtual users section's scenario pick, when one is applied — and then
-   * `u` is `narrowUsers`' payload, so only the sentences and the ⓘ change here
-   * (`narrowed.ts`). Optional: nothing else narrows these charts.
+   * `u` is `narrowUsers`' payload, so the sentences and the ⓘ change here
+   * (`narrowed.ts`), and so does the total: see `usersChart`. Optional:
+   * nothing else narrows these charts.
    */
   readonly narrowed?: Narrowed;
   readonly x?: 'index' | 'ms';
@@ -150,7 +151,19 @@ function usersChart(u: UsersResponse, spec: Spec, opts: UsersOptions): ChartData
   const read = (bucket: UserBucket | undefined): number =>
     bucket === undefined ? 0 : bucket[spec.measure] / divisor;
 
-  const columns = [TIME_COLUMN, ...u.scenarios.map((s) => s.scenario), ALL_USERS];
+  /**
+   * UNDER A SCENARIO PICK THERE IS NO "All users" LINE. `narrowUsers` leaves
+   * one scenario and makes `total` exactly its buckets, so the total would be
+   * a second, identical line named "All users" over one scenario's users — a
+   * false name, and a duplicate column in the table. The x-axis still reads
+   * `total`'s offsets, which are that scenario's. Any other pick (these charts
+   * never get one) and no pick keep the total.
+   */
+  const withTotal = opts.narrowed?.kind !== 'scenario';
+  const scenarioColumns = u.scenarios.map((s) => s.scenario);
+  const columns = withTotal
+    ? [TIME_COLUMN, ...scenarioColumns, ALL_USERS]
+    : [TIME_COLUMN, ...scenarioColumns];
 
   if (u.total.length === 0) {
     return {
@@ -213,7 +226,7 @@ function usersChart(u: UsersResponse, spec: Spec, opts: UsersOptions): ChartData
    * numbers is what stops a value axis from silently turning the data table
    * into a list of `[x, y]` tuples.
    */
-  const measured: readonly ChartSeries[] = [...perScenario, totalSeries];
+  const measured: readonly ChartSeries[] = withTotal ? [...perScenario, totalSeries] : perScenario;
 
   const rows: ChartTableRow[] = offsets.map((offset, i) => ({
     label: String(offset / 1000),

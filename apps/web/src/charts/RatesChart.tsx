@@ -11,6 +11,7 @@ import {
 } from './transforms/rates';
 import type { Narrowed } from './transforms/narrowed';
 import type { ChartData, TimeDomainMs } from './types';
+import useStableNarrowed from './useStableNarrowed';
 
 /**
  * §13.2 ⑩ requests per second (Appendix A G-23) and ⑪ responses per second
@@ -172,9 +173,11 @@ export function RequestsAndResponsesChart({
    */
   readonly narrowed?: Narrowed;
 }) {
+  // Keyed on the pick's primitives, not on the object — see `useStableNarrowed`.
+  const pick = useStableNarrowed(narrowed);
   const data = useMemo(
-    () => toRequestsAndResponses(series, { windowSelected, narrowed }),
-    [series, windowSelected, narrowed],
+    () => toRequestsAndResponses(series, { windowSelected, narrowed: pick }),
+    [series, windowSelected, pick],
   );
   return (
     <Chart

@@ -3,6 +3,7 @@ import { useMemo } from 'react';
 import Chart from './Chart';
 import { BAND_ROLES, toIndicators, toRowIndicators } from './transforms/indicators';
 import type { Narrowed } from './transforms/narrowed';
+import useStableNarrowed from './useStableNarrowed';
 
 /**
  * §13.2 ③ — the response-time indicator bands (Appendix A G-06…G-09).
@@ -56,15 +57,22 @@ export default function IndicatorsChart({
    * names the pick behind its ⓘ. Optional — the Summary and the drill-downs
    * never narrow — so `ChartWindowSelected.test.tsx` is what catches a chart
    * that takes it and does not pass it on.
+   *
+   * IGNORED WHEN `label` IS GIVEN. A `label` routes to `toRowIndicators`, the
+   * request and group drill-downs' one-row fold, which names its own subject
+   * and takes no pick; only the run-level fold (`toIndicators`) reads
+   * `narrowed`. The Report's pick therefore passes `narrowed` and no `label`.
    */
   readonly narrowed?: Narrowed;
 }) {
+  // Keyed on the pick's primitives, not on the object — see `useStableNarrowed`.
+  const pick = useStableNarrowed(narrowed);
   const data = useMemo(
     () =>
       label === undefined
-        ? toIndicators(stats, { windowSelected, narrowed })
+        ? toIndicators(stats, { windowSelected, narrowed: pick })
         : toRowIndicators(stats, row, label, noun ?? 'request'),
-    [stats, row, label, noun, windowSelected, narrowed],
+    [stats, row, label, noun, windowSelected, pick],
   );
 
   return (

@@ -3,6 +3,7 @@ import { useMemo } from 'react';
 import Chart from './Chart';
 import { DISTRIBUTION_ROLES, toDistribution } from './transforms/distribution';
 import type { Narrowed } from './transforms/narrowed';
+import useStableNarrowed from './useStableNarrowed';
 
 /**
  * §13.2 ⑧ — the response-time distribution (Appendix A G-20/G-21).
@@ -52,9 +53,11 @@ export default function DistributionChart({
    */
   readonly narrowed?: Narrowed;
 }) {
+  // Keyed on the pick's primitives, not on the object — see `useStableNarrowed`.
+  const pick = useStableNarrowed(narrowed);
   const data = useMemo(
-    () => toDistribution(distribution, { windowSelected, narrowed }),
-    [distribution, windowSelected, narrowed],
+    () => toDistribution(distribution, { windowSelected, narrowed: pick }),
+    [distribution, windowSelected, pick],
   );
 
   return (

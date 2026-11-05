@@ -1,7 +1,7 @@
 import type { StatRow, StatsResponse } from '@perfportal/contracts';
 import type { BandRole, StatusRole } from '../theme';
 import type { ChartData, ChartTableRow } from '../types';
-import { scopePhrase, withNarrowedLine, type Narrowed, type ScopeOpts } from './narrowed';
+import { pickLabel, scopePhrase, withNarrowedLine, type Narrowed, type ScopeOpts } from './narrowed';
 
 /**
  * `GET /v1/runs/:id/stats` → the two charts §13.2 draws from it: the indicator
@@ -191,15 +191,20 @@ export function toIndicators(
   /**
    * `narrowed` is the Report's pick, when one is applied — and then `stats` is
    * `narrowStats`' payload, whose `indicators` are already the members' summed
-   * bands, so only the sentence and the ⓘ change here. "Nothing was recorded"
-   * rather than "No requests were recorded": the scope may be a request.
+   * bands, so the sentence, the ⓘ and the bar's category change here.
+   * "Nothing was recorded" rather than "No requests were recorded": the scope
+   * may be a request.
+   *
+   * THE CATEGORY IS THE PICK'S NAME UNDER A PICK (`pickLabel`), because the
+   * bar and its tooltip would otherwise read "All requests" over the bands of
+   * one group's members — a claim the chart's own ⓘ contradicts.
    */
   opts: ScopeOpts,
 ): ChartData {
   return bandChart(
     stats.indicators,
     stats,
-    ALL_REQUESTS,
+    opts.narrowed != null ? pickLabel(opts.narrowed) : ALL_REQUESTS,
     opts.narrowed != null
       ? `Nothing was recorded ${scopePhrase(opts)}, so there are no response-time bands to show.`
       : opts.windowSelected

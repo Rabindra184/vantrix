@@ -497,6 +497,28 @@ describe('toIndicators / toRequestCounts — narrowed to a pick', () => {
     expect(d.limitation).toBe('Narrowed to the group Cart.');
   });
 
+  /**
+   * THE BAR IS NAMED FOR THE PICK. Its one category is what the bar and its
+   * tooltip call the bands drawn, and "All requests" over one group's members'
+   * bands is false — the chart's own ⓘ says it is narrowed. The name is the
+   * one the ⓘ line shows (`pickLabel`).
+   */
+  it.each([
+    [{ kind: 'group', name: 'Cart' }, 'Cart'],
+    [{ kind: 'group', name: 'Catalog/Recommendations' }, 'Catalog / Recommendations'],
+    [{ kind: 'group', name: '' }, 'Requests in no group'],
+    [{ kind: 'request', name: 'Cart/Add To Cart', label: 'Cart / Add To Cart' }, 'Cart / Add To Cart'],
+  ] as const)('names the bar for the pick, not "All requests" (%o)', (pick, name) => {
+    const d = toIndicators(cart, { windowSelected: false, narrowed: pick });
+    expect(d.axisLabels).toEqual([name]);
+    expect(d.axisLabels).not.toContain('All requests');
+  });
+
+  it('keeps the bar named "All requests" when nothing was picked', () => {
+    expect(toIndicators(stats, { windowSelected: false }).axisLabels).toEqual(['All requests']);
+    expect(toIndicators(stats, { windowSelected: false, narrowed: null }).axisLabels).toEqual(['All requests']);
+  });
+
   it('still reads the run row when nothing was picked', () => {
     const run = stats.stats.find((r) => r.scope === 'run' && r.family === 'response_time')!;
     const d = toRequestCounts(stats, { windowSelected: false, narrowed: null });

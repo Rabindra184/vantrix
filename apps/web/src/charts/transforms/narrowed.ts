@@ -58,7 +58,8 @@ export interface ScopeOpts {
  * sentence and the ⓘ line, so the two cannot drift into describing them two
  * ways.
  */
-const NO_GROUP = 'the requests in no group';
+const IN_NO_GROUP = 'requests in no group';
+const NO_GROUP = `the ${IN_NO_GROUP}`;
 
 function isNoGroup(narrowed: NonNullable<Narrowed>): boolean {
   return narrowed.kind === 'group' && narrowed.name === '';
@@ -69,32 +70,50 @@ function isNoGroup(narrowed: NonNullable<Narrowed>): boolean {
  *
  *   'in this run' | 'in the selected window'
  *   'for this group' | 'for this group in the selected window'
- *   (and 'for this request' / 'for this scenario' / 'for the requests in no
- *   group' in place of 'for this group')
+ *   (and 'for this request' / 'for this scenario' in place of 'for this group')
+ *   'for the requests in no group'
+ *     | 'in the selected window for the requests in no group'
+ *
+ * THE NO-GROUP PHRASE PUTS THE WINDOW FIRST. Appended, as the others are, it
+ * read "for the requests in no group in the selected window", which parses as
+ * "no group in the selected window" as readily as the meaning. With the
+ * window first, "in no group" ends the phrase and can attach to nothing else.
  *
  * Absent and `null` both mean no pick.
  */
 export function scopePhrase(opts: ScopeOpts): string {
   const { windowSelected, narrowed } = opts;
   if (narrowed == null) return windowSelected ? 'in the selected window' : 'in this run';
-  const subject = isNoGroup(narrowed) ? NO_GROUP : `this ${narrowed.kind}`;
+  if (isNoGroup(narrowed)) return windowSelected ? `in the selected window for ${NO_GROUP}` : `for ${NO_GROUP}`;
+  const subject = `this ${narrowed.kind}`;
   return windowSelected ? `for ${subject} in the selected window` : `for ${subject}`;
 }
 
 /**
- * The ⓘ line naming the pick — 'Narrowed to the group Cart.' — or `undefined`
- * when nothing was picked.
+ * The pick as a short NAME — where a chart would otherwise label its data
+ * "All requests": the ranges bar's category, and so its tooltip.
  *
- * A group is shown as the picker lists it (`displayPath`: `Catalog /
- * Recommendations`); a request or scenario by the name it was given, because
- * `displayPath` splits every `/` and a top-level `/login` would read ` / login`
- * (ruling R5). A `label` overrides either.
+ * The name `narrowedLine` shows: `label` when given; a group as the picker
+ * lists it (`displayPath`: `Catalog / Recommendations`); a request or
+ * scenario by the name it was given, because `displayPath` splits every `/`
+ * and a top-level `/login` would read ` / login` (ruling R5). "(no group)" is
+ * `Requests in no group`, the line's own noun phrase, and never takes a label
+ * (a picker's "(no group)" is not a name).
+ */
+export function pickLabel(narrowed: NonNullable<Narrowed>): string {
+  if (isNoGroup(narrowed)) return `${IN_NO_GROUP.charAt(0).toUpperCase()}${IN_NO_GROUP.slice(1)}`;
+  return narrowed.label ?? (narrowed.kind === 'group' ? displayPath(narrowed.name) : narrowed.name);
+}
+
+/**
+ * The ⓘ line naming the pick — 'Narrowed to the group Cart.' — or `undefined`
+ * when nothing was picked. The name is `pickLabel`'s, so the line and a
+ * chart's category cannot name one pick two ways.
  */
 export function narrowedLine(narrowed: Narrowed | undefined): string | undefined {
   if (narrowed == null) return undefined;
   if (isNoGroup(narrowed)) return `Narrowed to ${NO_GROUP}.`;
-  const shown = narrowed.label ?? (narrowed.kind === 'group' ? displayPath(narrowed.name) : narrowed.name);
-  return `Narrowed to the ${narrowed.kind} ${shown}.`;
+  return `Narrowed to the ${narrowed.kind} ${pickLabel(narrowed)}.`;
 }
 
 /**

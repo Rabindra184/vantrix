@@ -8,6 +8,7 @@ import { ControlBar, ControlGroup, Segmented, Switch } from './ChartControls';
 import type { MarkRole } from './theme';
 import type { Narrowed } from './transforms/narrowed';
 import { BAND_LABEL, BANDS, type Band, type Outcome, toPercentiles } from './transforms/percentiles';
+import useStableNarrowed from './useStableNarrowed';
 
 /**
  * The outcome control's three states, in the order they are drawn.
@@ -96,9 +97,11 @@ export default function PercentilesChart({
   const [bands, setBands] = useState<readonly Band[]>(DEFAULT_BANDS);
   const [outcome, setOutcome] = useState<Outcome>('ok');
 
+  // Keyed on the pick's primitives, not on the object — see `useStableNarrowed`.
+  const pick = useStableNarrowed(narrowed);
   const data = useMemo(
-    () => toPercentiles(series, { bands, outcome, x: 'ms', windowSelected, narrowed }),
-    [series, bands, outcome, windowSelected, narrowed],
+    () => toPercentiles(series, { bands, outcome, x: 'ms', windowSelected, narrowed: pick }),
+    [series, bands, outcome, windowSelected, pick],
   );
 
   // The transform always emits series in BANDS order, so the roles must be the

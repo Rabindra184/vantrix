@@ -3,6 +3,7 @@ import { useMemo } from 'react';
 import Chart from './Chart';
 import { OUTCOME_ROLES, toRequestCounts } from './transforms/indicators';
 import type { Narrowed } from './transforms/narrowed';
+import useStableNarrowed from './useStableNarrowed';
 
 /**
  * §13.2 ④ — the OK-vs-KO request-count donut (Appendix A G-10).
@@ -38,9 +39,11 @@ export default function RequestCountChart({
    */
   readonly narrowed?: Narrowed;
 }) {
+  // Keyed on the pick's primitives, not on the object — see `useStableNarrowed`.
+  const pick = useStableNarrowed(narrowed);
   const data = useMemo(
-    () => toRequestCounts(stats, { windowSelected, narrowed }),
-    [stats, windowSelected, narrowed],
+    () => toRequestCounts(stats, { windowSelected, narrowed: pick }),
+    [stats, windowSelected, pick],
   );
 
   return (

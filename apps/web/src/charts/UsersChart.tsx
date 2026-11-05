@@ -3,6 +3,7 @@ import { useMemo } from 'react';
 import Chart from './Chart';
 import type { Narrowed } from './transforms/narrowed';
 import type { TimeDomainMs } from './types';
+import useStableNarrowed from './useStableNarrowed';
 import { toConcurrentUsers, toUserEndRate, toUserStartRate } from './transforms/users';
 
 /**
@@ -64,9 +65,11 @@ export interface UsersChartProps {
 
 /** ⑦ — the concurrency curve. Plots `maxConcurrent`; see `toConcurrentUsers`. */
 export function ConcurrentUsersChart({ users, group, domainMs, warmupMs, windowSelected, narrowed }: UsersChartProps) {
+  // Keyed on the pick's primitives, not on the object — see `useStableNarrowed`.
+  const pick = useStableNarrowed(narrowed);
   const data = useMemo(
-    () => toConcurrentUsers(users, { x: 'ms', windowSelected, narrowed }),
-    [users, windowSelected, narrowed],
+    () => toConcurrentUsers(users, { x: 'ms', windowSelected, narrowed: pick }),
+    [users, windowSelected, pick],
   );
 
   return (
@@ -103,9 +106,11 @@ export function ConcurrentUsersChart({ users, group, domainMs, warmupMs, windowS
 
 /** ⑦ᵇ — the arrival rate. Plots `started` per second; see `toUserStartRate`. */
 export function UserStartRateChart({ users, group, domainMs, warmupMs, windowSelected, narrowed }: UsersChartProps) {
+  // Keyed on the pick's primitives, not on the object — see `useStableNarrowed`.
+  const pick = useStableNarrowed(narrowed);
   const data = useMemo(
-    () => toUserStartRate(users, { x: 'ms', windowSelected, narrowed }),
-    [users, windowSelected, narrowed],
+    () => toUserStartRate(users, { x: 'ms', windowSelected, narrowed: pick }),
+    [users, windowSelected, pick],
   );
 
   return (
@@ -135,9 +140,11 @@ export function UserStartRateChart({ users, group, domainMs, warmupMs, windowSel
 
 /** GE's "Users Termination Rate". Plots `ended` per second; see `toUserEndRate`. */
 export function UserEndRateChart({ users, group, domainMs, warmupMs, windowSelected, narrowed }: UsersChartProps) {
+  // Keyed on the pick's primitives, not on the object — see `useStableNarrowed`.
+  const pick = useStableNarrowed(narrowed);
   const data = useMemo(
-    () => toUserEndRate(users, { x: 'ms', windowSelected, narrowed }),
-    [users, windowSelected, narrowed],
+    () => toUserEndRate(users, { x: 'ms', windowSelected, narrowed: pick }),
+    [users, windowSelected, pick],
   );
 
   return (

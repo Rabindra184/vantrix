@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { expectAboutThePick, expectAboutTheRun, expectAboutTheWindow } from './support/emptySentence';
 import { assignPalette } from '../src/charts/theme.js';
 import { toConcurrentUsers, toUserEndRate, toUserStartRate } from '../src/charts/transforms/users.js';
+import { narrowUsers } from '../src/routes/report/narrow';
 import type { ChartData } from '../src/charts/types.js';
 import fixture from './fixtures/reference-run.json';
 
@@ -535,19 +536,46 @@ describe('narrowed to a scenario', () => {
   });
 
   it.each(TRANSFORMS)('names the pick behind its ⓘ on a drawn chart (%s)', (_label, transform) => {
-    expect(transform(users, { windowSelected: false, narrowed }).limitation).toBe('Narrowed to the scenario Browse.');
+    expect(transform(narrowUsers(users, 'Browse'), { windowSelected: false, narrowed }).limitation).toBe(
+      'Narrowed to the scenario Browse.',
+    );
     expect(transform(users, { windowSelected: false }).limitation).toBeUndefined();
   });
 
+  /**
+   * NO "All users" UNDER A SCENARIO PICK. `narrowUsers` leaves one scenario
+   * and makes `total` its buckets, so a total line would draw the same values
+   * a second time under a false name, and the table would carry two equal
+   * columns. The drawn series and the columns are that scenario's alone; the
+   * values are its own buckets.
+   */
+  it.each(TRANSFORMS)('draws the scenario alone, with no "All users" line or column (%s)', (_label, transform) => {
+    const browse = narrowUsers(users, 'Browse');
+    const d = transform(browse, { windowSelected: false, narrowed });
+    expect(d.series.map((s) => s.name)).toEqual(['Browse']);
+    expect(d.columns).toEqual(['Elapsed (s)', 'Browse']);
+    expect(d.rows.every((r) => r.values.length === 1)).toBe(true);
+    const plain = transform(browse, { windowSelected: false });
+    // The one line left is the scenario's own, which is what the total held.
+    expect(d.rows.map((r) => r.values[0])).toEqual(plain.rows.map((r) => r.values[1]));
+  });
+
+  it.each(TRANSFORMS)('keeps "All users" when nothing was picked (%s)', (_label, transform) => {
+    const d = transform(narrowUsers(users, 'Browse'), { windowSelected: false });
+    expect(d.series.at(-1)!.name).toBe('All users');
+    expect(d.columns.at(-1)).toBe('All users');
+  });
+
   it('keeps the resolution note beside the pick', () => {
+    const buckets = [
+      { startOffsetMs: 0, started: 6, ended: 0, maxConcurrent: 6 },
+      { startOffsetMs: 2000, started: 4, ended: 2, maxConcurrent: 8 },
+    ];
     const wide: UsersResponse = {
       runId: users.runId,
       window: null,
-      scenarios: [],
-      total: [
-        { startOffsetMs: 0, started: 6, ended: 0, maxConcurrent: 6 },
-        { startOffsetMs: 2000, started: 4, ended: 2, maxConcurrent: 8 },
-      ],
+      scenarios: [{ scenario: 'Browse', buckets }],
+      total: buckets.map((b) => ({ ...b })),
     };
     const d = toUserStartRate(wide, { windowSelected: false, narrowed });
     expect(d.limitation).toContain('Narrowed to the scenario Browse.');

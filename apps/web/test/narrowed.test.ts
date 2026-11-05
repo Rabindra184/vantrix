@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { narrowedLine, scopePhrase, withNarrowedLine, type Narrowed } from '../src/charts/transforms/narrowed';
+import { narrowedLine, pickLabel, scopePhrase, withNarrowedLine, type Narrowed } from '../src/charts/transforms/narrowed';
 
 /**
  * ═══ HOW A NARROWED CHART NAMES WHAT IT WAS NARROWED TO ═══
@@ -27,7 +27,9 @@ describe('scopePhrase', () => {
     [true, GROUP, 'for this group in the selected window'],
     [true, { kind: 'request', name: 'Search' }, 'for this request in the selected window'],
     [false, NO_GROUP, 'for the requests in no group'],
-    [true, NO_GROUP, 'for the requests in no group in the selected window'],
+    // The window FIRST for no group: appended, it read "…in no group in the
+    // selected window", which parses as "no group in the selected window".
+    [true, NO_GROUP, 'in the selected window for the requests in no group'],
   ] as const)('windowSelected=%s, narrowed=%o reads "%s"', (windowSelected, narrowed, phrase) => {
     expect(scopePhrase({ windowSelected, narrowed })).toBe(phrase);
   });
@@ -83,6 +85,35 @@ describe('narrowedLine', () => {
     expect(narrowedLine({ kind: 'scenario', name: 'Browse', label: 'Browsing' })).toBe(
       'Narrowed to the scenario Browsing.',
     );
+  });
+});
+
+/**
+ * The pick as a short name — the ranges bar's category under a pick, where it
+ * would otherwise read "All requests". The name `narrowedLine` shows, so the
+ * two cannot disagree; "(no group)" has its own short form.
+ */
+describe('pickLabel', () => {
+  it.each([
+    [{ kind: 'group', name: 'Cart' }, 'Cart'],
+    [{ kind: 'group', name: 'Catalog/Recommendations' }, 'Catalog / Recommendations'],
+    [{ kind: 'request', name: '/login' }, '/login'],
+    [{ kind: 'request', name: 'Cart/Add To Cart', label: 'Cart / Add To Cart' }, 'Cart / Add To Cart'],
+    [{ kind: 'scenario', name: 'Browse' }, 'Browse'],
+    [{ kind: 'group', name: '' }, 'Requests in no group'],
+    [{ kind: 'group', name: '', label: '(no group)' }, 'Requests in no group'],
+  ] as const)('%o is named "%s"', (narrowed, name) => {
+    expect(pickLabel(narrowed)).toBe(name);
+  });
+
+  it('names the pick the way its ⓘ line does', () => {
+    for (const narrowed of [
+      { kind: 'group', name: 'Catalog/Recommendations' },
+      { kind: 'request', name: 'Search', label: 'Search!' },
+      { kind: 'scenario', name: 'Browse' },
+    ] as const) {
+      expect(narrowedLine(narrowed)).toBe(`Narrowed to the ${narrowed.kind} ${pickLabel(narrowed)}.`);
+    }
   });
 });
 
