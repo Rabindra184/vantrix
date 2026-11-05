@@ -952,7 +952,7 @@ describe('RunReport — the Requests pickers', () => {
       requests: { windowedStats: reference.stats },
     });
 
-  it('says a link’s pick could not be checked when the names fail, and shows every request', async () => {
+  it('says a link’s pick could not be checked under a window, where the run’s figures draw', async () => {
     const seen = namesFail('?requests-group=Cart');
     const line = await within(requests()).findByTestId('requests-names-unavailable');
     expect(line.textContent).toMatch(/link.*could not be checked/);
