@@ -450,6 +450,13 @@ test('a one-request group selects its request', async ({ page }) => {
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
+  // Every /series request the page makes: the drawn table cannot say which
+  // read it came from (below), the request the page sent can.
+  const seriesReads: URL[] = [];
+  page.on('request', (request) => {
+    const url = new URL(request.url());
+    if (url.pathname === `/v1/runs/${runId}/series`) seriesReads.push(url);
+  });
   await openRequests(page, runReportPath(runId));
 
   // The premise, from the run's own rows: Catalog/Recommendations holds
@@ -469,11 +476,23 @@ test('a one-request group selects its request', async ({ page }) => {
   await expect(field.locator('dt')).toHaveText('Request');
   await expect(field.locator('dd')).toHaveText('Catalog / Recommendations / Related Items');
   await expect(requestPicker(page).locator('select')).toHaveCount(0);
-  // Selected for the charts too: they read that one request's series.
+  // Selected for the charts too. The table proves they draw that request's
+  // figures — and no more than that, since a one-member group's merged read
+  // answers the same rows. What proves they read the REQUEST is the request
+  // the page made: its name, and no `group`.
   const runSeries = await apiJson<SeriesPayload>(page, runSeriesPath(runId));
   const related = await apiJson<SeriesPayload>(page, requestSeriesPath(runId, 'Catalog/Recommendations/Related Items'));
   expect(percentileRows(related)).not.toEqual(percentileRows(runSeries));
-  await expectPercentiles(page, related, 'a one-request group’s charts read its request');
+  await expectPercentiles(page, related, 'a one-request group’s charts draw its request’s figures');
+  expect(
+    seriesReads.some(
+      (url) =>
+        url.searchParams.get('scope') === 'request' &&
+        url.searchParams.get('name') === 'Catalog/Recommendations/Related Items' &&
+        !url.searchParams.has('group'),
+    ),
+    'the page read /series?scope=request&name=Catalog/Recommendations/Related Items, with no group',
+  ).toBe(true);
   // Selected without being written: the URL names the group the reader chose,
   // and nothing they did not — checked after the charts drew the pick.
   await expectParamStaysAbsent(page, 'requests-request', 'a one-request group writes no request');
