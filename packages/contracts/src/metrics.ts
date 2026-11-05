@@ -112,6 +112,19 @@ export const SeriesResponseSchema = z.object({
   name: z.string(),
   family: MetricFamilySchema,
   /**
+   * The group whose requests this series merges, or `null` for an ordinary
+   * read (`?group=`, the Report pickers spec section 4). `''` is the requests
+   * in no group. A group read answers `scope: 'request'` and `name: ''`.
+   *
+   * `.nullable().optional()`, and the OPTIONAL half is load-bearing: the
+   * browser drops a body that fails this schema, so a required field would
+   * blank every chart for the length of a rolling deploy. And the browser
+   * refuses a group read whose body does not echo its group, because an API
+   * pod older than the parameter ignores it and answers the run's own data
+   * with a 200 — the echo is how the two are told apart.
+   */
+  group: z.string().nullable().optional(),
+  /**
    * The width of every bucket in this response. NOT always 1000: BucketSeries
    * halves resolution in place once a run exceeds its bucket cap, and the
    * width is not stored, so the server recovers it with inferBucketWidthMs.
@@ -246,6 +259,11 @@ export const DistributionResponseSchema = z.object({
   scope: MetricScopeSchema,
   name: z.string(),
   family: MetricFamilySchema,
+  /**
+   * The group whose requests this distribution merges, or `null` for an
+   * ordinary read — `SeriesResponseSchema.group`, for the same reasons.
+   */
+  group: z.string().nullable().optional(),
   /** Bucket MIDPOINTS, matching Gatling's category labels. */
   labels: z.array(z.number()),
   okCount: z.array(z.number().int()),

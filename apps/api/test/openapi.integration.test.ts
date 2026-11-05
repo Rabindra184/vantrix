@@ -505,6 +505,29 @@ describe('OpenAPI document', () => {
     expect(names).toEqual(expect.arrayContaining(['id', 'from', 'to', 'percentiles']));
   });
 
+  // `group` merges a group's requests on both endpoints (the Report pickers
+  // spec, section 4). Undeclared, a generated client cannot ask for it; the
+  // 409 undeclared, it cannot branch on GROUP_NOT_MERGEABLE; and the echo
+  // undeclared on the schemas, a client that strips unknown keys reads every
+  // group read as one from a server that ignored the parameter.
+  it('declares "group" and its 409 on /series and /distribution, and the echo on both responses', async () => {
+    const doc = await fetchDoc();
+    for (const path of ['/v1/runs/{id}/series', '/v1/runs/{id}/distribution']) {
+      const op = doc.paths?.[path]?.get as
+        | { parameters?: { name: string }[]; responses?: Record<string, unknown> }
+        | undefined;
+      expect((op?.parameters ?? []).map((p) => p.name), path).toContain('group');
+      expect(Object.keys(op?.responses ?? {}), path).toContain('409');
+    }
+    for (const schema of ['SeriesResponse', 'DistributionResponse']) {
+      const props = (doc.components?.schemas?.[schema] as { properties?: Record<string, unknown> } | undefined)
+        ?.properties ?? {};
+      expect(Object.keys(props), schema).toContain('group');
+      // Optional, for the rolling deploy: an older pod's body has no `group` key.
+      expect(doc.components?.schemas?.[schema]?.required ?? [], schema).not.toContain('group');
+    }
+  });
+
   it('declares GET /v1/projects and its response schema', async () => {
     const doc = await fetchDoc();
     expect(doc.paths?.['/v1/projects']?.['get']).toBeTruthy();

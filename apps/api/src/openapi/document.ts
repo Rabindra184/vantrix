@@ -269,6 +269,27 @@ const parameters: Record<string, ParameterObject> = {
       'run-level series, which has no name of its own.',
     schema: { type: 'string', default: '' },
   },
+  /**
+   * `group` on /series and /distribution — the Report pickers spec, section 4.
+   * One parameter for both, because the rule it states (which requests a
+   * group holds, and when it refuses) is one rule.
+   */
+  GroupPick: {
+    name: 'group',
+    in: 'query',
+    description:
+      'Merge every request of one group into this answer, instead of reading one row: the ' +
+      'group\'s requests and those of its subgroups ("Catalog" takes ' +
+      '"Catalog/Recommendations/Related Items" too), merged exactly from their stored ' +
+      'histograms. An EMPTY value ("group=") means the requests that sit in no group. Needs ' +
+      '"scope=request" and no "name"; the answer then reads scope "request", name "" and ' +
+      '"group" the path asked — an answer without that echo is from a server that does not ' +
+      'know this parameter. A group with no requests answers as an unknown name does. Given ' +
+      'more than once, beside a "name", or with any other "scope" (absent included): 400 ' +
+      'INVALID_QUERY. A request whose stored histograms are absent or not exact (a run ingested ' +
+      'before 2026-10-15, not recomputed): 409 GROUP_NOT_MERGEABLE.',
+    schema: { type: 'string' },
+  },
   SeriesFamily: {
     name: 'family',
     in: 'query',
@@ -734,7 +755,9 @@ const responses: Record<string, ResponseObject> = {
       '(code RUN_FILTER_INVALID, on the run list routes) "status" or "verdict" named a value ' +
       'outside its enum, or (code INVALID_QUERY, on the run list routes) a parameter was given ' +
       'more than once, or (code INVALID_QUERY, on the run series route) "percentiles" was not ' +
-      'a list of one to twelve ranks strictly between 0 and 100, or (codes UNKNOWN_REMOTE / UNKNOWN_HOSTNAME, on the agent routes) ' +
+      'a list of one to twelve ranks strictly between 0 and 100, or (code INVALID_QUERY, on the ' +
+      'run series and distribution routes) "group" was given more than once, beside a "name", ' +
+      'or without "scope=request", or (codes UNKNOWN_REMOTE / UNKNOWN_HOSTNAME, on the agent routes) ' +
       '"remote" or "hostname" named one the run does not have. application/problem+json with ' +
       'a required "remediation" that says what a valid value looks like.',
     content: problem(),
@@ -823,6 +846,15 @@ const responses: Record<string, ResponseObject> = {
       'code PASSWORD_CHANGE_REQUIRED on every operation a session can otherwise reach, except ' +
       'PUT /v1/me/password — after the scope check, before the role check. ' +
       'application/problem+json with a required "remediation".',
+    content: problem(),
+  },
+  GroupNotMergeable: {
+    description:
+      'A "group" read whose requests cannot be merged exactly (code GROUP_NOT_MERGEABLE): one ' +
+      'of them has no stored histograms, or only inexact ones — a run ingested before ' +
+      '2026-10-15 and not recomputed. Nothing is merged without it, and nothing is guessed. ' +
+      'application/problem+json with a required "remediation" naming the per-request read, ' +
+      'whose stored figures need no merge.',
     content: problem(),
   },
   NotFound: {
@@ -1462,11 +1494,13 @@ const paths: Record<string, PathItemObject> = {
         parameters['WindowFrom']!,
         parameters['WindowTo']!,
         parameters['SeriesPercentiles']!,
+        parameters['GroupPick']!,
       ],
       responses: {
         '200': { description: 'Time-series buckets.', content: json(schemaRef('SeriesResponse')) },
         '400': ref('BadRequest'),
         '404': ref('NotFound'),
+        '409': ref('GroupNotMergeable'),
         ...authFailureResponses,
       },
     },
@@ -1551,11 +1585,13 @@ const paths: Record<string, PathItemObject> = {
         parameters['DistributionFamily']!,
         parameters['WindowFrom']!,
         parameters['WindowTo']!,
+        parameters['GroupPick']!,
       ],
       responses: {
         '200': { description: 'Bucketed OK/KO distribution.', content: json(schemaRef('DistributionResponse')) },
         '400': ref('BadRequest'),
         '404': ref('NotFound'),
+        '409': ref('GroupNotMergeable'),
         ...authFailureResponses,
       },
     },
