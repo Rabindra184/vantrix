@@ -9,12 +9,14 @@ import {
   TrendsResponseSchema,
   UsersResponseSchema,
 } from '@perfportal/contracts';
-import type { Window } from '@perfportal/contracts';
+import type { DistributionResponse, Window } from '@perfportal/contracts';
 import { ProblemError, apiFetch } from './fetch';
 import {
   distributionPath,
   errorSeriesPath,
   errorsPath,
+  groupDistributionPath,
+  groupSeriesPath,
   scatterPath,
   seriesPath,
   statsPath,
@@ -254,6 +256,133 @@ export const distributionQuery = (
         overflowCount: 0,
       });
     }
+  },
+  staleTime: Infinity,
+});
+
+/* -------------------------------------------------------------------- *
+ * a group's requests merged — the Report's Group picker
+ * -------------------------------------------------------------------- */
+
+/**
+ * A group read the server did not answer AS a group read.
+ *
+ * `/series` and `/distribution` take `?group=` from the Report pickers branch
+ * on. An API pod older than that ignores the parameter it does not know and
+ * answers 200 — request `''`'s empty series, or worse the run's own data — so
+ * a group pick would draw figures that are not the group's with nothing
+ * failing. The response's `group` echo is the only thing that tells the two
+ * apart, so anything but the exact path asked for is this error, never data.
+ *
+ * Its MESSAGE is the sentence a reader is shown (the spec's "missing echo"
+ * state), so a chart that relays a failed query's text says the right thing
+ * even before anything branches on the class. `echoed` is what came back:
+ * `undefined` for a body with no `group` key, or for a group distribution's
+ * 404, which carries no body to echo with; `null` for an ordinary read's
+ * answer.
+ */
+export class GroupReadUnsupportedError extends Error {
+  readonly group: string;
+  readonly echoed: string | null | undefined;
+
+  constructor(group: string, echoed: string | null | undefined, options?: ErrorOptions) {
+    super('This server cannot narrow by group yet.', options);
+    this.name = 'GroupReadUnsupportedError';
+    this.group = group;
+    this.echoed = echoed;
+  }
+}
+
+/**
+ * A group read is over its REQUESTS' rows, and request rows are filed under
+ * `response_time` alone (`buildTree`'s `wantedFamily` says the same of the
+ * statistics table). Named once so the URL and the key cannot disagree.
+ */
+const GROUP_FAMILY = 'response_time';
+
+/** `''` is "(no group)", a real group path — compared exactly, never for truthiness. */
+function echoing<T extends { readonly group?: string | null | undefined }>(body: T, group: string): T {
+  if (body.group !== group) throw new GroupReadUnsupportedError(group, body.group);
+  return body;
+}
+
+/**
+ * THE GROUP IS AN OBJECT IN THE KEY, NOT A STRING, and that is what keeps this
+ * entry apart from every ordinary series read. `seriesQueryKey` puts `scope`
+ * and `name` at the same positions as strings, so a group spelled as a string
+ * there could meet `seriesQuery(id, 'group', 'Cart')` — the group drill-down's
+ * OWN series, a different answer — and `staleTime: Infinity` would serve one
+ * for the other for the life of the page. No string equals `{ group }`. The
+ * prefix stays `['run', id, 'series']`, so invalidating a run's series still
+ * reaches it.
+ */
+export const groupSeriesQueryKey = (id: string, group: string, window: Window | null) =>
+  ['run', id, 'series', 'request', { group }, GROUP_FAMILY, window?.fromMs ?? null, window?.toMs ?? null] as const;
+
+/**
+ * `/series?scope=request&group=` — every request `group` holds, merged into one
+ * series by the server, exactly, from their stored histograms.
+ *
+ * A body whose `group` is not exactly `group` rejects with
+ * `GroupReadUnsupportedError`; a 409 `GROUP_NOT_MERGEABLE` (a member with no
+ * exact stored histogram — a run from before exact statistics) is left the
+ * `ProblemError` it is, for the section to word; anything else throws as every
+ * read here does. `window` has no default: a group pick under a narrowed Report
+ * that forgot to pass it would draw the whole run under the window's handles.
+ *
+ * An empty series is a 200 like any other and is checked the same way: this
+ * server answers a group whose window holds none of its requests' buckets
+ * with `buckets: []` and the echo, and an older one answers request `''`'s
+ * `buckets: []` without it.
+ */
+export const groupSeriesQuery = (id: string, group: string, window: Window | null) => ({
+  queryKey: groupSeriesQueryKey(id, group, window),
+  queryFn: async () =>
+    echoing(await apiFetch(SeriesResponseSchema, groupSeriesPath(id, group, GROUP_FAMILY, window)), group),
+  staleTime: Infinity,
+});
+
+/** The group's distribution entry — an object in the key for the reason `groupSeriesQueryKey` gives. */
+export const groupDistributionQueryKey = (id: string, group: string, window: Window | null) =>
+  ['run', id, 'distribution', 'request', { group }, GROUP_FAMILY, window?.fromMs ?? null, window?.toMs ?? null] as const;
+
+/**
+ * `/distribution?scope=request&group=` — every request `group` holds in one
+ * distribution. A 200 is checked for its echo exactly as `groupSeriesQuery`
+ * checks it, and a 409 is left the `ProblemError` it is.
+ *
+ * ═══ EVERY 404 IS "THIS SERVER CANNOT NARROW", WINDOWED OR NOT ═══
+ *
+ * A 404 carries no echo, so it is read by what it can mean:
+ *
+ *   1. A server older than `group` ignores it and reads request `''`, which no
+ *      run has — so it answers 404 to EVERY group distribution read, windowed
+ *      or not.
+ *   2. This server answers 404 for a group it does not know (no members),
+ *      which the picker cannot offer: its names come from `/stats`.
+ *
+ * A QUIET WINDOW IS NOT A 404 HERE, and that is the difference from
+ * `distributionQuery` above, which turns a windowed 404 into an empty payload.
+ * This server answers a group whose window selects none of its requests'
+ * buckets with a 200: no bins, and the echo. So under a window a 404 can only
+ * be 1 or 2, and turning it into an empty payload would draw an older server's
+ * refusal as "No response times fall in the selected window" — the whole-run
+ * answer the echo exists to refuse, wearing a window's sentence instead. The
+ * empty window arrives as a 200, and passes the echo check like any other.
+ */
+export const groupDistributionQuery = (id: string, group: string, window: Window | null) => ({
+  queryKey: groupDistributionQueryKey(id, group, window),
+  queryFn: async () => {
+    let body: DistributionResponse;
+    try {
+      body = await apiFetch(DistributionResponseSchema, groupDistributionPath(id, group, GROUP_FAMILY, window));
+    } catch (error) {
+      if (error instanceof ProblemError && error.status === 404) {
+        throw new GroupReadUnsupportedError(group, undefined, { cause: error });
+      }
+      throw error;
+    }
+    return echoing(body, group);
   },
   staleTime: Infinity,
 });

@@ -123,6 +123,39 @@ export const distributionPath = (
   `&name=${encodeURIComponent(name)}&family=${encodeURIComponent(family)}` +
   rangeSuffix(window, '&');
 
+/* -------------------------------------------------------------------- *
+ * a group's requests merged — the Report's Group picker
+ * -------------------------------------------------------------------- */
+
+/**
+ * `scope=request&group=<path>`, AND NO `name` — not even the empty one the two
+ * builders above always spell out.
+ *
+ * The server's rule (`parseGroupPick`, `apps/api/src/common/validation.ts`):
+ * `group` merges every request a group holds, `name` reads one, and a request
+ * carrying both — an empty `name=` included — is 400 `INVALID_QUERY`. So these
+ * are their own builders rather than a `group` argument on `seriesPath`, whose
+ * `name=` would then have to be remembered away at every call. `group=` with
+ * an EMPTY value is "(no group)", the requests that sit in no group, and is
+ * sent as such; an absent `group` is an ordinary read, which these never are.
+ */
+const groupQuery = (group: string, family: string): string =>
+  `?scope=request&group=${encodeURIComponent(group)}&family=${encodeURIComponent(family)}`;
+
+export const groupSeriesPath = (
+  id: string,
+  group: string,
+  family = 'response_time',
+  window: Window | null = null,
+): string => `${runPath(id)}/series${groupQuery(group, family)}${rangeSuffix(window, '&')}`;
+
+export const groupDistributionPath = (
+  id: string,
+  group: string,
+  family = 'response_time',
+  window: Window | null = null,
+): string => `${runPath(id)}/distribution${groupQuery(group, family)}${rangeSuffix(window, '&')}`;
+
 /**
  * TAKES NO WINDOW, and that is the endpoint's own shape rather than an
  * omission here: `/v1/runs/:id/errors` declares no `from`/`to`, which is why
