@@ -98,6 +98,23 @@ export interface StatKey {
 }
 
 /**
+ * One member request's stored bucket, as `memberSeries` answers it: the
+ * fields `series()` answers, plus the request's name and the bucket's two
+ * status histograms.
+ */
+export interface StoredMemberBucket extends StoredBucket {
+  name: string;
+  /**
+   * Each column read on its own, `null` when that column is — a bucket written
+   * before the histograms existed. Never a half-pair silently completed: the
+   * caller refuses to merge a member it cannot merge exactly (409
+   * `GROUP_NOT_MERGEABLE`), and it can only do that if it sees the hole.
+   */
+  histogramOk: Histogram | null;
+  histogramKo: Histogram | null;
+}
+
+/**
  * The series query, shared verbatim between `MetricReader.series` and the
  * "prunes partitions" integration test (see metrics.integration.test.ts). That
  * sharing is load-bearing: `run_started_on = $1` is the partition-key predicate
@@ -131,6 +148,48 @@ export const SERIES_HISTOGRAMS_SQL = `SELECT start_offset_ms, histogram_ok, hist
           AND org_id = $3 AND project_id = $4
           AND scope = $5 AND name = $6 AND family = $7
         ORDER BY start_offset_ms`;
+
+/**
+ * Every member request's buckets for one group read, in ONE query (the Report
+ * pickers spec, "Merging series": all members in one round trip, rather than
+ * one series read per request).
+ *
+ * Shared verbatim with its "prunes partitions" integration test, for the same
+ * load-bearing reason as SERIES_SQL: `run_started_on = $1` is the
+ * partition-key predicate, and a test asserting the plan of a copy would keep
+ * passing after the real query lost it.
+ *
+ * `scope` is fixed at request: a group is merged from its requests, never from
+ * the group-scope rows the engine also stores under the group's own name. The
+ * run-scope row is named '' as well, so this predicate is also what keeps it
+ * out of a (no group) read. `name = ANY($6)` keeps the primary key's prefix
+ * (run_started_on, run_id, scope, name) usable for every member at once.
+ *
+ * Each bucket's two histograms ride along, unlike SERIES_SQL: a group read
+ * always merges them, so there is no cheaper read to keep them out of.
+ * Ordered by name, then offset, so the caller can split the rows per member
+ * in one pass.
+ */
+export const MEMBER_SERIES_SQL = `SELECT name, start_offset_ms, started_count, ended_count, ok_count, ko_count,
+              started_ok_count, started_ko_count,
+              min_ms, max_ms, mean_ms, percentiles, percentiles_ok, percentiles_ko,
+              histogram_ok, histogram_ko
+         FROM run_series_bucket
+        WHERE run_started_on = $1 AND run_id = $2
+          AND org_id = $3 AND project_id = $4
+          AND scope = 'request' AND family = $5 AND name = ANY($6::text[])
+        ORDER BY name, start_offset_ms`;
+
+/**
+ * Each member request's run-wide histograms, from `run_stat`: no partition
+ * key, because that table is not partitioned (see `trends` below). Request
+ * scope only, for the reason MEMBER_SERIES_SQL gives.
+ */
+export const MEMBER_HISTOGRAMS_SQL = `SELECT name, histogram_ok, histogram_ko
+         FROM run_stat
+        WHERE run_id = $1 AND org_id = $2 AND project_id = $3
+          AND scope = 'request' AND family = $4 AND name = ANY($5::text[])
+        ORDER BY name`;
 
 /**
  * Shared verbatim with the "prunes partitions" integration test, for the same
@@ -413,6 +472,74 @@ export class MetricReader {
     );
     return new Map(rows.map((r) => [
       r.start_offset_ms,
+      r.histogram_ok && r.histogram_ko
+        ? {
+            ok: Histogram.deserialize(new Uint8Array(r.histogram_ok)),
+            ko: Histogram.deserialize(new Uint8Array(r.histogram_ko)),
+          }
+        : null,
+    ]));
+  }
+
+  /**
+   * Every member request's buckets, with their names and histograms, in one
+   * query — `MEMBER_SERIES_SQL`. `names` are request names (a group's members);
+   * a name with no rows adds none, and an empty list answers an empty list.
+   * runStartedOn is REQUIRED for the same partition-pruning reason as series().
+   */
+  async memberSeries(
+    scope: ProjectScope,
+    runId: string,
+    runStartedOn: Date,
+    names: readonly string[],
+    family: string,
+  ): Promise<StoredMemberBucket[]> {
+    const { rows } = await this.pool.query(
+      MEMBER_SERIES_SQL,
+      [partitionDay(runStartedOn), runId, scope.orgId, scope.projectId, family, [...names]],
+    );
+    return rows.map((r) => ({
+      name: r.name,
+      startOffsetMs: r.start_offset_ms,
+      startedCount: r.started_count,
+      endedCount: r.ended_count,
+      okCount: r.ok_count,
+      koCount: r.ko_count,
+      // Not `?? 0`, for series()'s reason: absent is not zero.
+      startedOkCount: r.started_ok_count,
+      startedKoCount: r.started_ko_count,
+      minMs: r.min_ms,
+      maxMs: r.max_ms,
+      meanMs: r.mean_ms,
+      percentiles: r.percentiles as Record<string, number>,
+      percentilesOk: (r.percentiles_ok ?? {}) as Record<string, number>,
+      percentilesKo: (r.percentiles_ko ?? {}) as Record<string, number>,
+      histogramOk: r.histogram_ok ? Histogram.deserialize(new Uint8Array(r.histogram_ok)) : null,
+      histogramKo: r.histogram_ko ? Histogram.deserialize(new Uint8Array(r.histogram_ko)) : null,
+    }));
+  }
+
+  /**
+   * Each member request's run-wide OK and KO histograms, keyed by name, in one
+   * query. A row missing either column (a legacy row) maps to null rather than
+   * to a half-pair, as `histograms()` and `seriesHistograms()` do; a name with
+   * no row at all is ABSENT. The two are different answers: null is "this
+   * member exists and cannot be merged exactly", absence is "no such request".
+   */
+  async memberHistograms(
+    scope: ProjectScope,
+    runId: string,
+    names: readonly string[],
+    family: string,
+  ): Promise<Map<string, { ok: Histogram; ko: Histogram } | null>> {
+    const { rows } = await this.pool.query<{
+      name: string; histogram_ok: Buffer | null; histogram_ko: Buffer | null;
+    }>(
+      MEMBER_HISTOGRAMS_SQL,
+      [runId, scope.orgId, scope.projectId, family, [...names]],
+    );
+    return new Map(rows.map((r) => [
+      r.name,
       r.histogram_ok && r.histogram_ko
         ? {
             ok: Histogram.deserialize(new Uint8Array(r.histogram_ok)),

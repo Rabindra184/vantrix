@@ -1,7 +1,7 @@
 import { bandsFrom, bucketLatency, Histogram, HISTOGRAM_KIND, mergedHistogram, percentilesOf, runEngine, storedPercentiles } from '@perfportal/statistics';
 import type { CanonicalEvent } from '@perfportal/core';
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { createPool, createPrisma, ERROR_SERIES_SQL, MetricReader, MetricWriter, SERIES_HISTOGRAMS_SQL, SERIES_SQL, MAX_OFFSET_MS, USER_SERIES_SQL, WINDOWED_BUCKETS_SQL } from '../src/index.js';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createPool, createPrisma, ERROR_SERIES_SQL, MEMBER_SERIES_SQL, MetricReader, MetricWriter, SERIES_HISTOGRAMS_SQL, SERIES_SQL, MAX_OFFSET_MS, USER_SERIES_SQL, WINDOWED_BUCKETS_SQL } from '../src/index.js';
 import { requireDatabaseUrl, resetDatabase } from './support/db.js';
 
 const url = requireDatabaseUrl();
@@ -715,5 +715,122 @@ describe('windowed buckets — the int4 ceiling', () => {
       { fromMs: 0, toMs: Number.MAX_SAFE_INTEGER },
     );
     expect(rows.length).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * A group's figures are its member requests' rows merged (the Report pickers
+ * spec, "Merging series"). These two reads hand the API every member's rows at
+ * once; the merge itself is `mergeMemberSeries`, tested apart from the
+ * database. The fixture's two requests, GET /a and GET /b, stand in for the
+ * members of one group.
+ */
+describe('group member reads', () => {
+  const FAMILY = 'response_time';
+  const MEMBERS = ['GET /a', 'GET /b'];
+  const NOBODY = '00000000-0000-0000-0000-000000000000';
+
+  it('memberSeries reads every member\'s buckets, named and with their histograms, in one query', async () => {
+    const ctx = await seedRun();
+    const result = await persist(ctx);
+    const reader = new MetricReader(pool);
+    const tenant = { orgId: ctx.orgId, projectId: ctx.projectId };
+
+    // The single-name read is the reference for every stored field, so the
+    // member read can only differ by carrying the name and the histograms.
+    const expected: Array<Record<string, unknown>> = [];
+    for (const name of MEMBERS) {
+      const buckets = await reader.series(tenant, ctx.runId, STARTED_ON, { scope: 'request', name, family: FAMILY });
+      expect(buckets.length, name).toBeGreaterThan(1);
+      for (const b of buckets) expected.push({ ...b, name });
+    }
+
+    // An empty name and an unknown one ride along: the run-scope row is named
+    // '' and must not leak in, and a name with no rows adds nothing.
+    const spy = vi.spyOn(pool, 'query');
+    const rows = await reader.memberSeries(tenant, ctx.runId, STARTED_ON, ['', ...MEMBERS, 'GET /nope'], FAMILY);
+    const sent = spy.mock.calls.map((c) => c[0]);
+    spy.mockRestore();
+    // One round trip, and the exported string, so the pruning case below
+    // EXPLAINs exactly what runs.
+    expect(sent).toEqual([MEMBER_SERIES_SQL]);
+
+    // Ordered by name, then offset, field for field what series() answers.
+    expect(rows).toEqual(expected.map((e) => expect.objectContaining(e)));
+
+    // Each row's histograms are the engine's own for that bucket, byte for byte.
+    for (const row of rows) {
+      const engine = [...result.series.values()].find(
+        (v) => v.scope === 'request' && v.name === row.name && v.family === FAMILY)!;
+      const b = engine.buckets.find((x) => x.startOffsetMs === row.startOffsetMs)!;
+      expect(row.histogramOk!.serialize()).toEqual(b.histogramOk.serialize());
+      expect(row.histogramKo!.serialize()).toEqual(b.histogramKo.serialize());
+    }
+
+    // A column the row never recorded is null on its own, never a guess.
+    const first = rows[0]!;
+    await pool.query(
+      `UPDATE run_series_bucket SET histogram_ko = NULL
+        WHERE run_id = $1 AND scope = 'request' AND name = $2 AND family = $3 AND start_offset_ms = $4`,
+      [ctx.runId, first.name, FAMILY, first.startOffsetMs],
+    );
+    const after = await reader.memberSeries(tenant, ctx.runId, STARTED_ON, MEMBERS, FAMILY);
+    expect(after[0]!.histogramKo).toBeNull();
+    expect(after[0]!.histogramOk).not.toBeNull();
+    expect(after.slice(1).every((r) => r.histogramKo !== null)).toBe(true);
+
+    // Another family, another project, and no names at all answer nothing.
+    expect(await reader.memberSeries(tenant, ctx.runId, STARTED_ON, MEMBERS, 'group_cumulated')).toEqual([]);
+    expect(await reader.memberSeries(
+      { orgId: ctx.orgId, projectId: NOBODY }, ctx.runId, STARTED_ON, MEMBERS, FAMILY)).toEqual([]);
+    expect(await reader.memberSeries(tenant, ctx.runId, STARTED_ON, [], FAMILY)).toEqual([]);
+  });
+
+  it('prunes partitions — the member series query plan touches one partition', async () => {
+    const ctx = await seedRun();
+    await persist(ctx);
+    // EXPLAINs the exported constant, not a copy (see SERIES_SQL's docstring),
+    // and counts distinct partition names, as the series pruning case does.
+    const { rows } = await pool.query<{ 'QUERY PLAN': string }>(
+      `EXPLAIN ${MEMBER_SERIES_SQL}`,
+      [STARTED_ON, ctx.runId, ctx.orgId, ctx.projectId, FAMILY, MEMBERS],
+    );
+    const plan = rows.map((r) => r['QUERY PLAN']).join('\n');
+    expect(new Set(plan.match(/run_series_bucket_2026_\d\d/g) ?? []).size).toBe(1);
+  });
+
+  it('memberHistograms maps each member to its run-wide histograms, a half-recorded row to null, and leaves an unknown name out', async () => {
+    const ctx = await seedRun();
+    const result = await persist(ctx);
+    const reader = new MetricReader(pool);
+    const tenant = { orgId: ctx.orgId, projectId: ctx.projectId };
+
+    // '' is the run-scope row's name: request scope only, so it is absent too.
+    const map = await reader.memberHistograms(tenant, ctx.runId, ['', ...MEMBERS, 'GET /nope'], FAMILY);
+    expect([...map.keys()]).toEqual(MEMBERS);
+    for (const name of MEMBERS) {
+      const engine = result.stats.find((s) => s.scope === 'request' && s.name === name && s.family === FAMILY)!;
+      const entry = map.get(name);
+      expect(entry, name).not.toBeNull();
+      expect(entry!.ok.serialize()).toEqual(engine.histogramOk.serialize());
+      expect(entry!.ko.serialize()).toEqual(engine.histogramKo.serialize());
+    }
+
+    // A legacy row missing either column is null, and still present: "this
+    // member cannot be merged" is not "this member does not exist".
+    await pool.query(
+      `UPDATE run_stat SET histogram_ok = NULL WHERE run_id = $1 AND scope = 'request' AND name = $2`,
+      [ctx.runId, MEMBERS[0]],
+    );
+    await pool.query(
+      `UPDATE run_stat SET histogram_ko = NULL WHERE run_id = $1 AND scope = 'request' AND name = $2`,
+      [ctx.runId, MEMBERS[1]],
+    );
+    const after = await reader.memberHistograms(tenant, ctx.runId, MEMBERS, FAMILY);
+    expect([...after.entries()]).toEqual([[MEMBERS[0], null], [MEMBERS[1], null]]);
+
+    expect((await reader.memberHistograms(
+      { orgId: ctx.orgId, projectId: NOBODY }, ctx.runId, MEMBERS, FAMILY)).size).toBe(0);
+    expect((await reader.memberHistograms(tenant, ctx.runId, MEMBERS, 'group_cumulated')).size).toBe(0);
   });
 });
