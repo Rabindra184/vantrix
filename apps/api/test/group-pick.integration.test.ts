@@ -310,10 +310,32 @@ describe('GET /v1/runs/{id}/distribution?group=', () => {
     }
   });
 
-  it('a group with no members answers 404, as an unknown name does', async () => {
-    const res = await get(`/v1/runs/${runId}/distribution?scope=request&group=Nope&family=response_time`);
-    expect(res.status).toBe(404);
-    expect(res.body.remediation).toMatch(/GET \/v1\/runs\/\{id\}\/stats/);
+  it('a group with no members answers 404, as an unknown name does, windowed or not', async () => {
+    for (const query of ['', '&from=0&to=5000']) {
+      const res = await get(`/v1/runs/${runId}/distribution?scope=request&group=Nope&family=response_time${query}`);
+      expect(res.status, query).toBe(404);
+      expect(res.body.remediation).toMatch(/GET \/v1\/runs\/\{id\}\/stats/);
+    }
+  });
+
+  /**
+   * NOT the ordinary read's quiet-window 404. An API pod older than `?group=`
+   * answers every group distribution 404 with no body to echo, so a quiet
+   * window must be told apart from it: 200, empty, echoed.
+   */
+  it('a group with members whose window selects none of their buckets answers 200, empty, echoed', async () => {
+    const range = { fromMs: 0, toMs: 5000 };
+    // Vacuity: Cart has members, and none of them starts inside the window.
+    const { okN, koN } = oracleDistribution(inCart, range);
+    expect(okN + koN).toBe(0);
+    expect(oracleDistribution(inCart).okN).toBeGreaterThan(0);
+
+    const body = await groupDistribution('Cart', '&from=0&to=5000');
+    expect(body.window).toEqual({ ...range, bucketWidthMs: WIDTH });
+    expect({ labels: body.labels, okCount: body.okCount, koCount: body.koCount, okPercent: body.okPercent })
+      .toEqual({ labels: [], okCount: [], koCount: [], okPercent: [] });
+    expect(body.scope).toBe('request');
+    expect(body.name).toBe('');
   });
 });
 

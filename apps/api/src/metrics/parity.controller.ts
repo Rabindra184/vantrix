@@ -110,9 +110,19 @@ export class ParityController {
    * would be counted here — and its window would be snapped to whatever width
    * those rows suggested.
    *
-   * No members, or a window that selects none of their buckets, is the 404 the
-   * ordinary read gives an unknown name or a quiet window — "nothing to fold",
-   * not an empty distribution.
+   * ═══ A 404 HERE MEANS "UNKNOWN GROUP, OR A SERVER OLDER THAN THIS" ═══
+   *
+   * A group with NO members is the 404 the ordinary read gives an unknown
+   * name (the spec's rule). A group WITH members whose window selects none of
+   * their buckets is NOT: it answers 200, an empty distribution (the shape
+   * `distribution` gives two empty histograms), the snapped window and the
+   * `group` echo. Unlike the ordinary read, whose quiet-window 404 the browser
+   * reads as an empty window, a group read cannot afford that 404: an API pod
+   * older than `?group=` ignores the parameter, reads request "" and answers
+   * 404 to EVERY group distribution, whole-run and windowed, with no body to
+   * echo. Were a quiet window a 404 too, the browser could not tell "nothing
+   * in this window" from "this server cannot narrow by group", and would draw
+   * the empty sentence over an older pod's refusal.
    */
   async #groupDistribution(
     id: string,
@@ -144,8 +154,10 @@ export class ParityController {
         if (!h) continue;
         ok.merge(h.ok);
         ko.merge(h.ko);
-        found = true;
       }
+      // Found when the group HAS members, whatever the window selected: a
+      // quiet window is an empty answer, not a 404 (see the docstring).
+      found = members.length > 0;
     }
 
     if (!found)

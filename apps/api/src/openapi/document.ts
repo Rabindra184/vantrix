@@ -284,7 +284,12 @@ const parameters: Record<string, ParameterObject> = {
       'histograms. An EMPTY value ("group=") means the requests that sit in no group. Needs ' +
       '"scope=request" and no "name"; the answer then reads scope "request", name "" and ' +
       '"group" the path asked — an answer without that echo is from a server that does not ' +
-      'know this parameter. A group with no requests answers as an unknown name does. Given ' +
+      'know this parameter. A group with no requests answers as an unknown name does (an ' +
+      'empty "buckets" on /series, 404 on /distribution). A group WITH requests whose window ' +
+      'selects none of their buckets answers 200 on /distribution — an empty distribution, the ' +
+      'snapped window and the echo — never the 404 the ordinary read gives a quiet window, so ' +
+      'a group /distribution 404 means only an unknown group or a server older than this ' +
+      'parameter (which ignores it and 404s every group read). Given ' +
       'more than once, beside a "name", or with any other "scope" (absent included): 400 ' +
       'INVALID_QUERY. A request whose stored histograms are absent or not exact (a run ingested ' +
       'before 2026-10-15, not recomputed): 409 GROUP_NOT_MERGEABLE.',

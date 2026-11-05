@@ -59,7 +59,10 @@ function controllerWith(
   return new MetricsController(runs, reader, projects, telemetrySamples);
 }
 
-const req = { tenant: { orgId: RUN.orgId, projectId: RUN.projectId } } as unknown as Request;
+// `query` too: Express always sets one, and the handler reads the RAW query
+// for `?group=` (see `parseGroupPick`), whose scope and name its own
+// defaults would hide.
+const req = { tenant: { orgId: RUN.orgId, projectId: RUN.projectId }, query: {} } as unknown as Request;
 
 describe('GET /v1/runs/:id/series — bucketWidthMs', () => {
   it('reports a coalesced width, not the 1000ms of the common case', async () => {
