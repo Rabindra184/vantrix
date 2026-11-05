@@ -751,9 +751,13 @@ function VirtualUsersSection({ runId }: { readonly runId: string }) {
   if (!terminal) return <div className={REPORT_GRID}>{narrowedUsers !== undefined && draw(narrowedUsers)}</div>;
   return (
     <div className="flex flex-col gap-4">
+      {/* The picker's box only when it draws something — a control, or a
+          value the link named. Empty, it is still a child of this column, and
+          its gap would stand 16 px above the grid while the scenarios are
+          loading, and for good in a run that recorded none. */}
       {pick.failed ? (
         <ScenariosUnavailable linked={params.has('users-scenario')} />
-      ) : (
+      ) : pick.scenarios.length === 0 && pick.named === null ? null : (
         <div data-testid="users-scenario-picker">
           <ReportFilterControl
             label="Scenario"

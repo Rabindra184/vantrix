@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Outlet, Route, Routes, useLocation, type Location } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -9,11 +9,14 @@ import { AgentStatusResponseSchema, AgentSummaryResponseSchema, StatsResponseSch
 import type { RunResponse, UsersResponse } from '@perfportal/contracts';
 import agentRun from './fixtures/agent-run.json';
 import reference from './fixtures/reference-run.json';
+import { ProblemError } from '../src/api/fetch';
+import { usersQueryKey } from '../src/api/metrics';
 import { runQueryKey } from '../src/api/run';
 import { toIndicators, toRequestCounts } from '../src/charts/transforms/indicators';
 import { toConcurrentUsers, toUserEndRate, toUserStartRate } from '../src/charts/transforms/users';
 import type { ChartData } from '../src/charts/types';
 import RunReport from '../src/routes/RunReport';
+import { explain } from '../src/routes/payload';
 import { narrowStats, narrowUsers } from '../src/routes/report/narrow';
 import type { RunWindowContext } from '../src/routes/useRunWindow';
 import { UNKNOWN_ACCESS } from './support/access';
@@ -142,7 +145,12 @@ interface UsersBodies {
   readonly windowed?: unknown;
   /** Holds the whole-run answer until it resolves. */
   readonly gate?: Promise<unknown>;
+  /** Told as a WINDOWED `/users` is answered. */
+  readonly onWindowed?: () => void;
 }
+
+/** What the stub's `/users` answers for `body: null`: a 404 problem document. */
+const USERS_NOT_FOUND = { status: 404, title: 'Not Found', code: 'NOT_FOUND', detail: 'stub', remediation: 'stub' } as const;
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -190,12 +198,10 @@ function stubFetch(
     }
     if (path.endsWith('/users')) {
       const windowed = parsed.searchParams.has('from');
+      if (windowed) users.onWindowed?.();
       if (windowed && users.windowed !== undefined) return Promise.resolve(json(users.windowed));
       const body = users.body === undefined ? reference.users : users.body;
-      const answer = () =>
-        body === null
-          ? json({ status: 404, title: 'Not Found', code: 'NOT_FOUND', detail: 'stub', remediation: 'stub' }, 404)
-          : json(body);
+      const answer = () => (body === null ? json(USERS_NOT_FOUND, 404) : json(body));
       return windowed || users.gate === undefined ? Promise.resolve(answer()) : users.gate.then(answer);
     }
     if (path.endsWith('/agent')) {
@@ -259,6 +265,7 @@ function renderReport({
 } = {}) {
   const seen = stubFetch(stats, telemetry, agent, requests, users);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  lastClient = client;
   client.setQueryData(runQueryKey(RUN_ID), { state: 'ready', run: readyRun(run) });
   render(
     <QueryClientProvider client={client}>
@@ -287,6 +294,8 @@ function renderReport({
 
 /** Where the page's last navigation left the URL, for the cases that read a write. */
 let lastLocation: Location | null = null;
+/** The last report's query client, for a case that waits on what the page holds. */
+let lastClient: QueryClient | null = null;
 function LocationProbe() {
   lastLocation = useLocation();
   return null;
@@ -1101,6 +1110,9 @@ describe('RunReport — the Virtual users scenario pick', () => {
   const BROWSE = { kind: 'scenario', name: 'Browse' } as const;
   const section = () => screen.getByTestId('section-virtual-users');
   const picker = () => within(section()).getByTestId('users-scenario-picker');
+  /** The picker's box exists only once it draws something (review M1), so a
+   *  case reading it before the scenarios answer waits for it. */
+  const findPicker = () => within(section()).findByTestId('users-scenario-picker');
   const options = (select: HTMLElement) => [...select.querySelectorAll('option')].map((o) => o.textContent);
   const atPath = (seen: readonly string[], endpoint: string) =>
     seen.filter((u) => path(u) === `/v1/runs/${RUN_ID}${endpoint}`);
@@ -1138,7 +1150,7 @@ describe('RunReport — the Virtual users scenario pick', () => {
   it('draws Scenario with All scenarios, Browse and Checkout', async () => {
     renderReport({ url: `/runs/${RUN_ID}/report#virtual-users` });
     expect(SCENARIOS).toEqual(['Browse', 'Checkout']);
-    const select = await within(picker()).findByLabelText('Scenario');
+    const select = await within(await findPicker()).findByLabelText('Scenario');
     expect(options(select)).toEqual(['All scenarios', ...SCENARIOS]);
     expect(select).toHaveValue('*');
     // No pick, no narrowing: the run's own users, total included.
@@ -1179,10 +1191,45 @@ describe('RunReport — the Virtual users scenario pick', () => {
   it('one scenario shows a read-only Scenario field', async () => {
     const one = narrowUsers(USERS, 'Browse');
     renderReport({ url: `/runs/${RUN_ID}/report#virtual-users`, users: { body: one } });
-    const field = picker();
+    const field = await findPicker();
     expect(await within(field).findByText('Browse')).toBeVisible();
     expect(within(field).getByText('Scenario')).toBeVisible();
     expect(within(section()).queryByRole('combobox')).toBeNull();
+  });
+
+  /*
+   * Review M1: the picker's box is drawn only when it draws something. Empty,
+   * it is still a child of the section's column, and the column's gap stands
+   * 16 px above the grid — while the scenarios load, and for good in a run
+   * that recorded none. Each state below is waited into first, so the absence
+   * is a claim about it rather than about a first render.
+   */
+  it('draws no picker box while the scenarios are loading', async () => {
+    let release!: (value?: unknown) => void;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const seen = renderReport({ url: `/runs/${RUN_ID}/report#virtual-users`, users: { gate } });
+    await waitFor(() => expect(seen.filter(isWholeRunUsers)).not.toHaveLength(0));
+    expect(within(section()).getByTestId('chart-concurrent-users')).toHaveTextContent('Loading…');
+    expect(within(section()).queryByTestId('users-scenario-picker')).toBeNull();
+    release();
+    // And drawn once there are scenarios to offer.
+    expect(within(await findPicker()).getByLabelText('Scenario')).toBeInTheDocument();
+  });
+
+  it('draws no picker box for a run that recorded no scenarios', async () => {
+    const none: UsersResponse = { ...USERS, scenarios: [], total: [] };
+    renderReport({ url: `/runs/${RUN_ID}/report#virtual-users`, users: { body: none } });
+    const empty = toConcurrentUsers(none, { x: 'ms', windowSelected: false }).empty;
+    expect(empty, 'a run with no scenarios has an empty-chart sentence').toBeTruthy();
+    // Settled: a chart can say the run had no user activity only once the
+    // scenarios have answered.
+    await waitFor(() =>
+      expect(within(within(section()).getByTestId('chart-concurrent-users')).getByRole('status')).toHaveTextContent(empty!),
+    );
+    expect(within(section()).queryByTestId('users-scenario-picker')).toBeNull();
+    expect(within(section()).queryByTestId('users-names-unavailable')).toBeNull();
   });
 
   it('the pick is written as users-scenario=Browse with #virtual-users', async () => {
@@ -1190,7 +1237,7 @@ describe('RunReport — the Virtual users scenario pick', () => {
       url: `/runs/${RUN_ID}/report?from=10000&to=20000#virtual-users`,
       window: { fromMs: 10_000, toMs: 20_000, bucketWidthMs: 1_000 },
     });
-    const select = await within(picker()).findByLabelText('Scenario');
+    const select = await within(await findPicker()).findByLabelText('Scenario');
     await waitFor(() => expect(options(select)).toEqual(['All scenarios', ...SCENARIOS]));
     await userEvent.selectOptions(select, 'Browse');
     const written = new URLSearchParams(lastLocation!.search);
@@ -1209,7 +1256,7 @@ describe('RunReport — the Virtual users scenario pick', () => {
 
   it('a link naming a scenario the run lacks reads as All, and says so', async () => {
     renderReport({ url: `/runs/${RUN_ID}/report?users-scenario=Nope#virtual-users` });
-    const note = await within(picker()).findByTestId('filter-unknown');
+    const note = await within(await findPicker()).findByTestId('filter-unknown');
     expect(note.textContent).toContain('Nope');
     expect(note.textContent).toMatch(/never/);
     expect(note.textContent).toMatch(/all scenarios/);
@@ -1260,14 +1307,27 @@ describe('RunReport — the Virtual users scenario pick', () => {
     const gate = new Promise((resolve) => {
       release = resolve;
     });
-    const seen = renderReport({
-      url: `/runs/${RUN_ID}/report?users-scenario=Browse#virtual-users`,
-      window: { fromMs: 10_000, toMs: 20_000, bucketWidthMs: 1_000 },
-      users: { gate },
+    let answered!: () => void;
+    const windowedAnswered = new Promise<void>((resolve) => {
+      answered = resolve;
     });
-    await waitFor(() => expect(atPath(seen, '/users').some((u) => /[?&]from=10000/.test(u))).toBe(true));
-    // Long enough for the windowed answer to have landed and been drawn, if it were.
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    const window = { fromMs: 10_000, toMs: 20_000, bucketWidthMs: 1_000 };
+    renderReport({
+      url: `/runs/${RUN_ID}/report?users-scenario=Browse#virtual-users`,
+      window,
+      users: { gate, onWindowed: () => answered() },
+    });
+    // Waited on, never timed (review M2): the stub has answered the charts'
+    // windowed read, and the page's cache holds that answer — the moment an
+    // early draw would put every scenario on screen.
+    await windowedAnswered;
+    await waitFor(() => expect(lastClient!.getQueryState(usersQueryKey(RUN_ID, window))?.status).toBe('success'));
+    // TanStack tells its observers on a zero-delay timer queued as the answer
+    // landed; one more, queued after it, runs once they have been told, and
+    // `act` renders what they were told before anything is read.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
     // The figure stands in its place saying it is loading, with no row drawn.
     expect(within(section()).getByTestId('chart-concurrent-users')).toHaveTextContent('Loading…');
     expect(tableOf('concurrent-users')).toEqual([]);
@@ -1313,6 +1373,30 @@ describe('RunReport — the Virtual users scenario pick', () => {
     expect(line.textContent).not.toMatch(/link/);
   });
 
+  /*
+   * Review M3. With NO window the scenario list IS the charts' read — one key,
+   * one request — so when it fails there is nothing unnarrowed to draw either.
+   * That state is what the line's wording rests on: it says only that the
+   * charts are not narrowed to the link's scenario, never that every scenario
+   * is shown (ruling R14's words, false here), and each chart says, in its
+   * own place, that its data could not be loaded.
+   */
+  it('with no window, a failed scenario list draws the line and each chart’s own error, and no figure', async () => {
+    renderReport({ url: `/runs/${RUN_ID}/report?users-scenario=Browse#virtual-users`, users: { body: null } });
+    const line = await within(section()).findByTestId('users-names-unavailable');
+    expect(line.textContent).toMatch(/link.*could not be checked/);
+    expect(line.textContent).toMatch(/not narrowed/);
+    expect(line.textContent).not.toMatch(/every scenario/);
+    expect(within(section()).queryByTestId('users-scenario-picker')).toBeNull();
+    const failed = explain(new ProblemError(404, USERS_NOT_FOUND), 'chart');
+    for (const [id] of CHARTS) {
+      const status = within(within(section()).getByTestId(`chart-${id}`)).getByRole('status');
+      expect(status, id).toHaveTextContent(failed);
+      expect(status, id).not.toHaveTextContent('Loading…');
+      expect(tableOf(id), id).toEqual([]);
+    }
+  });
+
   // UNDER A WINDOW, because only there is the scenario list a read of its own:
   // with none it is the charts' own `/users`, one key and one request.
   it('keeps the picker behind the phone’s gate, and fetches nothing for it', async () => {
@@ -1325,6 +1409,6 @@ describe('RunReport — the Virtual users scenario pick', () => {
     expect(within(section()).queryByTestId('users-scenario-picker')).toBeNull();
     expect(atPath(seen, '/users')).toEqual([]);
     await userEvent.click(open);
-    expect(await within(picker()).findByLabelText('Scenario')).toHaveValue('Browse');
+    expect(await within(await findPicker()).findByLabelText('Scenario')).toHaveValue('Browse');
   });
 });
