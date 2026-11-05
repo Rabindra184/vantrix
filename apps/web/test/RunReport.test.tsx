@@ -134,7 +134,7 @@ interface RequestsBodies {
   readonly namesGate?: Promise<unknown>;
   /** How a group read (`?group=`) answers: with its echo (the default), without
    *  one (an API older than the pickers), or 409 `GROUP_NOT_MERGEABLE`. */
-  readonly group?: 'echo' | 'no-echo' | 'not-mergeable';
+  readonly group?: 'echo' | 'no-echo' | 'not-mergeable' | 'distribution-404';
 }
 
 /** How `/users` answers: the whole run (no `from`) and a window apart, as the
@@ -188,6 +188,12 @@ function stubFetch(
       }
       // An older API ignores `group` and answers the run's own body, echoing nothing.
       if (requests.group === 'no-echo') return Promise.resolve(json(body));
+      // Mid-deploy: a new pod answers the series, an old one 404s the distribution.
+      if (requests.group === 'distribution-404' && path.endsWith('/distribution')) {
+        return Promise.resolve(
+          json({ status: 404, title: 'Not Found', code: 'NOT_FOUND', detail: 'stub', remediation: 'stub' }, 404),
+        );
+      }
       return Promise.resolve(json({ ...body, scope: 'request', name: '', group }));
     }
     if (path.endsWith('/stats')) {
@@ -758,7 +764,8 @@ describe('RunReport — the Requests pickers', () => {
 
   it('says once that the server cannot merge a group, and draws no group chart under it', async () => {
     renderReport({ url: `/runs/${RUN_ID}/report?requests-group=Cart`, requests: { group: 'no-echo' } });
-    const words = 'The four response-time charts are not drawn, because this server cannot merge a group’s requests.';
+    const words =
+      'The per-second, percentile and distribution charts are not drawn, because this server cannot merge a group’s requests.';
     const sentence = await within(requests()).findByText(words);
     expect(sentence).toBeVisible();
     expect(within(requests()).getAllByText(words)).toHaveLength(1);
@@ -770,6 +777,29 @@ describe('RunReport — the Requests pickers', () => {
     }
     // What the browser narrows itself still draws.
     expect(within(requests()).getByTestId('chart-indicators')).toBeInTheDocument();
+  });
+
+  // Final re-review: a distribution-only failure (a rolling deploy) said the
+  // API layer's "cannot narrow by group yet" beside narrowed charts, so one
+  // cause had two wordings. It takes the section sentence's cause now.
+  it('words a distribution-only failure by the same cause, in the charts it feeds alone', async () => {
+    renderReport({ url: `/runs/${RUN_ID}/report?requests-group=Cart`, requests: { group: 'distribution-404' } });
+    for (const id of ['distribution', 'percentile-distribution']) {
+      await waitFor(() =>
+        expect(within(within(requests()).getByTestId(`chart-${id}`)).getByRole('status')).toHaveTextContent(
+          /cannot merge a group’s requests/,
+        ),
+      );
+    }
+    // The series answered, so its charts draw and no section-wide sentence
+    // shows. A chart's id exists from first paint, loading or not, so the
+    // claim is that neither is undrawn: no loading line, no failure line.
+    for (const id of ['requests-and-responses', 'percentiles']) {
+      const chart = within(requests()).getByTestId(`chart-${id}`);
+      expect(chart.textContent, id).not.toMatch(/Loading…|cannot merge|Not drawn/);
+    }
+    expect(within(requests()).queryByTestId('group-unsupported')).toBeNull();
+    expect(requests().textContent).not.toMatch(/cannot narrow by group/);
   });
 
   it('says a run’s group figures cannot be merged in each chart they feed', async () => {

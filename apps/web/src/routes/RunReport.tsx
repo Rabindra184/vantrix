@@ -397,8 +397,22 @@ function distributionRead(runId: string, narrowed: Narrowed, window: Window | nu
   return distributionQuery(runId, 'run', '', 'response_time', window);
 }
 
-/** In the four group charts' place when this server cannot merge a group's requests (ruling R8). */
-const GROUP_UNSUPPORTED = 'The four response-time charts are not drawn, because this server cannot merge a group’s requests.';
+/**
+ * In the four group charts' place when this server cannot merge a group's
+ * requests (ruling R8). Named by what they show, not as "response time": one
+ * of the four is requests and responses per second, and Response time ranges,
+ * which the browser narrows itself, draws right beside this sentence.
+ */
+const GROUP_UNSUPPORTED =
+  'The per-second, percentile and distribution charts are not drawn, because this server cannot merge a group’s requests.';
+
+/**
+ * The same cause in ONE chart's place: a distribution-only failure, which a
+ * rolling deploy produces (a new pod answers the series, an old one 404s the
+ * distribution). One cause, one wording — never the API layer's "cannot
+ * narrow by group", beside charts that are narrowed.
+ */
+const CHART_UNSUPPORTED = 'Not drawn, because this server cannot merge a group’s requests.';
 
 /** The spec's 409 state (section 7), in the section's words rather than the server's. */
 const NOT_MERGEABLE = "This run's group figures cannot be merged: it predates exact statistics.";
@@ -411,7 +425,7 @@ const NOT_MERGEABLE = "This run's group figures cannot be merged: it predates ex
  * `Payload` to explain as it explains every other failure.
  */
 function groupFailure(error: unknown): string | null {
-  if (error instanceof GroupReadUnsupportedError) return error.message;
+  if (error instanceof GroupReadUnsupportedError) return CHART_UNSUPPORTED;
   if (error instanceof ProblemError && error.code === 'GROUP_NOT_MERGEABLE') return NOT_MERGEABLE;
   return null;
 }
