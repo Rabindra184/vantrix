@@ -203,8 +203,8 @@ describe('mergeMemberSeries', () => {
   it('stays exact when a sparse member\'s smallest gap is not a real bucket width', () => {
     // A request called every 3 s at 1 s buckets: its smallest gap is 3000,
     // which is not 1000 x 2^k. B coalesced to 2 s, and its bucket [2000, 4000)
-    // holds a request starting at 3500. Merged at 3000, that bucket would land
-    // in [0, 3000) and carry the 3500 request with it.
+    // holds a request starting at 3500. Merged at the gap, 3000, that bucket
+    // would land in [0, 3000) and carry the 3500 request with it.
     const aRequests: Request[] = [0, 3000, 6000].map((t) => ({ startMs: t + 100, endMs: t + 300, ok: true }));
     const bRequests: Request[] = [100, 1100, 2100, 3500, 4100, 5100, 6100, 7100].map((t, i) => ({
       startMs: t, endMs: t + 150 + i * 10, ok: i !== 3,
@@ -216,8 +216,10 @@ describe('mergeMemberSeries', () => {
 
     const merged = mergeMemberSeries([a.buckets(), b.buckets()]);
 
-    // A real width, at least every member's.
-    expect(merged.widthMs).toBe(4000);
+    // The widest real width every member's offsets allow: A's 0/3000/6000 are
+    // only all divisible by 1000, B's by 2000. Rounding A's 3000 gap up to a
+    // real width would say 4000, coarser than anything requires.
+    expect(merged.widthMs).toBe(2000);
     // Every merged bucket holds exactly the requests that started inside it.
     const all = [...aRequests, ...bRequests];
     for (const m of merged.buckets) {
@@ -231,5 +233,39 @@ describe('mergeMemberSeries', () => {
       }));
     }
     expect(merged.buckets.reduce((n, m) => n + m.startedCount, 0)).toBe(all.length);
+  });
+
+  it('keeps a group at 1 s when a sparse member is still at 1 s buckets', () => {
+    // Every 3 s beside a dense request, both at 1 s buckets: the union is a
+    // 1 s series, and nothing in either member's offsets calls for coarser.
+    // A gap-based width, rounded up, would merge this whole group at 4 s.
+    const sparse: Request[] = [0, 3000, 6000].map((t) => ({ startMs: t + 100, endMs: t + 300, ok: true }));
+    const dense: Request[] = Array.from({ length: 7 }, (_, i) => ({
+      startMs: i * 1000 + 200, endMs: i * 1000 + 450 + i * 20, ok: i !== 4,
+    }));
+    const a = seriesOf(sparse, 100);
+    const b = seriesOf(dense, 100);
+    const union = seriesOf([...sparse, ...dense], 100);
+    expect(a.buckets().map((x) => x.startOffsetMs)).toEqual([0, 3000, 6000]);
+    expect(union.widthMs).toBe(1000);
+
+    const merged = mergeMemberSeries([a.buckets(), b.buckets()]);
+
+    expect(merged.widthMs).toBe(1000);
+    expect(merged.buckets).toEqual(union.buckets().map(expectedOf));
+  });
+
+  it('reads a member whose offsets are all divisible by a wider width at that width', () => {
+    // A request every 10 s: 0, 10000, 20000 are all divisible by 2000, so its
+    // series could really be at 2 s. Merging at 1 s would split a 2 s bucket,
+    // so the group merges at 2 s — exact, if coarser than the dense member.
+    const tenSecond = [bucketAt(0, [10]), bucketAt(10000, [20]), bucketAt(20000, [30])];
+    const dense = [bucketAt(0, [40]), bucketAt(1000, [50]), bucketAt(2000, [60])];
+
+    const merged = mergeMemberSeries([tenSecond, dense]);
+
+    expect(merged.widthMs).toBe(2000);
+    expect(merged.buckets.map((x) => x.startOffsetMs)).toEqual([0, 2000, 10000, 20000]);
+    expect(merged.buckets.map((x) => x.startedCount)).toEqual([3, 1, 1, 1]);
   });
 });

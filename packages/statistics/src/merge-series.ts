@@ -1,5 +1,4 @@
 import { bucketLatency, type BucketLatency } from './bucket-latency.js';
-import { inferBucketWidthMs } from './buckets.js';
 import { Histogram } from './histogram.js';
 
 /**
@@ -52,23 +51,37 @@ interface Accumulator {
  *
  * Each request series coalesces on its own, so two members can carry
  * different widths. Every real width is 1000 x 2^k from offset 0, so a finer
- * bucket falls inside exactly one coarser one — re-bucketing to the coarsest
- * member width by `floor(offset / width) * width` and merging histograms is
- * therefore exact, the same argument that makes `BucketSeries`' own coalescing
- * lossless. The latency fields come from `bucketLatency`, the function the
- * engine writes them with, so a merged bucket cannot disagree with a series
- * the engine would have built from the union.
+ * bucket falls inside exactly one coarser one — re-bucketing to a width every
+ * member's real width divides, by `floor(offset / width) * width`, and merging
+ * histograms is therefore exact, the same argument that makes `BucketSeries`'
+ * own coalescing lossless. The latency fields come from `bucketLatency`, the
+ * function the engine writes them with, so a merged bucket cannot disagree
+ * with a series the engine would have built from the union at that width.
  *
- * ═══ THE WIDTH IS ROUNDED UP TO A REAL ONE ═══
+ * ═══ THE WIDTH: THE LARGEST REAL WIDTH EACH MEMBER'S OFFSETS ALLOW ═══
  *
- * A member's width is read with `inferBucketWidthMs`, its smallest positive
- * gap — which is an upper bound on the real width, and not always a real
- * width itself: a request called every 3 s at 1 s buckets has no gap under
- * 3000. Merged at 3000, a 2 s member's bucket [2000, 4000) would land whole in
- * [0, 3000), carrying everything from 3000 to 4000 into the wrong bucket. The
- * next 1000 x 2^k at or above the largest gap is divisible by every member's
- * real width, so no member bucket straddles a merged one. On a member set
- * whose gaps are already real widths this changes nothing.
+ * Nothing stores a series' width; it has to be read off its offsets. A
+ * member's offsets are all `idx * w` for its real width `w = 1000 x 2^j`, so
+ * the largest `1000 x 2^k` that divides EVERY offset is at least `w` — never
+ * smaller, so merging at the maximum of those over the members puts no member
+ * bucket across two merged ones. It is also never coarser than needed by that
+ * evidence: it divides the member's smallest gap.
+ *
+ * The smallest gap itself (`inferBucketWidthMs`) is not safe to merge at: a
+ * request called every 3 s at 1 s buckets has no gap under 3000, and merged
+ * at 3000 a 2 s member's bucket [2000, 4000) lands whole in [0, 3000). Rounding
+ * that gap up to a real width is safe but coarser than it needs to be — the
+ * same 3 s request beside a dense 1 s one would merge the whole group at 4000
+ * where 1000 is exact. Each width is a power-of-two multiple of 1000, so the
+ * divisor rule reads the 3 s request as 1000 and keeps the group at 1 s.
+ *
+ * KNOWN LIMIT: a member with ONE bucket says nothing about its width and is
+ * read as 1000 — the answer the single-request series read gives it too
+ * (`inferBucketWidthMs`). That is wrong only for a single bucket whose series
+ * coalesced, which needs a project's unvalidated `maxBucketsEndpoint` of 1:
+ * a coalesce leaves at least two buckets once there were three to halve.
+ * Sizing a lone bucket by its offset's divisor instead would coarsen a whole
+ * group to 4 s for a request called once, four seconds in.
  *
  * A started count is `null` when any contributor's is, column by column: a
  * sum over an unknown is unknown, while the other column's sum stays exact.
@@ -76,14 +89,10 @@ interface Accumulator {
  * and writing into the first would change what every other reader of it sees.
  */
 export function mergeMemberSeries(members: readonly (readonly MemberBucket[])[]): MergedSeries {
-  let largestGapMs = 0;
+  let widthMs = 1000;
   for (const member of members) {
-    if (member.length === 0) continue;
-    // Sorted first: the smallest positive gap is only that between NEIGHBOURS.
-    const offsets = member.map((b) => b.startOffsetMs).sort((x, y) => x - y);
-    largestGapMs = Math.max(largestGapMs, inferBucketWidthMs(offsets));
+    widthMs = Math.max(widthMs, widestDividingWidth(member.map((b) => b.startOffsetMs)));
   }
-  const widthMs = realWidthAtLeast(largestGapMs);
 
   const byOffset = new Map<number, Accumulator>();
   for (const member of members) {
@@ -125,10 +134,17 @@ export function mergeMemberSeries(members: readonly (readonly MemberBucket[])[])
   };
 }
 
-/** The smallest real bucket width, 1000 x 2^k, at or above `ms`. */
-function realWidthAtLeast(ms: number): number {
+/**
+ * The largest real bucket width, 1000 x 2^k, dividing every one of a member's
+ * offsets — 1000 when there are fewer than two distinct offsets to read one
+ * from. Order-free: divisibility needs no neighbours, unlike a smallest gap.
+ */
+function widestDividingWidth(offsets: readonly number[]): number {
+  const nonZero = [...new Set(offsets)].filter((o) => o !== 0);
+  if (new Set(offsets).size < 2) return 1000;
   let width = 1000;
-  while (width < ms) width *= 2;
+  // Terminates: there is a non-zero offset, and no width above it divides it.
+  while (nonZero.every((o) => o % (width * 2) === 0)) width *= 2;
   return width;
 }
 
