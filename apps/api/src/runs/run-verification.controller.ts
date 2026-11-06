@@ -3,7 +3,7 @@ import { VerificationSchema, type Verification } from '@perfportal/contracts';
 import { retainedUntil } from '@perfportal/core';
 import { RunRepository, VerificationRepository } from '@perfportal/persistence';
 import type { Request } from 'express';
-import { Requires } from '../auth/access.decorator.js';
+import { LinkReadable, Requires } from '../auth/access.decorator.js';
 import { CONFIG } from '../auth/auth.module.js';
 import type { AppConfig } from '../config.js';
 import { Scopes } from '../auth/scopes.decorator.js';
@@ -61,6 +61,7 @@ export class RunVerificationController {
 
   @Get('verification')
   @Requires('project:read')
+  @LinkReadable()
   @Scopes('read')
   async verification(
     @Param('id', uuidParam('id')) id: string,

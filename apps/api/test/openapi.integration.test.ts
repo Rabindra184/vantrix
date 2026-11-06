@@ -619,7 +619,8 @@ describe('OpenAPI document', () => {
    */
   /**
    * Exact statistics, PR 3: a run's verification takes either credential like
-   * every run-scoped read; the data-integrity summary is an admin's, and
+   * every run-scoped read — and, being one of the fifteen a public link may
+   * make, the link as a third; the data-integrity summary is an admin's, and
    * session-only like every /v1/admin operation. Each answers its own named
    * schema, so a generated client gets a type rather than an inline blob.
    */
@@ -627,7 +628,7 @@ describe('OpenAPI document', () => {
     const doc = await fetchDoc();
     const verification = doc.paths?.['/v1/runs/{id}/verification']?.get;
     expect((verification as { operationId?: string } | undefined)?.operationId).toBe('getRunVerification');
-    expect(verification?.security).toBeUndefined();
+    expect(verification?.security).toEqual([{ bearerAuth: [] }, { cookieAuth: [] }, { publicLinkAuth: [] }]);
     expect(JSON.stringify(verification?.responses?.['200'])).toContain('#/components/schemas/Verification"');
     expect(Object.keys(verification?.responses ?? {})).toEqual(expect.arrayContaining(['200', '400', '404']));
 

@@ -4,6 +4,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
 import { ParseUUIDPipe, RequestMethod } from '@nestjs/common';
 import { GUARDS_METADATA, METHOD_METADATA, PATH_METADATA, ROUTE_ARGS_METADATA } from '@nestjs/common/constants.js';
 import { RouteParamtypes } from '@nestjs/common/enums/route-paramtypes.enum.js';
@@ -14,7 +15,8 @@ import {
   type AccessRole,
   type ProjectRole,
 } from '@perfportal/contracts';
-import { UserRepository } from '@perfportal/persistence';
+import { hashPublicLinkSecret, mintPublicLinkSecret } from '@perfportal/core';
+import { OrgSettingsRepository, PublicLinkRepository, UserRepository } from '@perfportal/persistence';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AppModule } from '../src/app.module.js';
@@ -284,6 +286,37 @@ const ACCESS_BY_ROUTE: Readonly<Record<string, Access>> = {
 /** Where the run routes live. A run names its project through the run row. */
 const isRunRoute = (path: string): boolean => path === '/v1/runs/:id' || path.startsWith('/v1/runs/:id/');
 
+/**
+ * ═══ THE FIFTEEN RUN READS A PUBLIC LINK MAY MAKE, WRITTEN DOWN ═══
+ * (docs/superpowers/specs/2026-11-06-public-links-and-custom-report-design.md,
+ * section 5.3)
+ *
+ * `@LinkReadable` opens a route to a reader outside the organisation, so a
+ * route added to the allowlist is a decision someone wrote down: the walked
+ * set must EQUAL this one, both ways. Copied from the spec's table, never
+ * from the controllers. Deliberately absent, and why: `/trends` returns the
+ * run's whole cohort, other runs' ids and figures included; `/ai-analysis`
+ * has no card on the public page; `/scatter` is read only by the request
+ * drill-down, which the public page does not offer.
+ */
+const LINK_READABLE_ROUTES: readonly string[] = [
+  'GET /v1/runs/:id',
+  'GET /v1/runs/:id/verification',
+  'GET /v1/runs/:id/users',
+  'GET /v1/runs/:id/stats',
+  'GET /v1/runs/:id/series',
+  'GET /v1/runs/:id/errors',
+  'GET /v1/runs/:id/errors/series',
+  'GET /v1/runs/:id/distribution',
+  'GET /v1/runs/:id/telemetry',
+  'GET /v1/runs/:id/agent',
+  'GET /v1/runs/:id/agent/connections',
+  'GET /v1/runs/:id/agent/dns',
+  'GET /v1/runs/:id/agent/injectors',
+  'GET /v1/runs/:id/agent/status',
+  'GET /v1/runs/:id/events',
+];
+
 describe('every route declares how it is reached', () => {
   /**
    * The vacuity floor counts routes FOUND, never routes that passed: a walk
@@ -390,6 +423,54 @@ describe('every route declares how it is reached', () => {
   });
 });
 
+describe('a public link reads exactly the allowlist written down', () => {
+  const linkReadable = ROUTES.filter((r) => r.linkReadable);
+
+  /** Routes FOUND carrying the marker, never routes that agreed: an empty walk would match an empty list. */
+  it('finds the @LinkReadable routes', () => {
+    expect(linkReadable.length, 'the walk found too few @LinkReadable routes — it has rotted').toBeGreaterThan(10);
+  });
+
+  it('marks exactly LINK_READABLE_ROUTES @LinkReadable, naming what is missing and what is extra', () => {
+    const walked = new Set(linkReadable.map((r) => r.label));
+    const written = new Set(LINK_READABLE_ROUTES);
+    expect(written.size, 'LINK_READABLE_ROUTES names a route twice').toBe(LINK_READABLE_ROUTES.length);
+    const diff = [
+      ...[...written].filter((label) => !walked.has(label)).map((label) => `missing: ${label} is written down and carries no @LinkReadable`),
+      ...[...walked].filter((label) => !written.has(label)).map((label) => `extra: ${label} carries @LinkReadable and is not written down`),
+    ].sort();
+    expect(diff, `the walked @LinkReadable set differs from LINK_READABLE_ROUTES:\n${diff.join('\n')}`).toEqual([]);
+  });
+
+  /**
+   * The marker is ADDITIVE: it sits beside `@Requires('project:read')`, which
+   * still decides every other caller of the route. A write, a route outside
+   * one run, or a route needing more than a read would each hand a link
+   * something the spec never offers it.
+   */
+  it('puts @LinkReadable only on a GET under /v1/runs/:id that requires project:read', () => {
+    const wrong = linkReadable
+      .filter((r) => !r.label.startsWith('GET ') || !isRunRoute(r.path) || r.requires !== 'project:read')
+      .map((r) => `${r.label}: requires ${String(r.requires)}`)
+      .sort();
+    expect(wrong, `@LinkReadable routes that are not a run read:\n${wrong.join('\n')}`).toEqual([]);
+  });
+
+  /**
+   * `SessionOnlyGuard` refuses every credential whose token id is not a
+   * session's, a link's included, so an allowlisted route behind it would be
+   * a promise the route never keeps.
+   */
+  it('puts no @LinkReadable route behind SessionOnlyGuard', () => {
+    const wrong = linkReadable.filter((r) => r.sessionOnly).map((r) => r.label).sort();
+    expect(wrong, `@LinkReadable routes SessionOnlyGuard refuses a link on:\n${wrong.join('\n')}`).toEqual([]);
+  });
+
+  it('marks GET /v1/public-link @PublicLinkOnly and nothing else', () => {
+    expect(ROUTES.filter((r) => r.publicLinkOnly).map((r) => r.label).sort()).toEqual(['GET /v1/public-link']);
+  });
+});
+
 describe('each route’s token scope agrees with its action', () => {
   /**
    * ONE TABLE FOR BOTH CREDENTIALS. `ACCESS_ACTIONS` gives each action the
@@ -459,14 +540,20 @@ describe('a project action sits on a route that names its project', () => {
 });
 
 describe('the document names the refusals the guard sends', () => {
+  type Security = Record<string, unknown>[];
   type Op = {
     operationId?: string;
     description?: string;
     responses?: Record<string, { $ref?: string; description?: string }>;
+    security?: Security;
   };
   const doc = buildOpenApiDocument() as unknown as {
+    security: Security;
     paths: Record<string, Record<string, Op>>;
-    components: { responses: Record<string, { description?: string }> };
+    components: {
+      responses: Record<string, { description?: string }>;
+      securitySchemes: Record<string, Record<string, unknown>>;
+    };
   };
   /** Every operation, keyed `VERB /path` with each parameter written `{}`, so a walked `:slug` meets a documented `{slug}`. */
   const ops = new Map<string, Op>();
@@ -506,6 +593,66 @@ describe('the document names the refusals the guard sends', () => {
       }
     }
     expect(gaps, gaps.join('\n')).toEqual([]);
+  });
+
+  /**
+   * ═══ EACH OPERATION NAMES THE CREDENTIALS ITS ROUTE TAKES ═══
+   * (spec section 5.3)
+   *
+   * An operation's security is its own override, else the document's
+   * default; this reads the EFFECTIVE one, so a default that grew a scheme
+   * is held to the same rule as an override that did. Derived from the walk:
+   *
+   *   - a `SessionOnlyGuard` route takes a session and nothing else, so it
+   *     lists `cookieAuth` alone — advertising a bearer token, or a link, on a
+   *     route that refuses both would send a generated client at a 403;
+   *   - a `@LinkReadable` route lists the public link as a third alternative
+   *     beside the token and the session, in that order;
+   *   - `GET /v1/public-link` takes a link alone;
+   *   - and no other operation names the link at all.
+   *
+   * The floors count routes FOUND in each group, never ones that agreed.
+   */
+  it('names, per operation, exactly the credentials its route takes', () => {
+    expect(doc.components.securitySchemes['publicLinkAuth'], 'the publicLinkAuth scheme').toMatchObject({
+      type: 'http',
+      scheme: 'PublicLink',
+    });
+    expect(doc.security, 'the document default must not name the link').toStrictEqual([
+      { bearerAuth: [] },
+      { cookieAuth: [] },
+    ]);
+    const sessionOnly = ROUTES.filter((r) => r.sessionOnly);
+    const linkReadable = ROUTES.filter((r) => r.linkReadable);
+    const linkOnly = ROUTES.filter((r) => r.publicLinkOnly);
+    expect(sessionOnly.length, 'no SessionOnlyGuard route found — the walk has rotted').toBeGreaterThan(10);
+    expect(linkReadable.length, 'no @LinkReadable route found — the walk has rotted').toBeGreaterThan(10);
+    expect(linkOnly.length, 'no @PublicLinkOnly route found — the walk has rotted').toBeGreaterThan(0);
+
+    const LINK_READABLE_SECURITY = [{ bearerAuth: [] }, { cookieAuth: [] }, { publicLinkAuth: [] }];
+    const gaps: string[] = [];
+    for (const r of ROUTES) {
+      const op = operationOf(r);
+      if (op === undefined) {
+        gaps.push(`${r.label}: no operation`);
+        continue;
+      }
+      const security = op.security ?? doc.security;
+      const expected = r.sessionOnly
+        ? [{ cookieAuth: [] }]
+        : r.linkReadable
+          ? LINK_READABLE_SECURITY
+          : r.publicLinkOnly
+            ? [{ publicLinkAuth: [] }]
+            : undefined;
+      if (expected !== undefined && !isDeepStrictEqual(security, expected)) {
+        gaps.push(`${r.label} (${op.operationId}): documents ${JSON.stringify(security)}, takes ${JSON.stringify(expected)}`);
+      }
+      if (expected === undefined && security.some((req) => 'publicLinkAuth' in req)) {
+        gaps.push(`${r.label} (${op.operationId}): names publicLinkAuth, and a link reads nothing here`);
+      }
+    }
+    expect(gaps.sort(), `operations whose credentials differ from their route's:\n${gaps.sort().join('\n')}`).toEqual([]);
   });
 
   /**
@@ -732,7 +879,7 @@ describe('the role matrix', () => {
    * request body as a stream, and one that waits for bytes nobody sends does
    * not fail — it hangs, and takes the file's whole timeout with it.
    */
-  function send(verb: Verb, url: string, cookie: string, body?: object): request.Test {
+  function open(verb: Verb, url: string): request.Test {
     const server = ctx.app.getHttpServer();
     const req =
       verb === 'GET'
@@ -744,7 +891,11 @@ describe('the role matrix', () => {
             : verb === 'PATCH'
               ? request(server).patch(url)
               : request(server).delete(url);
-    req.set('Cookie', cookie).timeout({ deadline: 15_000, response: 15_000 });
+    return req.timeout({ deadline: 15_000, response: 15_000 });
+  }
+
+  function send(verb: Verb, url: string, cookie: string, body?: object): request.Test {
+    const req = open(verb, url).set('Cookie', cookie);
     return body === undefined ? req : req.send(body);
   }
 
@@ -1170,6 +1321,147 @@ describe('the role matrix', () => {
       const tests = await request(server).get(`/v1/projects/${A.slug}/tests`).set(auth);
       const run = await request(server).get(`/v1/runs/${A.runId}`).set(auth);
       expect([tests.status, run.status]).toStrictEqual([200, 200]);
+    });
+  });
+
+  /*
+   * ═══ THE LINK MATRIX: A REAL LINK AGAINST EVERY ROUTE ═══
+   * (docs/superpowers/specs/2026-11-06-public-links-and-custom-report-design.md,
+   * section 5.6)
+   *
+   * A link to A's run, sent against every route the walk finds, its path
+   * filled by `fill()` with that run. Which routes should let it through is
+   * read from the lists WRITTEN DOWN — `LINK_READABLE_ROUTES` and
+   * `GET /v1/public-link` — never from the walk's own flags, so a marker added
+   * or dropped moves the guard's answer and not the expectation with it.
+   *
+   * An allowlisted route PASSES the guard, judged the way `expectPassed`
+   * judges a role — not a 401, not a 403, and not the 404 an invisible run
+   * gets — rather than "2xx": a seeded run with no stored figures may
+   * legitimately answer its own data 404 (`/distribution` with no histogram).
+   * `GET /v1/public-link` passes too. Every other route answers 404, with ONE
+   * body per route shape (ruling R3): on a route with `:id` the body a run
+   * that does not exist gets, and on a route with none the fixed sentence.
+   * Then every allowlisted route is sent for a second run of A and for B's
+   * run, and each answers as a missing run.
+   *
+   * Which routes EXIST is derived from the walk, so a route added later is
+   * probed by existing. The floor counts routes PROBED, never verdicts.
+   * `@Public` routes are not probed: they sit outside `/v1`, where
+   * `AuthMiddleware` never runs, so the header makes no link tenant there and
+   * there is nothing a link could read.
+   */
+  describe('a public link', () => {
+    /** Ruling R3: a link refused on a route that names no run. */
+    const NOT_READABLE = {
+      detail: 'Nothing here can be read with a public link.',
+      remediation: 'Open the link you were sent; it reads one run.',
+    } as const;
+    let secret: string;
+    /** A second run of project A, which the link must not reach. */
+    let siblingRunId: string;
+
+    beforeAll(async () => {
+      await new OrgSettingsRepository(ctx.pool).setPublicLinksEnabled(ctx.orgId, true);
+      siblingRunId = await seedRun(ctx.projectId);
+      secret = mintPublicLinkSecret();
+      await new PublicLinkRepository(ctx.pool).create({
+        orgId: ctx.orgId,
+        projectId: ctx.projectId,
+        runId: A.runId,
+        tokenHash: hashPublicLinkSecret(secret),
+        createdBy: null,
+        expiresAt: new Date(Date.now() + 30 * 86_400_000),
+      });
+    });
+
+    /** `open`'s deadline, with the link as the request's only credential. */
+    const asLink = (verb: Verb, url: string): request.Test =>
+      open(verb, url).set('Authorization', `PublicLink ${secret}`);
+
+    /** Every path parameter `fill` leaves (`:jobId`, `:ruleId`, `:prefix`) as a fresh uuid. */
+    const filled = (route: string, target: Target): { verb: Verb; url: string } => {
+      const { verb, url } = fill(route, target);
+      return { verb, url: url.replace(/:[A-Za-z]+/g, () => randomUUID()) };
+    };
+
+    /** The 404 a link gets for a run that does not exist, masked: what every refused `:id` route must equal. */
+    async function missingRunBody(): Promise<Record<string, unknown>> {
+      const res = await asLink('GET', `/v1/runs/${MISSING.runId}`);
+      expect([res.status, res.body.detail], JSON.stringify(res.body)).toStrictEqual([
+        404,
+        runNotFound(MISSING.runId).message,
+      ]);
+      return masked(res.body, MISSING.runId);
+    }
+
+    /** The 404 a link gets on a route that names no run, masked: ruling R3's fixed sentence, whichever such route. */
+    async function notReadableBody(): Promise<Record<string, unknown>> {
+      const res = await asLink('GET', '/v1/runs');
+      expect([res.status, res.body.code, res.body.detail, res.body.remediation], JSON.stringify(res.body)).toStrictEqual([
+        404,
+        'NOT_FOUND',
+        NOT_READABLE.detail,
+        NOT_READABLE.remediation,
+      ]);
+      return masked(res.body, A.runId);
+    }
+
+    it('passes the allowlist and GET /v1/public-link for its own run, and answers every other route 404', async () => {
+      const missingRun = await missingRunBody();
+      const notReadable = await notReadableBody();
+      const opens = new Set([...LINK_READABLE_ROUTES, 'GET /v1/public-link']);
+      const probed = ROUTES.filter((r) => !r.isPublic);
+      const wrong: string[] = [];
+      let count = 0;
+      for (const r of probed) {
+        const { verb, url } = filled(r.label, A);
+        const res = await asLink(verb, url);
+        count += 1;
+        const seen = `${res.status} ${JSON.stringify(res.body)}`;
+        if (opens.has(r.label)) {
+          try {
+            expect(res.status).not.toBe(401);
+            expectPassed(res, r.label);
+          } catch {
+            wrong.push(`${r.label}: should pass the guard, answered ${seen}`);
+          }
+          continue;
+        }
+        if (res.status !== 404 || typeof res.body?.traceId !== 'string') {
+          wrong.push(`${r.label}: should be 404, answered ${seen}`);
+          continue;
+        }
+        const namesRun = r.path.split('/').includes(':id');
+        const expected = namesRun ? missingRun : notReadable;
+        if (!isDeepStrictEqual(masked(res.body, A.runId), expected)) {
+          wrong.push(`${r.label}: answered ${seen}, not the ${namesRun ? 'missing run' : 'not-readable'} body`);
+        }
+      }
+      expect(count, 'routes probed: the walk has rotted').toBeGreaterThan(60);
+      expect(wrong, `routes that answered a public link wrongly:\n${wrong.join('\n')}`).toEqual([]);
+    });
+
+    it('answers every allowlisted route, for another run of its project and for another project’s run, as a missing run', async () => {
+      const missingRun = await missingRunBody();
+      const allowlisted = ROUTES.filter((r) => LINK_READABLE_ROUTES.includes(r.label));
+      expect(allowlisted.length, 'a written-down route is not registered').toBe(LINK_READABLE_ROUTES.length);
+      const wrong: string[] = [];
+      for (const r of allowlisted) {
+        for (const [whose, runId] of [
+          ['another run of A', siblingRunId],
+          ['B’s run', bRunId],
+        ] as const) {
+          const { verb, url } = filled(r.label, { slug: A.slug, runId });
+          const res = await asLink(verb, url);
+          const ok =
+            res.status === 404 &&
+            typeof res.body?.traceId === 'string' &&
+            isDeepStrictEqual(masked(res.body, runId), missingRun);
+          if (!ok) wrong.push(`${r.label} for ${whose}: ${res.status} ${JSON.stringify(res.body)}`);
+        }
+      }
+      expect(wrong, `allowlisted routes that let a link past its own run:\n${wrong.join('\n')}`).toEqual([]);
     });
   });
 });

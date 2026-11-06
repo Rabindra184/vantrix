@@ -53,8 +53,12 @@ interface ResponseObject {
  * except the bearer-only overrides below: an array of single-scheme entries
  * (rather than one entry naming both) is OpenAPI's way of expressing OR, not
  * AND — "bearerAuth alone is sufficient; cookieAuth alone is sufficient."
+ *
+ * A third, `publicLinkAuth`, is never a default: it is listed only on the
+ * fifteen run reads a public link may make (`LINK_READABLE_SECURITY`) and,
+ * alone, on GET /v1/public-link.
  */
-type SecurityRequirement = { bearerAuth: [] } | { cookieAuth: [] };
+type SecurityRequirement = { bearerAuth: [] } | { cookieAuth: [] } | { publicLinkAuth: [] };
 
 interface OperationObject {
   operationId: string;
@@ -1087,6 +1091,20 @@ function runStateResponses(): Record<string, Ref> {
 
 const authFailureResponses = { '401': ref('Unauthorized'), '403': ref('Forbidden') };
 
+/**
+ * ═══ THE FIFTEEN RUN READS A PUBLIC LINK MAY MAKE ═══
+ * (docs/superpowers/specs/2026-11-06-public-links-and-custom-report-design.md,
+ * section 5.3)
+ *
+ * The document default's two credentials and a public link as a third
+ * alternative, on exactly the operations whose handlers carry `@LinkReadable`
+ * — access-routes.integration.test.ts derives that set from the routes and
+ * holds every operation's effective security to it. A link reads these for its
+ * OWN run only; any other run id is answered 404, as a run that does not
+ * exist.
+ */
+const LINK_READABLE_SECURITY: SecurityRequirement[] = [{ bearerAuth: [] }, { cookieAuth: [] }, { publicLinkAuth: [] }];
+
 // ---------------------------------------------------------------------------
 // Paths
 // ---------------------------------------------------------------------------
@@ -1187,6 +1205,7 @@ const paths: Record<string, PathItemObject> = {
   '/v1/runs/{id}': {
     get: {
       operationId: 'getRun',
+      security: LINK_READABLE_SECURITY,
       summary: "Get a run by id — the ingest response's status URL",
       tags: ['runs'],
       description:
@@ -1194,7 +1213,9 @@ const paths: Record<string, PathItemObject> = {
         'Requires the "read" scope. Returns the exact same status code that ' +
         'POST /v1/runs returned (or would have returned, had it not been waiting) for this ' +
         'run\'s current state — see that operation\'s description for the shared state machine. ' +
-        'This is the URL a 202 response\'s "statusUrl" points at.',
+        'This is the URL a 202 response\'s "statusUrl" points at. Read through a public link ' +
+        '(publicLinkAuth), the note\'s "updatedBy" is null: its text and time are part of the run ' +
+        'the sharer chose to share, a person\'s name is not.',
       parameters: [parameters['RunId']!],
       responses: { ...runStateResponses(), '404': ref('NotFound'), ...authFailureResponses },
     },
@@ -1345,6 +1366,7 @@ const paths: Record<string, PathItemObject> = {
   '/v1/runs/{id}/stats': {
     get: {
       operationId: 'getRunStats',
+      security: LINK_READABLE_SECURITY,
       summary: 'Per-scope statistics table for a run',
       tags: ['metrics'],
       description:
@@ -1404,6 +1426,7 @@ const paths: Record<string, PathItemObject> = {
   '/v1/runs/{id}/events': {
     get: {
       operationId: 'getRunEvents',
+      security: LINK_READABLE_SECURITY,
       summary: 'The lifecycle events of a run the on-prem runner executed',
       tags: ['runs'],
       description:
@@ -1431,6 +1454,7 @@ const paths: Record<string, PathItemObject> = {
   '/v1/runs/{id}/verification': {
     get: {
       operationId: 'getRunVerification',
+      security: LINK_READABLE_SECURITY,
       summary: 'Whether a run\'s stored figures were checked against its raw log',
       tags: ['runs'],
       description:
@@ -1653,6 +1677,8 @@ const paths: Record<string, PathItemObject> = {
   '/v1/public-link': {
     get: {
       operationId: 'resolvePublicLink',
+      // A link alone: a session and a token are answered 404 here.
+      security: [{ publicLinkAuth: [] }],
       summary: 'Which run a public link reads, and until when',
       tags: ['runs'],
       description:
@@ -1684,6 +1710,7 @@ const paths: Record<string, PathItemObject> = {
   '/v1/runs/{id}/series': {
     get: {
       operationId: 'getRunSeries',
+      security: LINK_READABLE_SECURITY,
       summary: 'Time-series buckets for one scope/name within a run',
       tags: ['metrics'],
       description:
@@ -1712,6 +1739,7 @@ const paths: Record<string, PathItemObject> = {
   '/v1/runs/{id}/errors': {
     get: {
       operationId: 'getRunErrors',
+      security: LINK_READABLE_SECURITY,
       summary: 'Aggregated error table for a run',
       tags: ['metrics'],
       description:
@@ -1745,6 +1773,7 @@ const paths: Record<string, PathItemObject> = {
   '/v1/runs/{id}/errors/series': {
     get: {
       operationId: 'getRunErrorSeries',
+      security: LINK_READABLE_SECURITY,
       summary: 'Failed-request counts over time for a run',
       tags: ['metrics'],
       description:
@@ -1773,6 +1802,7 @@ const paths: Record<string, PathItemObject> = {
   '/v1/runs/{id}/distribution': {
     get: {
       operationId: 'getRunDistribution',
+      security: LINK_READABLE_SECURITY,
       summary: 'Response-time histogram (Gatling-style bucketed distribution) for a run',
       tags: ['metrics'],
       description:
@@ -1803,6 +1833,7 @@ const paths: Record<string, PathItemObject> = {
   '/v1/runs/{id}/users': {
     get: {
       operationId: 'getRunUsers',
+      security: LINK_READABLE_SECURITY,
       summary: 'Active-users-over-time series, per scenario and summed across scenarios',
       tags: ['metrics'],
       description:
@@ -1850,6 +1881,7 @@ const paths: Record<string, PathItemObject> = {
   '/v1/runs/{id}/telemetry': {
     get: {
       operationId: 'getRunTelemetry',
+      security: LINK_READABLE_SECURITY,
       summary: "Host telemetry for this run, on the run's own elapsed axis",
       tags: ['metrics'],
       description:
@@ -1881,6 +1913,7 @@ const paths: Record<string, PathItemObject> = {
   '/v1/runs/{id}/agent': {
     get: {
       operationId: 'getRunAgent',
+      security: LINK_READABLE_SECURITY,
       summary: "The run's load-generator agent: whether it was collected, its header, remotes and hostnames",
       tags: ['metrics'],
       description:
@@ -1940,6 +1973,7 @@ const paths: Record<string, PathItemObject> = {
   '/v1/runs/{id}/agent/connections': {
     get: {
       operationId: 'getRunAgentConnections',
+      security: LINK_READABLE_SECURITY,
       summary: 'Connections, bandwidth, TCP states, and TCP-connect and TLS-handshake durations',
       tags: ['metrics'],
       description:
@@ -1970,6 +2004,7 @@ const paths: Record<string, PathItemObject> = {
   '/v1/runs/{id}/agent/dns': {
     get: {
       operationId: 'getRunAgentDns',
+      security: LINK_READABLE_SECURITY,
       summary: 'DNS lookups and resolution durations',
       tags: ['metrics'],
       description:
@@ -1995,6 +2030,7 @@ const paths: Record<string, PathItemObject> = {
   '/v1/runs/{id}/agent/injectors': {
     get: {
       operationId: 'getRunAgentInjectors',
+      security: LINK_READABLE_SECURITY,
       summary: "The load generator's JVM and machine: GC, heap, Netty, CPU, RAM and kernel TCP",
       tags: ['metrics'],
       description:
@@ -2017,6 +2053,7 @@ const paths: Record<string, PathItemObject> = {
   '/v1/runs/{id}/agent/status': {
     get: {
       operationId: 'getRunAgentStatus',
+      security: LINK_READABLE_SECURITY,
       summary: 'HTTP status codes over time, one per response',
       tags: ['metrics'],
       description:
@@ -3639,6 +3676,22 @@ export function buildOpenApiDocument(): OpenApiDocument {
             'the missing-project check above applies. Minted with the Secure attribute ' +
             'unconditionally, so it requires an HTTPS origin — see the root README\'s ' +
             'Authentication section.',
+        },
+        publicLinkAuth: {
+          type: 'http',
+          scheme: 'PublicLink',
+          description:
+            'A public link\'s credential: "Authorization: PublicLink <secret>", the secret being ' +
+            'the last segment of the link\'s URL ("ppl_" and 43 base64url characters), sent with no ' +
+            'cookie. It reads ONE run, the one the link was created for, and only through the ' +
+            'operations that list this scheme: GET /v1/public-link, which takes it alone, and ' +
+            'fifteen GET /v1/runs/{id} reads, where it is a third alternative beside bearerAuth ' +
+            'and cookieAuth. Any other run id, and every other operation, is answered 404 — the ' +
+            'body a run that does not exist gets, or on an operation that names no run one fixed ' +
+            'sentence — so a link cannot be used to map the API. A refused link is answered 401 ' +
+            'with its own code (see the PublicLinkRefused response). It holds no scope and no ' +
+            'role, every response to it carries Cache-Control: private, no-store, and a person\'s ' +
+            'name does not reach it (GET /v1/runs/{id} answers a note\'s "updatedBy" null).',
         },
       },
       parameters,

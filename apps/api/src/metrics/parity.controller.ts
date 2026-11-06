@@ -8,7 +8,7 @@ import { Scopes } from '../auth/scopes.decorator.js';
 import { parseGroupPick, uuidParam } from '../common/validation.js';
 import { inRange, resolveRange, snapWindow } from '../common/window.js';
 import { notFound, runNotFound } from '../common/validation.js';
-import { Requires } from '../auth/access.decorator.js';
+import { LinkReadable, Requires } from '../auth/access.decorator.js';
 import { groupMembers, isMergeable, mergedGroupSeries, notMergeable } from './group-pick.js';
 
 @Controller('/v1/runs/:id')
@@ -27,6 +27,7 @@ export class ParityController {
 
   @Get('distribution')
   @Requires('project:read')
+  @LinkReadable()
   @Scopes('read')
   async distribution(
     @Param('id', uuidParam('id')) id: string,
@@ -186,6 +187,7 @@ export class ParityController {
 
   @Get('users')
   @Requires('project:read')
+  @LinkReadable()
   @Scopes('read')
   async users(
     @Param('id', uuidParam('id')) id: string,

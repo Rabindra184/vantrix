@@ -8,7 +8,9 @@ import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
 import { LinkReadable, PublicLinkOnly } from '../src/auth/access.decorator.js';
+import { runNotFound } from '../src/common/validation.js';
 import { CLOSE_UNAUTHORIZED } from '../src/live/live.gateway.js';
+import { buildOpenApiDocument } from '../src/openapi/document.js';
 import { createTestApp, type TestContext } from './support/app.js';
 import { signInAsProjectMember } from './support/session.js';
 
@@ -20,10 +22,11 @@ import { signInAsProjectMember } from './support/session.js';
  * `Authorization: PublicLink <secret>` is the third credential `AuthMiddleware`
  * accepts, ahead of a bearer token and a session. These cases drive it through
  * the real app: the four 401s and the order they are tested in, the switch,
- * revocation on the next request, `GET /v1/public-link`, and the default-deny
- * `AccessGuard` answers every other route with — before Task 6 marks the
- * fifteen run reads a link may reach, so a link reaches NOTHING here but its
- * own resolve route.
+ * revocation on the next request, `GET /v1/public-link`, the default-deny
+ * `AccessGuard` answers every other route with, and what a link reads of its
+ * own run: the note without its author's name (section 5.4), and no response a
+ * cache may keep. Which routes a link may read is pinned against every route
+ * by the link matrix in `access-routes.integration.test.ts`.
  *
  * Links are written through `PublicLinkRepository` with a secret minted here,
  * not through the create route: what is under test is the READ path, and the
@@ -33,13 +36,13 @@ import { signInAsProjectMember } from './support/session.js';
 /*
  * ═══ TWO TEST-ONLY ROUTES, ONE PER OPENING ═══
  *
- * No real handler carries `@LinkReadable` until Task 6, and the one real
- * `@PublicLinkOnly` handler refuses a non-link caller itself too — so on real
- * routes alone, the guard's allow path is unreachable and its refusal of a
- * session on a `@PublicLinkOnly` route is masked by the controller's own.
- * These two answer 200 to whoever the guard lets through, so each opening is
- * seen by itself: a link reads its own run and no other, and a
- * `@PublicLinkOnly` route answers a link and nobody else.
+ * Every real `@LinkReadable` handler answers from its own lookups, and the one
+ * real `@PublicLinkOnly` handler refuses a non-link caller itself too — so on
+ * real routes alone, what the guard decides is mixed with what the handler
+ * answers, and its refusal of a session on a `@PublicLinkOnly` route is masked
+ * by the controller's own. These two answer 200 to whoever the guard lets
+ * through, so each opening is seen by itself: a link reads its own run and no
+ * other, and a `@PublicLinkOnly` route answers a link and nobody else.
  */
 @Controller('/v1/runs/:id/__link-readable-probe')
 class LinkReadableProbe {
@@ -115,6 +118,33 @@ async function seedRun(): Promise<string> {
     },
   });
   return run.id;
+}
+
+/**
+ * A run of `status` carrying a note a member of the project wrote through the
+ * real note route, so its author is a person with a name: the account's name,
+ * which these helpers set to its email. `running` is read through the
+ * hand-written 202, `complete` through `toResponse` — the two identity
+ * builders a redaction has to reach.
+ */
+async function notedRun(
+  status: 'complete' | 'running',
+): Promise<{ runId: string; cookie: string; email: string; text: string }> {
+  const runId = await seedRun();
+  if (status === 'running') await ctx.prisma.run.update({ where: { id: runId }, data: { status: 'running' } });
+  const email = `author-${randomUUID()}@example.test`;
+  const { cookie } = await signInAsProjectMember(ctx, email, [{ projectId: ctx.projectId, role: 'member' }]);
+  const text = 'Baseline after the cache change.';
+  const written = await request(ctx.app.getHttpServer())
+    .put(`/v1/runs/${runId}/note`)
+    .set('Cookie', cookie)
+    .timeout(DEADLINE)
+    .send({ note: text });
+  expect([written.status, written.body.note?.updatedBy], JSON.stringify(written.body)).toStrictEqual([
+    200,
+    { name: email },
+  ]);
+  return { runId, cookie, email, text };
 }
 
 /** A link to `runId`, stored as the create route stores one: the secret's hash and nothing else. */
@@ -206,10 +236,7 @@ describe('a malformed or unknown PublicLink credential', () => {
    */
   it('takes the PublicLink header over a session cookie sent with it', async () => {
     await setSwitch(true);
-    const { cookie } = await signInAsProjectMember(ctx, `sharer-${randomUUID()}@example.test`, [
-      { projectId: ctx.projectId, role: 'member' },
-    ]);
-    const runId = await seedRun();
+    const { cookie, email, runId } = await notedRun('complete');
 
     const bogus = await request(ctx.app.getHttpServer())
       .get(`/v1/runs/${runId}`)
@@ -224,9 +251,15 @@ describe('a malformed or unknown PublicLink credential', () => {
       .set('Cookie', cookie)
       .set('Authorization', `PublicLink ${secret}`)
       .timeout(DEADLINE);
-    // The cookie alone reads this run 200; with the link it is the link's
-    // answer, and before Task 6 a link reads no run.
-    expect([real.status, real.body.code], JSON.stringify(real.body)).toStrictEqual([404, 'NOT_FOUND']);
+    const cookieAlone = await request(ctx.app.getHttpServer()).get(`/v1/runs/${runId}`).set('Cookie', cookie).timeout(DEADLINE);
+    // Both read the run 200, so what tells the two answers apart is what only
+    // a link's answer withholds: the note's author.
+    expect([cookieAlone.status, cookieAlone.body.note?.updatedBy], JSON.stringify(cookieAlone.body)).toStrictEqual([
+      200,
+      { name: email },
+    ]);
+    expect([real.status, real.body.note?.updatedBy], JSON.stringify(real.body)).toStrictEqual([200, null]);
+    expect(real.headers['cache-control']).toBe('private, no-store');
   });
 });
 
@@ -400,10 +433,12 @@ describe('GET /v1/public-link', () => {
 /*
  * ═══ DEFAULT-DENY: A LINK REACHES NOTHING IT IS NOT GIVEN ═══
  *
- * Before Task 6 no handler carries `@LinkReadable`, so a link reads nothing
- * but its own resolve route — including its OWN run, which is the case that
- * proves the guard decides from the marker and not from the run id alone.
- * Every refusal answers exactly as a run that does not exist.
+ * A link reads its own run's fifteen allowlisted routes and its resolve route,
+ * and nothing else — including a route of its OWN run that is not on the
+ * allowlist (`/trends`), which is the case that proves the guard decides from
+ * the marker and not from the run id alone. Every refusal answers exactly as
+ * a run that does not exist. The same rule over every route is the link
+ * matrix's, in `access-routes.integration.test.ts`.
  */
 describe('a link on every other route', () => {
   async function linked(): Promise<{ runId: string; secret: string }> {
@@ -412,17 +447,17 @@ describe('a link on every other route', () => {
     return { runId, secret: (await makeLink(runId)).secret };
   }
 
-  it('answers GET of its own run 404, byte for byte the body a missing run gets', async () => {
+  it('answers a read of its own run off the allowlist 404, byte for byte the body a missing run gets', async () => {
     const { runId, secret } = await linked();
     const missingId = randomUUID();
     const { cookie } = await signInAsProjectMember(ctx, `member-${randomUUID()}@example.test`, [
       { projectId: ctx.projectId, role: 'member' },
     ]);
 
-    const own = await withHeader(`/v1/runs/${runId}`, `PublicLink ${secret}`);
-    const missingByLink = await withHeader(`/v1/runs/${missingId}`, `PublicLink ${secret}`);
+    const own = await withHeader(`/v1/runs/${runId}/trends`, `PublicLink ${secret}`);
+    const missingByLink = await withHeader(`/v1/runs/${missingId}/trends`, `PublicLink ${secret}`);
     const missingBySession = await request(ctx.app.getHttpServer())
-      .get(`/v1/runs/${missingId}`)
+      .get(`/v1/runs/${missingId}/trends`)
       .set('Cookie', cookie)
       .timeout(DEADLINE);
 
@@ -477,6 +512,73 @@ describe('a link on every other route', () => {
       );
       expect(masked(res.body)).toStrictEqual(masked(responses[0]!.body));
     }
+  });
+});
+
+/*
+ * ═══ WHAT A LINK READS OF ITS OWN RUN ═══
+ * (spec section 5.4)
+ *
+ * The note's text is part of the run the sharer chose to share, so it stays;
+ * a person's name does not leave the install, so `updatedBy` reads null — the
+ * value it already has once an author's account is deleted. Through BOTH
+ * identity builders: a finished run is answered by `toResponse`, a running one
+ * by the hand-written 202, and a redaction applied to one alone would leave
+ * the name on the other. A session reading the same run still sees the name,
+ * which is what keeps "redacted" from meaning "never stored".
+ */
+describe('what a link reads of its own run', () => {
+  it.each([
+    ['complete', 200],
+    ['running', 202],
+  ] as const)('reads a %s run’s note without its author, which a session still sees', async (status, code) => {
+    await setSwitch(true);
+    const { runId, cookie, email, text } = await notedRun(status);
+    const { secret } = await makeLink(runId);
+
+    const byLink = await withHeader(`/v1/runs/${runId}`, `PublicLink ${secret}`);
+    const bySession = await request(ctx.app.getHttpServer()).get(`/v1/runs/${runId}`).set('Cookie', cookie).timeout(DEADLINE);
+
+    expect([bySession.status, bySession.body.note?.text, bySession.body.note?.updatedBy], JSON.stringify(bySession.body)).toStrictEqual([
+      code,
+      text,
+      { name: email },
+    ]);
+    expect([byLink.status, byLink.body.note], JSON.stringify(byLink.body)).toStrictEqual([
+      code,
+      { text, updatedAt: bySession.body.note.updatedAt, updatedBy: null },
+    ]);
+  });
+
+  /**
+   * Every response to a link carries `Cache-Control: private, no-store`, so no
+   * intermediary keeps a copy of a run read without signing in. The routes
+   * are the ones the document offers a link (`publicLinkAuth` beside the
+   * other two credentials) — a set `access-routes.integration.test.ts` holds
+   * equal to the walked `@LinkReadable` set — each filled with the link's own
+   * run, and a response is counted only once the guard has let it through:
+   * a refusal's header is the default-deny block's claim, not this one.
+   */
+  it('marks every allowlisted response through the link private, no-store', async () => {
+    await setSwitch(true);
+    const runId = await seedRun();
+    const { secret } = await makeLink(runId);
+    const doc = buildOpenApiDocument();
+    const allowlisted = Object.entries(doc.paths)
+      .filter(([, item]) => (item.get?.security ?? []).some((req) => 'publicLinkAuth' in req))
+      .map(([path]) => path)
+      .filter((path) => path.startsWith('/v1/runs/{id}'));
+    expect(allowlisted.length, 'the document offers a link too few routes').toBeGreaterThan(10);
+
+    const wrong: string[] = [];
+    for (const path of allowlisted) {
+      const res = await withHeader(path.replace('{id}', runId), `PublicLink ${secret}`);
+      if (res.body?.detail === runNotFound(runId).message) wrong.push(`${path}: refused, ${res.status}`);
+      else if (res.headers['cache-control'] !== 'private, no-store') {
+        wrong.push(`${path}: Cache-Control ${String(res.headers['cache-control'])}`);
+      }
+    }
+    expect(wrong, wrong.join('\n')).toEqual([]);
   });
 });
 

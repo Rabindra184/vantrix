@@ -31,7 +31,7 @@ import { Scopes } from '../auth/scopes.decorator.js';
 import { badRequest, parseGroupPick, parseLimit, parsePercentileList, uuidParam } from '../common/validation.js';
 import { inRange, resolveRange, snapWindow } from '../common/window.js';
 import { runNotFound } from '../common/validation.js';
-import { Requires } from '../auth/access.decorator.js';
+import { LinkReadable, Requires } from '../auth/access.decorator.js';
 import { groupMembers, mergedGroupSeries } from './group-pick.js';
 
 // AuthGuard is registered globally via APP_GUARD (see auth.module.ts), so
@@ -192,6 +192,7 @@ export class MetricsController {
 
   @Get('stats')
   @Requires('project:read')
+  @LinkReadable()
   @Scopes('read')
   async stats(
     @Param('id', uuidParam('id')) id: string,
@@ -294,6 +295,7 @@ export class MetricsController {
 
   @Get('series')
   @Requires('project:read')
+  @LinkReadable()
   @Scopes('read')
   async series(
     @Param('id', uuidParam('id')) id: string,
@@ -541,6 +543,7 @@ export class MetricsController {
 
   @Get('errors')
   @Requires('project:read')
+  @LinkReadable()
   @Scopes('read')
   async errors(
     @Param('id', uuidParam('id')) id: string,
@@ -573,6 +576,7 @@ export class MetricsController {
    */
   @Get('errors/series')
   @Requires('project:read')
+  @LinkReadable()
   @Scopes('read')
   async errorSeries(
     @Param('id', uuidParam('id')) id: string,
@@ -650,6 +654,7 @@ export class MetricsController {
    */
   @Get('telemetry')
   @Requires('project:read')
+  @LinkReadable()
   @Scopes('read')
   async telemetry(
     @Param('id', uuidParam('id')) id: string,

@@ -11,6 +11,7 @@ import {
 } from '@perfportal/contracts';
 import { MetricReader, RunRepository, type RunRecord } from '@perfportal/persistence';
 import { PrismaClient } from '@prisma/client';
+import type { Tenant } from '../auth/auth.guard.js';
 import { statusForCode } from '../common/problem.js';
 
 interface RunAssertionRow {
@@ -119,7 +120,7 @@ export class RunsService {
     };
   }
 
-  async toResponse(run: RunRecord): Promise<RunResponse> {
+  async toResponse(run: RunRecord, reader: RunReader): Promise<RunResponse> {
     const assertions = await this.prisma.runAssertion.findMany({
       where: { runId: run.id },
       orderBy: { outcome: 'asc' },   // 'failed' sorts before 'not_applicable' and 'passed'
@@ -167,7 +168,7 @@ export class RunsService {
       statsMethod: lifecycle.statsMethod,
       verdictChanges: lifecycle.verdictChanges,
       verification: lifecycle.verification,
-      note: noteOf(run),
+      note: noteOf(run, reader),
       // Appendix A G-05. Already evaluated at ingest against the rollups the
       // engine had in hand, so this is a projection, not a computation — and
       // `null` is preserved rather than defaulted to `[]`, because "this run
@@ -236,18 +237,38 @@ export function warmupMsOf(engineOptions: unknown): number | null {
 }
 
 /**
+ * Who a run's body is built for: the one fact about the caller a run body
+ * depends on, which is whether it reads through a public link. Required at
+ * every builder, never defaulted: a body built without asking would carry a
+ * person's name to a reader outside the organisation, and nothing would say
+ * so.
+ */
+export type RunReader = Pick<Tenant, 'publicLink'>;
+
+/**
  * The run's note on the wire, or null for none — ONE helper for BOTH identity
  * builders, `toResponse` and `respondWithRun`'s hand-written 202. A note
  * written while a run streams is read through the 202, so a field sent only
  * by `toResponse` would vanish until the run finished: the warmupMs lesson,
  * with its guard written first.
+ *
+ * ═══ A PERSON'S NAME DOES NOT LEAVE THE INSTALL THROUGH A LINK ═══
+ * (docs/superpowers/specs/2026-11-06-public-links-and-custom-report-design.md,
+ * section 5.4)
+ *
+ * For a public link reader `updatedBy` is null. The text and its time stay:
+ * they are part of the run the sharer chose to share. Null is already what
+ * `updatedBy` reads once an author's account is deleted, so the page renders
+ * this case today. Here, in the one helper both builders call, so neither can
+ * redact while the other leaks.
  */
-export function noteOf(run: RunRecord): RunNote | null {
+export function noteOf(run: RunRecord, reader: RunReader): RunNote | null {
   if (run.note === null) return null;
   return {
     text: run.note,
     updatedAt: run.noteUpdatedAt === null ? null : run.noteUpdatedAt.toISOString(),
-    updatedBy: run.noteAuthorName === null ? null : { name: run.noteAuthorName },
+    updatedBy:
+      reader.publicLink !== undefined || run.noteAuthorName === null ? null : { name: run.noteAuthorName },
   };
 }
 
