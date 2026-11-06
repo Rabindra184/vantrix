@@ -212,6 +212,30 @@ describe('static asset delivery', () => {
 });
 
 /**
+ * ═══ A PUBLIC LINK'S PAGE IS NOT FOR SEARCH ENGINES ═══
+ *
+ * A link pasted somewhere public would otherwise be crawled, and its page
+ * indexed with the run's project and test names in it (spec 6.2). The header
+ * rides on the SPA document for `/share/*` alone — the app's own pages sit
+ * behind sign-in, and saying `noindex` there is a claim about nothing — and
+ * the `share` segment is matched as the router matches it, without regard to
+ * case, so `/Share/…` is the same page with the same header.
+ */
+describe('a public link’s page', () => {
+  it.each(['/share/x', '/share/x/report', '/Share/x'])('serves index.html for %s with X-Robots-Tag: noindex', async (path) => {
+    const res = await request(server).get(path).expect(200);
+    expect(res.text).toBe(INDEX_HTML);
+    expect(res.headers['x-robots-tag']).toBe('noindex');
+  });
+
+  it.each(['/runs/x', '/', '/shared/x'])('says nothing to robots on %s', async (path) => {
+    const res = await request(server).get(path).expect(200);
+    expect(res.text).toBe(INDEX_HTML);
+    expect(res.headers['x-robots-tag']).toBeUndefined();
+  });
+});
+
+/**
  * ═══ A DIST UNDER A DOTTED DIRECTORY STILL SERVES ITS PAGES ═══
  *
  * `send` — under both `express.static` and `res.sendFile` — refuses a path

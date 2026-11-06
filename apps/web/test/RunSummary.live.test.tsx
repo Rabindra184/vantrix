@@ -121,7 +121,7 @@ function renderSummary({
             element={
               <Outlet
                 context={
-                  { window: null, durationMs: null, liveDurationMs: null, warmupMs: null, live, projectAccess: UNKNOWN_ACCESS } satisfies RunWindowContext
+                  { runId: RUN_ID, window: null, durationMs: null, liveDurationMs: null, warmupMs: null, live, projectAccess: UNKNOWN_ACCESS } satisfies RunWindowContext
                 }
               />
             }

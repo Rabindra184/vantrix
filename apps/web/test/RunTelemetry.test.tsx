@@ -55,7 +55,7 @@ function ShellStandIn() {
   return (
     <Outlet
       context={
-        {
+        { runId: RUN,
           window: null, durationMs: null, liveDurationMs: null, warmupMs: null, live: null, projectAccess,
         } satisfies RunWindowContext
       }

@@ -1,13 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useRef } from 'react';
-import { useParams } from 'react-router-dom';
 import type { RunEvent } from '@perfportal/contracts';
 import { ProblemError } from '../api/fetch';
 import { fetchRunEvents, RUN_EVENTS_POLL_MS, runEventsQueryKey } from '../api/runEvents';
 import { EmptyState, ErrorState, LoadingState } from '../components/States';
 import { formatLogTime } from './format';
 import { highlightLogMessage } from './logLine';
-import { useRunTerminal } from './useRunWindow';
+import { useRunIdFromShell, useRunTerminal } from './useRunWindow';
 
 /**
  * ═══ THE LOGS TAB ═══ (docs/superpowers/specs/2026-09-29-run-logs-design.md)
@@ -36,12 +35,11 @@ import { useRunTerminal } from './useRunWindow';
  * visually hidden headings too.
  */
 export default function RunLogs() {
-  const { runId } = useParams<{ runId: string }>();
+  const runId = useRunIdFromShell();
   const { terminal } = useRunTerminal(runId);
   const events = useQuery({
-    queryKey: runEventsQueryKey(runId ?? ''),
-    queryFn: () => fetchRunEvents(runId!),
-    enabled: runId !== undefined,
+    queryKey: runEventsQueryKey(runId),
+    queryFn: () => fetchRunEvents(runId),
     refetchInterval: terminal ? false : RUN_EVENTS_POLL_MS,
   });
 

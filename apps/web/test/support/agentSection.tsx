@@ -58,7 +58,7 @@ function ShellStandIn({ window }: { readonly window: Window | null }) {
   return (
     <Outlet
       context={
-        {
+        { runId: AGENT_RUN,
           window, durationMs: null, liveDurationMs: null, warmupMs: null, live: null, projectAccess,
         } satisfies RunWindowContext
       }

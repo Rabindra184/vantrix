@@ -63,6 +63,7 @@ const RunSectionNotFound = lazy(() => import('./routes/RunSectionNotFound'));
 const RunList = lazy(() => import('./routes/RunList'));
 const RunDetail = lazy(() => import('./routes/RunDetail'));
 const RunSummary = lazy(() => import('./routes/RunSummary'));
+const PublicLinkApp = lazy(() => import('./routes/share/PublicLinkApp'));
 
 export default function App() {
   /* The boundary sits OUTSIDE `Suspense`, so it catches what `Suspense`
@@ -75,6 +76,12 @@ export default function App() {
     <Suspense fallback={<RouteFallback />}>
       <Routes>
         <Route path="/login" element={<Login />} />
+        {/* A run read through a public link (spec 6.1). Outside AuthGate and
+            AppShell, like `/login`: the reader may not be signed in, and one
+            who is must read what a stranger reads — the page asks neither the
+            session nor the project list, and owns its own query client so a
+            refused link shows its own page rather than a sign-in form. */}
+        <Route path="/share/:token/*" element={<PublicLinkApp />} />
         {/* Outside AuthGate on purpose: the gate is what redirects here, so
             gating this route would send a membership-less user in a circle —
             the exact loop the 403 branch exists to prevent. */}

@@ -1,6 +1,6 @@
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import type { Window } from '@perfportal/contracts';
 import { agentInjectorsQuery } from '../api/agent';
 import { seriesQuery, statsQuery, telemetryQuery, trendsQuery, usersQuery } from '../api/metrics';
@@ -31,7 +31,7 @@ import DesktopOnly from './DesktopOnly';
 import { linkButtonClasses } from '../components/Button';
 import { projectRunsPath, projectTestPath } from './paths';
 import LiveNotice from './LiveNotice';
-import { useRunTerminal } from './useRunWindow';
+import { useRunIdFromShell, useRunTerminal } from './useRunWindow';
 import useIsCompact from '../useIsCompact';
 import {
   DEFAULT_COMPARE_METRIC,
@@ -136,7 +136,7 @@ interface RunScope {
 }
 
 export default function RunCompare() {
-  const { runId } = useParams<{ runId: string }>();
+  const runId = useRunIdFromShell();
   const [params, setParams] = useSearchParams();
 
   /**
@@ -201,7 +201,7 @@ export default function RunCompare() {
   // render, so a phone does not fetch a payload it has been told not to draw.
   const compact = useIsCompact();
   const [shown, setShown] = useState(false);
-  const cohort = useQuery({ ...trendsQuery(runId ?? ''), enabled: runId !== undefined && terminal });
+  const cohort = useQuery({ ...trendsQuery(runId), enabled: terminal });
 
   const cohortIds = useMemo(
     () => (cohort.data?.runs ?? []).map((run) => run.id),
@@ -209,7 +209,7 @@ export default function RunCompare() {
   );
 
   const selected = useMemo(
-    () => parseCompareSelection(params.get('runs'), cohortIds, runId ?? ''),
+    () => parseCompareSelection(params.get('runs'), cohortIds, runId),
     [params, cohortIds, runId],
   );
 
@@ -481,7 +481,7 @@ export default function RunCompare() {
     : resolveReference(
         matrixRuns.filter((run) => run.stats !== null),
         parseCompareReference(params.get('ref')),
-        runId ?? '',
+        runId,
       );
   const matrix = toCompareMatrix(matrixRuns, metric, referenceRunId);
   const setReference = (id: string) => refine((next) => next.set('ref', id));
@@ -527,7 +527,7 @@ export default function RunCompare() {
             {/* WHAT THE URL ASKED FOR AND DID NOT GET. Silently drawing fewer
                 runs than were requested is how a reader concludes two runs are
                 identical when one of them was never fetched. */}
-            {selected.length < countRequested(params.get('runs'), runId ?? '') && (
+            {selected.length < countRequested(params.get('runs'), runId) && (
               <p className="text-[0.8125rem] text-muted">
                 Some runs named in this link were left out: a run can only be compared with
                 others of the same simulation, and at most {MAX_COMPARE} at a time.
@@ -765,7 +765,7 @@ export default function RunCompare() {
                 ) : (
                   matrixRuns.length > 0 && (
                     <CompareSummary
-                      summary={buildCompareSummary(matrixRuns, runId ?? '', referenceRunId, metric)}
+                      summary={buildCompareSummary(matrixRuns, runId, referenceRunId, metric)}
                     />
                   )
                 )}

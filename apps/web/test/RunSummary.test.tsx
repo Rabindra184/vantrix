@@ -183,7 +183,7 @@ function renderSummary({
             path="/runs/:runId"
             element={
               <Outlet
-                context={{ window, durationMs: run.durationMs ?? null, liveDurationMs: null, warmupMs: null, live: null, projectAccess: access } satisfies RunWindowContext}
+                context={{ runId: RUN_ID, window, durationMs: run.durationMs ?? null, liveDurationMs: null, warmupMs: null, live: null, projectAccess: access } satisfies RunWindowContext}
               />
             }
           >
@@ -369,7 +369,7 @@ describe('RunSummary — always the whole run', () => {
         <Routes>
           <Route
             path="/r"
-            element={<Outlet context={{ window: { fromMs: 10_000, toMs: 20_000, bucketWidthMs: 1_000 }, durationMs: 63161, liveDurationMs: null, warmupMs: null, live: null, projectAccess: UNKNOWN_ACCESS } satisfies RunWindowContext} />}
+            element={<Outlet context={{ runId: RUN_ID, window: { fromMs: 10_000, toMs: 20_000, bucketWidthMs: 1_000 }, durationMs: 63161, liveDurationMs: null, warmupMs: null, live: null, projectAccess: UNKNOWN_ACCESS } satisfies RunWindowContext} />}
           >
             <Route index element={<Probe />} />
           </Route>

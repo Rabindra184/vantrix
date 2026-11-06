@@ -1,5 +1,5 @@
 import { useId, useMemo, useState, type ReactNode } from 'react';
-import { useParams, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery, type QueryKey, type UseQueryResult } from '@tanstack/react-query';
 import { displayPath } from '@perfportal/contracts';
 import type { DistributionResponse, RunResponse, SeriesResponse, StatsResponse, UsersResponse, Window } from '@perfportal/contracts';
@@ -48,6 +48,7 @@ import WholeRunNote from './report/WholeRunNote';
 import { PERCENTILES, REQUESTS_AND_RESPONSES } from './runSlots';
 import {
   useLiveFromShell,
+  useRunIdFromShell,
   useRunTerminal,
   useTimeDomainFromShell,
   useWarmupFromShell,
@@ -109,10 +110,10 @@ const CONCURRENT_USERS: Slot = { id: 'concurrent-users', title: 'Concurrent user
  * own fetches and these share their cache keys.
  */
 export default function RunReport() {
-  const { runId } = useParams<{ runId: string }>();
+  const runId = useRunIdFromShell();
   const { detail: run } = useRunTerminal(runId);
   const live = useLiveFromShell();
-  if (runId === undefined || run.data === undefined) return null;
+  if (run.data === undefined) return null;
   // An honest wait until there is something live to draw — the condition the
   // Charts tab this replaces used: no delta yet this session.
   if (run.data.state === 'processing' && live?.lastDelta == null) {

@@ -24,6 +24,13 @@ function isApiPath(path: string): boolean {
 }
 
 /**
+ * A public link's page (`/share/<secret>` and its sections). Matched without
+ * regard to case because the router matches `/share/:token/*` that way, so
+ * `/Share/…` renders the same page and must carry the same header.
+ */
+const SHARE_PAGE = /^\/share(?:\/|$)/i;
+
+/**
  * ═══ CACHING: EVERYTHING HERE IS EITHER FOREVER OR NEVER ═══
  *
  * Vite fingerprints every emitted asset (`index-oRcKcgSw.js`), so the CONTENT
@@ -184,6 +191,10 @@ export function mountSpa(instance: express.Express, distDir: string): void {
       // Never `immutable`: this URL is stable and its content names the
       // current asset fingerprints. See cacheControlFor above.
       res.setHeader('Cache-Control', REVALIDATE);
+      // A public link pasted somewhere public must not be indexed: its page
+      // names the run's project and test (spec 6.2). Only there — the app's
+      // own pages sit behind sign-in, where a crawler reads a login form.
+      if (SHARE_PAGE.test(req.path)) res.setHeader('X-Robots-Tag', 'noindex');
       // `root`, never `join(distDir, 'index.html')`: `send` refuses any path
       // with a segment starting with `.`, and applies that to whatever it is
       // handed. Given an absolute path it checked the WHOLE install location,

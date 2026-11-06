@@ -1,6 +1,6 @@
 import InfoTip from '../components/InfoTip';
 import { useId, type ReactNode } from 'react';
-import { useParams, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import type { LiveDelta, SeriesResponse } from '@perfportal/contracts';
 import { errorsQuery, seriesQuery, statsQuery, trendsQuery, usersQuery } from '../api/metrics';
@@ -25,6 +25,7 @@ import { peakConcurrentUsers } from './runUsers';
 import {
   useLiveFromShell,
   useProjectAccessFromShell,
+  useRunIdFromShell,
   useRunTerminal,
   useWarmupFromShell,
   useWholeRunDomainFromShell,
@@ -57,7 +58,7 @@ const SUMMARY_TRENDS_STALE_MS = 5 * 60_000;
  * wrapper holding the instance would undo that.
  */
 export default function RunSummary() {
-  const { runId } = useParams<{ runId: string }>();
+  const runId = useRunIdFromShell();
   const { detail: run, terminal } = useRunTerminal(runId);
   const live = useLiveFromShell();
   // The run's project access, asked once by `RunShell` and shared through its
@@ -67,11 +68,10 @@ export default function RunSummary() {
   const domainMs = useWholeRunDomainFromShell();
   const warmupMs = useWarmupFromShell() ?? undefined;
   const compact = useIsCompact();
-  const id = runId ?? '';
-  const stats = useQuery({ ...statsQuery(id, null), enabled: terminal });
-  const users = useQuery({ ...usersQuery(id, null), enabled: terminal });
+  const stats = useQuery({ ...statsQuery(runId, null), enabled: terminal });
+  const users = useQuery({ ...usersQuery(runId, null), enabled: terminal });
   // Read live too: the delta writes this same key, and a live view has no window.
-  const series = useQuery({ ...seriesQuery(id, 'run', '', 'response_time', null), enabled: terminal });
+  const series = useQuery({ ...seriesQuery(runId, 'run', '', 'response_time', null), enabled: terminal });
   // THE COHORT, FOR ONE NEIGHBOUR — and deliberately NOT on this file's
   // default terms.
   //
@@ -90,7 +90,7 @@ export default function RunSummary() {
   // though both observe the identical key. `terminal` only: there is no window
   // to withhold the deltas under any more, because the Summary has none.
   const trends = useQuery({
-    ...trendsQuery(id),
+    ...trendsQuery(runId),
     enabled: terminal,
     staleTime: SUMMARY_TRENDS_STALE_MS,
   });
@@ -99,7 +99,7 @@ export default function RunSummary() {
   // first paint — `RunShell` mounts this page only once `RunDetail` has
   // resolved SOME state for this `runId`, and the query above is then served
   // from that same warm cache entry.
-  if (runId === undefined || run.data === undefined) return null;
+  if (run.data === undefined) return null;
 
   // NOT TERMINAL: either an honest wait, or the live wire's own headline
   // numbers. `run.data.state === 'processing'`, not `!terminal`, narrows

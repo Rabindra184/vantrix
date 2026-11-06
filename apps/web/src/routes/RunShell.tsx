@@ -7,7 +7,7 @@ import type { ProjectAccess } from '../access/useAccess';
 import TimeBrush from '../charts/TimeBrush';
 import { TimeAxisProvider } from '../charts/TimeAxisContext';
 import { useRunWindow, type RunWindowContext } from './useRunWindow';
-import { runPath, runReportPath } from './paths';
+import { useRunPaths } from './presentation';
 import type { Assertion, RunProcessing, RunResponse } from '@perfportal/contracts';
 import { usersQuery } from '../api/metrics';
 import RunHeader from './RunHeader';
@@ -171,11 +171,17 @@ export default function RunShell({
    * strip, no band and no brush and look like a section with nothing on it.
    * The run's own id comes back from the API in lower case; the URL has no
    * such guarantee. The window parameters live in the SEARCH, which `pathname`
-   * does not carry, so a narrowed link still reads as the page it names. */
+   * does not carry, so a narrowed link still reads as the page it names.
+   *
+   * THE SECTIONS' OWN PATHS, FOR WHICHEVER PAGE THIS IS (`useRunPaths`): a
+   * run's Summary is `/runs/<id>` in the app and `/share/<secret>` behind a
+   * public link, and a comparison against the app's path alone would draw a
+   * public Summary with no band and no strip. */
   const { pathname } = useLocation();
   const here = pathname.replace(/\/$/, '').toLowerCase();
-  const onSummary = here === runPath(identity.id).toLowerCase();
-  const onReport = here === runReportPath(identity.id).toLowerCase();
+  const paths = useRunPaths(identity.id);
+  const onSummary = here === paths.section('summary')?.toLowerCase();
+  const onReport = here === paths.section('report')?.toLowerCase();
 
   /* ═══ THE BRUSH ONLY WHERE A WINDOW MEANS SOMETHING ═══
    *
@@ -441,6 +447,7 @@ export default function RunShell({
       <Suspense fallback={<RouteFallback />}>
         <Outlet
           context={{
+            runId: identity.id,
             window,
             durationMs: identity.durationMs ?? null,
             warmupMs: identity.warmupMs ?? null,

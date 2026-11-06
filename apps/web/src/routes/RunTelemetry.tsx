@@ -1,4 +1,4 @@
-import { Link, useParams } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { useId, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type { TelemetryResponse } from '@perfportal/contracts';
@@ -10,6 +10,7 @@ import { formatDuration } from './format';
 import { Payload, Undrawn, type Slot } from './payload';
 import {
   useProjectAccessFromShell,
+  useRunIdFromShell,
   useRunTerminal,
   useTimeDomainFromShell,
   useWindowFromShell,
@@ -106,7 +107,7 @@ export default function RunTelemetry({
    */
   readonly action: string;
 }) {
-  const { runId } = useParams<{ runId: string }>();
+  const runId = useRunIdFromShell();
   // The slots this section owns. The `as` is the one place a plain string id
   // meets the union `only` is typed in; `TelemetryCharts` takes the same list.
   const slots = TELEMETRY_SLOTS.filter((s) => only.includes(s.id as TelemetryChartId));
@@ -162,8 +163,8 @@ export default function RunTelemetry({
   // answer forever, past the moment the run actually finishes.
   const wanted = !compact || shown;
   const telemetry = useQuery({
-    ...telemetryQuery(runId ?? '', window),
-    enabled: runId !== undefined && wanted && terminal,
+    ...telemetryQuery(runId, window),
+    enabled: wanted && terminal,
   });
 
   // NOT TERMINAL (CRITICAL 1 fix): the live wording, returned BEFORE the
