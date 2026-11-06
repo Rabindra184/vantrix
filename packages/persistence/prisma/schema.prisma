@@ -18,8 +18,12 @@ model Org {
   createdAt DateTime    @default(now()) @map("created_at")
   /// The org's opt-in to AI run analysis: off until an admin turns it on.
   aiEnabled Boolean     @default(false) @map("ai_enabled")
+  /// The org's opt-in to public links: off until an admin turns it on, and
+  /// turning it off stops every link at once without touching one.
+  publicLinksEnabled Boolean @default(false) @map("public_links_enabled")
   projects  Project[]
   members   OrgMember[]
+  publicLinks RunPublicLink[]
 
   @@map("org")
 }
@@ -41,6 +45,7 @@ model Project {
   runnerJobs      RunnerJob[]
   packages        Package[]
   members         ProjectMember[]
+  publicLinks     RunPublicLink[]
 
   @@unique([id, orgId])
   @@unique([orgId, slug])
@@ -548,6 +553,7 @@ model Run {
   verification   RunVerification?
   aiAnalysis     RunAiAnalysis?
   agent          RunAgent?
+  publicLinks    RunPublicLink[]
   runnerJobs RunnerJob[]
   /// SET NULL, not CASCADE: a deleted account keeps its words on the run and
   /// loses only the attribution.
@@ -956,6 +962,43 @@ model RunAiAnalysis {
   @@map("run_ai_analysis")
 }
 
+/// A link that lets someone read one run without signing in
+/// (docs/superpowers/specs/2026-11-06-public-links-and-custom-report-design.md,
+/// section 3). Written and read through PublicLinkRepository's raw SQL.
+///
+/// `tokenHash` is the lowercase hex SHA-256 of the secret, never the secret:
+/// run_public_link_token_hash_check (in the migration, which Prisma cannot
+/// model) holds every writer to that shape. `orgId` and `projectId` are
+/// denormalised from the run, so the credential lookup answers the tenant in
+/// one row. Rows are never deleted by the product; they go with their org,
+/// project or run. The two people a row names are SET NULL on delete.
+model RunPublicLink {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId      String    @map("org_id") @db.Uuid
+  projectId  String    @map("project_id") @db.Uuid
+  runId      String    @map("run_id") @db.Uuid
+  tokenHash  String    @unique @map("token_hash")
+  createdBy  String?   @map("created_by")
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  /// Every link expires.
+  expiresAt  DateTime  @map("expires_at") @db.Timestamptz(3)
+  /// Set by a revoke and never cleared.
+  revokedAt  DateTime? @map("revoked_at") @db.Timestamptz(3)
+  revokedBy  String?   @map("revoked_by")
+  /// Touched at most once a minute (PublicLinkRepository.touch).
+  lastUsedAt DateTime? @map("last_used_at") @db.Timestamptz(3)
+
+  org     Org     @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  run     Run     @relation(fields: [runId], references: [id], onDelete: Cascade)
+  creator User?   @relation("RunPublicLinkCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
+  revoker User?   @relation("RunPublicLinkRevokedBy", fields: [revokedBy], references: [id], onDelete: SetNull)
+
+  /// Serves a run's list, newest first.
+  @@index([runId, createdAt(sort: Desc)])
+  @@map("run_public_link")
+}
+
 /// One row per run that had an agent file: whether it could be read, why not,
 /// and what its figures were built on. Cascades from run, so unlike the two
 /// agent bucket tables it is not FK-free.
@@ -1016,6 +1059,10 @@ model User {
   /// The AI analyses this person asked for. Only here because Prisma names
   /// both ends of a relation; nothing reads it.
   aiAnalysesRequested RunAiAnalysis[]
+  /// The public links this person made, and the ones they revoked. Only here
+  /// because Prisma names both ends of a relation; nothing reads them.
+  publicLinksCreated  RunPublicLink[] @relation("RunPublicLinkCreatedBy")
+  publicLinksRevoked  RunPublicLink[] @relation("RunPublicLinkRevokedBy")
 
   @@unique([email])
   @@map("user")
