@@ -21,8 +21,10 @@ import { AppModule } from '../src/app.module.js';
 import {
   ALLOWED_BEFORE_PASSWORD_CHANGE_KEY,
   BEARER_ONLY_KEY,
+  LINK_READABLE_KEY,
   NOT_PROJECT_SCOPED_KEY,
   OWN_ACCOUNT_KEY,
+  PUBLIC_LINK_ONLY_KEY,
   REQUIRES_KEY,
 } from '../src/auth/access.decorator.js';
 import { IS_PUBLIC_KEY, SCOPES_KEY } from '../src/auth/scopes.decorator.js';
@@ -67,6 +69,12 @@ interface WalkedRoute {
   readonly allowedBeforePasswordChange: boolean;
   /** `@AllowedBeforePasswordChange` on the route's CONTROLLER CLASS, which the guard does not read. */
   readonly allowedBeforePasswordChangeOnClass: boolean;
+  /** `@LinkReadable` on the HANDLER, as `AccessGuard` reads it: a public link may read this route for its own run. */
+  readonly linkReadable: boolean;
+  /** `@PublicLinkOnly` on the HANDLER, as `AccessGuard` reads it: the sixth access marker. */
+  readonly publicLinkOnly: boolean;
+  /** `@LinkReadable` or `@PublicLinkOnly` on the route's CONTROLLER CLASS, which the guard does not read. */
+  readonly linkMarkerOnClass: boolean;
   /** `@Scopes` as `AuthGuard` reads it: the handler's, else the class's. */
   readonly scopes: readonly string[] | undefined;
   /** `SessionOnlyGuard` on the handler or its class. */
@@ -130,6 +138,12 @@ function walkRoutes(): WalkedRoute[] {
           // it opens nothing, so it must not be counted as opening anything.
           allowedBeforePasswordChange: Reflect.getMetadata(ALLOWED_BEFORE_PASSWORD_CHANGE_KEY, fn) === true,
           allowedBeforePasswordChangeOnClass: Reflect.getMetadata(ALLOWED_BEFORE_PASSWORD_CHANGE_KEY, cls) === true,
+          // The HANDLER's alone, as `AccessGuard` reads both: each OPENS a route
+          // to a reader outside the organisation, so neither counts on a class.
+          linkReadable: Reflect.getMetadata(LINK_READABLE_KEY, fn) === true,
+          publicLinkOnly: Reflect.getMetadata(PUBLIC_LINK_ONLY_KEY, fn) === true,
+          linkMarkerOnClass:
+            Reflect.getMetadata(LINK_READABLE_KEY, cls) === true || Reflect.getMetadata(PUBLIC_LINK_ONLY_KEY, cls) === true,
           scopes: meta<string[]>(SCOPES_KEY),
           sessionOnly: guardedBySessionOnly(cls) || guardedBySessionOnly(fn),
           uuidParams,
@@ -145,8 +159,8 @@ function walkRoutes(): WalkedRoute[] {
 
 const ROUTES = walkRoutes();
 
-/** How a route is reached: the action it `@Requires`, or one of the four statements. */
-type Access = AccessAction | 'bearer-only' | 'not-project-scoped' | 'own-account' | 'public';
+/** How a route is reached: the action it `@Requires`, one of the four statements, or `@PublicLinkOnly`. */
+type Access = AccessAction | 'bearer-only' | 'not-project-scoped' | 'own-account' | 'public' | 'public-link';
 
 /** Every marker a walked route carries, as `Access` values — one, if it is declared right. */
 function markers(r: WalkedRoute): Access[] {
@@ -156,6 +170,7 @@ function markers(r: WalkedRoute): Access[] {
     r.notProjectScoped ? 'not-project-scoped' : null,
     r.ownAccount ? 'own-account' : null,
     r.isPublic ? 'public' : null,
+    r.publicLinkOnly ? 'public-link' : null,
   ].filter((m): m is Access => m !== null);
 }
 
@@ -252,6 +267,8 @@ const ACCESS_BY_ROUTE: Readonly<Record<string, Access>> = {
 
   'PUT /v1/me/password': 'own-account',
 
+  'GET /v1/public-link': 'public-link',
+
   'GET /v1/admin/users': 'users:manage',
   'POST /v1/admin/users': 'users:manage',
   'PATCH /v1/admin/users/:userId': 'users:manage',
@@ -277,7 +294,7 @@ describe('every route declares how it is reached', () => {
     expect(ROUTES.length, 'the route walk found too few routes — it has rotted').toBeGreaterThan(40);
   });
 
-  it('gives each route exactly one of @Requires, @BearerOnly, @NotProjectScoped, @OwnAccount and @Public', () => {
+  it('gives each route exactly one of @Requires, @BearerOnly, @NotProjectScoped, @OwnAccount, @Public and @PublicLinkOnly', () => {
     const wrong = ROUTES.map((r) => ({ label: r.label, markers: markers(r) }))
       .filter((r) => r.markers.length !== 1)
       .map((r) => `${r.label}: ${r.markers.length === 0 ? 'none' : r.markers.join(' + ')}`)
@@ -342,6 +359,19 @@ describe('every route declares how it is reached', () => {
       ...new Set(ROUTES.filter((r) => r.allowedBeforePasswordChangeOnClass).map((r) => r.label)),
     ].sort();
     expect(onClass, `routes whose controller class is marked:\n${onClass.join('\n')}`).toEqual([]);
+  });
+
+  /**
+   * `AccessGuard` reads `@LinkReadable` and `@PublicLinkOnly` off the HANDLER
+   * alone, and so does this walk — each opens a route to a reader outside the
+   * organisation, so a controller must not open every route it holds at once.
+   * A marker on a CLASS would open nothing today and be counted nowhere; the
+   * day the guard read the class too, it would open the whole controller. So
+   * no class may carry either.
+   */
+  it('lets no controller class carry @LinkReadable or @PublicLinkOnly', () => {
+    const onClass = [...new Set(ROUTES.filter((r) => r.linkMarkerOnClass).map((r) => r.label))].sort();
+    expect(onClass, `routes whose controller class carries a public-link marker:\n${onClass.join('\n')}`).toEqual([]);
   });
 
   it('declares, route by route, exactly the access written down for it', () => {

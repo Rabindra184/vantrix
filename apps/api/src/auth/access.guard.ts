@@ -10,9 +10,10 @@ import { Reflector } from '@nestjs/core';
 import { ACCESS_ACTIONS, accessRefusal, type AccessAction } from '@perfportal/contracts';
 import { isUuid, ProjectRepository, RunRepository } from '@perfportal/persistence';
 import type { Request } from 'express';
-import { accessDenied, projectNotFound, runNotFound } from '../common/validation.js';
+import { accessDenied, notReadableByLink, onlyAPublicLink, projectNotFound, runNotFound } from '../common/validation.js';
 import { accessDecision } from './access.js';
-import { REQUIRES_KEY } from './access.decorator.js';
+import { LINK_READABLE_KEY, PUBLIC_LINK_ONLY_KEY, REQUIRES_KEY } from './access.decorator.js';
+import type { Tenant } from './auth.guard.js';
 import { SESSION_TOKEN_ID_PREFIX } from './session-only.guard.js';
 
 /**
@@ -26,7 +27,8 @@ import { SESSION_TOKEN_ID_PREFIX } from './session-only.guard.js';
  * ═══ IT RETURNS `true` FOR EVERYTHING IT DOES NOT JUDGE ═══
  *
  * A route with no `@Requires`, and any tenant that is not a session — a
- * bearer token, or no tenant at all on a `@Public` route. A token's reach is
+ * bearer token, or no tenant at all on a `@Public` route. The one exception
+ * is a public link, which is judged everywhere and FIRST (below). A token's reach is
  * its one project and its scopes, decided by `AuthGuard`, `@Scopes` and
  * `SessionOnlyGuard` exactly as before this guard existed, and CI ingest
  * depends on that path not moving. A session is told apart the way
@@ -59,6 +61,25 @@ import { SESSION_TOKEN_ID_PREFIX } from './session-only.guard.js';
  *
  * Both lookups are scoped by the session's org, which is what keeps another
  * org's project out — `canSeeProject` and `accessDecision` do not check it.
+ *
+ * ═══ A PUBLIC LINK IS DECIDED FIRST, AND THE DECISION IS DEFAULT-DENY ═══
+ * (docs/superpowers/specs/2026-11-06-public-links-and-custom-report-design.md,
+ * section 5.2)
+ *
+ * Before `@Requires` is read — so before the "no action, nothing to judge"
+ * return, which would otherwise wave a link through every route that
+ * declares none (`GET /v1/runs`, `GET /v1/projects`, a `@BearerOnly` route).
+ * A tenant carrying `publicLink` is let through only to a `@PublicLinkOnly`
+ * route, or to a `@LinkReadable` route whose `:id` is one of its `runIds`.
+ * Everything else is a 404, and the SAME 404 for every case of a route shape:
+ * on a route with an `:id` it is `runNotFound(id)` — the body a run that does
+ * not exist gets, a malformed id and another run of the same project included
+ * — and on a route with none it is `notReadableByLink`. No route is "not
+ * found" for one reason and "forbidden" for another, so a link cannot map the
+ * API. Both markers are read off the HANDLER alone (access.decorator.ts).
+ *
+ * Every other caller on a `@PublicLinkOnly` route gets `onlyAPublicLink`'s
+ * 404, whoever it is.
  */
 @Injectable()
 export class AccessGuard implements CanActivate {
@@ -69,14 +90,18 @@ export class AccessGuard implements CanActivate {
   ) {}
 
   async canActivate(ctx: ExecutionContext): Promise<boolean> {
+    const req = ctx.switchToHttp().getRequest<Request>();
+    const tenant = req.tenant;
+    const publicLinkOnly = this.reflector.get<boolean | undefined>(PUBLIC_LINK_ONLY_KEY, ctx.getHandler()) === true;
+    if (tenant?.publicLink !== undefined) return this.#decideLink(ctx, req, tenant.publicLink, publicLinkOnly);
+    if (publicLinkOnly) throw onlyAPublicLink();
+
     const action = this.reflector.getAllAndOverride<AccessAction | undefined>(REQUIRES_KEY, [
       ctx.getHandler(),
       ctx.getClass(),
     ]);
     if (action === undefined) return true;
 
-    const req = ctx.switchToHttp().getRequest<Request>();
-    const tenant = req.tenant;
     if (tenant === undefined || !tenant.tokenId.startsWith(SESSION_TOKEN_ID_PREFIX)) return true;
 
     const required = ACCESS_ACTIONS[action].role;
@@ -118,6 +143,21 @@ export class AccessGuard implements CanActivate {
     // 'not-found'. ('admin-required' cannot arise: `required` is a project
     // role here, and the admin case returned above.)
     throw notVisible();
+  }
+
+  /** The link tenant's whole decision: see the class docstring. Returns true or throws. */
+  #decideLink(
+    ctx: ExecutionContext,
+    req: Request,
+    link: NonNullable<Tenant['publicLink']>,
+    publicLinkOnly: boolean,
+  ): true {
+    if (publicLinkOnly) return true;
+    const params = (req.params ?? {}) as Record<string, unknown>;
+    const id = typeof params.id === 'string' ? params.id : undefined;
+    const linkReadable = this.reflector.get<boolean | undefined>(LINK_READABLE_KEY, ctx.getHandler()) === true;
+    if (linkReadable && id !== undefined && link.runIds.includes(id)) return true;
+    throw id === undefined ? notReadableByLink() : runNotFound(id);
   }
 }
 

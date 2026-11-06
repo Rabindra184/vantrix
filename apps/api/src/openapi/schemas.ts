@@ -37,6 +37,7 @@ import {
   CreatePublicLinkRequestSchema,
   CreatePublicLinkResponseSchema,
   PublicLinkListResponseSchema,
+  PublicLinkResolveResponseSchema,
   PublicLinkSchema,
   IngestMetadataSchema,
   MintedTokenSchema,
@@ -211,11 +212,13 @@ const SOURCE: Record<string, z.ZodType> = {
   OrgSettings: OrgSettingsSchema,
   UpdateOrgSettingsRequest: UpdateOrgSettingsRequestSchema,
   // PUBLIC LINKS: one link, the create's body and answer (the answer carries
-  // the secret, once), and a run's list with the org's switch.
+  // the secret, once), a run's list with the org's switch, and what a link
+  // itself reads first — which run, and until when.
   PublicLink: PublicLinkSchema,
   CreatePublicLinkRequest: CreatePublicLinkRequestSchema,
   CreatePublicLinkResponse: CreatePublicLinkResponseSchema,
   PublicLinkListResponse: PublicLinkListResponseSchema,
+  PublicLinkResolveResponse: PublicLinkResolveResponseSchema,
 };
 
 /**

@@ -143,6 +143,28 @@ export function runNotFound(id: string): NotFoundException {
 }
 
 /**
+ * A public link refused on a route that names no run (no `:id`). A link
+ * refused on a run route gets `runNotFound` instead — the very body a run
+ * that does not exist gets — so every refusal of one route shape is one body,
+ * and a link cannot be used to tell one route from another.
+ */
+export function notReadableByLink(): NotFoundException {
+  return notFound('Nothing here can be read with a public link.', 'Open the link you were sent; it reads one run.');
+}
+
+/**
+ * Any credential but a public link, on a `@PublicLinkOnly` route
+ * (`GET /v1/public-link`). One body for a session and a bearer token alike.
+ */
+export function onlyAPublicLink(): NotFoundException {
+  return notFound(
+    "Only a public link's credential can read this.",
+    "Send Authorization: PublicLink <secret>, with the secret from the link's URL. A signed-in " +
+      'session or an API token reads the run itself at GET /v1/runs/{id}.',
+  );
+}
+
+/**
  * An account the caller's org does not hold — one in another org, one in no
  * org at all, or one that does not exist — on `/v1/admin/users/:userId` and
  * the members routes. One answer for all three, so an admin of one install

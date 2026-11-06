@@ -6,12 +6,13 @@ import {
   UnauthorizedException,
   type NestMiddleware,
 } from '@nestjs/common';
-import { OrgMemberRepository, ProjectMemberRepository, TokenRepository } from '@perfportal/persistence';
+import { OrgMemberRepository, ProjectMemberRepository, PublicLinkRepository, TokenRepository } from '@perfportal/persistence';
 import { fromNodeHeaders } from 'better-auth/node';
 import type { NextFunction, Request, Response } from 'express';
 import { loadSessionAccess } from './access.js';
 import { authenticateRequest, type Tenant } from './auth.guard.js';
 import { auth } from './better-auth.instance.js';
+import { authenticatePublicLink, carriesPublicLink, PublicLinkRefusal } from './public-link.js';
 import { SESSION_TOKEN_ID_PREFIX } from './session-only.guard.js';
 import { internalProblem, logInternalError, problem } from '../common/problem.js';
 
@@ -91,23 +92,52 @@ export class AuthMiddleware implements NestMiddleware {
     private readonly tokens: TokenRepository,
     private readonly members: OrgMemberRepository,
     private readonly projectMembers: ProjectMemberRepository,
+    private readonly links: PublicLinkRepository,
   ) {}
 
   async use(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      // Dispatch on the credential present. `Authorization: Bearer …` takes
-      // the existing, untouched bearer path — CI ingest depends on this not
-      // shifting. Anything else (a session cookie, or no credential at all)
-      // attempts the session: getSession() rejects a missing cookie exactly
-      // like an absent bearer token, so "neither" naturally falls out of
-      // that same branch as a 401 rather than needing a third case here.
+      // Dispatch on the credential present, PUBLIC LINK FIRST. A link's page
+      // never sends a cookie, but a signed-in sharer opening their own link
+      // in the same browser might carry one — and must see exactly what a
+      // stranger sees, so the PublicLink scheme wins over a cookie beside it
+      // (public-link.ts).
+      //
+      // `Authorization: Bearer …` then takes the existing, untouched bearer
+      // path — CI ingest depends on this not shifting. Anything else (a
+      // session cookie, or no credential at all) attempts the session:
+      // getSession() rejects a missing cookie exactly like an absent bearer
+      // token, so "neither" naturally falls out of that same branch as a 401
+      // rather than needing a case of its own here.
       const authHeader = req.headers.authorization;
-      const hasBearer = typeof authHeader === 'string' && authHeader.startsWith('Bearer ');
-      req.tenant = hasBearer
-        ? await authenticateRequest(req, this.tokens)
-        : await authenticateSession(req, this.members, this.projectMembers);
+      if (carriesPublicLink(authHeader)) {
+        req.tenant = await authenticatePublicLink(req, this.links);
+        // Every response to a link tenant, its refusals by the guards
+        // included: an intermediary must never keep a copy of a run a link
+        // shows (spec section 5.4).
+        res.setHeader('Cache-Control', 'private, no-store');
+      } else {
+        const hasBearer = typeof authHeader === 'string' && authHeader.startsWith('Bearer ');
+        req.tenant = hasBearer
+          ? await authenticateRequest(req, this.tokens)
+          : await authenticateSession(req, this.members, this.projectMembers);
+      }
       next();
     } catch (err) {
+      // A public link that does not work: a 401 with ITS OWN code, detail and
+      // remediation, which a link's reader can act on. Not the
+      // UNAUTHENTICATED body below, whose advice — use a token, or sign in —
+      // is for the other two credentials. Kept out of caches like the link's
+      // successes: its detail names the link's state and its expiry.
+      if (err instanceof PublicLinkRefusal) {
+        res
+          .status(401)
+          .set('Cache-Control', 'private, no-store')
+          .type('application/problem+json')
+          .send(problem(err.code, 401, err.detail, err.remediation));
+        return;
+      }
+
       // A deliberate rejection from the authentication path itself (bad,
       // missing, or revoked token; missing/invalid/expired session; or a
       // valid session belonging to no org) — safe to surface as-is; it never

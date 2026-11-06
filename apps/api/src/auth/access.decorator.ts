@@ -2,20 +2,25 @@ import { SetMetadata } from '@nestjs/common';
 import type { AccessAction } from '@perfportal/contracts';
 
 /*
- * ═══ FOUR WAYS A ROUTE STATES WHO MAY CALL IT ═══
- * (docs/superpowers/specs/2026-10-07-project-access-design.md, section 2)
+ * ═══ FIVE WAYS A ROUTE STATES WHO MAY CALL IT ═══
+ * (docs/superpowers/specs/2026-10-07-project-access-design.md, section 2, and
+ * docs/superpowers/specs/2026-11-06-public-links-and-custom-report-design.md,
+ * section 5.3)
  *
- * Every route carries exactly one of the four below, or `@Public` (the
+ * Every route carries exactly one of the five below, or `@Public` (the
  * health probes). The route walk in `access-routes.integration.test.ts` reads
  * these keys off Nest's metadata, the way `openapi.integration.test.ts` reads
- * `PATH_METADATA`, and fails any route carrying none of the five, or more
- * than one — so a route cannot ship without saying who it is for. Only
- * `@Requires` changes what a request gets back; the other three are
- * statements for that walk, and `AccessGuard` does not read them.
+ * `PATH_METADATA`, and fails any route carrying none of the six, or more
+ * than one — so a route cannot ship without saying who it is for. `@Requires`
+ * and `@PublicLinkOnly` change what a request gets back; `@BearerOnly`,
+ * `@NotProjectScoped` and `@OwnAccount` are statements for that walk, and
+ * `AccessGuard` does not read them.
  *
- * `@AllowedBeforePasswordChange`, at the bottom, is not one of the four: it
+ * Two decorators at the bottom are not among the five. `@AllowedBeforePasswordChange`
  * says nothing about who may call a route, only that a session which must
- * still choose its password may.
+ * still choose its password may. `@LinkReadable` is ADDITIVE: it sits beside
+ * a route's `@Requires` and opens that one route to a public link for its own
+ * run.
  */
 
 export const REQUIRES_KEY = 'perfportal:requires';
@@ -23,6 +28,8 @@ export const BEARER_ONLY_KEY = 'perfportal:bearer-only';
 export const NOT_PROJECT_SCOPED_KEY = 'perfportal:not-project-scoped';
 export const OWN_ACCOUNT_KEY = 'perfportal:own-account';
 export const ALLOWED_BEFORE_PASSWORD_CHANGE_KEY = 'perfportal:allowed-before-password-change';
+export const LINK_READABLE_KEY = 'perfportal:link-readable';
+export const PUBLIC_LINK_ONLY_KEY = 'perfportal:public-link-only';
 
 /**
  * A per-project route, and the action it performs. `AccessGuard` looks the
@@ -76,3 +83,30 @@ export const OwnAccount = () => SetMetadata(OWN_ACCOUNT_KEY, true);
  * Nest has already routed to, so there is no path to spell differently.
  */
 export const AllowedBeforePasswordChange = () => SetMetadata(ALLOWED_BEFORE_PASSWORD_CHANGE_KEY, true);
+
+/*
+ * ═══ THE PUBLIC LINK'S TWO MARKERS, READ OFF THE HANDLER ALONE ═══
+ *
+ * A link tenant is decided FIRST in `AccessGuard`, and the decision is
+ * default-deny: it is let through only where one of these two says so. Both
+ * are read with `reflector.get` on the HANDLER, never the class, the way
+ * `@AllowedBeforePasswordChange` is: either one OPENS a route to a reader
+ * outside the organisation, so a controller must not be able to open every
+ * route it holds at once. The route walk refuses either on a class.
+ */
+
+/**
+ * A run read a public link may make, for ITS OWN run: `AccessGuard` lets a
+ * link tenant through only when the route's `:id` is one of
+ * `tenant.publicLink.runIds`. Additive — it sits beside the route's
+ * `@Requires('project:read')`, which still decides every other caller.
+ */
+export const LinkReadable = () => SetMetadata(LINK_READABLE_KEY, true);
+
+/**
+ * A route only a public link may call (`GET /v1/public-link`), and an access
+ * marker of its own, exclusive with the other five. `AccessGuard` lets a link
+ * tenant through and answers every other caller — a session, a bearer token —
+ * 404.
+ */
+export const PublicLinkOnly = () => SetMetadata(PUBLIC_LINK_ONLY_KEY, true);

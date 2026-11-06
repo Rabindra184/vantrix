@@ -921,6 +921,20 @@ const responses: Record<string, ResponseObject> = {
       'application/problem+json with a required "remediation".',
     content: problem(),
   },
+  PublicLinkRefused: {
+    description:
+      'The PublicLink credential does not work, with one code per cause, tested in this order: ' +
+      'LINK_NOT_FOUND — the value after "PublicLink " is not a link secret ("ppl_" and 43 ' +
+      'base64url characters), or no link has it; LINK_REVOKED — the link was revoked, and never ' +
+      'works again; PUBLIC_LINKS_DISABLED — the organisation has public links turned off, which an ' +
+      'admin may undo; LINK_EXPIRED — the link\'s expiry has passed (an expiry of exactly now has ' +
+      'passed), its detail naming the instant. The remediation is always to ask whoever sent the ' +
+      'link for a new one. Sent with Cache-Control: private, no-store. A request that sends no ' +
+      'PublicLink header is not judged as a link at all: it is answered as any other credential ' +
+      'is, code UNAUTHENTICATED when nothing it carries authenticates it. ' +
+      'application/problem+json with a required "remediation".',
+    content: problem(),
+  },
   RunNotShareable: {
     description:
       'The run is not finished (code RUN_NOT_SHAREABLE): only a "complete" or "incomplete" run ' +
@@ -1622,6 +1636,41 @@ const paths: Record<string, PathItemObject> = {
         '401': ref('Unauthorized'),
         '403': ref('SessionRequired'),
         '404': ref('NotFound'),
+      },
+    },
+  },
+
+  // ═══ WHAT A PUBLIC LINK READS FIRST ═══
+  //
+  // The public page's URL carries only the secret, so this is its first call.
+  // `@PublicLinkOnly`: every other credential is answered 404.
+  '/v1/public-link': {
+    get: {
+      operationId: 'resolvePublicLink',
+      summary: 'Which run a public link reads, and until when',
+      tags: ['runs'],
+      description:
+        'Accepts ONLY a public link\'s credential, "Authorization: PublicLink <secret>" — the ' +
+        'secret is the last segment of the link\'s URL, "ppl_" and 43 base64url characters — ' +
+        'sent with no cookie. A signed-in session or an API token is answered 404 here, and reads ' +
+        'a run at GET /v1/runs/{id} instead. Answers the run the link was created for and the ' +
+        'instant it stops working. The credential is checked on every request with nothing ' +
+        'cached between them, so a revoke, an expiry and the organisation\'s switch all take ' +
+        'effect on the next one. Every response to a link carries Cache-Control: private, ' +
+        'no-store.',
+      responses: {
+        '200': {
+          description: 'The link\'s run and its expiry.',
+          content: json(schemaRef('PublicLinkResolveResponse')),
+        },
+        '401': ref('PublicLinkRefused'),
+        '404': {
+          description:
+            'The request carried a credential other than a public link — a session cookie or a ' +
+            'bearer token. One body for both. application/problem+json with a required ' +
+            '"remediation".',
+          content: problem(),
+        },
       },
     },
   },

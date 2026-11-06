@@ -8,6 +8,7 @@ import {
   OrgMemberRepository,
   ProjectMemberRepository,
   ProjectRepository,
+  PublicLinkRepository,
   RunnerRepository,
   RunRepository,
   RuleRepository,
@@ -43,6 +44,10 @@ export const CONFIG = Symbol('CONFIG');
     { provide: TestRepository, useFactory: (p: PrismaClient) => new TestRepository(p), inject: [PrismaClient] },
     { provide: ActivityRepository, useFactory: (p: PrismaClient) => new ActivityRepository(p), inject: [PrismaClient] },
     { provide: UserRepository, useFactory: (p: PrismaClient) => new UserRepository(p), inject: [PrismaClient] },
+    // Raw SQL on the shared pool. Here, and exported, because AuthMiddleware
+    // reads it on every PublicLink request; PublicLinksModule's controllers
+    // use this one instance rather than a second.
+    { provide: PublicLinkRepository, useFactory: (pool: pg.Pool) => new PublicLinkRepository(pool), inject: [pg.Pool] },
     AuthGuard,
     AuthMiddleware,
     // Global so @Scopes() is enforced everywhere by default — a handler
@@ -74,6 +79,6 @@ export const CONFIG = Symbol('CONFIG');
     AccessGuard,
     { provide: APP_GUARD, useExisting: AccessGuard },
   ],
-  exports: [CONFIG, PrismaClient, pg.Pool, RedisCommands, TokenRepository, OrgMemberRepository, ProjectMemberRepository, ProjectRepository, RunnerRepository, RunRepository, RuleRepository, TestRepository, ActivityRepository, UserRepository, AuthGuard, AuthMiddleware],
+  exports: [CONFIG, PrismaClient, pg.Pool, RedisCommands, TokenRepository, OrgMemberRepository, ProjectMemberRepository, ProjectRepository, RunnerRepository, RunRepository, RuleRepository, TestRepository, ActivityRepository, UserRepository, PublicLinkRepository, AuthGuard, AuthMiddleware],
 })
 export class AuthModule {}
