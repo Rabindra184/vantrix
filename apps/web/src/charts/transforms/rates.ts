@@ -1,6 +1,7 @@
 import type { SeriesResponse } from '@perfportal/contracts';
 import type { StatusRole } from '../theme';
 import type { ChartData, ChartSeries, ChartTableRow } from '../types';
+import { scopePhrase, withNarrowedLine, type ScopeOpts } from './narrowed';
 
 /**
  * `GET /v1/runs/:id/series` → the two rate charts §13.2 draws from it:
@@ -334,8 +335,13 @@ export function toRequestsAndResponses(
    * REQUIRED, no default: "recorded for this run" is false of a window that
    * simply selected nothing, and a wrong value is silent. The Report passes
    * `window !== null`; the Summary passes `false`.
+   *
+   * `narrowed` is the Report's pick, when one is applied (`narrowed.ts`). Its
+   * sentence opens "Nothing was recorded" rather than "No requests were
+   * recorded" because the scope may itself be a request: "No requests were
+   * recorded for this request" says one thing twice.
    */
-  opts: { readonly windowSelected: boolean },
+  opts: ScopeOpts,
 ): ChartData {
   const columns = [TIME_COLUMN, ...COMBINED_LINES];
   if (series.buckets.length === 0) {
@@ -344,9 +350,13 @@ export function toRequestsAndResponses(
       axisLabels: [],
       columns,
       rows: [],
-      empty: opts.windowSelected
-        ? 'No requests ran in the selected window, so there are no request or response rates to show.'
-        : 'No requests were recorded for this run, so there are no request or response rates to show.',
+      empty:
+        opts.narrowed != null
+          ? `Nothing was recorded ${scopePhrase(opts)}, so there are no request or response rates to show.`
+          : opts.windowSelected
+            ? 'No requests ran in the selected window, so there are no request or response rates to show.'
+            : 'No requests were recorded for this run, so there are no request or response rates to show.',
+      limitation: withNarrowedLine(undefined, opts.narrowed),
     };
   }
   // The payload's own width — see `rateChart`'s divisor note.
@@ -369,9 +379,11 @@ export function toRequestsAndResponses(
       label: String(b.startOffsetMs / 1000),
       values: measured.map((line) => line[i]!),
     })),
-    limitation:
+    limitation: withNarrowedLine(
       series.bucketWidthMs === 1000
         ? undefined
         : widthNote(series.bucketWidthMs, 'requests and responses were counted'),
+      opts.narrowed,
+    ),
   };
 }

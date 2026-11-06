@@ -1,6 +1,7 @@
 import type { DistributionResponse } from '@perfportal/contracts';
 import type { ChartData, ChartTableRow } from '../types';
 import { binLabelColumn } from './distribution';
+import { scopePhrase, withNarrowedLine, type ScopeOpts } from './narrowed';
 import type { Outcome } from './percentiles';
 
 /**
@@ -89,15 +90,18 @@ function overflowNote(count: number, outcome: Outcome): string {
 export function toPercentileDistribution(
   d: DistributionResponse,
   outcome: Outcome,
-  /** REQUIRED, no default — see `toDistribution`. */
-  opts: { readonly windowSelected: boolean },
+  /** REQUIRED, no default — see `toDistribution`; `narrowed` likewise. */
+  opts: ScopeOpts,
 ): ChartData {
   const columns = [PERCENTILE_COLUMN, binLabelColumn('Response time', d.exactValues), 'Requests at or below'];
   // Emitted in the empty branch too: "everything overflowed" is exactly the
   // case with no curve to draw AND the case where the reader most needs to
-  // know why.
-  const limitation =
-    d.overflowCount > 0 ? overflowNote(d.overflowCount, outcome) : undefined;
+  // know why. The pick's line goes in front; the overflow note is about
+  // storage and stays.
+  const limitation = withNarrowedLine(
+    d.overflowCount > 0 ? overflowNote(d.overflowCount, outcome) : undefined,
+    opts.narrowed,
+  );
 
   const counts = countsFor(d, outcome);
 
@@ -152,8 +156,13 @@ export function toPercentileDistribution(
       // BOTH switch under a window: each says "this run" about something a
       // window can leave empty while the run is not. The outcome wording is
       // the same `NOTHING_RECORDED` noun phrase in both, so the two sentences
-      // differ only in WHAT they are about.
-      empty: opts.windowSelected
+      // differ only in WHAT they are about. A pick switches both too, and
+      // names the window as well when one is applied (`scopePhrase`).
+      empty: opts.narrowed != null
+        ? d.labels.length === 0
+          ? `No response times were recorded ${scopePhrase(opts)}, so there is no curve to draw.`
+          : `There were ${NOTHING_RECORDED[outcome]} ${scopePhrase(opts)}, so there is no curve to draw.`
+        : opts.windowSelected
         ? d.labels.length === 0
           ? 'No response times fall in the selected window, so there is no curve to draw.'
           : `The selected window holds ${NOTHING_RECORDED[outcome]}, so there is no curve to draw.`

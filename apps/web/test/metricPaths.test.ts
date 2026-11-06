@@ -43,6 +43,12 @@ const PROBES: Record<string, { windowed: (w: Window | null) => string } | { unwi
   distributionPath: {
     windowed: (w) => paths.distributionPath(ID, 'run', '', 'response_time', w),
   },
+  // A GROUP read (the Report pickers): `scope=request&group=` and no `name`.
+  // Probed with a nested group, so its `/` is part of what is encoded.
+  groupSeriesPath: { windowed: (w) => paths.groupSeriesPath(ID, 'Catalog/Recommendations', 'response_time', w) },
+  groupDistributionPath: {
+    windowed: (w) => paths.groupDistributionPath(ID, 'Catalog/Recommendations', 'response_time', w),
+  },
   // Takes no window BY THE ENDPOINT'S OWN SHAPE, not by omission here:
   // `/v1/runs/:id/errors` declares no from/to, which is why `ErrorsTable`
   // renders a whole-run notice under a window.
@@ -188,5 +194,62 @@ describe('the percentiles parameter', () => {
     // The key the live socket writes into, read from `api/live.ts` itself
     // rather than spelled out again here.
     expect(seriesQuery(ID).queryKey).toEqual(liveSeriesKey(ID));
+  });
+});
+
+/**
+ * `?group=` — every request of one group merged into one series or one
+ * distribution (the Report pickers spec, section 4).
+ *
+ * The server's rule is the wire contract this pins (`parseGroupPick` in
+ * `apps/api/src/common/validation.ts`): `group` needs `scope=request`, and a
+ * `name` beside it — an EMPTY `name=` included — is 400 `INVALID_QUERY`. So a
+ * group path must not inherit the `name=` the ordinary `seriesPath` and
+ * `distributionPath` always spell out. Read through `URL`, never by substring:
+ * `rename=` or `groupname=` would satisfy a substring check either way.
+ */
+describe('the group parameter', () => {
+  const BUILDERS = [
+    ['groupSeriesPath', paths.groupSeriesPath, '/series'],
+    ['groupDistributionPath', paths.groupDistributionPath, '/distribution'],
+  ] as const;
+  // '' is "(no group)" and must survive as an empty value, not vanish.
+  const GROUPS = ['Cart', '', 'Catalog/Recommendations'];
+  const query = (path: string): URLSearchParams => new URL(path, 'http://x').searchParams;
+
+  it('never carries a name, not even an empty one', () => {
+    for (const [label, build] of BUILDERS) {
+      for (const group of GROUPS) {
+        for (const w of [null, WINDOW]) {
+          const url = build(ID, group, 'response_time', w);
+          expect(query(url).has('name'), `${label}(${JSON.stringify(group)}) sends a name: ${url}`).toBe(false);
+        }
+      }
+    }
+  });
+
+  it('carries group= with an empty value for (no group)', () => {
+    const url = paths.groupSeriesPath('r', '');
+    expect(query(url).has('group'), url).toBe(true);
+    expect(query(url).get('group'), url).toBe('');
+    expect(url, url).toMatch(/[?&]group=(&|$)/);
+    expect(query(paths.groupDistributionPath('r', '')).get('group')).toBe('');
+  });
+
+  it('reads at request scope, the group encoded, on its own endpoint', () => {
+    for (const [label, build, endpoint] of BUILDERS) {
+      for (const group of GROUPS) {
+        const url = build(ID, group);
+        const q = query(url);
+        expect(new URL(url, 'http://x').pathname, label).toBe(`${paths.runPath(ID)}${endpoint}`);
+        expect(q.get('scope'), url).toBe('request');
+        expect(q.get('group'), url).toBe(group);
+        // Spelled out, as the ordinary builders spell their default family.
+        expect(q.get('family'), url).toBe('response_time');
+        expect(q.getAll('group'), `${url} repeats group`).toHaveLength(1);
+      }
+    }
+    // A `/` inside a group path is part of the value, not of the URL's path.
+    expect(paths.groupSeriesPath(ID, 'Catalog/Recommendations')).toContain('group=Catalog%2FRecommendations');
   });
 });

@@ -34,3 +34,17 @@ export function expectAboutTheRun(empty: string | undefined, tail?: RegExp): voi
   expect(empty).not.toMatch(/window/i);
   if (tail !== undefined) expect(empty).toMatch(tail);
 }
+
+/**
+ * The sentence is about the part of the run a picker narrowed the chart to —
+ * `scope` is the phrase it must carry ("for this group", "for this group in the
+ * selected window") — and never about "this run". The scoped-empty rule again:
+ * a chart narrowed to one group that drew nothing has not shown that the RUN
+ * recorded nothing, so "this run" in it is false whenever another group ran.
+ */
+export function expectAboutThePick(empty: string | undefined, scope: string, tail?: RegExp): void {
+  expect(empty, 'an empty chart must say why').toBeTruthy();
+  expect(empty).toContain(scope);
+  expect(empty).not.toMatch(/\bthis run\b/i);
+  if (tail !== undefined) expect(empty).toMatch(tail);
+}

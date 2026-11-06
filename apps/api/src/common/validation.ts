@@ -394,3 +394,49 @@ export function parsePercentileList(name: string, raw: unknown): number[] | null
 
   return [...new Set(ranks)].sort((a, b) => a - b);
 }
+
+/**
+ * `?group=` on `/series` and `/distribution`: merge every request of one group
+ * (the Report pickers spec, section 4). `null` when the parameter is absent —
+ * an ordinary read — and otherwise the group path, `''` included: an EMPTY
+ * value is "(no group)", the requests that sit in no group, not "no group
+ * asked for". Only absence means that.
+ *
+ * Read from the RAW query, never from the handlers' defaulted `scope = 'run'`
+ * and `name = ''`: a default makes an absent parameter look like one sent, so
+ * "group with a name" and "group with no scope" would be invisible.
+ *
+ * Refused, each as 400 INVALID_QUERY naming the conflict, because each would
+ * otherwise be answered as something the caller did not ask:
+ *   - a repeated `group` (via `singleValue`, as every other parameter);
+ *   - `group` beside a `name`, even an empty one — a group read merges a set of
+ *     requests, and a name picks one; there is no reading of both;
+ *   - any `scope` but `request`, absent included: a group is merged from its
+ *     REQUESTS' rows, and the endpoints' own default scope is `run`. The rule
+ *     CLAUDE.md records for `?name=` without `scope` — both, always — applies.
+ */
+export function parseGroupPick(query: { scope?: unknown; name?: unknown; group?: unknown }): string | null {
+  const group = singleValue('group', query.group);
+  if (group === undefined) return null;
+
+  if (query.name !== undefined) {
+    throw badRequest(
+      'INVALID_QUERY',
+      `"group" and "name" cannot be given together: "group" merges every request of a group, "name" reads one.`,
+      'Send "group" with scope=request and no "name", for example ?scope=request&group=Cart; '
+        + 'to read one request, send its "name" and no "group".',
+    );
+  }
+  const scope = singleValue('scope', query.scope);
+  if (scope !== 'request') {
+    throw badRequest(
+      'INVALID_QUERY',
+      scope === undefined
+        ? '"group" needs scope=request: a group is merged from its requests.'
+        : `"group" needs scope=request, not "${scope}": a group is merged from its requests.`,
+      'Send scope=request with "group", for example ?scope=request&group=Cart. A group\'s own '
+        + 'figures are read with scope=group and its "name" instead.',
+    );
+  }
+  return group;
+}

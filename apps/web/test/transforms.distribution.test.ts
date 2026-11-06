@@ -1,6 +1,6 @@
 import type { DistributionResponse } from '@perfportal/contracts';
 import { describe, expect, it } from 'vitest';
-import { expectAboutTheRun, expectAboutTheWindow } from './support/emptySentence';
+import { expectAboutThePick, expectAboutTheRun, expectAboutTheWindow } from './support/emptySentence';
 import { DISTRIBUTION_ROLES, toDistribution } from '../src/charts/transforms/distribution.js';
 import fixture from './fixtures/reference-run.json';
 
@@ -366,5 +366,51 @@ describe('toDistribution — a window that selects no responses', () => {
 
   it('keeps the overflow note under a window', () => {
     expect(toDistribution(allOverflowed, { windowSelected: true }).limitation).toContain('40');
+  });
+});
+
+/**
+ * Narrowed to a pick: both empty branches name the pick, never "this run", and
+ * the pick and the window together under a window. A drawn chart names the
+ * pick behind its ⓘ; the overflow note, a fact about storage, stays beside it.
+ */
+describe('toDistribution — narrowed to a pick', () => {
+  const narrowed = { kind: 'group', name: 'Cart' } as const;
+  const noLabels = withFields({ labels: [], okCount: [], koCount: [], okPercent: [], koPercent: [] });
+  const allOverflowed = withFields({
+    okCount: zeros(src.labels.length),
+    koCount: zeros(src.labels.length),
+    okPercent: zeros(src.labels.length),
+    koPercent: zeros(src.labels.length),
+    overflowCount: 40,
+  });
+
+  it.each([
+    ['no bins at all', noLabels, /no distribution to show/i],
+    ['bins that hold nothing', allOverflowed, /no bins to draw/i],
+  ] as const)('names the pick, not the run, and keeps the tail (%s)', (_state, payload, tail) => {
+    expectAboutThePick(toDistribution(payload, { windowSelected: false, narrowed }).empty, 'for this group', tail);
+  });
+
+  it.each([
+    ['no bins at all', noLabels, /no distribution to show/i],
+    ['bins that hold nothing', allOverflowed, /no bins to draw/i],
+  ] as const)('names the pick and the window together (%s)', (_state, payload, tail) => {
+    expectAboutThePick(
+      toDistribution(payload, { windowSelected: true, narrowed }).empty,
+      'for this group in the selected window',
+      tail,
+    );
+  });
+
+  it('names the pick behind its ⓘ on a drawn chart', () => {
+    expect(toDistribution(src, { windowSelected: false, narrowed }).limitation).toBe('Narrowed to the group Cart.');
+    expect(toDistribution(src, { windowSelected: false }).limitation).toBeUndefined();
+  });
+
+  it('keeps the overflow note beside the pick', () => {
+    const d = toDistribution(allOverflowed, { windowSelected: false, narrowed });
+    expect(d.limitation).toContain('Narrowed to the group Cart.');
+    expect(d.limitation).toContain('40');
   });
 });

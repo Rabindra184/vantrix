@@ -6,7 +6,9 @@ import type { TimeDomainMs } from './types';
 import BandsMenu from './BandsMenu';
 import { ControlBar, ControlGroup, Segmented, Switch } from './ChartControls';
 import type { MarkRole } from './theme';
+import type { Narrowed } from './transforms/narrowed';
 import { BAND_LABEL, BANDS, type Band, type Outcome, toPercentiles } from './transforms/percentiles';
+import useStableNarrowed from './useStableNarrowed';
 
 /**
  * The outcome control's three states, in the order they are drawn.
@@ -61,6 +63,7 @@ export default function PercentilesChart({
   warmupMs,
   compact,
   windowSelected,
+  narrowed,
 }: {
   readonly series: SeriesResponse;
   readonly id?: string;
@@ -81,14 +84,24 @@ export default function PercentilesChart({
    * `window !== null`; the Summary and the drill-downs pass `false`.
    */
   readonly windowSelected: boolean;
+  /**
+   * The Report's pick, when one is applied (`transforms/narrowed.ts`): an empty
+   * chart says "for this group" rather than "for this run", and a drawn one
+   * names the pick behind its ⓘ. Optional — the Summary and the drill-downs
+   * never narrow — so `ChartWindowSelected.test.tsx` is what catches a chart
+   * that takes it and does not pass it on.
+   */
+  readonly narrowed?: Narrowed;
 }) {
   const [scale, setScale] = useState<'log' | 'value'>('log');
   const [bands, setBands] = useState<readonly Band[]>(DEFAULT_BANDS);
   const [outcome, setOutcome] = useState<Outcome>('ok');
 
+  // Keyed on the pick's primitives, not on the object — see `useStableNarrowed`.
+  const pick = useStableNarrowed(narrowed);
   const data = useMemo(
-    () => toPercentiles(series, { bands, outcome, x: 'ms', windowSelected }),
-    [series, bands, outcome, windowSelected],
+    () => toPercentiles(series, { bands, outcome, x: 'ms', windowSelected, narrowed: pick }),
+    [series, bands, outcome, windowSelected, pick],
   );
 
   // The transform always emits series in BANDS order, so the roles must be the

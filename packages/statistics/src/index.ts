@@ -2,6 +2,7 @@ export * from './histogram.js';
 export * from './distribution.js';
 export * from './buckets.js';
 export * from './bucket-latency.js';
+export * from './merge-series.js';
 export * from './percentile.js';
 export * from './rank.js';
 export * from './rollup.js';

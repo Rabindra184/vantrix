@@ -1,13 +1,15 @@
 import { Controller, Get, Param, Query, Req } from '@nestjs/common';
 import type { DistributionResponse, ScatterResponse, UsersResponse } from '@perfportal/contracts';
+import { displayPath } from '@perfportal/contracts';
 import { MetricReader, RunRepository, type StoredBucket } from '@perfportal/persistence';
 import { Histogram, distribution, inferBucketWidthMs, sumUsersByOffset } from '@perfportal/statistics';
 import type { Request } from 'express';
 import { Scopes } from '../auth/scopes.decorator.js';
-import { uuidParam } from '../common/validation.js';
+import { parseGroupPick, uuidParam } from '../common/validation.js';
 import { inRange, resolveRange, snapWindow } from '../common/window.js';
 import { notFound, runNotFound } from '../common/validation.js';
 import { Requires } from '../auth/access.decorator.js';
+import { groupMembers, isMergeable, mergedGroupSeries, notMergeable } from './group-pick.js';
 
 @Controller('/v1/runs/:id')
 export class ParityController {
@@ -34,10 +36,15 @@ export class ParityController {
     @Query('family') family = 'response_time',
     @Query('from') from?: string,
     @Query('to') to?: string,
+    @Query('group') group?: unknown,
   ): Promise<DistributionResponse> {
+    // Off the RAW query, for the reason `series` gives: the defaults above
+    // would hide an absent scope or a name sent beside the group.
+    const pick = parseGroupPick({ scope: req.query['scope'], name: req.query['name'], group });
     const run = await this.#run(req, id);
     const tenant = { orgId: run.orgId, projectId: run.projectId };
     const range = await resolveRange(this.reader, run, from, to);
+    if (pick !== null) return this.#groupDistribution(id, run, tenant, pick, family, range);
 
     // Two sources for the same shape. Unwindowed reads run_stat's whole-run
     // histograms; windowed merges the bucket histograms for the range — the
@@ -76,6 +83,96 @@ export class ParityController {
       window,
       scope: scope as DistributionResponse['scope'],
       name,
+      group: null,
+      family: family as DistributionResponse['family'],
+      labels: d.labels,
+      okCount: d.okCount,
+      koCount: d.koCount,
+      okPercent: d.okPercent,
+      koPercent: d.koPercent,
+      exactValues: d.exactValues,
+      overflowCount: d.overflowCount,
+    };
+  }
+
+  /**
+   * `/distribution?scope=request&group=` — every request of one group in one
+   * distribution, from the members' histograms merged.
+   *
+   * Unwindowed, from each member's run-wide `run_stat` histograms
+   * (`memberHistograms`). WINDOWED, from the same merged series `/series`
+   * answers for the group, keeping the merged buckets whose start lies in the
+   * window: one selection and one snapped window for both endpoints, at the
+   * merge's width. Selecting the members' raw bucket rows by the window
+   * instead would disagree with the series whenever the members' widths
+   * differ and the window does not sit on the coarser width's boundaries — a
+   * fine member's bucket inside a coarse merged bucket the series leaves out
+   * would be counted here — and its window would be snapped to whatever width
+   * those rows suggested.
+   *
+   * ═══ A 404 HERE MEANS "UNKNOWN GROUP, OR A SERVER OLDER THAN THIS" ═══
+   *
+   * A group with NO members is the 404 the ordinary read gives an unknown
+   * name (the spec's rule). A group WITH members whose window selects none of
+   * their buckets is NOT: it answers 200, an empty distribution (the shape
+   * `distribution` gives two empty histograms), the snapped window and the
+   * `group` echo. Unlike the ordinary read, whose quiet-window 404 the browser
+   * reads as an empty window, a group read cannot afford that 404: an API pod
+   * older than `?group=` ignores the parameter, reads request "" and answers
+   * 404 to EVERY group distribution, whole-run and windowed, with no body to
+   * echo. Were a quiet window a 404 too, the browser could not tell "nothing
+   * in this window" from "this server cannot narrow by group", and would draw
+   * the empty sentence over an older pod's refusal.
+   */
+  async #groupDistribution(
+    id: string,
+    run: { id: string; startedOn: Date; engineOptions: Record<string, unknown> },
+    tenant: { orgId: string; projectId: string },
+    group: string,
+    family: string,
+    range: { fromMs: number; toMs: number } | null,
+  ): Promise<DistributionResponse> {
+    const members = await groupMembers(this.reader, tenant, run.id, group, family);
+    const ok = new Histogram();
+    const ko = new Histogram();
+    let window: DistributionResponse['window'] = null;
+    let found = false;
+    if (range === null) {
+      const stored = await this.reader.memberHistograms(tenant, run.id, members, family);
+      for (const [name, h] of stored) {
+        if (!h || !isMergeable(h.ok) || !isMergeable(h.ko)) throw notMergeable('distribution', group, name);
+        ok.merge(h.ok);
+        ko.merge(h.ko);
+        found = true;
+      }
+    } else {
+      const merged = await mergedGroupSeries(this.reader, tenant, run, members, family, 'distribution', group);
+      window = snapWindow(merged.buckets.map((b) => b.startOffsetMs), range, merged.widthMs);
+      for (const b of merged.buckets) {
+        if (!inRange(b.startOffsetMs, range)) continue;
+        const h = merged.histograms.get(b.startOffsetMs);
+        if (!h) continue;
+        ok.merge(h.ok);
+        ko.merge(h.ko);
+      }
+      // Found when the group HAS members, whatever the window selected: a
+      // quiet window is an empty answer, not a 404 (see the docstring).
+      found = members.length > 0;
+    }
+
+    if (!found)
+      throw notFound(
+        `No ${family} histogram for the requests of the group "${displayPath(group)}" in run ${id}.`,
+        'Check the group and family against GET /v1/runs/{id}/stats, which lists every request '
+        + 'and group this run recorded.',
+      );
+    const d = distribution(ok, ko);
+    return {
+      runId: run.id,
+      window,
+      scope: 'request',
+      name: '',
+      group,
       family: family as DistributionResponse['family'],
       labels: d.labels,
       okCount: d.okCount,

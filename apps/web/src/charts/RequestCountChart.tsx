@@ -2,6 +2,8 @@ import type { StatsResponse } from '@perfportal/contracts';
 import { useMemo } from 'react';
 import Chart from './Chart';
 import { OUTCOME_ROLES, toRequestCounts } from './transforms/indicators';
+import type { Narrowed } from './transforms/narrowed';
+import useStableNarrowed from './useStableNarrowed';
 
 /**
  * §13.2 ④ — the OK-vs-KO request-count donut (Appendix A G-10).
@@ -17,6 +19,7 @@ import { OUTCOME_ROLES, toRequestCounts } from './transforms/indicators';
 export default function RequestCountChart({
   stats,
   windowSelected,
+  narrowed,
 }: {
   readonly stats: StatsResponse;
   /**
@@ -27,8 +30,21 @@ export default function RequestCountChart({
    * `window !== null`; the Summary and the drill-downs pass `false`.
    */
   readonly windowSelected: boolean;
+  /**
+   * The Report's pick, when one is applied (`transforms/narrowed.ts`): an empty
+   * chart says "for this group" rather than "for this run", and a drawn one
+   * names the pick behind its ⓘ. Optional — the Summary and the drill-downs
+   * never narrow — so `ChartWindowSelected.test.tsx` is what catches a chart
+   * that takes it and does not pass it on.
+   */
+  readonly narrowed?: Narrowed;
 }) {
-  const data = useMemo(() => toRequestCounts(stats, { windowSelected }), [stats, windowSelected]);
+  // Keyed on the pick's primitives, not on the object — see `useStableNarrowed`.
+  const pick = useStableNarrowed(narrowed);
+  const data = useMemo(
+    () => toRequestCounts(stats, { windowSelected, narrowed: pick }),
+    [stats, windowSelected, pick],
+  );
 
   return (
     <Chart

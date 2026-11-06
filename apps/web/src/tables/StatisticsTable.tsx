@@ -76,6 +76,9 @@ import { clampPercentile } from '../percentile';
  */
 const GLOBAL_GROUP_FAMILY: MetricFamily = 'group_cumulated';
 
+/** `openGroups`' default: one array, so the default compares equal to itself. */
+const NO_OPEN_GROUPS: readonly string[] = [];
+
 /* ======================================================================== *
  * 2. THE PERCENTILE CLAMP — ruling-percentile-clamp.md
  * ======================================================================== */
@@ -600,6 +603,7 @@ export default function StatisticsTable({
   windowSelected,
   exact,
   headingLevel = 2,
+  openGroups = NO_OPEN_GROUPS,
 }: {
   stats: StatsResponse;
   runId: string;
@@ -639,6 +643,15 @@ export default function StatisticsTable({
    * so the outline says the table belongs to it. The size follows the level.
    */
   readonly headingLevel?: 2 | 3;
+  /**
+   * Group paths opened on arrival, and opened again whenever this list
+   * changes — the Report's group pick, whose table is one group's subtree and
+   * would otherwise open on that group's one collapsed row, hiding the very
+   * members the pick is about. Added to what the reader has opened, never in
+   * place of it, and closable like any other group. Empty by default: every
+   * other caller opens collapsed (the checkpoint below).
+   */
+  readonly openGroups?: readonly string[];
 }) {
   const headingId = useId();
   const filterId = useId();
@@ -728,6 +741,14 @@ export default function StatisticsTable({
     setChosen(next);
   };
 
+  /** The keys of the groups `openGroups` names, as this tree holds them. */
+  const opened = useMemo(() => {
+    const want = new Set(openGroups);
+    return flatten(tree)
+      .filter((row) => row.scope === 'group' && want.has(row.path))
+      .map((row) => row.key);
+  }, [tree, openGroups]);
+
   /**
    * GROUPS START COLLAPSED — §9 checkpoint 4, and one of the two NON-NUMERIC
    * checkpoints this plan requires.
@@ -741,8 +762,23 @@ export default function StatisticsTable({
    *
    * Keyed by `TableRow.key`, which is stable across sort and filter (task 2),
    * so expanding a group and then sorting the table does not collapse it.
+   *
+   * The empty set is still every caller's that names no `openGroups`; only the
+   * Report's group pick opens anything on arrival.
    */
-  const [expandedKeys, setExpandedKeys] = useState<ReadonlySet<string>>(() => new Set());
+  const [expandedKeys, setExpandedKeys] = useState<ReadonlySet<string>>(() => new Set(opened));
+  /* A NEW LIST OPENS ITS GROUPS TOO, as the first one did: the Report keeps
+     this table mounted while the reader changes the pick. Compared by value,
+     so a caller's new array holding the same paths opens nothing again, and a
+     group the reader closed stays closed. Set during render, React's pattern
+     for state that follows a prop: an effect would draw the new pick's group
+     shut for one frame first. */
+  const openSignature = JSON.stringify(openGroups);
+  const [openedFor, setOpenedFor] = useState(openSignature);
+  if (openedFor !== openSignature) {
+    setOpenedFor(openSignature);
+    setExpandedKeys((was) => new Set([...was, ...opened]));
+  }
 
   const toggle = (key: string) =>
     setExpandedKeys((was) => {

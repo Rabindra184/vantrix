@@ -337,14 +337,18 @@ test('a group expands to its children and collapses again', async ({ page }) => 
    * brief's. */
   await expect(parent).toBeVisible();
   await expect(child).toHaveCount(0);
-  await expect(page.getByText('Recommendations')).toHaveCount(0);
+  /* SCOPED TO THE TABLE, because the Requests section's Group picker shares
+   * the document: its options read "Catalog" and "Catalog / Recommendations",
+   * and `getByText` matches an `<option>`, so a page-wide query here counted
+   * the picker rather than the tree. The claim was always about the table. */
+  await expect(statisticsTable(page).getByText('Recommendations')).toHaveCount(0);
 
   const toggle = page.getByRole('button', { name: /expand Catalog/i });
   await expect(toggle).toHaveAttribute('aria-expanded', 'false');
   await toggle.click();
 
   await expect(child).toBeVisible();
-  await expect(page.getByText('Recommendations')).toBeVisible();
+  await expect(statisticsTable(page).getByText('Recommendations')).toBeVisible();
   // A CHILD, not a row that happened to appear: at depth 1, directly beneath
   // its parent. An implementation that appended matches to the end of the
   // table would satisfy "is visible" and fail this.
@@ -358,7 +362,7 @@ test('a group expands to its children and collapses again', async ({ page }) => 
 
   await page.getByRole('button', { name: /collapse Catalog/i }).click();
   await expect(child).toHaveCount(0);
-  await expect(page.getByText('Recommendations')).toHaveCount(0);
+  await expect(statisticsTable(page).getByText('Recommendations')).toHaveCount(0);
   await expect(parent).toBeVisible();
 });
 
@@ -373,8 +377,10 @@ test('filtering keeps the match in its group', async ({ page }) => {
   const filter = page.getByLabel(/filter/i);
   await filter.fill('Recommend');
 
-  await expect(page.getByText('Catalog', { exact: true })).toBeVisible();
-  await expect(page.getByText('List Products')).toHaveCount(0);
+  // Scoped to the table for the reason the case above gives: the Group
+  // picker's options name these groups too.
+  await expect(statisticsTable(page).getByText('Catalog', { exact: true })).toBeVisible();
+  await expect(statisticsTable(page).getByText('List Products')).toHaveCount(0);
 
   /* THE MATCH ITSELF. The brief's version checks that the ANCESTOR survived and
    * that a non-match went away — both of which a filter that dropped the match

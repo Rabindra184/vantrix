@@ -128,10 +128,10 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **294 files / 4838 tests**, it
+`nvm use` first, and if a run reports fewer than **302 files / 5138 tests**, it
 did not run everything — nor did an integration run reporting fewer than
-**275 files / 4341 tests**, an e2e run fewer than **223**, or a
-`pnpm test:e2e:cross` run fewer than **669** (223 on each of three engines).
+**281 files / 4504 tests**, an e2e run fewer than **232**, or a
+`pnpm test:e2e:cross` run fewer than **696** (232 on each of three engines).
 (Update those numbers when a sub-project adds suites, or the next reader
 calibrates against a stale floor and a silently-skipped run looks like a
 pass.)
@@ -150,6 +150,206 @@ still Chromium and still 102; `pnpm test:e2e:cross` was 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The Report pickers branch (`feat/report-pickers`, gap #1 of
+`docs/superpowers/research/2026-11-03-ge-page-parity/README.md`, spec
+`docs/superpowers/specs/2026-11-04-report-pickers-design.md`, plan
+`docs/superpowers/plans/2026-11-04-report-pickers.md`, ledger
+`.superpowers/sdd/2026-11-04-report-pickers/progress.md`) added EIGHT unit
+files — `packages/contracts/test/groups.test.ts` (7),
+`packages/statistics/test/merge-series.test.ts` (16), and in `apps/web/test`
+`groupReads` (18), `narrow` (9), `narrowed` (26), `ChartNarrowedMemo` (28),
+`ReportFilterControl` (6) and `useRequestsPick` (36) — and grew `RunReport`
+(to 75), `useReportFilter`, `metricPaths`, `ChartWindowSelected`, the six
+`transforms.*` files it touches and `contracts`: unit **294 / 4848 to
+302 / 5138**. Integration gains the five new `.ts` files, ONE integration
+file (`apps/api/test/group-pick.integration.test.ts`, 27) and cases in
+`metrics.integration`, `openapi.integration` and `series-bucket-width`:
+**275 / 4345 to 281 / 4504**, collected by `vitest list` before the run.
+**e2e 223 to 232** (`apps/web/e2e/report-pickers.spec.ts`, 9);
+`test:e2e:cross` **696** by arithmetic, the pickers spec alone run on three
+engines (27 / 27).
+
+**THE REPORT NARROWS TO A GROUP, A REQUEST OR A SCENARIO, EXACTLY, AND SAYS
+WHERE IT CANNOT.** The Requests section takes a Group then a Request picker;
+six of its eight charts and its Table follow the pick. Virtual users takes a
+Scenario picker and its three charts follow it. Errors per second and
+Responses by status stay whole run under a pick and say so ("Shows every
+request: errors are not recorded per request." / "…status codes are not
+recorded per request."), because `run_error_bucket` has no scope and the agent
+files status counts under `*` only — that is scope B, declined for now. Each
+pick lives in the URL (`?requests-group=`, `?requests-request=`,
+`?users-scenario=`), beside the window and the section's hash, so a shared
+link reopens it.
+
+**A GROUP IS ITS REQUESTS MERGED, AND THE MERGE IS DONE WHEN IT IS READ.** No
+stored row holds a group's series. `requestsInGroup` (`@perfportal/contracts`)
+is the one membership rule, imported by the API and the web, subgroups
+included and `''` meaning the requests in no group. `GET /v1/runs/:id/series`
+and `/distribution` take `?group=` (request scope only; repeated `group`, any
+`name` or another scope is 400 `INVALID_QUERY`), merge the members' stored
+`sparse-ms-v2` histograms through `mergeMemberSeries`
+(`packages/statistics/src/merge-series.ts`) and echo `group`. A member with a
+null or non-exact histogram is 409 `GROUP_NOT_MERGEABLE`; a memberless group
+is 404 on `/distribution` and `[]` on `/series`; a group with members whose
+window selects nothing is 200 with an empty distribution and the echo (Ruling
+R8). Ranges, Number of requests and the Table narrow in the browser from
+`/stats` (`narrowStats`), and the picker's names come from the WHOLE-RUN
+`/stats` (`statsQuery(runId, null)`, R13) — never the window, the M15 errors
+filter trap.
+
+**MEMBERS CAN SIT AT DIFFERENT WIDTHS, AND THE FIRST TWO RULES FOR THE MERGED
+WIDTH WERE BOTH WRONG.** Each member's series coalesces on its own, so one
+group can hold a 1 s member beside a 2 s one. Rounding the gap between offsets
+up merged a 3 s member and a dense one at 4 s. The largest `1000 × 2^k`
+dividing every offset was exact for those and coarsened a whole group for a
+SPARSE member: a request called only at 8 s and 16 s divides by 8000, so a
+dense 1/s group merged at 8000 and a 10–20 s window counted 4 requests where
+windowed `/stats` counted 11 (the final review's construction). **Ruling R16:
+a series coalesced against a cap holds at least `ceil((floor(cap) + 1) / 2)`
+buckets, so a member with fewer distinct offsets never coalesced and is 1000;
+only the rest are read by their divisor.** The cap is the run's FROZEN
+`engineOptions.maxBucketsEndpoint`, a REQUIRED argument with
+`DEFAULT_MAX_BUCKETS_ENDPOINT` (now exported from `engine.ts`) the one default.
+**Offsets cannot tell a never-coalesced member on a 2^k grid from a coalesced
+one** — a request paced exactly every 2 s with 200 buckets still coarsens its
+group, by at most one period at each window edge, and the docstring says so.
+
+**AN OLDER API IGNORES `group` AND ANSWERS THE RUN'S OWN FIGURES, SO THE ECHO
+IS WHAT TELLS THEM APART.** `groupSeriesQuery` and `groupDistributionQuery`
+require the echo to equal the group asked; a missing or different echo, and
+every group `/distribution` 404, is `GroupReadUnsupportedError`. The section
+then draws ONE plain-text sentence in the four group charts' place ("The
+per-second, percentile and distribution charts are not drawn, because this
+server cannot merge a group's requests."), and a distribution-only failure — a
+new pod's series beside an old pod's 404, mid-deploy — reads the same cause
+in the two charts it feeds. Plain text, not a status: it mounts holding its
+words.
+
+**A PICK NAMES ITSELF, AND A LINK THAT NAMES SOMETHING IT CANNOT SHOW SAYS
+WHAT IT SHOWS INSTEAD.** Every narrowed chart's empty sentence reads "for this
+request|group|scenario" (or "for the requests in no group"), the ranges bar's
+category is the pick's own label rather than "All requests", and under a
+scenario pick the users charts drop the "All users" line rather than drawing
+two identical ones (R11). `requestLabel` writes a grouped request as
+`Cart / Add To Cart` and a slash-led top-level one raw (R5). The pickers offer
+only groups that have members (R10a), so `(no group)` is absent from a run
+where every request is grouped. A stale link's group or request is named with
+its reason — not in this run, no requests, outside the shown group — beside
+what is shown (R12). If the names read FAILS there are no pickers, and one
+line says the link's pick could not be checked and the section is not narrowed
+to it (R14).
+
+**THE REAL CHECK**, on a stack of its own — `perfportal_pickers_real`, Redis
+db 13, bucket `perfportal-pickers-real`, API :3890 and the worker from `dist`,
+the plugin `0.3.0-SNAPSHOT` from Maven local: `ParitySimulation` once through
+the Gradle plugin, run `ba81dbc4`, `complete`, `exact-v1`, **895 / 870 / 25**,
+`verified` with 22,929 figures and 0 mismatches. An independent oracle decoded
+the local `simulation.log` with `parseSimulationLog` alone and built every
+figure itself (buckets, nearest rank, Gatling's binning, bands, a users
+sweep); shifting its start by 1 s made 19 reads disagree, and a floor rank 9.
+Every figure agreed, whole run / 10–30 s:
+
+```
+                                buckets  started  KO     max         cells
+  group Cart                    55 / 20  170 / 40 15 / 2 146 / 141   1479 / 516
+  group Catalog                 61 / 20  480 / 146 0 / 0 2503 / 2503 1525 / 500
+  group Catalog/Recommendations 61 / 20  160 / 48  0 / 0 2503 / 2503 1525 / 500
+  group ''                      62 / 20  245 / 69 10 / 4 2226 / 2226 1614 / 532
+  request Cart/Add To Cart      55 / 20   85 / 20 15 / 2 146 / 141   1447 / 500
+  + ?percentiles=99.9,99.99     11,786 cells, all equal
+  /distribution, all five       labels, ok, ko, exactValues equal; percentages sum to 100
+  ranges at 800/1200 and at     equal (every "between" is 0 at the default bounds,
+    100/1000                    so the project's bounds were moved on that database)
+  Browse users                  62 / 20 buckets, 160 / 49 started, peak 7 / 6, equal
+```
+
+**THE WIDTH WAS 1000 ON EVERY READ OF THAT RUN**, so the mixed-width merge is
+proven by the unit and integration cases, not by the real one. And starting the
+API and the worker together on a FRESH bucket crashed the API at boot with
+`BucketAlreadyOwnedByYou`: `ensureBucket` checks, then creates, and the two
+race. It predates this branch and is left for its own.
+
+**RED-VERIFIED** from committed checkpoints, replacement counts asserted, each
+on its own case (the task reports beside the ledger hold the rest, about
+ninety):
+
+```
+  T2  the gap rounded up for the width           the three width cases
+  T3  a member's name filter dropped             the one-member reads (with the bind kept)
+  T4  the echo dropped / the 409 skipped         their own group-pick cases
+  T5  the window dropped from the path or key    the windowed-200 and key cases
+  T6  "All requests" on a narrowed ranges bar    the pick-label case alone
+  T7  the "outside the shown group" reason gone  the Cart + Search note case alone
+  T8  a failed names read counted as settled     the R14 line cases
+  T9  the windowed /users used for the options   the quiet-scenario case
+  T10 null passed as a group read's window       the windowed group cases, unit and e2e
+  R16 the floor removed / <= / -1 / ceil(cap/2)  the sparse-member cases
+      the NaN guard / Math.floor removed         the NaN case alone / the 5.5 case alone
+  fin the old section sentence                   its pin alone
+      the error's own message per chart          the distribution-only case alone
+```
+
+**THREE PROCESS LESSONS FROM RUNNING SEVERAL AGENTS IN ONE CHECKOUT.** A
+controller's mutation in a shared package is visible to every other agent's
+suite in that checkout (Task 4's first green run failed 8 cases on it); two
+committing agents interleave, and an amend by one rewrote the other's commit
+seven seconds after it landed (restored by `update-ref`, tree identical) — one
+committer at a time, never amend; and one shared scratch directory let one
+agent's mutation script overwrite another's — each agent gets its own. **And
+`page.on('request')` sees the case's own oracle reads**, so "the page asked
+for `name=`" was satisfied by the test itself; a bounded `waitForRequest`
+armed before the click is the check.
+
+**WHAT WAS RUN**, Node v22.19.0, `perfportal_pickers`, Redis db 9 flushed
+through `infra-redis-1`, bucket `perfportal-pickers`, e2e port 3880, on the
+final tree: `pnpm build`, `typecheck` and `lint` exit 0 by their own exit
+codes; `test:unit` **302 / 5138**, exit 0, zero `Errors` lines;
+`test:integration` COLLECTED **281 / 4504**, the prediction exactly, and
+exited 1 on THREE cases on routes this branch does not change —
+`live.integration`'s close-before-finalize case and `session-auth.integration`'s
+token-parity and per-org `/v1/tests` cases, each a 500 carrying a P1001
+"Can't reach database server" at Prisma's connect timeout (5.6–6.0 s), from
+`runVerification`, the ingest path and `/v1/tests` — at a start load of
+5.04 / 6.72 (1261 s); the two files then passed **68 / 68** alone;
+`PERFPORTAL_E2E_PORT=3880 pnpm test:e2e --workers=2` read back `Running 232
+tests using 2 workers`, **232 passed, exit 0**, no retry; and
+`report-pickers.spec.ts` with `PERFPORTAL_E2E_BROWSERS=all --workers=1`
+**27 / 27**.
+
+**RULINGS** (the ledger's R1–R16): (1) the start floors are CI's on #299's
+head; (2) a "changing the group drops the previous request" browser case; (3)
+push and the PR wait for the user; (4) `narrowed` optional on the nine charts,
+guarded by the seam case; (5) a grouped request is labelled
+`<group> / <rest>`, a top-level one raw; (6) the merged width is reported and
+passed to `snapWindow`, never re-inferred, and the 409 covers a non-exact
+histogram; (7, 8) an empty window under a group with members is 200, 404 is a
+memberless group, and every group `/distribution` 404 reads as unsupported;
+(9) `''` is worded as the requests in no group; (10) only groups with members
+are offered, the Table keeps the picked subtree, Number of requests sums the
+narrowed rows; (11) a pick's own label on the ranges bar, no "All users" under
+a scenario; (12) a named value's reason is worded truthfully; (13) picker
+names from whole-run `/stats`; (14) a failed names read draws no pickers and
+one line; (15) the two whole-run notes say "Shows every request", true with or
+without a window; (16) the sparse-member floor.
+
+**KNOWN AND LEFT:**
+
+  - Statistics: the R16 residual above; a top-level request whose name begins
+    with a group's path and `/` is read as that group's member (the spec's
+    recorded limit); a cap of 1 still reads a lone, possibly coalesced bucket
+    as 1 s; a warm-up-only request is not its group's member (members come
+    from `run_stat`); the double histogram read for `/series` with ranks.
+  - Web: under a request pick the Table row shows the raw `Cart/Add To Cart`
+    while the picker says `Cart / Add To Cart`; the users rate divisor under a
+    scenario pick (pre-existing, the All view is the one in error); only one
+    section's fragment survives a second section's pick (the Connections/DNS
+    shape); picking a recorded request beside an unoffered group in a
+    one-group run reads All with no note; the linked R14 sentence is long.
+  - Infra: `ensureBucket`'s check-then-create race between API and worker on a
+    fresh bucket.
+  - Scope B — per-request errors per second and status codes — needs an
+    engine change, a migration, a verifier bump and a recompute.
 
 The compare-parity branch (`feat/compare-parity`, gap #2 of
 `docs/superpowers/research/2026-11-03-ge-page-parity/README.md`, spec

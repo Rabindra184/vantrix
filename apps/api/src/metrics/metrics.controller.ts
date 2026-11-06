@@ -28,10 +28,11 @@ import {
 } from '@perfportal/statistics';
 import type { Request } from 'express';
 import { Scopes } from '../auth/scopes.decorator.js';
-import { badRequest, parseLimit, parsePercentileList, uuidParam } from '../common/validation.js';
+import { badRequest, parseGroupPick, parseLimit, parsePercentileList, uuidParam } from '../common/validation.js';
 import { inRange, resolveRange, snapWindow } from '../common/window.js';
 import { runNotFound } from '../common/validation.js';
 import { Requires } from '../auth/access.decorator.js';
+import { groupMembers, mergedGroupSeries } from './group-pick.js';
 
 // AuthGuard is registered globally via APP_GUARD (see auth.module.ts), so
 // every route authenticates by default — @UseGuards(AuthGuard) here would be
@@ -303,13 +304,18 @@ export class MetricsController {
     @Query('from') from?: string,
     @Query('to') to?: string,
     @Query('percentiles') percentiles?: unknown,
+    @Query('group') group?: unknown,
   ): Promise<SeriesResponse> {
     // Parsed before anything is read, as on /stats. `null` means "only the
     // ranks each bucket stored".
     const requested = parsePercentileList('percentiles', percentiles);
+    // Read off the RAW query: `scope` and `name` above carry defaults, which
+    // would hide an absent scope or a name sent beside the group.
+    const pick = parseGroupPick({ scope: req.query['scope'], name: req.query['name'], group });
     const run = await this.#run(req, id);
     const range = await resolveRange(this.reader, run, from, to);
     const tenant = { orgId: run.orgId, projectId: run.projectId };
+    if (pick !== null) return this.#groupSeries(run, tenant, pick, family, range, requested);
     const sel = { scope, name, family };
     const all = await this.reader.series(tenant, run.id, run.startedOn, sel);
     // Filtered here rather than in SQL: the width has to be inferred from the
@@ -325,6 +331,7 @@ export class MetricsController {
       runId: run.id,
       scope: scope as SeriesResponse['scope'],
       name,
+      group: null,
       family: family as SeriesResponse['family'],
       bucketWidthMs,
       // Derived from the rows themselves, not from a run-level flag: the
@@ -347,6 +354,58 @@ export class MetricsController {
             )
           : false,
       window: range === null ? null : snapWindow(all.map((b) => b.startOffsetMs), range),
+      buckets,
+    };
+  }
+
+  /**
+   * `/series?scope=request&group=` — every request of one group as ONE series,
+   * merged exactly from the members' stored bucket histograms (the Report
+   * pickers spec, "Merging series").
+   *
+   * The merge runs over every member's WHOLE series and the window is applied
+   * to the merged buckets afterwards, for the reason the ordinary read infers
+   * its width from the whole series: a window's worth of buckets cannot say
+   * how wide a member's buckets are. `bucketWidthMs` and the snapped window
+   * both take `merged.widthMs` — never a width re-inferred from the merged
+   * offsets, whose smallest gap can be wider than the buckets are (a sparse
+   * group), and which would then scale every rate by the wrong width.
+   *
+   * A group with no members is an empty series, as an unknown `name` is on the
+   * ordinary read: 200, `buckets: []`.
+   */
+  async #groupSeries(
+    run: { id: string; startedOn: Date; engineOptions: Record<string, unknown> },
+    tenant: { orgId: string; projectId: string },
+    group: string,
+    family: string,
+    range: { fromMs: number; toMs: number } | null,
+    requested: number[] | null,
+  ): Promise<SeriesResponse> {
+    const members = await groupMembers(this.reader, tenant, run.id, group, family);
+    const merged = await mergedGroupSeries(this.reader, tenant, run, members, family, 'series', group);
+    const inWindow = merged.buckets.filter((b) => inRange(b.startOffsetMs, range));
+    // The merged histograms are fresh `sparse-ms-v2` ones, so every bucket
+    // answers the asked ranks — no member reached the merge otherwise.
+    const buckets = requested === null ? inWindow : withExtraRanks(inWindow, merged.histograms, requested);
+    return {
+      runId: run.id,
+      scope: 'request',
+      name: '',
+      group,
+      family: family as SeriesResponse['family'],
+      bucketWidthMs: merged.widthMs,
+      // A merged started count is null when any contributor's is, so this
+      // reads exactly as the ordinary read's does over the merged rows.
+      startedSplitAvailable:
+        buckets.length > 0 &&
+        buckets.every((b) => b.startedOkCount !== null && b.startedKoCount !== null),
+      // A group-scope question; a group read is at request scope.
+      groupSeriesAvailable: false,
+      window:
+        range === null
+          ? null
+          : snapWindow(merged.buckets.map((b) => b.startOffsetMs), range, merged.widthMs),
       buckets,
     };
   }

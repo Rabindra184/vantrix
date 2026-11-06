@@ -1,6 +1,7 @@
 import type { StatRow, StatsResponse } from '@perfportal/contracts';
 import type { BandRole, StatusRole } from '../theme';
 import type { ChartData, ChartTableRow } from '../types';
+import { pickLabel, scopePhrase, withNarrowedLine, type Narrowed, type ScopeOpts } from './narrowed';
 
 /**
  * `GET /v1/runs/:id/stats` → the two charts §13.2 draws from it: the indicator
@@ -122,6 +123,8 @@ function bandChart(
   stats: StatsResponse,
   axisLabel: string,
   empty: string,
+  /** The Report's pick, named in front of the caveat (`narrowed.ts`). */
+  narrowed?: Narrowed,
 ): ChartData {
   const counts = BANDS.map((band) => bands[band.key]);
   const labels = BANDS.map((band) => band.label(stats.bounds));
@@ -135,11 +138,14 @@ function bandChart(
    * control in this sub-project, so the caveat is the entire deliverable, and
    * it has to name the numbers or "fixed" tells the reader nothing actionable.
    */
-  const limitation = stats.configurable
-    ? undefined
-    : `These bands are fixed at ${stats.bounds.lowerMs} ms and ${stats.bounds.higherMs} ms. ` +
-      'This run was recorded before response times were stored as a histogram, so its bands ' +
-      'were folded once and will not change if the project’s indicator bounds change.';
+  const limitation = withNarrowedLine(
+    stats.configurable
+      ? undefined
+      : `These bands are fixed at ${stats.bounds.lowerMs} ms and ${stats.bounds.higherMs} ms. ` +
+          'This run was recorded before response times were stored as a histogram, so its bands ' +
+          'were folded once and will not change if the project’s indicator bounds change.',
+    narrowed,
+  );
 
   if (total <= 0) {
     return {
@@ -182,15 +188,29 @@ function bandChart(
  */
 export function toIndicators(
   stats: StatsResponse,
-  opts: { readonly windowSelected: boolean },
+  /**
+   * `narrowed` is the Report's pick, when one is applied — and then `stats` is
+   * `narrowStats`' payload, whose `indicators` are already the members' summed
+   * bands, so the sentence, the ⓘ and the bar's category change here.
+   * "Nothing was recorded" rather than "No requests were recorded": the scope
+   * may be a request.
+   *
+   * THE CATEGORY IS THE PICK'S NAME UNDER A PICK (`pickLabel`), because the
+   * bar and its tooltip would otherwise read "All requests" over the bands of
+   * one group's members — a claim the chart's own ⓘ contradicts.
+   */
+  opts: ScopeOpts,
 ): ChartData {
   return bandChart(
     stats.indicators,
     stats,
-    ALL_REQUESTS,
-    opts.windowSelected
-      ? 'No requests ran in the selected window, so there are no response-time bands to show.'
-      : 'No requests were recorded for this run, so there are no response-time bands to show.',
+    opts.narrowed != null ? pickLabel(opts.narrowed) : ALL_REQUESTS,
+    opts.narrowed != null
+      ? `Nothing was recorded ${scopePhrase(opts)}, so there are no response-time bands to show.`
+      : opts.windowSelected
+        ? 'No requests ran in the selected window, so there are no response-time bands to show.'
+        : 'No requests were recorded for this run, so there are no response-time bands to show.',
+    opts.narrowed,
   );
 }
 
@@ -256,11 +276,13 @@ const OUTCOME_COLUMNS = ['Outcome', 'Count', 'Percent'] as const;
 /**
  * OK vs KO for the run as a whole, with totals (G-10).
  *
- * THE RUN-SCOPE ROW, and only it. `/stats` is fetched unfiltered because both
- * charts need the whole response, so `stats.stats` here holds fourteen rows
- * across four scopes — the first of which, on the reference run, is a *group*.
- * Reading `stats.stats[0]`, or summing the `request` rows, yields a donut that
+ * THE RUN-SCOPE ROW, and only it, for the whole run. `/stats` is fetched
+ * unfiltered because both charts need the whole response, so `stats.stats`
+ * here holds fourteen rows across four scopes — the first of which, on the
+ * reference run, is a *group*. Reading `stats.stats[0]` yields a donut that
  * looks entirely reasonable and is about the wrong subset of the traffic.
+ * (Under a Report pick the run row is gone and the request rows are the
+ * subject; see `opts` below.)
  *
  * `family: 'response_time'` as well as `scope: 'run'`: the run can also carry
  * group families, and `latency` is explicitly not rendered anywhere in this
@@ -272,13 +294,26 @@ const OUTCOME_COLUMNS = ['Outcome', 'Count', 'Percent'] as const;
  */
 export function toRequestCounts(
   stats: StatsResponse,
-  /** REQUIRED, no default — see `toIndicators`. */
-  opts: { readonly windowSelected: boolean },
+  /**
+   * REQUIRED, no default — see `toIndicators`. `narrowed` is the Report's pick,
+   * when one is applied.
+   *
+   * ═══ UNDER A PICK THE DONUT COUNTS THE REQUEST ROWS ═══
+   *
+   * The pick's payload is `narrowStats`' (`routes/report/narrow.ts`), and that
+   * DROPS the run row — it is the whole run's total, which a pick is not. Read
+   * as above, every narrowed donut would have said there was nothing to count.
+   * So under a pick the counts are the `response_time` request rows' own,
+   * summed: the members of a group, or the one picked request. Group rows are
+   * left out even though `narrowStats` keeps the ones on the members' paths —
+   * a group's executions are counted again by its requests' rows.
+   */
+  opts: ScopeOpts,
 ): ChartData {
-  const run = stats.stats.find((row) => row.scope === 'run' && row.family === 'response_time');
-  const total = run === undefined ? 0 : run.okCount + run.koCount;
+  const counted = countsOf(stats, opts.narrowed != null);
+  const total = counted === null ? 0 : counted.ok + counted.ko;
 
-  if (run === undefined || total <= 0) {
+  if (counted === null || total <= 0) {
     return {
       series: [],
       axisLabels: [],
@@ -288,25 +323,51 @@ export function toRequestCounts(
       // window: a windowed read with no run-scope row at all (the window
       // selected nothing) and one whose row counts zero are the same fact to a
       // reader who asked about a window, and neither may be said of the run.
-      empty: opts.windowSelected
-        ? 'No requests ran in the selected window, so there is nothing to count.'
-        : run === undefined
-          ? 'This run has no request statistics, so there is nothing to count.'
-          : 'This run recorded no requests.',
+      // A pick switches both as well, and names the window too when one is
+      // applied. "Nothing was recorded" because the scope may be a request.
+      empty:
+        opts.narrowed != null
+          ? `Nothing was recorded ${scopePhrase(opts)}, so there are no requests to count.`
+          : opts.windowSelected
+            ? 'No requests ran in the selected window, so there is nothing to count.'
+            : counted === null
+              ? 'This run has no request statistics, so there is nothing to count.'
+              : 'This run recorded no requests.',
+      limitation: withNarrowedLine(undefined, opts.narrowed),
     };
   }
 
   return {
-    series: [{ name: 'Requests', data: [run.okCount, run.koCount] }],
+    series: [{ name: 'Requests', data: [counted.ok, counted.ko] }],
     axisLabels: ['OK', 'KO'],
     columns: [...OUTCOME_COLUMNS],
     rows: [
-      { label: 'OK', values: [run.okCount, percent(run.okCount, total)] },
-      { label: 'KO', values: [run.koCount, percent(run.koCount, total)] },
+      { label: 'OK', values: [counted.ok, percent(counted.ok, total)] },
+      { label: 'KO', values: [counted.ko, percent(counted.ko, total)] },
       // A third ROW but not a third slice: G-10 asks for the totals and a
       // total slice would double the ring. The data table is the parity
       // surface, so the total belongs there.
       { label: 'Total', values: [total, percent(total, total)] },
     ],
+    limitation: withNarrowedLine(undefined, opts.narrowed),
+  };
+}
+
+/**
+ * The OK and KO counts the donut draws: the run row's for the whole run, or
+ * the `response_time` request rows' summed under a pick — see
+ * `toRequestCounts`. `null` when there is nothing to read them from: no run
+ * row, or no request row under a pick.
+ */
+function countsOf(stats: StatsResponse, picked: boolean): { ok: number; ko: number } | null {
+  if (!picked) {
+    const run = stats.stats.find((row) => row.scope === 'run' && row.family === 'response_time');
+    return run === undefined ? null : { ok: run.okCount, ko: run.koCount };
+  }
+  const rows = stats.stats.filter((row) => row.scope === 'request' && row.family === 'response_time');
+  if (rows.length === 0) return null;
+  return {
+    ok: rows.reduce((sum, row) => sum + row.okCount, 0),
+    ko: rows.reduce((sum, row) => sum + row.koCount, 0),
   };
 }

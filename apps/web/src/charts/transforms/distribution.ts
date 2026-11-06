@@ -1,6 +1,7 @@
 import type { DistributionResponse } from '@perfportal/contracts';
 import type { StatusRole } from '../theme';
 import type { ChartData, ChartTableRow } from '../types';
+import { scopePhrase, withNarrowedLine, type ScopeOpts } from './narrowed';
 
 /**
  * `GET /v1/runs/:id/distribution` → §13.2 ⑧, the response-time distribution
@@ -139,14 +140,20 @@ export function toDistribution(
    * REQUIRED, no default: the empty sentences below are claims about the whole
    * run unless the reader asked about a window, and a wrong value is silent.
    * The Report passes `window !== null`; the Summary and the drill-downs pass
-   * `false`.
+   * `false`. `narrowed` is the Report's pick, when one is applied
+   * (`narrowed.ts`).
    */
-  opts: { readonly windowSelected: boolean },
+  opts: ScopeOpts,
 ): ChartData {
   const columns = [binLabelColumn('Response time', d.exactValues), ...VALUE_COLUMNS];
   // Emitted in the empty branch too: "everything overflowed" is exactly the
   // case where there are no bins to draw AND the reader most needs to know why.
-  const limitation = d.overflowCount > 0 ? overflowNote(d.overflowCount) : undefined;
+  // The pick's line goes in front of it; the overflow note is about storage
+  // and stays whatever was picked.
+  const limitation = withNarrowedLine(
+    d.overflowCount > 0 ? overflowNote(d.overflowCount) : undefined,
+    opts.narrowed,
+  );
 
   const binned = total(d.okCount) + total(d.koCount);
 
@@ -166,13 +173,18 @@ export function toDistribution(
       // the rest of the run fell inside the range, so the second sentence is
       // no truer of the run than the first. (The overflow `limitation` beside
       // it is a fact about the histogram's storage and stays.)
-      empty: opts.windowSelected
-        ? d.labels.length === 0
-          ? 'No response times fall in the selected window, so there is no distribution to show.'
-          : 'No response time in the selected window fell inside the recorded range, so there are no bins to draw.'
-        : d.labels.length === 0
-          ? 'No response times were recorded for this run, so there is no distribution to show.'
-          : 'No response time in this run fell inside the recorded range, so there are no bins to draw.',
+      //
+      // AND BOTH SWITCH UNDER A PICK, for the same reason. The second sentence
+      // is `scopePhrase` in all four states: "in this run" and "in the selected
+      // window" are exactly what it already said.
+      empty:
+        d.labels.length > 0
+          ? `No response time ${scopePhrase(opts)} fell inside the recorded range, so there are no bins to draw.`
+          : opts.narrowed != null
+            ? `No response times were recorded ${scopePhrase(opts)}, so there is no distribution to show.`
+            : opts.windowSelected
+              ? 'No response times fall in the selected window, so there is no distribution to show.'
+              : 'No response times were recorded for this run, so there is no distribution to show.',
       limitation,
     };
   }

@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  DistributionResponseSchema,
   IngestMetadataSchema,
   ProblemDetailsSchema,
   RunIdentitySchema,
   RunResponseSchema,
+  SeriesResponseSchema,
   TrendRunSchema,
   VerdictChangeSchema,
 } from '../src/index.js';
@@ -346,5 +348,58 @@ describe('TrendRunSchema — comparability fields', () => {
     const parsed = TrendRunSchema.parse({ ...base, tool: 'gatling', simulation: 'example.Checkout' });
     expect(parsed.tool).toBe('gatling');
     expect(parsed.simulation).toBe('example.Checkout');
+  });
+});
+
+/**
+ * `group` on `/series` and `/distribution` — the group a read merged its
+ * requests for (the Report pickers spec, section 4), `null` for an ordinary
+ * read.
+ *
+ * `.nullable().optional()`, and the OPTIONAL half is the load-bearing one for
+ * the reason the trends fields above give: the browser drops a body that fails
+ * the schema, so a required field would blank every chart for the length of a
+ * rolling deploy. And the browser REFUSES a group read whose body does not echo
+ * its group, so the field has to survive the parse with its value — a schema
+ * that never declared it strips it, and every group read would then look like
+ * an older pod's answer.
+ */
+describe('group on the series and distribution responses', () => {
+  const series = {
+    runId: '11111111-1111-4111-8111-111111111111',
+    scope: 'request',
+    name: '',
+    family: 'response_time',
+    bucketWidthMs: 1000,
+    startedSplitAvailable: true,
+    groupSeriesAvailable: false,
+    window: null,
+    buckets: [],
+  };
+  const distribution = {
+    runId: '11111111-1111-4111-8111-111111111111',
+    window: null,
+    scope: 'request',
+    name: '',
+    family: 'response_time',
+    labels: [],
+    okCount: [],
+    koCount: [],
+    okPercent: [],
+    koPercent: [],
+    exactValues: false,
+    overflowCount: 0,
+  };
+
+  it('parses a body from an API pod that predates the field, mid-rolling-deploy', () => {
+    expect(SeriesResponseSchema.safeParse(series).success).toBe(true);
+    expect(DistributionResponseSchema.safeParse(distribution).success).toBe(true);
+  });
+
+  it('carries the group a read merged, the empty "(no group)" path and an ordinary null alike', () => {
+    for (const group of ['Cart', '', null]) {
+      expect(SeriesResponseSchema.parse({ ...series, group }).group).toBe(group);
+      expect(DistributionResponseSchema.parse({ ...distribution, group }).group).toBe(group);
+    }
   });
 });

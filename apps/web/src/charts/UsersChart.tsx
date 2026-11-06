@@ -1,7 +1,9 @@
 import type { UsersResponse } from '@perfportal/contracts';
 import { useMemo } from 'react';
 import Chart from './Chart';
+import type { Narrowed } from './transforms/narrowed';
 import type { TimeDomainMs } from './types';
+import useStableNarrowed from './useStableNarrowed';
 import { toConcurrentUsers, toUserEndRate, toUserStartRate } from './transforms/users';
 
 /**
@@ -51,11 +53,24 @@ export interface UsersChartProps {
    * leave it out.
    */
   readonly windowSelected: boolean;
+  /**
+   * The Virtual users section's scenario pick, when one is applied
+   * (`transforms/narrowed.ts`): an empty chart says "for this scenario" rather
+   * than "for this run", and a drawn one names the pick behind its ⓘ. Optional,
+   * so `ChartWindowSelected.test.tsx` is what catches one of the three that
+   * takes it and does not pass it on.
+   */
+  readonly narrowed?: Narrowed;
 }
 
 /** ⑦ — the concurrency curve. Plots `maxConcurrent`; see `toConcurrentUsers`. */
-export function ConcurrentUsersChart({ users, group, domainMs, warmupMs, windowSelected }: UsersChartProps) {
-  const data = useMemo(() => toConcurrentUsers(users, { x: 'ms', windowSelected }), [users, windowSelected]);
+export function ConcurrentUsersChart({ users, group, domainMs, warmupMs, windowSelected, narrowed }: UsersChartProps) {
+  // Keyed on the pick's primitives, not on the object — see `useStableNarrowed`.
+  const pick = useStableNarrowed(narrowed);
+  const data = useMemo(
+    () => toConcurrentUsers(users, { x: 'ms', windowSelected, narrowed: pick }),
+    [users, windowSelected, pick],
+  );
 
   return (
     <Chart
@@ -90,8 +105,13 @@ export function ConcurrentUsersChart({ users, group, domainMs, warmupMs, windowS
 }
 
 /** ⑦ᵇ — the arrival rate. Plots `started` per second; see `toUserStartRate`. */
-export function UserStartRateChart({ users, group, domainMs, warmupMs, windowSelected }: UsersChartProps) {
-  const data = useMemo(() => toUserStartRate(users, { x: 'ms', windowSelected }), [users, windowSelected]);
+export function UserStartRateChart({ users, group, domainMs, warmupMs, windowSelected, narrowed }: UsersChartProps) {
+  // Keyed on the pick's primitives, not on the object — see `useStableNarrowed`.
+  const pick = useStableNarrowed(narrowed);
+  const data = useMemo(
+    () => toUserStartRate(users, { x: 'ms', windowSelected, narrowed: pick }),
+    [users, windowSelected, pick],
+  );
 
   return (
     <Chart
@@ -119,8 +139,13 @@ export function UserStartRateChart({ users, group, domainMs, warmupMs, windowSel
 }
 
 /** GE's "Users Termination Rate". Plots `ended` per second; see `toUserEndRate`. */
-export function UserEndRateChart({ users, group, domainMs, warmupMs, windowSelected }: UsersChartProps) {
-  const data = useMemo(() => toUserEndRate(users, { x: 'ms', windowSelected }), [users, windowSelected]);
+export function UserEndRateChart({ users, group, domainMs, warmupMs, windowSelected, narrowed }: UsersChartProps) {
+  // Keyed on the pick's primitives, not on the object — see `useStableNarrowed`.
+  const pick = useStableNarrowed(narrowed);
+  const data = useMemo(
+    () => toUserEndRate(users, { x: 'ms', windowSelected, narrowed: pick }),
+    [users, windowSelected, pick],
+  );
 
   return (
     <Chart

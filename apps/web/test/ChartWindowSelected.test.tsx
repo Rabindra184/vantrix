@@ -18,7 +18,8 @@ import { RequestsAndResponsesChart } from '../src/charts/RatesChart';
 import RequestCountChart from '../src/charts/RequestCountChart';
 import { ConcurrentUsersChart, UserEndRateChart, UserStartRateChart } from '../src/charts/UsersChart';
 import fixture from './fixtures/reference-run.json';
-import { expectAboutTheRun, expectAboutTheWindow } from './support/emptySentence';
+import type { Narrowed } from '../src/charts/transforms/narrowed';
+import { expectAboutThePick, expectAboutTheRun, expectAboutTheWindow } from './support/emptySentence';
 
 afterEach(cleanup);
 
@@ -120,5 +121,111 @@ describe('a Report chart drawn under a window that selects nothing', () => {
       cleanup();
     }
     expect(new Set(CHARTS.map(([, id]) => id)).size).toBe(10);
+  });
+});
+
+/**
+ * ═══ EVERY NARROWABLE CHART HANDS ITS PICK TO ITS TRANSFORM ═══
+ *
+ * The same seam for the Report's pickers. `narrowed` is OPTIONAL on every chart
+ * and transform (ruling R4, following `agentChart.ts`'s optional `filter`), so
+ * `tsc` cannot find a component that drops it: a chart that took the prop and
+ * never passed it on would draw "No response times were recorded for this run"
+ * under a group pick and name nothing behind its ⓘ. THIS FILE IS THE GUARD, so
+ * it renders ALL NINE charts the pickers narrow — every one but errors per
+ * second, which stays whole-run under a pick and says so — with every kind.
+ *
+ * Each case asserts both halves of what the pick changes: the empty sentence
+ * names the pick and not the run, and the figure's ⓘ trigger carries the
+ * narrowed line as its accessible description, which is where a screen-reader
+ * user meets it.
+ */
+type NarrowedChart = readonly [
+  name: string,
+  id: string,
+  title: string,
+  chart: (opts: { readonly windowSelected: boolean; readonly narrowed: Narrowed }) => ReactElement,
+];
+
+const NARROWABLE: readonly NarrowedChart[] = [
+  ['response time ranges', 'indicators', 'Response time ranges', (o) => <IndicatorsChart stats={noRequests} {...o} />],
+  ['number of requests', 'request-counts', 'Number of requests', (o) => <RequestCountChart stats={noRequests} {...o} />],
+  [
+    'response time distribution',
+    'distribution',
+    'Response time distribution',
+    (o) => <DistributionChart distribution={noDistribution} {...o} />,
+  ],
+  [
+    'response time percentiles distribution',
+    'percentile-distribution',
+    'Response time percentiles distribution',
+    (o) => <PercentileDistributionChart distribution={noDistribution} {...o} />,
+  ],
+  [
+    'response time percentiles over time',
+    'percentiles',
+    'Response time percentiles over time',
+    (o) => <PercentilesChart series={noSeries} {...o} />,
+  ],
+  [
+    'requests and responses per second',
+    'requests-and-responses',
+    'Requests and responses per second over time',
+    (o) => <RequestsAndResponsesChart series={noSeries} {...o} />,
+  ],
+  ['users started per second', 'user-start-rate', 'Users started per second', (o) => <UserStartRateChart users={noUsers} {...o} />],
+  ['users ended per second', 'user-end-rate', 'Users ended per second', (o) => <UserEndRateChart users={noUsers} {...o} />],
+  ['concurrent users', 'concurrent-users', 'Concurrent users over time', (o) => <ConcurrentUsersChart users={noUsers} {...o} />],
+];
+
+/** One pick of each kind, with the line its ⓘ must carry. */
+const PICKS: readonly (readonly [NonNullable<Narrowed>, string])[] = [
+  [{ kind: 'request', name: 'Cart/Add To Cart' }, 'Narrowed to the request Cart/Add To Cart.'],
+  [{ kind: 'group', name: 'Catalog/Recommendations' }, 'Narrowed to the group Catalog / Recommendations.'],
+  [{ kind: 'scenario', name: 'Browse' }, 'Narrowed to the scenario Browse.'],
+];
+
+const NARROWED_CASES = NARROWABLE.flatMap(([name, id, title, chart]) =>
+  PICKS.map(([narrowed, line]) => [name, narrowed.kind, id, title, chart, narrowed, line] as const),
+);
+
+/** The figure's ⓘ trigger, which `Chart` names "About <title>". */
+function infoTrigger(figureId: string, title: string): HTMLElement {
+  return within(screen.getByTestId(`chart-${figureId}`)).getByRole('button', { name: `About ${title}` });
+}
+
+describe('a Report chart narrowed to a pick that holds nothing', () => {
+  it.each(NARROWED_CASES)('%s names the %s it was narrowed to', (_name, kind, id, title, chart, narrowed, line) => {
+    render(chart({ windowSelected: false, narrowed }));
+    expectAboutThePick(sentence(id), `for this ${kind}`);
+    expect(sentence(id)).not.toMatch(/window/i);
+    expect(infoTrigger(id, title)).toHaveAccessibleDescription(expect.stringContaining(line));
+  });
+
+  it.each(NARROWABLE)('%s names the pick and the window together', (_name, id, _title, chart) => {
+    render(chart({ windowSelected: true, narrowed: { kind: 'group', name: 'Cart' } }));
+    expectAboutThePick(sentence(id), 'for this group in the selected window');
+  });
+
+  it.each(NARROWABLE)('%s says the requests in no group, never "the group (no group)"', (_name, id, title, chart) => {
+    render(chart({ windowSelected: false, narrowed: { kind: 'group', name: '' } }));
+    expectAboutThePick(sentence(id), 'for the requests in no group');
+    expect(infoTrigger(id, title)).toHaveAccessibleDescription(
+      expect.stringContaining('Narrowed to the requests in no group.'),
+    );
+    expect(screen.getByTestId(`chart-${id}`).textContent).not.toMatch(/group \(no group\)/);
+  });
+
+  /** Vacuity: the nine are exactly the Report's charts but errors per second,
+   *  each rendered once under its own id. A chart left out of this list is the
+   *  defect R4 accepted the risk of, so the list is held to the window list. */
+  it('covers every Report chart the pickers narrow', () => {
+    expect(NARROWABLE.map(([, id]) => id).sort()).toEqual(
+      CHARTS.map(([, id]) => id)
+        .filter((id) => id !== 'errors-over-time')
+        .sort(),
+    );
+    expect(NARROWED_CASES).toHaveLength(27);
   });
 });

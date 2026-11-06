@@ -1,6 +1,6 @@
 import type { SeriesResponse } from '@perfportal/contracts';
 import { describe, expect, it } from 'vitest';
-import { expectAboutTheRun, expectAboutTheWindow } from './support/emptySentence';
+import { expectAboutThePick, expectAboutTheRun, expectAboutTheWindow } from './support/emptySentence';
 import { BANDS, toPercentiles } from '../src/charts/transforms/percentiles';
 import fixture from './fixtures/reference-run.json';
 
@@ -382,5 +382,43 @@ describe('toPercentiles — a window that selects no responses', () => {
     const d = toPercentiles(series, { bands: [], windowSelected });
     expect(d.empty).toMatch(/no percentile bands are selected/i);
     expect(d.empty).not.toMatch(/window|this run/i);
+  });
+});
+
+/**
+ * Narrowed to a pick (the Report's Requests section under a group or request):
+ * an empty chart names the pick, never "this run", and both the pick and the
+ * window when a window is applied too. A drawn one names the pick behind its ⓘ
+ * ahead of the outcome note, which stays.
+ */
+describe('toPercentiles — narrowed to a pick', () => {
+  const none = { ...series, buckets: [] };
+  const narrowed = { kind: 'group', name: 'Cart' } as const;
+
+  it('names the pick, not the run', () => {
+    expectAboutThePick(toPercentiles(none, { windowSelected: false, narrowed }).empty, 'for this group');
+  });
+
+  it('names the pick and the window together', () => {
+    expectAboutThePick(
+      toPercentiles(none, { windowSelected: true, narrowed }).empty,
+      'for this group in the selected window',
+    );
+  });
+
+  it('names the pick behind its ⓘ, joined to the outcome note', () => {
+    const d = toPercentiles(series, { windowSelected: false, narrowed });
+    expect(d.limitation).toContain('Narrowed to the group Cart.');
+    expect(d.limitation).toMatch(/min and max are the combined/i);
+  });
+
+  it('names nothing when nothing was picked', () => {
+    expect(toPercentiles(series, { windowSelected: false }).limitation).not.toMatch(/narrowed/i);
+  });
+
+  it('keeps the empty-selection sentence, which is about a control', () => {
+    const d = toPercentiles(series, { bands: [], windowSelected: false, narrowed });
+    expect(d.empty).toMatch(/no percentile bands are selected/i);
+    expect(d.limitation).toContain('Narrowed to the group Cart.');
   });
 });
