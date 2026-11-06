@@ -42,7 +42,15 @@ import useIsCompact from '../useIsCompact';
  * verdict yet" from appearing on screen as though they were measurements.
  */
 export default function RunDetail() {
-  const { runId } = useParams<{ runId: string }>();
+  /* THE API'S SPELLING OF THE ID, NOT THE URL'S. The router matches
+     `/runs/<ID>` whatever its case, and every section under the shell reads
+     its run as the API spells it — `identity.id`, lower case — through the
+     outlet context. Read here as typed, an upper-case URL put this page's
+     poll, its live socket and the socket's cache writes under one key and
+     every section's reads under another: a live run kept no live updates,
+     and its terminal flip reached no section. UUIDs are case-insensitive by
+     definition, so lower-casing is the same run under the one key. */
+  const runId = useParams<{ runId: string }>().runId?.toLowerCase();
 
   // The polling cap, held as state rather than computed at render time. A
   // derived `Date.now() - start > CAP` would be correct only at the moments

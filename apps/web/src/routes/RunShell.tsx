@@ -7,7 +7,8 @@ import type { ProjectAccess } from '../access/useAccess';
 import TimeBrush from '../charts/TimeBrush';
 import { TimeAxisProvider } from '../charts/TimeAxisContext';
 import { useRunWindow, type RunWindowContext } from './useRunWindow';
-import { useRunPaths } from './presentation';
+import { useRunPaths, useRunPresentation } from './presentation';
+import ShareRunButton from './share/ShareRunButton';
 import type { Assertion, RunProcessing, RunResponse } from '@perfportal/contracts';
 import { usersQuery } from '../api/metrics';
 import RunHeader from './RunHeader';
@@ -183,6 +184,23 @@ export default function RunShell({
   const onSummary = here === paths.section('summary')?.toLowerCase();
   const onReport = here === paths.section('report')?.toLowerCase();
 
+  /* ═══ SHARE, FOR WHO MAY AND ON WHAT THE API WILL SHARE (spec 6.4) ═══
+   *
+   * Three conditions, every one of them a refusal the API would otherwise
+   * make after the reader had opened the dialog and chosen an expiry:
+   *   - the app, never a link's page: a link's reader creates nothing, and the
+   *     management routes are session-only, whatever access a page was handed;
+   *   - `run:share` (Member) in the run's project;
+   *   - a finished run, `complete` or `incomplete` — the two statuses the API
+   *     shares (409 RUN_NOT_SHAREABLE for the rest).
+   * Not the org's switch: a Member cannot read it until the dialog's own list
+   * says, and the dialog then says who can turn it back on. */
+  const presentation = useRunPresentation();
+  const shareable =
+    presentation.kind === 'app' &&
+    projectAccess.can('run:share') &&
+    (status === 'complete' || status === 'incomplete');
+
   /* ═══ THE BRUSH ONLY WHERE A WINDOW MEANS SOMETHING ═══
    *
    * The window applies on the Report, where Gatling Enterprise puts it, and
@@ -254,6 +272,9 @@ export default function RunShell({
            disclosure on a phone, and a `<details>`'s open state is the one
            thing a media query cannot set. See `RunHeader`'s own note. */
         compact={compact}
+        /* Keyed by the run for `RunNote`'s reason below: an open dialog, and a
+           created link's URL inside it, must not survive a move to another run. */
+        actions={shareable ? <ShareRunButton key={identity.id} runId={identity.id} /> : null}
         /* `key={identity.id}`, NOT a reset-during-render inside RunNote:
            the `/runs/:runId` route is not keyed and this shell does not
            remount between runs, so without it a still-open editor's

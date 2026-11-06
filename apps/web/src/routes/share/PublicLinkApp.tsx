@@ -1,4 +1,5 @@
 import { lazy, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { publicLinkSecretFromPath } from '../../api/fetch';
@@ -66,8 +67,20 @@ export default function PublicLinkApp() {
  */
 function PublicLink({ secret }: { readonly secret: string }) {
   const [refusal, setRefusal] = useState<PublicLinkRefusal | null>(null);
+  /* FLUSHED, so the link-state page wins deterministically. The cache's
+     `onError` runs as soon as the refused query records its error, and its
+     observers are told on a later tick (TanStack schedules notifications);
+     an ordinary state update is scheduled too, and the two can land in
+     either order — so a section's own "could not be loaded" alert could
+     commit first, and be announced, for a page about to disappear.
+     `flushSync` commits the link-state page before any observer re-renders.
+     (The cache calls this from the fetch's settlement, never during a render,
+     where `flushSync` would be refused.) `PublicRunPage` keeps its own guard
+     as the second line. */
   const [client] = useState(() =>
-    createPublicLinkQueryClient((code, detail) => setRefusal((current) => current ?? { code, detail })),
+    createPublicLinkQueryClient((code, detail) =>
+      flushSync(() => setRefusal((current) => current ?? { code, detail })),
+    ),
   );
 
   if (refusal !== null) return <LinkUnavailable refusal={refusal} />;

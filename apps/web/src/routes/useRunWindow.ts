@@ -68,9 +68,12 @@ export interface RunWindowContext {
    * this way.
    *
    * The API's own id for the run (`identity.id`), so a section keys its reads
-   * on the id every response names. The one cost: an app URL hand-typed in
-   * upper case is read by `RunDetail` under that spelling and by the sections
-   * under the API's lower-case one, so the run is fetched once more there.
+   * on the id every response names — in lower case. `RunDetail` reads the
+   * URL's id in lower case for exactly that reason: read as typed, an app URL
+   * hand-typed in upper case keyed the page's poll, its live socket and the
+   * socket's cache writes under one spelling and every section's reads under
+   * the other, so a live run lost its live updates and its terminal flip
+   * reached no section — not merely one extra read.
    */
   readonly runId: string;
   readonly window: Window | null;

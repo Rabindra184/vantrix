@@ -18,6 +18,7 @@ import { failingRequestNames } from './errorRequestFilter';
 import { FRAGMENT_SCROLL_MARGIN } from './fragment';
 import { Payload, TableSection, explain } from './payload';
 import { baselineRun, cohortRun } from './runBaseline';
+import { useRunPresentation } from './presentation';
 import RunStats from './RunStats';
 import { isExact } from './statsMethod';
 import { PERCENTILES, REQUESTS_AND_RESPONSES } from './runSlots';
@@ -68,6 +69,14 @@ export default function RunSummary() {
   const domainMs = useWholeRunDomainFromShell();
   const warmupMs = useWarmupFromShell() ?? undefined;
   const compact = useIsCompact();
+  /* ═══ BEHIND A PUBLIC LINK, NOTHING THAT LEAVES THE RUN (spec 6.3) ═══
+     Two of this page's reads are about more than the run: `/trends` is its
+     cohort — other runs' ids and figures — and `/ai-analysis` feeds a card a
+     link's reader is never shown. Neither is on the link's allowlist, and a
+     refused read would replace the whole page with the link-state page, so
+     neither is ASKED: the cohort query is never enabled (the tiles show
+     values alone) and the card is not rendered. */
+  const isPublic = useRunPresentation().kind === 'public';
   const stats = useQuery({ ...statsQuery(runId, null), enabled: terminal });
   const users = useQuery({ ...usersQuery(runId, null), enabled: terminal });
   // Read live too: the delta writes this same key, and a live view has no window.
@@ -91,7 +100,7 @@ export default function RunSummary() {
   // to withhold the deltas under any more, because the Summary has none.
   const trends = useQuery({
     ...trendsQuery(runId),
-    enabled: terminal,
+    enabled: terminal && !isPublic,
     staleTime: SUMMARY_TRENDS_STALE_MS,
   });
 
@@ -191,7 +200,7 @@ export default function RunSummary() {
           the `!compact` gate the charts sit behind (Ruling 2). Finished runs
           only: this branch is past the `processing` return, and the card asks
           for nothing until it mounts. */}
-      <AiAnalysisCard runId={runId} canAnalyze={projectAccess.can('run:analyze')} />
+      {!isPublic && <AiAnalysisCard runId={runId} canAnalyze={projectAccess.can('run:analyze')} />}
       {!compact && (
         <OverTimeSection>
           <Payload query={series} slots={[REQUESTS_AND_RESPONSES, PERCENTILES]}>

@@ -5,7 +5,8 @@ import Badge from '../components/Badge';
 import { ChevronRightIcon } from '../components/icons';
 import { formatDuration, formatInstant } from './format';
 import { STATUS, VERDICT, type Mark } from './marks';
-import { projectPath, projectTestPath } from './paths';
+import { cn } from '../lib/cn';
+import { useRunPaths } from './presentation';
 import { runName } from '../runNumber';
 import VerificationMark from './VerificationMark';
 
@@ -85,6 +86,7 @@ export default function RunHeader({
   verdict,
   compact,
   note,
+  actions,
 }: {
   /**
    * PARTIAL, and the partiality is the point. A terminal run supplies every
@@ -128,7 +130,29 @@ export default function RunHeader({
    * caller forget it and the page silently loses the note.
    */
   readonly note: ReactNode;
+  /**
+   * The run's own actions — today the Share button (spec 6.4) — drawn beside
+   * the heading, with the run's badges. WHETHER there are any is the caller's
+   * to know (`RunShell` reads the reader's access and the run's status), so
+   * this draws what it is handed. REQUIRED, with no default, for the reason
+   * `note` is: an optional slot lets a caller forget it and the action
+   * silently disappears from the page.
+   *
+   * ON A PHONE IT GOES INSIDE Run details, where an empty note's "Add a note"
+   * already goes, and for the same reason — the first screen. A `size="sm"`
+   * button is 32px against the badges' 22px row, so beside them it would grow
+   * the header by about ten pixels (the classes' arithmetic, not a browser
+   * measurement), and the run's first tile had 7.6 to spare under
+   * `mobile.spec.ts`'s 812 bound. §22.6 makes the phone a read-only summary,
+   * so the one write the header offers is a tap away rather than on it.
+   */
+  readonly actions: ReactNode;
 }) {
+  // THE BREADCRUMB'S DESTINATIONS, FOR WHICHEVER PAGE THIS IS. In the app the
+  // project and the test are one click away; behind a public link their pages
+  // are the app's, which the link does not reach, so `useRunPaths` answers
+  // null and the names are said, not linked.
+  const paths = useRunPaths(identity.id);
   // See the Duration chip below for why this is `activityMs` first.
   const runDurationMs = identity.activityMs ?? identity.durationMs;
 
@@ -316,12 +340,7 @@ export default function RunHeader({
           aria-label="Breadcrumb"
           className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[0.8125rem] text-muted"
         >
-          <Link
-            to={projectPath(identity.project.slug)}
-            className="transition-ui font-medium text-accent hover:underline hover:underline-offset-2"
-          >
-            {identity.project.name}
-          </Link>
+          <Crumb to={paths.project(identity.project.slug)}>{identity.project.name}</Crumb>
           {/* THE TEST IS A RUNG, NOT A DECORATION — it is the level the trend
               this run belongs to is computed at (`TRENDS_SQL` cohorts on
               `test_id`), so a reader who wants "the other runs of this same
@@ -339,13 +358,9 @@ export default function RunHeader({
           {identity.test != null && (
             <>
               <ChevronRightIcon className="h-3.5 w-3.5 opacity-50" />
-              <Link
-                to={projectTestPath(identity.project.slug, identity.test.slug)}
-                data-testid="run-test"
-                className="transition-ui min-w-0 truncate font-medium text-accent hover:underline hover:underline-offset-2"
-              >
+              <Crumb to={paths.test(identity.project.slug, identity.test.slug)} testId="run-test" truncate>
                 {identity.test.name}
-              </Link>
+              </Crumb>
             </>
           )}
           <ChevronRightIcon className="h-3.5 w-3.5 opacity-50" />
@@ -428,6 +443,7 @@ export default function RunHeader({
               button opening the verification panel, drawn only for a run
               that has statistics (`VerificationMark`). */}
           <VerificationMark runId={identity.id} status={status} summary={identity.verification} />
+          {compact ? null : actions}
         </div>
       </div>
 
@@ -536,6 +552,8 @@ export default function RunHeader({
                   action — inherited mono made "Add a note" and the editor it
                   opens read like data. Seen on a real run at 375 px. */}
               {noteInDetails ? <div className="col-span-2 font-sans">{note}</div> : null}
+              {/* The run's actions, on a phone: see `actions` above. */}
+              {actions == null ? null : <div className="col-span-2 font-sans">{actions}</div>}
             </div>
           </details>
         </div>
@@ -600,6 +618,41 @@ function headingSubject(identity: Identity): string | null {
  */
 function headingFor(identity: Identity): string {
   return headingSubject(identity) ?? `Run ${identity.id.slice(0, 8)}`;
+}
+
+/**
+ * One rung of the breadcrumb above the run: a link to its page, or — where
+ * this presentation has no such page (`useRunPaths` answers null) — the same
+ * name as text, so the run's place is said either way.
+ */
+function Crumb({
+  to,
+  testId,
+  truncate = false,
+  children,
+}: {
+  readonly to: string | null;
+  readonly testId?: string;
+  readonly truncate?: boolean;
+  readonly children: ReactNode;
+}) {
+  const width = truncate && 'min-w-0 truncate';
+  if (to === null) {
+    return (
+      <span data-testid={testId} className={cn(width, 'font-medium text-primary')}>
+        {children}
+      </span>
+    );
+  }
+  return (
+    <Link
+      to={to}
+      data-testid={testId}
+      className={cn('transition-ui', width, 'font-medium text-accent hover:underline hover:underline-offset-2')}
+    >
+      {children}
+    </Link>
+  );
 }
 
 function Chip({

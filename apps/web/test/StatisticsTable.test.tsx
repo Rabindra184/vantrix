@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
+import type { ReactElement } from 'react';
 import { resolve } from 'node:path';
 import type { StatRow, StatsResponse } from '@perfportal/contracts';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
@@ -9,6 +10,8 @@ import StatisticsTable, {
   percentileColumnLabel,
 } from '../src/tables/StatisticsTable.js';
 import fixture from './fixtures/reference-run.json';
+import GroupsList from '../src/routes/GroupsList';
+import { RunPresentationProvider, type RunPresentation } from '../src/routes/presentation';
 
 /**
  * §13.2 ⑤ the statistics table itself — Appendix A G-11…G-13 and G-16 — rendered
@@ -2140,5 +2143,71 @@ describe('StatisticsTable — the Count/s bridge', () => {
     expect(named, 'the bridge names no axis at all').not.toBe('');
     // The word the hint promises must be an axis the chart actually names.
     expect(readFileSync(fromRepo('apps/web/src/charts/RatesChart.tsx'), 'utf8')).toContain(`name: '${named}'`);
+  });
+});
+
+/**
+ * ═══ BEHIND A PUBLIC LINK, A ROW'S NAME IS TEXT (spec 6.3) ═══
+ *
+ * A request's and a group's own pages are drill-downs the link does not reach,
+ * so the names are said and not linked — the Report's pickers narrow the page
+ * instead. The `<th>` still takes its name from the row's name element, so a
+ * screen reader hears the same row header either way.
+ *
+ * (This file has no jest-dom matchers, so the assertions read the DOM directly.)
+ */
+describe('StatisticsTable and GroupsList — behind a public link', () => {
+  const PUBLIC: RunPresentation = {
+    kind: 'public',
+    secret: 'ppl_Q7x_Kd-9mVb2LpN4rTzW8yHc6uJf3sEa1oGiX5nBkY0',
+    expiresAt: '2026-11-13T09:30:00.000Z',
+  };
+
+  function publicRender(node: ReactElement) {
+    return render(
+      <MemoryRouter>
+        <RunPresentationProvider value={PUBLIC}>{node}</RunPresentationProvider>
+      </MemoryRouter>,
+    );
+  }
+
+  it('names every row of the statistics table without linking it', () => {
+    publicRender(<StatisticsTable exact stats={stats} runId={RUN_ID} windowSelected={false} />);
+    expandCatalog();
+    fireEvent.click(screen.getByRole('button', { name: /expand Cart/i }));
+    fireEvent.click(screen.getByRole('button', { name: /expand Recommendations/i }));
+
+    expect(screen.getByRole('table', { name: /statistics/i }).querySelectorAll('a')).toHaveLength(0);
+    for (const path of ALL_PATHS) {
+      const name = cellIn(rowAt(path), 'name');
+      expect(`${path}: ${name.querySelector('a') === null}`).toBe(`${path}: true`);
+      // The row header is still named after the row, through the same id.
+      const labelledBy = name.getAttribute('aria-labelledby') ?? '';
+      expect(`${path}: ${document.getElementById(labelledBy)?.textContent}`).toBe(
+        `${path}: ${path.split('/').at(-1)}`,
+      );
+    }
+  });
+
+  it('names every group of the groups list without linking it', () => {
+    publicRender(<GroupsList runId={RUN_ID} stats={stats} windowSelected={false} exact />);
+    const rows = screen.getAllByTestId('group-row');
+    expect(rows.length).toBeGreaterThan(1);
+    expect(screen.getByRole('table', { name: 'Groups' }).querySelectorAll('a')).toHaveLength(0);
+    expect(rows.map((row) => row.querySelector('td')?.textContent)).toEqual(
+      stats.stats.filter((s) => s.scope === 'group' && s.family === 'group_cumulated').map((s) => s.name),
+    );
+  });
+
+  /** The paired app half: the same list links each group to its own page. */
+  it('links every group in the app', () => {
+    render(
+      <MemoryRouter>
+        <GroupsList runId={RUN_ID} stats={stats} windowSelected={false} exact />
+      </MemoryRouter>,
+    );
+    const links = screen.getAllByTestId('group-row').map((row) => row.querySelector('a')?.getAttribute('href'));
+    expect(links.length).toBeGreaterThan(1);
+    for (const href of links) expect(href?.startsWith(`/runs/${RUN_ID}/groups/`)).toBe(true);
   });
 });

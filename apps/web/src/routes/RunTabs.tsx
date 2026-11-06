@@ -9,13 +9,7 @@ import {
 } from '../components/icons';
 import { cn } from '../lib/cn';
 import { useWindowSuffix } from './useRunWindow';
-import {
-  runComparePath,
-  runLogsPath,
-  runPath,
-  runReportPath,
-  runTrendsPath,
-} from './paths';
+import { useRunPaths, type RunSection } from './presentation';
 
 /**
  * A run's four sections — five on a run the on-prem runner executed, which also
@@ -43,6 +37,15 @@ import {
  * panels swapped in place, brings a roving-tabindex keyboard contract this
  * repo has no test for, and would break middle-click. The underline is a
  * visual convention; the semantics are navigation.
+ *
+ * ═══ EVERY TAB IS A SECTION `useRunPaths` HAS A PATH FOR ═══
+ *
+ * In the app that is all five, at `/runs/<id>/…`. Behind a public link it is
+ * the Summary, the Report and Logs, at `/share/<secret>/…`, and Trends and
+ * Compare are not drawn at all: both read the run's cohort — other runs' ids
+ * and figures — which a link may not, so a tab there would lead a stranger to
+ * a page that refuses them (spec 6.3). A section whose path is null is simply
+ * not a tab; the order and the Logs rule are the same on both pages.
  */
 export default function RunTabs({
   runId,
@@ -61,6 +64,7 @@ export default function RunTabs({
      hand the interval back when the reader returns to a tab that honours it. */
   const suffix = useWindowSuffix();
   const withWindow = (path: string): string => `${path}${suffix}`;
+  const paths = useRunPaths(runId);
 
   return (
     // `overflow-x-auto` because five tabs will not fit a 320px viewport — each
@@ -87,43 +91,52 @@ export default function RunTabs({
       aria-label="Run sections"
       className="sticky top-header z-20 -mx-4 flex gap-1 overflow-x-auto border-b border-default bg-page/90 px-4 backdrop-blur-md sm:-mx-6 sm:px-6"
     >
-      {/* Each tab carries a lucide glyph beside its word. All section icons are
-          `aria-hidden` (icons.tsx's default), so every tab's accessible name
-          stays exactly its text — `RunTabs.test.tsx` asserts those names
-          verbatim, and `run-detail.spec.ts` selects by them. The COMPONENT is
-          passed, not an element, so `Tab` sizes all five in one place and a
-          future section cannot drift to the icon module's larger default. */}
-      <Tab to={withWindow(runPath(runId))} end icon={SummaryTabIcon}>
-        Summary
-      </Tab>
-      <Tab to={withWindow(runReportPath(runId))} icon={ReportTabIcon}>
-        Report
-      </Tab>
-      {/* LOGS ONLY WHERE THERE CAN BE ANY. A run the on-prem runner did not
-          execute has no events and never will, and a tab over a section that
-          can never have content is a false claim — so it is withheld, not
-          shown empty. It sits after Report because it is still about THIS
-          run, and before the two tabs that leave it. */}
-      {hasLogs && (
-        <Tab to={withWindow(runLogsPath(runId))} icon={LogsTabIcon}>
-          Logs
-        </Tab>
-      )}
-      {/* LAST PAIR, AND THE POSITION IS THE ARGUMENT. Every tab before them
-          answers a question about THIS run — how it went (Summary), what it
-          looked like (Report), and, for a runner run, what the runner did
-          (Logs). Trends is the cohort view, and Compare is the editable
-          overlay that follows from it, so they sit together at the end rather
-          than beside the Report, whose charts they superficially resemble. */}
-      <Tab to={withWindow(runTrendsPath(runId))} icon={TrendsTabIcon}>
-        Trends
-      </Tab>
-      <Tab to={withWindow(runComparePath(runId))} icon={CompareTabIcon}>
-        Compare
-      </Tab>
+      {/* `end` on the Summary is what stops it matching the Report beneath it,
+          whose path starts with the Summary's on both pages. */}
+      {TABS.filter((tab) => tab.section !== 'logs' || hasLogs).map((tab) => {
+        const path = paths.section(tab.section);
+        return path === null ? null : (
+          <Tab key={tab.section} to={withWindow(path)} end={tab.section === 'summary'} icon={tab.icon}>
+            {tab.label}
+          </Tab>
+        );
+      })}
     </nav>
   );
 }
+
+/**
+ * The sections in strip order, each with its word and glyph.
+ *
+ * SUMMARY AND REPORT FIRST, then LOGS — only where there can be any: a run the
+ * on-prem runner did not execute has no events and never will, and a tab over
+ * a section that can never have content is a false claim, so it is withheld,
+ * not shown empty. It sits after Report because it is still about THIS run,
+ * and before the two that leave it.
+ *
+ * TRENDS AND COMPARE LAST, AND THE POSITION IS THE ARGUMENT. Every tab before
+ * them answers a question about THIS run — how it went (Summary), what it
+ * looked like (Report), and, for a runner run, what the runner did (Logs).
+ * Trends is the cohort view, and Compare is the editable overlay that follows
+ * from it, so they sit together at the end rather than beside the Report,
+ * whose charts they superficially resemble.
+ *
+ * Each glyph is `aria-hidden` (icons.tsx's default), so every tab's accessible
+ * name stays exactly its word — `RunTabs.test.tsx` asserts those names
+ * verbatim, and `run-detail.spec.ts` selects by them. The COMPONENT is listed,
+ * not an element, so `Tab` sizes all five in one place.
+ */
+const TABS: readonly {
+  readonly section: RunSection;
+  readonly label: string;
+  readonly icon: ComponentType<{ className?: string }>;
+}[] = [
+  { section: 'summary', label: 'Summary', icon: SummaryTabIcon },
+  { section: 'report', label: 'Report', icon: ReportTabIcon },
+  { section: 'logs', label: 'Logs', icon: LogsTabIcon },
+  { section: 'trends', label: 'Trends', icon: TrendsTabIcon },
+  { section: 'compare', label: 'Compare', icon: CompareTabIcon },
+];
 
 /**
  * One tab.

@@ -1,5 +1,10 @@
 import '@testing-library/jest-dom/vitest';
-import { MutationObserver as QueryMutationObserver, QueryClientProvider, type QueryClient } from '@tanstack/react-query';
+import {
+  MutationObserver as QueryMutationObserver,
+  QueryClientProvider,
+  focusManager,
+  type QueryClient,
+} from '@tanstack/react-query';
 import { cleanup, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -127,9 +132,11 @@ function problem(status: number, code: string, detail: string): Response {
 function stubFetch({
   resolve = () => json({ runId: RUN_ID, expiresAt: EXPIRES_AT }),
   stats = () => json(reference.stats),
+  run = () => json(RUN),
 }: {
   resolve?: () => Response | Promise<Response>;
   stats?: () => Response | Promise<Response>;
+  run?: () => Response | Promise<Response>;
 } = {}): { readonly sent: Sent[]; readonly forbidden: string[] } {
   const sent: Sent[] = [];
   const forbidden: string[] = [];
@@ -141,7 +148,7 @@ function stubFetch({
       return Promise.reject(new Error(`the public page asked ${path}`));
     }
     if (path === '/v1/public-link') return Promise.resolve(resolve());
-    if (path === `/v1/runs/${RUN_ID}`) return Promise.resolve(json(RUN));
+    if (path === `/v1/runs/${RUN_ID}`) return Promise.resolve(run());
     if (path.endsWith('/stats')) return Promise.resolve(stats());
     if (path.endsWith('/users')) return Promise.resolve(json(reference.users));
     if (path.endsWith('/series')) return Promise.resolve(json(reference.series));
@@ -192,13 +199,24 @@ function mount(url: string): QueryClient {
   return app;
 }
 
+/* jsdom implements no `scrollTo`, and the page calls it: `PublicLinkApp`
+   keeps the app's scroll-to-top on a new path (`useScrollAndFragment`). The
+   stub keeps jsdom's "Not implemented" out of the output, and the redirect case
+   reads it to pin that the hook is called. */
+let scrollTo: ReturnType<typeof vi.fn>;
+let scrollSpy: { mockRestore(): void };
+
 beforeEach(() => {
   document.title = '';
+  scrollTo = vi.fn();
+  scrollSpy = vi.spyOn(window, 'scrollTo').mockImplementation(scrollTo as never);
 });
 
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  scrollSpy.mockRestore();
+  focusManager.setFocused(undefined);
   window.history.replaceState(null, '', '/');
 });
 
@@ -288,16 +306,9 @@ describe('/share/:token — a link the API resolves', () => {
     expect(document.title).toBe('Run 3 · Checkout smoke — PerfPortal');
   });
 
-  /**
-   * ═══ TASK 9's, PINNED NOW AS A KNOWN FAILURE ═══
-   *
-   * The brief's "three tabs, whose hrefs start with `/share/<secret>`" is true
-   * only once `RunTabs` builds its links through `useRunPaths` (Task 9). Until
-   * then the strip draws five tabs at app paths, so this is `it.fails`: it
-   * passes while the claim is false, and FAILS the moment Task 9 makes it true
-   * — at which point that task turns it into an `it`.
-   */
-  it.fails('draws three tabs, every one at a share path', async () => {
+  /** The three sections a link reaches, at share paths — the strip builds its
+   *  links through `useRunPaths`, and Trends and Compare are not among them. */
+  it('draws three tabs, every one at a share path', async () => {
     stubFetch();
     mount(SHARE);
     const tabs = within(await screen.findByRole('navigation', { name: 'Run sections' })).getAllByRole('link');
@@ -324,6 +335,44 @@ describe('/share/:token — a link the API resolves', () => {
     mount(`${SHARE}/trends`);
     await screen.findByTestId('stat-total-requests');
     expect(screen.getByTestId('location')).toHaveAttribute('data-path', SHARE);
+    // A new path starts at its own top: the page keeps the app's scroll
+    // behaviour (`useScrollAndFragment`), which is what moved it here.
+    expect(scrollTo).toHaveBeenCalledWith({ top: 0 });
+  });
+
+  /**
+   * FREEZE, DO NOT BLANK. A link and a run the page has already read stay on
+   * screen when a BACKGROUND re-read of either fails — returning to the tab
+   * re-asks both — because a failure the reader did not ask for must not take
+   * away what they were reading. Only a failure with nothing loaded is shown.
+   */
+  it('keeps a loaded page when a background re-read of the link and the run fails', async () => {
+    let failing = false;
+    const outage = () => problem(503, 'UNAVAILABLE', 'The API is restarting.');
+    const { sent } = stubFetch({
+      resolve: () => (failing ? outage() : json({ runId: RUN_ID, expiresAt: EXPIRES_AT })),
+      run: () => (failing ? outage() : json(RUN)),
+    });
+    mount(SHARE);
+    expect(await screen.findByTestId('stat-total-requests')).toBeInTheDocument();
+
+    failing = true;
+    const before = sent.length;
+    const alerts = watchAlerts();
+    // Returning to the tab is what re-asks both (TanStack's refetch on focus).
+    focusManager.setFocused(false);
+    focusManager.setFocused(true);
+    await vi.waitFor(() => {
+      const again = sent.slice(before).map((request) => request.path);
+      expect(again).toContain('/v1/public-link');
+      expect(again).toContain(`/v1/runs/${RUN_ID}`);
+    });
+    // Let both failures land and the page re-render under them.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(screen.getByTestId('stat-total-requests')).toBeInTheDocument();
+    expect(screen.getByRole('navigation', { name: 'Run sections' })).toBeInTheDocument();
+    expect(alerts.stop().filter((text) => /could not be (opened|loaded)/.test(text))).toEqual([]);
   });
 });
 

@@ -10,6 +10,7 @@ import { assertionsCsv } from './assertionExport';
 import { describeAssertionRuleForReader } from './assertions';
 import { ASSERTION_OUTCOME, Marked } from './marks';
 import { projectRulesPath } from './paths';
+import { useRunPaths } from './presentation';
 import { formatActual, toolAssertionParts } from './toolAssertion';
 import { useWindowSuffix } from './useRunWindow';
 
@@ -331,6 +332,10 @@ export function SimulationAssertionsBar({
  *
  * (This was a copy while `RunDetail.tsx` still rendered the table that owned the
  * original; that table went with the Overview tab, and this is the only one.)
+ *
+ * BEHIND A PUBLIC LINK THE TARGET IS TEXT: a request's and a group's own pages
+ * are drill-downs the link does not reach, so `useRunPaths` answers null for
+ * both, and the name the tool wrote is said rather than linked (spec 6.3).
  */
 function AssertionTarget({
   assertion,
@@ -343,6 +348,7 @@ function AssertionTarget({
 }) {
   // Above the early returns: the hook order must not depend on the assertion.
   const windowSuffix = useWindowSuffix();
+  const paths = useRunPaths(runId);
   const label = toolAssertionParts(assertion).target;
   if (label === null) return <>—</>;
 
@@ -354,12 +360,11 @@ function AssertionTarget({
   const name = parts === undefined || parts.length === 0 ? null : parts.join('/');
   const section = name === null ? undefined : recorded.get(name);
   if (name === null || section === undefined) return <>{label}</>;
+  const path = section === 'requests' ? paths.request(name) : paths.group(name);
+  if (path === null) return <>{label}</>;
 
   return (
-    <Link
-      to={`/runs/${encodeURIComponent(runId)}/${section}/${encodeURIComponent(name)}${windowSuffix}`}
-      className="underline"
-    >
+    <Link to={`${path}${windowSuffix}`} className="underline">
       {label}
     </Link>
   );

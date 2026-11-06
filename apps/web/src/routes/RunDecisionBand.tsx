@@ -8,7 +8,7 @@ import Button, { linkButtonClasses } from '../components/Button';
 import { STATUS, VERDICT, type Mark } from './marks';
 import { countAssertions, firstFailedAssertion, type AssertionCounts } from './assertions';
 import { decisionOf, releaseWord, rulesRan, type Decision } from './decision';
-import { runComparePath, runPath } from './paths';
+import { useRunPaths } from './presentation';
 import { downloadRunSummary, runSummaryJson } from './runExport';
 import { VerdictChanged } from './VerdictChanged';
 
@@ -138,6 +138,14 @@ export default function RunDecisionBand({
   // the same function, rather than by agreeing with a copy of it.
   const word = releaseWord(verdict, assertions, ran);
   const runId = identity.id;
+  /* THE BAND'S TWO LINKS, FOR WHICHEVER PAGE THIS IS (`useRunPaths`). The
+     failing-check link is a move within the Summary, which behind a public
+     link is the link itself (`/share/<secret>`). Compare reads the run's
+     cohort, which a link may not — so where it has no path the action is not
+     offered at all, never pointed at a page that would refuse the reader. */
+  const paths = useRunPaths(runId);
+  const summaryPath = paths.section('summary');
+  const comparePath = paths.section('compare');
   const exportRun = () =>
     downloadRunSummary(
       `perfportal-${runId}-run.json`,
@@ -289,9 +297,9 @@ export default function RunDecisionBand({
                * text, and the link below names the count. */
               tone={simulation.failedCount > 0 ? 'failed' : undefined}
               action={
-                simulation.failedExpression === null ? null : (
+                simulation.failedExpression === null || summaryPath === null ? null : (
                   <Link
-                    to={{ pathname: runPath(identity.id), search, hash: '#simulation-assertions' }}
+                    to={{ pathname: summaryPath, search, hash: '#simulation-assertions' }}
                     className="transition-ui font-medium text-accent hover:underline hover:underline-offset-2"
                   >
                     {simulation.failedCount === 1
@@ -306,18 +314,20 @@ export default function RunDecisionBand({
 
         <div className="flex min-w-0 flex-col justify-center gap-3 bg-sunken/45 p-4 @4xl:p-5">
           <div className="flex flex-wrap items-center gap-2">
-            <Link to={runComparePath(runId)} className={linkButtonClasses}>
-              <CompareTabIcon className="h-3.5 w-3.5" />
-              {/* "Compare runs", not "Compare previous". The destination is a
-                  PICKER over this run's cohort, and both demo runs landed on
-                  "Nothing to compare yet" — the action named a comparison that
-                  may not exist. Worse, `compareSelection`'s default can pick a
-                  NEWER neighbour for the oldest run in a cohort, so the word
-                  "previous" was not even reliably true when a run did have
-                  one. The destination is unchanged and still discoverable;
-                  only the promise is corrected. */}
-              Compare runs
-            </Link>
+            {comparePath !== null && (
+              <Link to={comparePath} className={linkButtonClasses}>
+                <CompareTabIcon className="h-3.5 w-3.5" />
+                {/* "Compare runs", not "Compare previous". The destination is a
+                    PICKER over this run's cohort, and both demo runs landed on
+                    "Nothing to compare yet" — the action named a comparison that
+                    may not exist. Worse, `compareSelection`'s default can pick a
+                    NEWER neighbour for the oldest run in a cohort, so the word
+                    "previous" was not even reliably true when a run did have
+                    one. The destination is unchanged and still discoverable;
+                    only the promise is corrected. */}
+                Compare runs
+              </Link>
+            )}
             <Button type="button" variant="secondary" onClick={exportRun}>
               <DownloadIcon className="h-3.5 w-3.5" />
               {/* NAMED AFTER WHAT IT WRITES. "Export run" promised a run

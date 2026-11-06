@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import type { RunResponse } from '@perfportal/contracts';
 import RunHeader from '../src/routes/RunHeader';
+import { RunPresentationProvider, type RunPresentation } from '../src/routes/presentation';
 
 // No global setup runs `afterEach(cleanup)` for us (see StatisticsTable.test.tsx)
 // — without it, each `render` call below leaves its `<header>` mounted
@@ -50,6 +51,7 @@ function renderHeader(
         verdict={run.verdict}
         compact={compact}
         note={note}
+        actions={null}
       />
     </MemoryRouter>,
   );
@@ -234,7 +236,7 @@ describe('RunHeader', () => {
     render(
       <MemoryRouter>
         <RunHeader identity={{ id: 'a66548b7-2962-43ff-8b93-7149a6f2a1b8' }}
-                   status="running" verdict={undefined} compact={false} note={null} />
+                   status="running" verdict={undefined} compact={false} note={null} actions={null} />
       </MemoryRouter>,
     );
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Run a66548b7');
@@ -253,7 +255,7 @@ describe('RunHeader', () => {
                                project: { id: '11111111-1111-4111-8111-111111111111',
                                           slug: 'checkout', name: 'Checkout' },
                                tool: 'gatling', startedAt: '2026-08-20T10:43:49.546Z' }}
-                   status="running" verdict={undefined} compact={false} note={null} />
+                   status="running" verdict={undefined} compact={false} note={null} actions={null} />
       </MemoryRouter>,
     );
     expect(screen.queryByTestId('run-verdict')).toBeNull();
@@ -266,7 +268,7 @@ describe('RunHeader', () => {
   it('draws a failed terminal run’s verdict beside its status', () => {
     render(
       <MemoryRouter>
-        <RunHeader identity={FULL_IDENTITY} status="complete" verdict="failed" compact={false} note={null} />
+        <RunHeader identity={FULL_IDENTITY} status="complete" verdict="failed" compact={false} note={null} actions={null} />
       </MemoryRouter>,
     );
     expect(screen.getByTestId('run-status')).toHaveAccessibleName('complete');
@@ -276,7 +278,7 @@ describe('RunHeader', () => {
   it('draws an evaluated absence as no verdict yet', () => {
     render(
       <MemoryRouter>
-        <RunHeader identity={FULL_IDENTITY} status="complete" verdict={null} compact={false} note={null} />
+        <RunHeader identity={FULL_IDENTITY} status="complete" verdict={null} compact={false} note={null} actions={null} />
       </MemoryRouter>,
     );
     expect(screen.getByTestId('run-verdict')).toHaveAccessibleName('no verdict yet');
@@ -437,5 +439,100 @@ describe('RunHeader — the verification mark', () => {
   it('draws no mark for a run still running', () => {
     renderHeader({ ...RUN, status: 'running', verification: { status: 'verified', reason: null } });
     expect(screen.queryByTestId('run-verification')).toBeNull();
+  });
+});
+
+/**
+ * ═══ THE RUN'S OTHER ACTIONS, BESIDE ITS HEADING (spec 6.4) ═══
+ *
+ * The header draws what it is handed and decides nothing about it: whether the
+ * reader may share the run is `RunShell`'s to know. REQUIRED, so a caller
+ * states `null` rather than forgetting the slot.
+ */
+describe('RunHeader — the actions slot', () => {
+  it('draws the actions it is handed beside the heading', () => {
+    render(
+      <MemoryRouter>
+        <RunHeader
+          identity={FULL_IDENTITY}
+          status="complete"
+          verdict="passed"
+          compact={false}
+          note={null}
+          actions={<button type="button">Share</button>}
+        />
+      </MemoryRouter>,
+    );
+    const share = screen.getByRole('button', { name: 'Share' });
+    // In the header's top row with the run's badges, not under the metadata.
+    expect(screen.getByTestId('run-status').parentElement).toContainElement(share);
+  });
+
+  /** A phone's first screen has 7.6px to spare before the run's first tile;
+   *  the action waits inside Run details, where an empty note's already does. */
+  it('on a phone, keeps the actions inside Run details and off the first screen', () => {
+    render(
+      <MemoryRouter>
+        <RunHeader
+          identity={FULL_IDENTITY}
+          status="complete"
+          verdict="passed"
+          compact
+          note={null}
+          actions={<button type="button">Share</button>}
+        />
+      </MemoryRouter>,
+    );
+    const share = screen.getByRole('button', { name: 'Share', hidden: true });
+    expect(screen.getByTestId('run-metadata')).toContainElement(share);
+    expect(screen.getByTestId('run-status').parentElement).not.toContainElement(share);
+    expect(screen.getAllByRole('button', { name: 'Share', hidden: true })).toHaveLength(1);
+  });
+});
+
+/**
+ * ═══ BEHIND A PUBLIC LINK, THE BREADCRUMB IS TEXT (spec 6.3) ═══
+ *
+ * The project and the test are where the run belongs, and still worth saying;
+ * but their pages are the app's, which a link does not reach. So the names
+ * stay and the links go.
+ */
+describe('RunHeader — behind a public link', () => {
+  const PUBLIC: RunPresentation = {
+    kind: 'public',
+    secret: 'ppl_Q7x_Kd-9mVb2LpN4rTzW8yHc6uJf3sEa1oGiX5nBkY0',
+    expiresAt: '2026-11-13T09:30:00.000Z',
+  };
+
+  it('names the project and the test without linking either', () => {
+    render(
+      <MemoryRouter>
+        <RunPresentationProvider value={PUBLIC}>
+          <RunHeader
+            identity={{ ...RUN, test: { id: TEST_ID, slug: 'checkout-smoke', name: 'Checkout smoke' }, runNumber: 3 }}
+            status="complete"
+            verdict="passed"
+            compact={false}
+            note={null}
+            actions={null}
+          />
+        </RunPresentationProvider>
+      </MemoryRouter>,
+    );
+    const crumb = screen.getByRole('navigation', { name: 'Breadcrumb' });
+    expect(crumb.querySelectorAll('a')).toHaveLength(0);
+    expect(crumb).toHaveTextContent('Checkout');
+    expect(screen.getByTestId('run-test')).toHaveTextContent('Checkout smoke');
+    expect(screen.getByTestId('run-crumb')).toHaveTextContent('Run 3');
+  });
+
+  /** The paired positive: the app's breadcrumb still links both rungs. */
+  it('links both rungs in the app', () => {
+    renderHeader({ ...RUN, test: { id: TEST_ID, slug: 'checkout-smoke', name: 'Checkout smoke' } });
+    const crumb = screen.getByRole('navigation', { name: 'Breadcrumb' });
+    expect([...crumb.querySelectorAll('a')].map((a) => a.getAttribute('href'))).toEqual([
+      '/projects/checkout',
+      '/projects/checkout/tests/checkout-smoke',
+    ]);
   });
 });

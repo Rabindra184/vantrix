@@ -1,4 +1,4 @@
-import type { AssertionOutcome, RunStatus, RunVerdict, VerificationStatus } from '@perfportal/contracts';
+import type { AssertionOutcome, PublicLinkState, RunStatus, RunVerdict, VerificationStatus } from '@perfportal/contracts';
 
 /**
  * The one vocabulary this app uses to render a status, a verdict or an
@@ -114,4 +114,20 @@ export const VERIFICATION: Record<VerificationStatus, Mark> = {
   pending: { glyph: '○', label: 'Verifying…', colour: 'var(--color-text-muted)' },
   mismatch: { glyph: '✕', label: 'Verification failed', colour: 'var(--color-status-failed)' },
   unverifiable: { glyph: '–', label: 'Not verified', colour: 'var(--color-status-not-applicable)' },
+};
+
+/**
+ * A public link's state (`publicLinkState`), in the share dialog's list.
+ *
+ * ACTIVE IS THE PASSED GREEN, because it is the state that matters most to the
+ * person reading the list: this link works, for anyone who has it, right now.
+ * Expired and revoked are both "stopped" and both muted, told apart by word
+ * and shape — revoked is the struck ✕ (somebody stopped it), expired the
+ * empty ○ (it ran out) — for the reason the API gives revoked precedence: the
+ * two have different causes.
+ */
+export const PUBLIC_LINK_STATE: Record<PublicLinkState, Mark> = {
+  active: { glyph: '●', label: 'Active', colour: 'var(--color-status-passed)' },
+  expired: { glyph: '○', label: 'Expired', colour: 'var(--color-status-not-applicable)' },
+  revoked: { glyph: '✕', label: 'Revoked', colour: 'var(--color-status-not-applicable)' },
 };

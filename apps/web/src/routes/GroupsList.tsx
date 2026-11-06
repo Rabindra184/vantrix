@@ -6,6 +6,7 @@ import { ROW, TABLE, TD, TD_NUM, TH, TH_NUM, THEAD } from '../components/tableSt
 import { clampPercentile } from '../percentile';
 import { formatCount, formatMs } from '../tables/StatisticsTable';
 import { useWindowSuffix } from './useRunWindow';
+import { useRunPaths } from './presentation';
 
 export interface GroupRow {
   readonly name: string;
@@ -58,7 +59,8 @@ const TABLE_INFO = 'Each group shows the p95 of its summed time and of its wall-
  * The Report's Groups section — this product's own design, because GE's
  * populated Groups section could not be measured (neither run in the account
  * has a group). Each name links to its existing group page, which holds the
- * group's charts.
+ * group's charts — in the app. Behind a public link that page is a drill-down
+ * the link does not reach (`useRunPaths` answers null), so the name is text.
  */
 export default function GroupsList({
   runId,
@@ -85,6 +87,7 @@ export default function GroupsList({
      parameters travel. Above the early return — a hook after it would not run
      for an empty list. */
   const windowSuffix = useWindowSuffix();
+  const paths = useRunPaths(runId);
   const rows = groupRows(stats);
   if (rows.length === 0) {
     // A SCOPED EMPTY RESULT IS NOT A WHOLE-RUN CONCLUSION — the rule
@@ -120,23 +123,27 @@ export default function GroupsList({
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
-            <tr key={row.name} data-testid="group-row" className={ROW}>
-              <td className={TD}>
-                <Link
-                  to={`/runs/${encodeURIComponent(runId)}/groups/${encodeURIComponent(row.name)}${windowSuffix}`}
-                  className="text-accent underline-offset-2 hover:underline"
-                >
-                  {row.name}
-                </Link>
-              </td>
-              <td className={TD_NUM}>{formatCount(row.count)}</td>
-              <td className={TD_NUM}>{formatCount(row.okCount)}</td>
-              <td className={TD_NUM}>{formatCount(row.koCount)}</td>
-              <td className={TD_NUM}>{ms(row.cumulatedP95)}</td>
-              <td className={TD_NUM}>{ms(row.durationP95)}</td>
-            </tr>
-          ))}
+          {rows.map((row) => {
+            const path = paths.group(row.name);
+            return (
+              <tr key={row.name} data-testid="group-row" className={ROW}>
+                <td className={TD}>
+                  {path === null ? (
+                    row.name
+                  ) : (
+                    <Link to={`${path}${windowSuffix}`} className="text-accent underline-offset-2 hover:underline">
+                      {row.name}
+                    </Link>
+                  )}
+                </td>
+                <td className={TD_NUM}>{formatCount(row.count)}</td>
+                <td className={TD_NUM}>{formatCount(row.okCount)}</td>
+                <td className={TD_NUM}>{formatCount(row.koCount)}</td>
+                <td className={TD_NUM}>{ms(row.cumulatedP95)}</td>
+                <td className={TD_NUM}>{ms(row.durationP95)}</td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </TableFrame>

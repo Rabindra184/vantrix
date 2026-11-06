@@ -82,15 +82,24 @@ export default function PublicRunPage({ secret }: { readonly secret: string }) {
       {/* `id="main"` because the fragment reveal (`useScrollAndFragment`)
           observes this column, as it observes the app's own. */}
       <main id="main" tabIndex={-1} className="min-w-0 p-4 outline-none sm:p-6">
-        {link.isError ? (
-          <Failure
-            error={link.error}
-            title="This link could not be opened"
-          />
-        ) : link.isPending || run.isPending ? (
-          <LoadingState label="Loading run…" />
-        ) : run.isError ? (
-          <Failure error={run.error} title="This run could not be loaded" />
+        {/* DATA BEFORE ERROR — freeze, do not blank. Both reads re-run in the
+            background (a return to the tab re-asks them), and a failed re-read
+            keeps the data it had: a page the reader is reading stays, and only
+            a failure with nothing loaded is shown. A link REFUSAL is not one of
+            those — `PublicLinkApp` replaces the whole page for it, whatever is
+            loaded here. */}
+        {link.data === undefined ? (
+          link.isError ? (
+            <Failure error={link.error} title="This link could not be opened" />
+          ) : (
+            <LoadingState label="Loading run…" />
+          )
+        ) : run.data === undefined ? (
+          run.isError ? (
+            <Failure error={run.error} title="This run could not be loaded" />
+          ) : (
+            <LoadingState label="Loading run…" />
+          )
         ) : (
           <PublicShell
             secret={secret}

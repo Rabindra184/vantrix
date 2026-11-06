@@ -14,6 +14,7 @@ import useIsCompact from '../src/useIsCompact';
 import type { RunWindowContext } from '../src/routes/useRunWindow';
 import { useTimeAxis } from '../src/charts/TimeAxisContext';
 import { UNKNOWN_ACCESS } from './support/access';
+import { RunPresentationProvider, type RunPresentation } from '../src/routes/presentation';
 
 /* NOT compact by default, which is what every case above this file's last
    describe assumes and what `useIsCompact` itself falls back to where
@@ -1117,5 +1118,73 @@ describe('RunShell — the run’s note follows the access it is handed', () => 
     cleanup();
     renderNoteShell({ ...RUN, note: null }, UNKNOWN_ACCESS);
     expect(screen.queryByRole('button', { name: 'Add a note' })).toBeNull();
+  });
+});
+
+/**
+ * ═══ THE SHARE BUTTON: WHO MAY, AND ON WHICH RUNS (spec 6.4) ═══
+ *
+ * Beside the run's heading, for a reader with `run:share` (Member) on a run
+ * that has finished — complete or incomplete, the two statuses the API will
+ * share — and never behind a public link, whatever the access says: a link's
+ * reader creates nothing. Rendering the button asks nothing; the dialog reads
+ * the run's links only once it opens.
+ */
+describe('RunShell — the Share button', () => {
+  it.each(['complete', 'incomplete'] as const)('offers Share on a %s run to a reader who may share', (status) => {
+    const fetchSpy = vi.fn(() => new Promise<Response>(() => {}));
+    vi.stubGlobal('fetch', fetchSpy);
+    renderShellWith({ status, projectAccess: allowing('run:share') });
+    expect(screen.getByRole('button', { name: 'Share' })).toBeInTheDocument();
+    expect(fetchSpy.mock.calls.map((c: unknown[]) => String(c[0])).filter((u) => u.includes('public-links'))).toEqual([]);
+  });
+
+  it.each(['pending', 'parsing', 'running', 'failed'] as const)('offers no Share on a %s run', (status) => {
+    renderShellWith({ status, projectAccess: allowing('run:share') });
+    expect(screen.getByRole('navigation', { name: 'Run sections' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Share' })).toBeNull();
+  });
+
+  it('offers no Share to a reader who may not', () => {
+    renderShellWith({ projectAccess: allowing('run:note') });
+    expect(screen.getByRole('navigation', { name: 'Run sections' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Share' })).toBeNull();
+  });
+
+  it('offers no Share behind a public link, even to an access that allows it', () => {
+    const secret = 'ppl_Q7x_Kd-9mVb2LpN4rTzW8yHc6uJf3sEa1oGiX5nBkY0';
+    const presentation: RunPresentation = { kind: 'public', secret, expiresAt: '2026-11-13T09:30:00.000Z' };
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={[`/share/${secret}`]}>
+          <RunPresentationProvider value={presentation}>
+            <Routes>
+              <Route
+                path="/share/:token"
+                element={
+                  <RunShell
+                    identity={RUN}
+                    status="complete"
+                    verdict={RUN.verdict}
+                    windowable={RUN.windowable}
+                    terminal
+                    projectAccess={allowing('run:share', 'run:note')}
+                    live={null}
+                    capReached={false}
+                    onRetry={() => {}}
+                  />
+                }
+              >
+                <Route index element={<div />} />
+              </Route>
+            </Routes>
+          </RunPresentationProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    // The paired positive: the shell drew, and knew this page as the Summary.
+    expect(screen.getByRole('region', { name: 'Release decision' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Share' })).toBeNull();
   });
 });

@@ -6,6 +6,7 @@ import StatTile from '../components/StatTile';
 import { comparability, summariseConditions } from './comparability';
 import { clampPercentile, type PercentileRange } from '../percentile';
 import { runPath } from './paths';
+import { useRunPresentation } from './presentation';
 import { runName } from '../runNumber';
 import { StatisticsEmpty, formatCount, formatMs } from '../tables/StatisticsTable';
 
@@ -48,7 +49,7 @@ export default function RunStats({
   stats,
   peakUsers,
   runStatus,
-  baseline,
+  baseline: givenBaseline,
   current,
   assertions,
   exact,
@@ -91,6 +92,14 @@ export default function RunStats({
    */
   readonly exact: boolean;
 }) {
+  /* ═══ NO BASELINE BEHIND A PUBLIC LINK (spec 6.3) ═══
+     The baseline is another run of the cohort, and every delta links to it —
+     a run the link does not reach, read from `/trends`, which a link may not
+     ask. `RunSummary` never asks for it there; this refuses one anyway, so the
+     tiles show their values alone and no delta can name, or link to, a run
+     the link was not made for. Above the early return: hook order. */
+  const presentation = useRunPresentation();
+  const baseline = presentation.kind === 'public' ? null : givenBaseline;
   const run = stats.stats.find((row) => row.scope === 'run');
   if (run === undefined) {
     return (

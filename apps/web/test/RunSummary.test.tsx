@@ -12,6 +12,7 @@ import { runQueryKey } from '../src/api/run';
 import RunSummary from '../src/routes/RunSummary';
 import { peakConcurrentUsers } from '../src/routes/runUsers';
 import { useWholeRunDomainFromShell, type RunWindowContext } from '../src/routes/useRunWindow';
+import { RunPresentationProvider, type RunPresentation } from '../src/routes/presentation';
 import { UNKNOWN_ACCESS } from './support/access';
 import useIsCompact from '../src/useIsCompact';
 
@@ -153,6 +154,7 @@ function renderSummary({
   access = UNKNOWN_ACCESS,
   statsMethod,
   aiBody = null,
+  presentation = { kind: 'app' },
 }: {
   url?: string;
   window?: RunWindowContext['window'];
@@ -170,6 +172,8 @@ function renderSummary({
   statsMethod?: RunResponse['statsMethod'];
   /** What `/ai-analysis` answers; null is the 404 an API without the route gives. */
   aiBody?: unknown;
+  /** Who the page is shown to: the app's reader, or a public link's. */
+  presentation?: RunPresentation;
 } = {}) {
   const seen = stubFetch(statsBody, statsStatus, aiBody);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -177,6 +181,7 @@ function renderSummary({
   client.setQueryData(runQueryKey(RUN_ID), { state: 'ready', run });
   render(
     <QueryClientProvider client={client}>
+      <RunPresentationProvider value={presentation}>
       <MemoryRouter initialEntries={[url]}>
         <Routes>
           <Route
@@ -191,6 +196,7 @@ function renderSummary({
           </Route>
         </Routes>
       </MemoryRouter>
+      </RunPresentationProvider>
     </QueryClientProvider>,
   );
   return seen;
@@ -419,5 +425,48 @@ describe('RunSummary — the way to add a rule follows the run’s project acces
       'href',
       '/projects/checkout/rules',
     );
+  });
+});
+
+/**
+ * ═══ BEHIND A PUBLIC LINK, THE SUMMARY STAYS ON THIS RUN (spec 6.3) ═══
+ *
+ * Two of the Summary's reads leave the run: `/trends` is the cohort — other
+ * runs' ids and figures — which the tiles' deltas are computed from, and
+ * `/ai-analysis` feeds a card a link's reader is never shown. Neither is on
+ * the link's allowlist, so neither may be ASKED: a refused read would replace
+ * the page with nothing to say. The tiles show their values alone.
+ */
+describe('RunSummary — behind a public link', () => {
+  const PUBLIC: RunPresentation = {
+    kind: 'public',
+    secret: 'ppl_Q7x_Kd-9mVb2LpN4rTzW8yHc6uJf3sEa1oGiX5nBkY0',
+    expiresAt: '2026-11-13T09:30:00.000Z',
+  };
+  const NONE = { available: true, state: 'none', content: null, failureReason: null, generatedAt: null, model: null, stale: false, requestedAt: null };
+  // An access that allows everything: whatever the card would offer a member,
+  // the presentation is what withholds it.
+  const EVERYTHING: ProjectAccess = { known: true, can: () => true };
+
+  it('asks for no cohort and no analysis, and draws no AI card', async () => {
+    const seen = renderSummary({ presentation: PUBLIC, aiBody: NONE, access: EVERYTHING });
+    await screen.findByTestId('stat-total-requests');
+    await screen.findByRole('heading', { level: 2, name: 'Errors' });
+    // Every read the page makes has been asked by now; give a late one a turn.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const paths = seen.map((url) => new URL(url, 'http://x').pathname);
+    expect(paths.filter((path) => path.endsWith('/trends')), 'a /trends request').toEqual([]);
+    expect(paths.filter((path) => path.endsWith('/ai-analysis')), 'an /ai-analysis request').toEqual([]);
+    expect(screen.queryByRole('heading', { name: 'AI run analysis' })).toBeNull();
+    // The paired positive: the page did read its own figures.
+    expect(paths.some((path) => path.endsWith('/stats'))).toBe(true);
+  });
+
+  /** The paired app half: the same render asks for both. */
+  it('asks for both in the app', async () => {
+    const seen = renderSummary({ aiBody: NONE, access: EVERYTHING });
+    await screen.findByRole('heading', { level: 2, name: 'AI run analysis' });
+    await waitFor(() => expect(seen.some((url) => new URL(url, 'http://x').pathname.endsWith('/trends'))).toBe(true));
   });
 });
