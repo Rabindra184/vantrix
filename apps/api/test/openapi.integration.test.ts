@@ -235,6 +235,25 @@ describe('OpenAPI document', () => {
     expect(schema?.required ?? []).toEqual(expect.arrayContaining(['name', 'scopes']));
   });
 
+  /**
+   * The same trap on the settings body: `UpdateOrgSettingsRequestSchema` is
+   * two optional switches under a refinement requiring at least one. A
+   * conversion that lost a property would leave a generated client unable to
+   * set it, and one that marked either required would refuse the body a
+   * browser built before the public-links switch still sends —
+   * `{ "aiEnabled": … }` alone. The response must name the new switch too.
+   */
+  it('keeps both switches on the settings body, refinement and all, and neither required', async () => {
+    const doc = await fetchDoc();
+    const schemas = (doc.components as { schemas?: Record<string, { properties?: Record<string, unknown>; required?: string[] }> })
+      ?.schemas;
+    const body = schemas?.['UpdateOrgSettingsRequest'];
+
+    expect(Object.keys(body?.properties ?? {}).sort()).toEqual(['aiEnabled', 'publicLinksEnabled']);
+    expect(body?.required ?? []).toEqual([]);
+    expect(Object.keys(schemas?.['OrgSettings']?.properties ?? {})).toContain('publicLinksEnabled');
+  });
+
   it('lists "remediation" as required on the problem-details schema', async () => {
     const doc = await fetchDoc();
     const problemDetails = doc.components?.schemas?.['ProblemDetails'];

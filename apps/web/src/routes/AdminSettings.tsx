@@ -8,9 +8,13 @@ import { fetchOrgSettings, orgSettingsQueryKey, updateOrgSettings } from '../api
 import AdminShell, { RefreshFailed, isRefusal } from './AdminShell';
 
 /**
- * Administration › Settings: the org's own settings, which today is one
- * switch — AI features, which lets a member send a run to the deployment's AI
- * provider for a written analysis.
+ * Administration › Settings: the org's own settings, which are two switches —
+ * AI features, which lets a member send a run to the deployment's AI provider
+ * for a written analysis, and Public links, which lets a run be read through
+ * a link by someone who is not signed in. Each is off until an admin turns it
+ * on, and each sends only its own field (`{"aiEnabled": …}` or
+ * `{"publicLinksEnabled": …}`), so pressing one never writes the other from a
+ * value this page read earlier.
  *
  * ═══ NO PROVIDER, NO SWITCH — UNLESS IT IS ON (ruling 17) ═══
  *
@@ -42,11 +46,24 @@ import AdminShell, { RefreshFailed, isRefusal } from './AdminShell';
  * ON. The knob moves when the PUT answers, not when it is pressed. Turning it
  * off with no provider configured removes the switch, so focus moves to the
  * operator sentence that replaces it rather than falling to the page. A
- * refused change shows
- * the API's own detail and remediation beside the switch, which stays as it
- * was. A refused READ (`403 ADMIN_REQUIRED` for a session that is not an
- * admin) replaces the page with the refusal, under the shell (ruling W17); a
- * 401 ends the session in `queryClient.ts`, not here.
+ * refused change shows the API's own detail and remediation beside the
+ * switch that was pressed, which stays as it was. A refused READ
+ * (`403 ADMIN_REQUIRED` for a session that is not an admin) replaces the page
+ * with the refusal, under the shell (ruling W17); a 401 ends the session in
+ * `queryClient.ts`, not here.
+ *
+ * ═══ PUBLIC LINKS: ITS SENTENCE IS ON SCREEN, FOR THE SAME REASON ═══
+ *
+ * Turning public links on is a decision about publishing, so its sentence —
+ * what a link lets someone read, without signing in, and what turning the
+ * switch off and on again does to the links that exist — is visible beside
+ * the switch and is its `aria-describedby`, never behind an ⓘ (the AI
+ * consent rule; spec section 6.5). It does not depend on an AI provider: the
+ * two switches are independent, so it is drawn whatever the AI half shows.
+ *
+ * An API pod older than the switch sends no `publicLinksEnabled` and refuses
+ * the field in a PUT, so through a rolling deploy there is nothing to draw:
+ * no switch, rather than one reading OFF that answers 400 when pressed.
  */
 export default function AdminSettings() {
   const query = useQuery({ queryKey: orgSettingsQueryKey, queryFn: fetchOrgSettings });
@@ -65,27 +82,54 @@ export default function AdminSettings() {
         <div className="flex flex-col gap-4">
           {query.isError && <RefreshFailed />}
           <AiFeatures settings={query.data} />
+          {query.data.publicLinksEnabled !== undefined && <PublicLinks enabled={query.data.publicLinksEnabled} />}
         </div>
       )}
     </AdminShell>
   );
 }
 
-function AiFeatures({ settings }: { readonly settings: OrgSettings }) {
+/** The Public links switch's sentence, verbatim from spec section 6.5. */
+const PUBLIC_LINKS_SENTENCE =
+  "Anyone with a public link can read that run's Summary, Report and Logs without signing in, until the link expires or is revoked. Turning this off stops every link at once; turning it back on restores the links that have not expired or been revoked.";
+
+/**
+ * One switch's change: the PUT, whose answer is written into the cache before
+ * the re-read (so a failed re-read cannot show the old state), then the
+ * re-read. Each switch holds its own, so a refusal is shown beside the switch
+ * that was pressed. `onAnswer` runs after the answer is cached.
+ */
+function useSettingsChange(onAnswer?: (answer: OrgSettings) => void) {
   const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: updateOrgSettings,
+    onSuccess: (answer) => {
+      queryClient.setQueryData(orgSettingsQueryKey, answer);
+      onAnswer?.(answer);
+      return queryClient.invalidateQueries({ queryKey: orgSettingsQueryKey });
+    },
+  });
+}
+
+/** A refused change: the API's own detail and remediation. */
+function ChangeRefused({ error }: { readonly error: Error }) {
+  const problem = error instanceof ProblemError ? error : null;
+  return (
+    <div role="alert" className="rounded-lg border border-default bg-sunken p-3 text-[0.8125rem] text-primary">
+      <p>{problem?.detail ?? error.message}</p>
+      {problem !== null && <p className="mt-1 text-muted">{problem.remediation}</p>}
+    </div>
+  );
+}
+
+function AiFeatures({ settings }: { readonly settings: OrgSettings }) {
   const descriptionId = `${useId()}-ai-features`;
   const operatorRef = useRef<HTMLParagraphElement>(null);
   // Set when a change the reader made removes the switch, and spent once
   // focus has moved — never on a page that merely arrives without one.
   const [focusOperator, setFocusOperator] = useState(false);
-  const mutation = useMutation({
-    mutationFn: updateOrgSettings,
-    onSuccess: (answer) => {
-      // The PUT's answer first, so a failed re-read cannot show the old state.
-      queryClient.setQueryData(orgSettingsQueryKey, answer);
-      if (!answer.aiProviderConfigured && !answer.aiEnabled) setFocusOperator(true);
-      return queryClient.invalidateQueries({ queryKey: orgSettingsQueryKey });
-    },
+  const mutation = useSettingsChange((answer) => {
+    if (!answer.aiProviderConfigured && !answer.aiEnabled) setFocusOperator(true);
   });
 
   const switchHidden = !settings.aiProviderConfigured && !settings.aiEnabled;
@@ -116,8 +160,6 @@ function AiFeatures({ settings }: { readonly settings: OrgSettings }) {
      provider an operator configures next. */
   if (switchHidden) return operatorLine;
 
-  const problem = mutation.error instanceof ProblemError ? mutation.error : null;
-
   return (
     <div className="flex flex-col gap-2">
       <Switch
@@ -127,7 +169,8 @@ function AiFeatures({ settings }: { readonly settings: OrgSettings }) {
         describedBy={descriptionId}
         onClick={() => {
           // One change at a time: a second click while the first is in
-          // flight would PUT the same value the knob has not yet left.
+          // flight would PUT the same value the knob has not yet left. Its
+          // own field alone: the other switch is not re-sent.
           if (mutation.isPending) return;
           mutation.mutate({ aiEnabled: !settings.aiEnabled });
         }}
@@ -143,12 +186,35 @@ function AiFeatures({ settings }: { readonly settings: OrgSettings }) {
       ) : (
         operatorLine
       )}
-      {mutation.isError && (
-        <div role="alert" className="rounded-lg border border-default bg-sunken p-3 text-[0.8125rem] text-primary">
-          <p>{problem?.detail ?? mutation.error.message}</p>
-          {problem !== null && <p className="mt-1 text-muted">{problem.remediation}</p>}
-        </div>
-      )}
+      {mutation.isError && <ChangeRefused error={mutation.error} />}
+    </div>
+  );
+}
+
+/**
+ * The Public links switch: its sentence always on screen and as its
+ * description, and its own field alone in the PUT. The knob moves when the
+ * PUT answers, not when it is pressed, as the AI switch's does.
+ */
+function PublicLinks({ enabled }: { readonly enabled: boolean }) {
+  const descriptionId = `${useId()}-public-links`;
+  const mutation = useSettingsChange();
+  return (
+    <div className="flex flex-col gap-2">
+      <Switch
+        pressed={enabled}
+        label="Public links"
+        testId="public-links-switch"
+        describedBy={descriptionId}
+        onClick={() => {
+          if (mutation.isPending) return;
+          mutation.mutate({ publicLinksEnabled: !enabled });
+        }}
+      />
+      <p id={descriptionId} className="text-[0.8125rem] text-muted">
+        {PUBLIC_LINKS_SENTENCE}
+      </p>
+      {mutation.isError && <ChangeRefused error={mutation.error} />}
     </div>
   );
 }

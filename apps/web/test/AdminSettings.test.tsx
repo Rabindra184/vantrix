@@ -27,6 +27,7 @@ const problem = (status: number, code: string, detail: string, remediation: stri
 
 const CONFIGURED_OFF: OrgSettings = {
   aiEnabled: false,
+  publicLinksEnabled: false,
   aiProviderConfigured: true,
   aiProvider: 'anthropic',
   aiModel: 'claude-sonnet-4',
@@ -34,6 +35,7 @@ const CONFIGURED_OFF: OrgSettings = {
 
 const NOT_CONFIGURED: OrgSettings = {
   aiEnabled: false,
+  publicLinksEnabled: false,
   aiProviderConfigured: false,
   aiProvider: null,
   aiModel: null,
@@ -43,12 +45,17 @@ const NOT_CONFIGURED: OrgSettings = {
  *  since lost it: the switch must stay reachable, so it can be turned off. */
 const ENABLED_NOT_CONFIGURED: OrgSettings = { ...NOT_CONFIGURED, aiEnabled: true };
 
+/** The public-links switch's sentence: spec section 6.5, verbatim. */
+const PUBLIC_LINKS_SENTENCE =
+  "Anyone with a public link can read that run's Summary, Report and Logs without signing in, until the link expires or is revoked. Turning this off stops every link at once; turning it back on restores the links that have not expired or been revoked.";
+
 const CONSENT =
   "When on, a member can send a run's figures and the names it records — its simulation, requests, groups and assertions — with its error messages to anthropic/claude-sonnet-4 to write an analysis. Off also hides analyses already written.";
 
 /** A self-hosted endpoint: the API names its host, and nothing else of its URL. */
 const OPENAI_COMPATIBLE: OrgSettings = {
   aiEnabled: false,
+  publicLinksEnabled: false,
   aiProviderConfigured: true,
   aiProvider: 'openai-compatible',
   aiModel: 'llama-3.3-70b',
@@ -296,5 +303,104 @@ describe('AdminSettings', () => {
     expect(alert).toHaveTextContent('Managing users needs an admin.');
     expect(alert).toHaveTextContent('Ask an admin to do this.');
     expect(screen.getByRole('button', { name: 'AI features' })).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('draws a second switch, Public links, beside AI features', async () => {
+    stub(() => json(200, CONFIGURED_OFF));
+    renderPage();
+    const toggle = await screen.findByRole('button', { name: 'Public links' });
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByRole('button', { name: 'AI features' })).toBeInTheDocument();
+  });
+
+  it('draws the Public links switch when no AI provider is configured', async () => {
+    stub(() => json(200, NOT_CONFIGURED));
+    renderPage();
+    await screen.findByTestId('ai-provider-not-configured');
+    // The two switches are independent: no AI provider is no reason to hide
+    // the one that publishes runs.
+    expect(screen.getByRole('button', { name: 'Public links' })).toBeInTheDocument();
+  });
+
+  it("states what turning public links on publishes, visibly and as the switch's description", async () => {
+    stub(() => json(200, CONFIGURED_OFF));
+    renderPage();
+    const toggle = await screen.findByRole('button', { name: 'Public links' });
+    expect(toggle).toHaveAccessibleDescription(PUBLIC_LINKS_SENTENCE);
+    // VISIBLE, not behind an ⓘ: turning it on is a decision about publishing,
+    // read before the switch is pressed (the AI consent rule).
+    const sentence = screen.getByText(PUBLIC_LINKS_SENTENCE);
+    expect(sentence).toBeVisible();
+    expect(sentence.closest('[hidden]')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'About Public links' })).toBeNull();
+  });
+
+  it('turns public links on, sending that switch alone, and re-reads the settings', async () => {
+    // AI features ON, so a body that carried both switches would show it.
+    let held: OrgSettings = { ...CONFIGURED_OFF, aiEnabled: true };
+    const calls = stub((call) => {
+      if (call.method === 'PUT') held = { ...held, ...(JSON.parse(call.body ?? '{}') as Partial<OrgSettings>) };
+      return json(200, held);
+    });
+    renderPage();
+    const toggle = await screen.findByRole('button', { name: 'Public links' });
+
+    await userEvent.click(toggle);
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Public links' })).toHaveAttribute('aria-pressed', 'true'),
+    );
+    const puts = calls.filter((c) => c.url === SETTINGS && c.method === 'PUT');
+    expect(puts).toHaveLength(1);
+    // Its own field and nothing else: the AI switch is not re-sent.
+    expect(puts[0]!.body).toBe('{"publicLinksEnabled":true}');
+    expect(screen.getByRole('button', { name: 'AI features' })).toHaveAttribute('aria-pressed', 'true');
+    await waitFor(() => expect(settingsGets(calls)).toHaveLength(2));
+  });
+
+  it('still sends the AI switch alone with public links on', async () => {
+    let held: OrgSettings = { ...CONFIGURED_OFF, publicLinksEnabled: true };
+    const calls = stub((call) => {
+      if (call.method === 'PUT') held = { ...held, ...(JSON.parse(call.body ?? '{}') as Partial<OrgSettings>) };
+      return json(200, held);
+    });
+    renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: 'AI features' }));
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'AI features' })).toHaveAttribute('aria-pressed', 'true'),
+    );
+    const puts = calls.filter((c) => c.url === SETTINGS && c.method === 'PUT');
+    expect(puts.map((c) => c.body)).toEqual(['{"aiEnabled":true}']);
+    expect(screen.getByRole('button', { name: 'Public links' })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it("shows the API's refusal of a public-links change beside that switch, and keeps it as it was", async () => {
+    stub((call) =>
+      call.method === 'PUT'
+        ? problem(403, 'ADMIN_REQUIRED', 'Managing users needs an admin.', 'Ask an admin to do this.')
+        : json(200, CONFIGURED_OFF),
+    );
+    renderPage();
+    const toggle = await screen.findByRole('button', { name: 'Public links' });
+    await userEvent.click(toggle);
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Managing users needs an admin.');
+    expect(alert).toHaveTextContent('Ask an admin to do this.');
+    expect(toggle.parentElement).toContainElement(alert);
+    expect(screen.getByRole('button', { name: 'Public links' })).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  /** An API pod that predates the switch sends no key, and refuses the field
+   *  in a PUT (its body is strict) — so there is nothing to draw, rather than
+   *  a switch reading OFF that would answer 400 when pressed. */
+  it('draws no Public links switch for an API that predates it, and keeps AI features', async () => {
+    const older: Record<string, unknown> = { ...CONFIGURED_OFF };
+    delete older.publicLinksEnabled;
+    stub(() => json(200, older));
+    renderPage();
+    await screen.findByRole('button', { name: 'AI features' });
+    expect(screen.queryByRole('button', { name: 'Public links' })).toBeNull();
+    expect(screen.queryByText(PUBLIC_LINKS_SENTENCE)).toBeNull();
   });
 });

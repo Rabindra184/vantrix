@@ -5,6 +5,7 @@ import {
   AdminUserListResponseSchema,
   AdminUserSchema,
   DataIntegritySchema,
+  OrgSettingsSchema,
   RecomputeProgressSchema,
 } from '@perfportal/contracts';
 import {
@@ -1296,4 +1297,85 @@ describe('two admins taking admin away at the same moment', () => {
       expect(await ctx.prisma.user.count({ where: { id: { in: [a.userId, b.userId] } } })).toBe(removing ? 1 : 2);
     });
   }
+});
+
+/*
+ * ═══ PUT /v1/admin/settings: EACH SWITCH WRITES ONLY ITSELF ═══
+ * (docs/superpowers/specs/2026-11-06-public-links-and-custom-report-design.md, section 4.2)
+ *
+ * Two switches share one body, and each is optional, so a body naming one
+ * must leave the other exactly as the database holds it. Each "unchanged"
+ * case starts the OTHER switch ON: a handler that wrote a missing field as
+ * false would be invisible against a default that is already false.
+ */
+describe('/v1/admin/settings: the public-links switch', () => {
+  /** Both columns as the database holds them, never the API's own answer. */
+  async function columns(): Promise<{ ai_enabled: boolean; public_links_enabled: boolean }> {
+    const { rows } = await ctx.pool.query<{ ai_enabled: boolean; public_links_enabled: boolean }>(
+      'SELECT ai_enabled, public_links_enabled FROM org WHERE id = $1::uuid',
+      [ctx.orgId],
+    );
+    return rows[0]!;
+  }
+
+  it('reports the switch, off until an admin turns it on', async () => {
+    ctx = await createTestApp();
+    const admin = await signInAsAdmin(ctx, email('admin'));
+    const res = await api('get', '/v1/admin/settings', admin.cookie).expect(200);
+    expect(OrgSettingsSchema.parse(res.body).publicLinksEnabled).toBe(false);
+  });
+
+  it('turns public links on and leaves the AI switch as it was', async () => {
+    ctx = await createTestApp();
+    const admin = await signInAsAdmin(ctx, email('admin'));
+    await ctx.pool.query('UPDATE org SET ai_enabled = true WHERE id = $1::uuid', [ctx.orgId]);
+
+    const res = await api('put', '/v1/admin/settings', admin.cookie, { publicLinksEnabled: true }).expect(200);
+    const answer = OrgSettingsSchema.parse(res.body);
+    expect([answer.publicLinksEnabled, answer.aiEnabled]).toEqual([true, true]);
+    expect(await columns()).toEqual({ ai_enabled: true, public_links_enabled: true });
+  });
+
+  it('turns AI features on and leaves the public-links switch as it was', async () => {
+    ctx = await createTestApp();
+    const admin = await signInAsAdmin(ctx, email('admin'));
+    await ctx.pool.query('UPDATE org SET public_links_enabled = true WHERE id = $1::uuid', [ctx.orgId]);
+
+    // The body a browser built before the public-links switch sends.
+    const res = await api('put', '/v1/admin/settings', admin.cookie, { aiEnabled: true }).expect(200);
+    const answer = OrgSettingsSchema.parse(res.body);
+    expect([answer.aiEnabled, answer.publicLinksEnabled]).toEqual([true, true]);
+    expect(await columns()).toEqual({ ai_enabled: true, public_links_enabled: true });
+  });
+
+  it('sets both when both are sent, and turns public links off again', async () => {
+    ctx = await createTestApp();
+    const admin = await signInAsAdmin(ctx, email('admin'));
+    await api('put', '/v1/admin/settings', admin.cookie, { aiEnabled: true, publicLinksEnabled: true }).expect(200);
+    expect(await columns()).toEqual({ ai_enabled: true, public_links_enabled: true });
+
+    const off = await api('put', '/v1/admin/settings', admin.cookie, { publicLinksEnabled: false }).expect(200);
+    expect(OrgSettingsSchema.parse(off.body).publicLinksEnabled).toBe(false);
+    expect(await columns()).toEqual({ ai_enabled: true, public_links_enabled: false });
+  });
+
+  it('refuses a body that sets neither 400 INVALID_ORG_SETTINGS, naming both switches, and changes nothing', async () => {
+    ctx = await createTestApp();
+    const admin = await signInAsAdmin(ctx, email('admin'));
+    await ctx.pool.query('UPDATE org SET ai_enabled = true WHERE id = $1::uuid', [ctx.orgId]);
+
+    const res = await api('put', '/v1/admin/settings', admin.cookie, {});
+    expect([res.status, res.body.code]).toEqual([400, 'INVALID_ORG_SETTINGS']);
+    expect(res.body.remediation).toContain('"aiEnabled"');
+    expect(res.body.remediation).toContain('"publicLinksEnabled"');
+    expect(await columns()).toEqual({ ai_enabled: true, public_links_enabled: false });
+  });
+
+  it('refuses a Member 403 ADMIN_REQUIRED, and changes nothing', async () => {
+    ctx = await createTestApp();
+    const member = await signInAsProjectMember(ctx, email('member'), [{ projectId: ctx.projectId, role: 'member' }]);
+    const res = await api('put', '/v1/admin/settings', member.cookie, { publicLinksEnabled: true });
+    expect([res.status, res.body.code]).toEqual([403, 'ADMIN_REQUIRED']);
+    expect(await columns()).toEqual({ ai_enabled: false, public_links_enabled: false });
+  });
 });

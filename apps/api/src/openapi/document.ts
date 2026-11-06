@@ -3248,11 +3248,12 @@ const paths: Record<string, PathItemObject> = {
       security: [{ cookieAuth: [] }],
       description:
         sessionAccessSentence('users:manage') + ' ' +
-        '"aiEnabled" is this organisation\'s switch for AI run analysis, off until an admin turns ' +
-        'it on. "aiProviderConfigured", "aiProvider" and "aiModel" are the DEPLOYMENT\'s ' +
-        'configuration (AI_PROVIDER, AI_MODEL), read-only here; the provider\'s key is never ' +
-        'returned. Nothing is sent to a provider unless a provider is configured AND the switch is ' +
-        'on.',
+        '"aiEnabled" is this organisation\'s switch for AI run analysis and "publicLinksEnabled" ' +
+        'its switch for public links (a run read through a link without signing in); each is off ' +
+        'until an admin turns it on. "aiProviderConfigured", "aiProvider" and "aiModel" are the ' +
+        'DEPLOYMENT\'s configuration (AI_PROVIDER, AI_MODEL), read-only here; the provider\'s key ' +
+        'is never returned. Nothing is sent to a provider unless a provider is configured AND the ' +
+        'AI switch is on. An API older than public links sends no "publicLinksEnabled".',
       responses: {
         '200': {
           description: 'This organisation\'s settings.',
@@ -3264,16 +3265,21 @@ const paths: Record<string, PathItemObject> = {
     },
     put: {
       operationId: 'updateOrgSettings',
-      summary: 'Turn AI run analysis on or off for this organisation',
+      summary: 'Turn AI run analysis or public links on or off for this organisation',
       tags: ['admin'],
       security: [{ cookieAuth: [] }],
       description:
         sessionAccessSentence('users:manage') + ' ' +
-        'Sets the switch and nothing else. Turning it off stops new analyses and hides stored ' +
-        'ones; a job already queued is re-checked by the worker and sends nothing.',
+        'Sets the switches the body names and nothing else: a switch left out keeps its value. ' +
+        'Turning AI off stops new analyses and hides stored ones; a job already queued is ' +
+        're-checked by the worker and sends nothing. Turning public links off stops every link on ' +
+        'its next request without changing it; turning it back on restores the links that have ' +
+        'not expired or been revoked.',
       requestBody: {
         required: true,
-        description: '"aiEnabled": true or false. No other field is accepted.',
+        description:
+          '"aiEnabled", "publicLinksEnabled", or both, each true or false; at least one. No other ' +
+          'field is accepted.',
         content: json(schemaRef('UpdateOrgSettingsRequest')),
       },
       responses: {
@@ -3284,9 +3290,9 @@ const paths: Record<string, PathItemObject> = {
         '400': {
           description:
             'The body failed UpdateOrgSettingsRequestSchema (code INVALID_ORG_SETTINGS) — a ' +
-            'missing switch, or a field the schema does not know, such as the provider or model, ' +
-            'which belong to the environment. Nothing changed. application/problem+json with a ' +
-            'required "remediation".',
+            'body naming neither switch, or a field the schema does not know, such as the ' +
+            'provider or model, which belong to the environment. Nothing changed. ' +
+            'application/problem+json with a required "remediation".',
           content: problem(),
         },
         '401': ref('Unauthorized'),

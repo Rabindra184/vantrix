@@ -262,10 +262,11 @@ export class AdminController {
   }
 
   /**
-   * The org's own settings: the AI run analysis switch, and — read-only —
-   * whether the DEPLOYMENT configures a provider, which one and which model,
-   * so Administration can say whether there is anything to switch on and
-   * what leaves the deployment when it is. Never the key.
+   * The org's own settings: its two switches — AI run analysis and public
+   * links — and, read-only, whether the DEPLOYMENT configures an AI provider,
+   * which one and which model, so Administration can say whether there is
+   * anything to switch on and what leaves the deployment when it is. Never the
+   * key.
    */
   @Get('settings')
   @Requires('users:manage')
@@ -274,12 +275,20 @@ export class AdminController {
   }
 
   /**
-   * Turn AI run analysis on or off for this org. The switch is the only
-   * field: the provider and model are the environment's, and the schema is
-   * `.strict()`, so a body that tries to set them is refused rather than
-   * answered as though it had worked. Off stops new analyses AND hides stored
-   * ones; a job queued just before is re-checked by the worker and sends
-   * nothing.
+   * Turn either switch on or off for this org. Each field is optional and the
+   * handler writes only the ones the body names, so the page's AI switch and
+   * its public-links switch each send their own field and neither touches the
+   * other — and a browser built before public links existed, which sends
+   * `{ "aiEnabled": … }` alone, keeps working through a rolling deploy. A body
+   * naming neither is refused. The provider and model are the environment's,
+   * and the schema is `.strict()`, so a body that tries to set them is refused
+   * rather than answered as though it had worked.
+   *
+   * AI off stops new analyses AND hides stored ones; a job queued just before
+   * is re-checked by the worker and sends nothing. Public links off stops
+   * every link at once, on its next request, without touching the links:
+   * turning it back on restores the ones that have not expired or been
+   * revoked.
    */
   @Put('settings')
   @Requires('users:manage')
@@ -289,19 +298,26 @@ export class AdminController {
       throw badRequest(
         'INVALID_ORG_SETTINGS',
         `The settings are not valid: ${firstIssue(parsed.error)}`,
-        'Send {"aiEnabled": true} or {"aiEnabled": false}. No other field is accepted: the AI provider and ' +
+        'Send {"aiEnabled": true|false}, {"publicLinksEnabled": true|false}, or both. The AI provider and ' +
           'model are the deployment\'s environment (AI_PROVIDER, AI_MODEL), not an organisation setting.',
       );
     }
     const orgId = req.tenant!.orgId;
-    await this.orgSettings.setAiEnabled(orgId, parsed.data.aiEnabled);
+    const { aiEnabled, publicLinksEnabled } = parsed.data;
+    if (aiEnabled !== undefined) await this.orgSettings.setAiEnabled(orgId, aiEnabled);
+    if (publicLinksEnabled !== undefined) await this.orgSettings.setPublicLinksEnabled(orgId, publicLinksEnabled);
     return this.#settings(orgId);
   }
 
   async #settings(orgId: string): Promise<OrgSettings> {
     const ai = this.config.ai;
+    const [aiEnabled, publicLinksEnabled] = await Promise.all([
+      this.orgSettings.aiEnabled(orgId),
+      this.orgSettings.publicLinksEnabled(orgId),
+    ]);
     return OrgSettingsSchema.parse({
-      aiEnabled: await this.orgSettings.aiEnabled(orgId),
+      aiEnabled,
+      publicLinksEnabled,
       aiProviderConfigured: ai !== null,
       aiProvider: ai?.provider ?? null,
       aiModel: ai?.model ?? null,

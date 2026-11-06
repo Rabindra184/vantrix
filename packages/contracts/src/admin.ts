@@ -214,24 +214,30 @@ export const DataIntegritySchema = z.object({
 export type DataIntegrity = z.infer<typeof DataIntegritySchema>;
 
 /**
- * `GET /v1/admin/settings`: the org's own settings, the first this product
- * has. `aiEnabled` is the org's switch for AI run analysis (`org.ai_enabled`,
- * default false), which an admin turns on; the other three are the
- * DEPLOYMENT's configuration, read-only here, so the Administration section
- * can say whether there is a provider to switch on and what leaves the
- * deployment when there is. `aiProvider` and `aiModel` are null exactly when
- * `aiProviderConfigured` is false.
+ * `GET /v1/admin/settings`: the org's own settings. Two are the org's
+ * switches, each off until an admin turns it on: `aiEnabled` for AI run
+ * analysis (`org.ai_enabled`) and `publicLinksEnabled` for public links
+ * (`org.public_links_enabled`), which lets a run be read through a link
+ * without signing in. The other three are the DEPLOYMENT's configuration,
+ * read-only here, so the Administration section can say whether there is an
+ * AI provider to switch on and what leaves the deployment when there is.
+ * `aiProvider` and `aiModel` are null exactly when `aiProviderConfigured` is
+ * false.
  *
  * `aiBaseUrlHost` is the HOST of an openai-compatible provider's endpoint
  * (`new URL(AI_BASE_URL).host`: hostname and port, never userinfo, path or
  * query), so the consent sentence can name where the data actually goes; it
- * is null for anthropic and with no provider. Optional as well as nullable,
- * because an API pod that predates the field sends no key at all and the
- * browser drops a body that fails this schema — a rolling deploy would
- * otherwise blank the settings page.
+ * is null for anthropic and with no provider.
+ *
+ * `aiBaseUrlHost` and `publicLinksEnabled` are OPTIONAL, because an API pod
+ * that predates either sends no key at all and the browser drops a body that
+ * fails this schema — a rolling deploy would otherwise blank the settings
+ * page. This API always sends both. An absent `publicLinksEnabled` is not
+ * "off": it is an API that has no such switch, and refuses the field in a PUT.
  */
 export const OrgSettingsSchema = z.object({
   aiEnabled: z.boolean(),
+  publicLinksEnabled: z.boolean().optional(),
   aiProviderConfigured: z.boolean(),
   aiProvider: z.enum(['anthropic', 'openai-compatible']).nullable(),
   aiModel: z.string().nullable(),
@@ -240,14 +246,23 @@ export const OrgSettingsSchema = z.object({
 export type OrgSettings = z.infer<typeof OrgSettingsSchema>;
 
 /**
- * The body of `PUT /v1/admin/settings`: the org's switch and nothing else.
- * The provider and model belong to the deployment's environment, so `.strict()`
- * refuses an attempt to set them here rather than ignoring it and answering
- * as though it had worked.
+ * The body of `PUT /v1/admin/settings`: the org's switches, and nothing else.
+ * Each is optional and a body sets the ones it names, so a switch on the page
+ * sends only its own field — and a browser built before `publicLinksEnabled`
+ * existed goes on sending `{ "aiEnabled": … }` alone through a rolling
+ * deploy. The `.refine()` makes a body naming neither a 400 rather than a
+ * write that changes nothing and reports success, as `UpdateUserRequestSchema`
+ * does. The provider and model belong to the deployment's environment, so
+ * `.strict()` refuses an attempt to set them here rather than ignoring it and
+ * answering as though it had worked.
  */
 export const UpdateOrgSettingsRequestSchema = z
   .object({
-    aiEnabled: z.boolean(),
+    aiEnabled: z.boolean().optional(),
+    publicLinksEnabled: z.boolean().optional(),
   })
-  .strict();
+  .strict()
+  .refine((body) => body.aiEnabled !== undefined || body.publicLinksEnabled !== undefined, {
+    message: 'Send at least one of "aiEnabled" or "publicLinksEnabled".',
+  });
 export type UpdateOrgSettingsRequest = z.infer<typeof UpdateOrgSettingsRequestSchema>;

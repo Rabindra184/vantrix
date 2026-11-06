@@ -409,6 +409,7 @@ describe('/v1/admin/settings', () => {
     const before = await api.get('/v1/admin/settings').set('Cookie', admin.cookie).expect(200);
     expect(OrgSettingsSchema.parse(before.body)).toEqual({
       aiEnabled: false,
+      publicLinksEnabled: false,
       aiProviderConfigured: true,
       aiProvider: 'anthropic',
       aiModel: 'claude-opus-5-5',
@@ -442,6 +443,7 @@ describe('/v1/admin/settings', () => {
     const res = await request(ctx.app.getHttpServer()).get('/v1/admin/settings').set('Cookie', admin.cookie).expect(200);
     expect(res.body).toEqual({
       aiEnabled: false,
+      publicLinksEnabled: false,
       aiProviderConfigured: false,
       aiProvider: null,
       aiModel: null,
@@ -461,6 +463,7 @@ describe('/v1/admin/settings', () => {
     const res = await request(ctx.app.getHttpServer()).get('/v1/admin/settings').set('Cookie', admin.cookie).expect(200);
     expect(OrgSettingsSchema.parse(res.body)).toEqual({
       aiEnabled: false,
+      publicLinksEnabled: false,
       aiProviderConfigured: true,
       aiProvider: 'openai-compatible',
       aiModel: 'llama-3.3-70b',
