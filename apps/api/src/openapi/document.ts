@@ -525,6 +525,16 @@ const parameters: Record<string, ParameterObject> = {
       'the same as one that exists nowhere.',
     schema: { type: 'string', format: 'uuid' },
   },
+  PublicLinkId: {
+    name: 'linkId',
+    in: 'path',
+    required: true,
+    description:
+      'The "id" a create or list response returned for one of this run\'s links. Must be a UUID — ' +
+      'anything else is a 400 (code INVALID_ID). A UUID that names no link OF THIS RUN — another ' +
+      'run\'s, another project\'s, or none at all — answers 404, and nothing changes.',
+    schema: { type: 'string', format: 'uuid' },
+  },
   RunnerProjectSlug: {
     name: 'slug',
     in: 'path',
@@ -659,6 +669,26 @@ const headers: Record<string, HeaderObject> = {
 // the document, the same way runs.controller.ts's respondWithRun() makes it
 // structural in the code the document describes.
 // ---------------------------------------------------------------------------
+
+/**
+ * The session-only refusal, said once: the `SessionRequired` response below,
+ * and the one operation whose 403 says more (creating a public link, which an
+ * org can also have switched off) carries these words whole and adds its own.
+ * `openapi.integration.test.ts` holds every SessionOnlyGuard route's 403 to
+ * them.
+ */
+const SESSION_REQUIRED_DESCRIPTION =
+  'The credential is a valid bearer API token, not a signed-in session (code FORBIDDEN). ' +
+  'An operation carrying this response is one a person performs, and a bearer token is ' +
+  'refused unconditionally, whatever scopes it carries. The check is SessionOnlyGuard ' +
+  'rather than @Scopes() because a scope check passes for ANY credential holding the ' +
+  'scope: on token minting, for example, it would let a read-only CI token mint itself a ' +
+  'broader one. Sign in at POST /auth/sign-in/email and retry with the session cookie. ' +
+  'A signed-in session can be refused here too, by role rather than by credential type: ' +
+  'code ROLE_REQUIRED when its role in the project is below the one the operation needs, or ' +
+  'ADMIN_REQUIRED when the operation is an admin\'s. And a session whose account must choose ' +
+  'a new password is refused code PASSWORD_CHANGE_REQUIRED on every operation but ' +
+  'PUT /v1/me/password, before its role is checked.';
 
 const responses: Record<string, ResponseObject> = {
   RunOk: {
@@ -869,18 +899,35 @@ const responses: Record<string, ResponseObject> = {
     content: problem(),
   },
   SessionRequired: {
+    description: SESSION_REQUIRED_DESCRIPTION,
+    content: problem(),
+  },
+  PublicLinkCreateForbidden: {
     description:
-      'The credential is a valid bearer API token, not a signed-in session (code FORBIDDEN). ' +
-      'An operation carrying this response is one a person performs, and a bearer token is ' +
-      'refused unconditionally, whatever scopes it carries. The check is SessionOnlyGuard ' +
-      'rather than @Scopes() because a scope check passes for ANY credential holding the ' +
-      'scope: on token minting, for example, it would let a read-only CI token mint itself a ' +
-      'broader one. Sign in at POST /auth/sign-in/email and retry with the session cookie. ' +
-      'A signed-in session can be refused here too, by role rather than by credential type: ' +
-      'code ROLE_REQUIRED when its role in the project is below the one the operation needs, or ' +
-      'ADMIN_REQUIRED when the operation is an admin\'s. And a session whose account must choose ' +
-      'a new password is refused code PASSWORD_CHANGE_REQUIRED on every operation but ' +
-      'PUT /v1/me/password, before its role is checked.',
+      SESSION_REQUIRED_DESCRIPTION + ' ' +
+      'On this operation also: code PUBLIC_LINKS_DISABLED when the organisation has public links ' +
+      'turned off — an admin turns them on in Administration › Settings, or with ' +
+      'PUT /v1/admin/settings {"publicLinksEnabled": true}. Checked after the run is found and ' +
+      'before anything about the run or the body, and nothing is stored.',
+    content: problem(),
+  },
+  InvalidPublicLink: {
+    description:
+      'Refused before anything was stored. Code INVALID_ID when "id" is not a UUID; code ' +
+      'INVALID_PUBLIC_LINK when the body failed CreatePublicLinkRequestSchema ("expiresAt" ' +
+      'missing or not an ISO 8601 instant, or the body named another field — the schema is ' +
+      '`.strict()`), or when "expiresAt" is not more than 60 seconds ahead of the server\'s ' +
+      'clock, or is more than 732 days ahead. Every link expires; there is no "never". ' +
+      'application/problem+json with a required "remediation".',
+    content: problem(),
+  },
+  RunNotShareable: {
+    description:
+      'The run is not finished (code RUN_NOT_SHAREABLE): only a "complete" or "incomplete" run ' +
+      'can be shared. A "failed" run has no Summary — GET /v1/runs/{id} answers it with its ' +
+      'ingest problem — and a run still pending, parsing or running has a live page, which a ' +
+      'link does not reach. Nothing is stored. application/problem+json with a required ' +
+      '"remediation".',
     content: problem(),
   },
   InvalidTokenRequest: {
@@ -1479,6 +1526,102 @@ const paths: Record<string, PathItemObject> = {
             'application/problem+json with a required "remediation".',
           content: problem(),
         },
+      },
+    },
+  },
+
+  // ═══ A RUN'S PUBLIC LINKS ═══
+  //
+  // Session-only, all three: a link shows a run to someone outside the
+  // organisation, a person's decision, and a CI token that could mint links
+  // would publish every run it can read. `run:share`, a Member and up.
+  '/v1/runs/{id}/public-links': {
+    post: {
+      operationId: 'createRunPublicLink',
+      summary: 'Share a run by a public link',
+      tags: ['runs'],
+      security: [{ cookieAuth: [] }],
+      description:
+        sessionAccessSentence('run:share') + ' ' +
+        'Requires a signed-in session — refused for ANY bearer token regardless of scopes (see ' +
+        'SessionOnlyGuard and the 403 below). Creates a link anyone may read this run\'s Summary, ' +
+        'Report and Logs through, its project and test names included, without signing in, until ' +
+        'it expires or is revoked. The response carries "secret" — "ppl_" and 43 base64url ' +
+        'characters — and it is the ONLY copy: the server stores its SHA-256 and nothing that ' +
+        'could recover it, so a reader who loses it creates a new link. Refused, in this order and ' +
+        'each before anything is stored: 403 PUBLIC_LINKS_DISABLED while the organisation has ' +
+        'public links turned off, 409 RUN_NOT_SHAREABLE for a run that is not finished, and 400 ' +
+        'INVALID_PUBLIC_LINK for an expiry not more than 60 seconds ahead of the server\'s clock ' +
+        'or more than 732 days ahead. A run outside the caller\'s organisation or project answers ' +
+        '404.',
+      parameters: [parameters['RunId']!],
+      requestBody: {
+        required: true,
+        description: 'When the link stops working. Required: every link expires.',
+        content: json(schemaRef('CreatePublicLinkRequest')),
+      },
+      responses: {
+        '201': {
+          description:
+            'Created. The link, in state "active", and its secret — shown this once and never again.',
+          content: json(schemaRef('CreatePublicLinkResponse')),
+        },
+        '400': ref('InvalidPublicLink'),
+        '401': ref('Unauthorized'),
+        '403': ref('PublicLinkCreateForbidden'),
+        '404': ref('NotFound'),
+        '409': ref('RunNotShareable'),
+      },
+    },
+    get: {
+      operationId: 'listRunPublicLinks',
+      summary: 'A run\'s public links',
+      tags: ['runs'],
+      security: [{ cookieAuth: [] }],
+      description:
+        sessionAccessSentence('run:share') + ' ' +
+        'Requires a signed-in session — refused for ANY bearer token regardless of scopes. Every ' +
+        'link of this run, newest first: expired and revoked ones too, so a reader can see what ' +
+        'was shared and when it stopped. Never a secret and never its hash. "state" is read when ' +
+        'the list is: "revoked" beats "expired", because the two have different causes. ' +
+        '"enabled" is the organisation\'s switch — false means no link answers at all, though ' +
+        'the links are still listed and can still be revoked. A run outside the caller\'s ' +
+        'organisation or project answers 404.',
+      parameters: [parameters['RunId']!],
+      responses: {
+        '200': {
+          description: 'The organisation\'s switch, and this run\'s links, newest first.',
+          content: json(schemaRef('PublicLinkListResponse')),
+        },
+        '400': ref('BadRequest'),
+        '401': ref('Unauthorized'),
+        '403': ref('SessionRequired'),
+        '404': ref('NotFound'),
+      },
+    },
+  },
+
+  '/v1/runs/{id}/public-links/{linkId}': {
+    delete: {
+      operationId: 'revokeRunPublicLink',
+      summary: 'Revoke one of a run\'s public links',
+      tags: ['runs'],
+      security: [{ cookieAuth: [] }],
+      description:
+        sessionAccessSentence('run:share') + ' ' +
+        'Requires a signed-in session — refused for ANY bearer token regardless of scopes. Stops ' +
+        'the link at once and for good; a revoked link is never restored. IDEMPOTENT: revoking a ' +
+        'link already revoked answers 204 and keeps its first revocation, its time and who made ' +
+        'it. Any Member of the project may revoke any of its links, whoever created them, and ' +
+        'whatever the organisation\'s switch or the run\'s status. A "linkId" that is not one of ' +
+        'this run\'s links answers 404.',
+      parameters: [parameters['RunId']!, parameters['PublicLinkId']!],
+      responses: {
+        '204': { description: 'Revoked, now or before. No body.' },
+        '400': ref('BadRequest'),
+        '401': ref('Unauthorized'),
+        '403': ref('SessionRequired'),
+        '404': ref('NotFound'),
       },
     },
   },

@@ -157,9 +157,15 @@ export function userNotFound(userId: string): NotFoundException {
  * them, and their standing is not enough. Unlike `forbidden`, it carries its
  * own `code`, because a client tells "ask for a role" from "ask an admin"
  * by it.
+ *
+ * `PUBLIC_LINKS_DISABLED` is the one refusal here that is about the ORG
+ * rather than the caller: an admin has not turned public links on, so a
+ * Member who may share a run still cannot create a link. Its own code, for
+ * the same reason — the share dialog says "ask an admin" by it, not "ask for
+ * a role".
  */
 export function accessDenied(
-  code: 'ROLE_REQUIRED' | 'ADMIN_REQUIRED',
+  code: 'ROLE_REQUIRED' | 'ADMIN_REQUIRED' | 'PUBLIC_LINKS_DISABLED',
   message: string,
   remediation: string,
 ): ForbiddenException {

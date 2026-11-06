@@ -10,6 +10,7 @@ import { MeModule } from './me/me.module.js';
 import { MembersModule } from './members/members.module.js';
 import { MetricsModule } from './metrics/metrics.module.js';
 import { ProjectsModule } from './projects/projects.module.js';
+import { PublicLinksModule } from './public-links/public-links.module.js';
 import { RunsModule } from './runs/runs.module.js';
 import { RunnerModule } from './runner/runner.module.js';
 import { TelemetryModule } from './telemetry/telemetry.module.js';
@@ -19,7 +20,7 @@ import { TokensModule } from './tokens/tokens.module.js';
 
 @Module({
   imports: [AuthModule, RunsModule, IngestModule, LiveModule, MetricsModule, ProjectsModule, RulesModule,
-    TestsModule, ActivityModule, RunnerModule, TelemetryModule, TokensModule, MeModule, AdminModule, MembersModule],
+    TestsModule, ActivityModule, RunnerModule, TelemetryModule, TokensModule, MeModule, AdminModule, MembersModule, PublicLinksModule],
   controllers: [HealthController],
 })
 export class AppModule implements NestModule {

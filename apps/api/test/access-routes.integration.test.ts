@@ -213,6 +213,9 @@ const ACCESS_BY_ROUTE: Readonly<Record<string, Access>> = {
   'PUT /v1/runs/:id/note': 'run:note',
   'GET /v1/runs/:id/ai-analysis': 'project:read',
   'POST /v1/runs/:id/ai-analysis': 'run:analyze',
+  'POST /v1/runs/:id/public-links': 'run:share',
+  'GET /v1/runs/:id/public-links': 'run:share',
+  'DELETE /v1/runs/:id/public-links/:linkId': 'run:share',
 
   'GET /v1/projects/:slug/tests': 'project:read',
   'GET /v1/projects/:slug/tests/:testSlug': 'project:read',
@@ -580,6 +583,7 @@ const PROBES: readonly Probe[] = [
   { action: 'rules:read', role: 'viewer', route: 'GET /v1/projects/:slug/rules' },
   { action: 'run:note', role: 'member', route: 'PUT /v1/runs/:id/note', body: {} },
   { action: 'run:analyze', role: 'member', route: 'POST /v1/runs/:id/ai-analysis', body: {} },
+  { action: 'run:share', role: 'member', route: 'GET /v1/runs/:id/public-links' },
   { action: 'run:upload', role: 'member', route: 'POST /v1/projects/:slug/runs' },
   { action: 'runner:run', role: 'member', route: 'POST /v1/projects/:slug/runner/runs' },
   { action: 'packages:manage', role: 'member', route: 'POST /v1/projects/:slug/packages' },
@@ -603,6 +607,8 @@ interface Target {
 const NO_PACKAGE = randomUUID();
 /** An account id nobody holds. Account ids are opaque strings (Better Auth's own, or a uuid an admin's create chose); nothing pipes them. */
 const NO_USER = `no-such-user-${randomUUID()}`;
+/** A public link id no run holds: a well-formed uuid, so it reaches past `uuidParam` to the run's own links. */
+const NO_LINK = randomUUID();
 
 function fill(route: string, target: Target): { verb: Verb; url: string } {
   const [verb, template] = route.split(' ') as [Verb, string];
@@ -611,7 +617,8 @@ function fill(route: string, target: Target): { verb: Verb; url: string } {
     .replace(':id', target.runId)
     .replace(':packageId', NO_PACKAGE)
     .replace(':testSlug', 'missing')
-    .replace(':userId', NO_USER);
+    .replace(':userId', NO_USER)
+    .replace(':linkId', NO_LINK);
   return { verb, url };
 }
 
