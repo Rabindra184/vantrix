@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Header, HttpCode, Param, Post, Req, UseGuards } from '@nestjs/common';
 import {
   CreatePublicLinkRequestSchema,
   CreatePublicLinkResponseSchema,
@@ -98,10 +98,16 @@ export class PublicLinksController {
    * 201: it awaits one insert and answers the row it wrote, so the link is
    * complete and addressable the moment the response is sent — the list
    * carries it, and the DELETE works on its id.
+   *
+   * `Cache-Control: no-store` on this answer alone: it is the only copy of a
+   * credential, so no cache — a proxy's or the browser's own — may keep it.
+   * Nest sets it on the success path only; a refusal carries no secret. The
+   * list and the revoke carry none either and are left alone.
    */
   @Post('public-links')
   @Requires('run:share')
   @HttpCode(201)
+  @Header('Cache-Control', 'no-store')
   async create(
     @Param('id', uuidParam('id')) id: string,
     @Req() req: Request,

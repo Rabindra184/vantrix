@@ -127,6 +127,21 @@ describe('POST /v1/runs/{id}/public-links', () => {
     expect([body.link.revokedAt, body.link.revokedBy, body.link.lastUsedAt]).toEqual([null, null, null]);
   });
 
+  /**
+   * The 201 is the ONLY copy of a credential, so no cache between the API and
+   * the browser — nor the browser's own — may keep it. The list and the
+   * revoke carry no secret and are left as they are.
+   */
+  it('answers the secret with Cache-Control: no-store', async () => {
+    await setSwitch(true);
+    const runId = await seedRun('complete');
+
+    const res = await create(runId, { expiresAt: ahead(30 * DAY_MS) });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(res.headers['cache-control'] ?? '').toContain('no-store');
+  });
+
   it('stores only the secret’s SHA-256, and no column holds the secret itself', async () => {
     await setSwitch(true);
     const runId = await seedRun('complete');

@@ -1578,6 +1578,12 @@ const paths: Record<string, PathItemObject> = {
         '201': {
           description:
             'Created. The link, in state "active", and its secret — shown this once and never again.',
+          headers: {
+            'Cache-Control': {
+              description: 'Always "no-store": this body is the only copy of a credential, and no cache may keep it.',
+              schema: { type: 'string' },
+            },
+          },
           content: json(schemaRef('CreatePublicLinkResponse')),
         },
         '400': ref('InvalidPublicLink'),
