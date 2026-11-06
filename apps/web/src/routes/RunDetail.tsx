@@ -5,6 +5,7 @@ import { Skeleton } from '../components/Skeleton';
 import { ErrorState, LoadingState } from '../components/States';
 import { ChevronLeftIcon } from '../components/icons';
 import { ProblemError } from '../api/fetch';
+import { useProjectAccess } from '../access/useAccess';
 import { useLiveRun } from '../api/live';
 import { POLL_CAP_MS, pollIntervalFor } from '../api/run';
 import { ALL_RUNS_ROUTE } from './paths';
@@ -72,6 +73,22 @@ export default function RunDetail() {
   const compact = useIsCompact();
   const running = run.data?.state === 'processing' && run.data.run.status === 'running';
   const live = useLiveRun(runId ?? '', running && !compact);
+
+  /* ═══ WHAT THE READER MAY DO IN THIS RUN'S PROJECT, ASKED ONCE ═══
+     Asked HERE and handed to `RunShell`, which hands it to every section
+     through the outlet context: one observer on the session and the project
+     list per page. The shell does not ask for itself, because the public page
+     mounts the same shell with no session and no project list to ask, and
+     hands it an access that allows nothing.
+
+     ABOVE THE EARLY RETURNS, like every hook here: the page renders a loading
+     line before the run arrives and the shell after, and a hook called only on
+     the second of those renders changes the number of hooks this component
+     calls — which React refuses. Until the run has answered there is no
+     project to ask about, and a run with none in its identity asks about none:
+     neither is known for anyone, so a control gated on it stays hidden and
+     nobody is told they were refused. */
+  const projectAccess = useProjectAccess(run.data?.run.project?.slug);
 
   // The polling cap, held as state rather than computed at render time. A
   // derived `Date.now() - start > CAP` would be correct only at the moments
@@ -195,6 +212,7 @@ export default function RunDetail() {
       assertions={detail.state === 'ready' ? detail.run.assertions : undefined}
       toolAssertions={detail.state === 'ready' ? detail.run.toolAssertions : undefined}
       windowable={detail.state === 'ready' ? detail.run.windowable : undefined}
+      projectAccess={projectAccess}
       live={detail.state === 'processing' ? live : null}
       capReached={capReached}
       onRetry={() => void run.refetch()}

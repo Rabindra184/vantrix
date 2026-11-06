@@ -3,7 +3,7 @@ import { Outlet, useLocation } from 'react-router-dom';
 import RouteFallback from '../components/RouteFallback';
 import RouteErrorBoundary from '../components/RouteErrorBoundary';
 import { useQuery } from '@tanstack/react-query';
-import { useProjectAccess } from '../access/useAccess';
+import type { ProjectAccess } from '../access/useAccess';
 import TimeBrush from '../charts/TimeBrush';
 import { TimeAxisProvider } from '../charts/TimeAxisContext';
 import { useRunWindow, type RunWindowContext } from './useRunWindow';
@@ -60,6 +60,7 @@ export default function RunShell({
   assertions,
   toolAssertions,
   windowable,
+  projectAccess,
   live,
   capReached,
   onRetry,
@@ -107,6 +108,21 @@ export default function RunShell({
    * a live run is never offered a brush (see the `TimeBrush` block below).
    */
   readonly windowable: boolean | undefined;
+  /**
+   * WHAT THE READER MAY DO IN THIS RUN'S PROJECT, HANDED IN — never asked
+   * here. The shell reads it for its own chrome (the run's note is editable
+   * only with `run:note`) and hands it to every section through the outlet
+   * context, so a page asks once (ruling P13).
+   *
+   * `RunDetail` asks, with `useProjectAccess` for the run's own project; the
+   * public page has no session and no project list to ask, and hands one that
+   * allows nothing (`{ known: true, can: () => false }`) with no request to
+   * `/auth/*` or `/v1/projects`. REQUIRED, with no default, because a wrong
+   * answer here is silent: a default that asked would send the public page's
+   * requests to `/auth`, and one that allowed nothing would quietly take the
+   * note's editor away from every member in the app.
+   */
+  readonly projectAccess: ProjectAccess;
   /** The live socket's state, or `null` for a run that is not streaming. */
   readonly live: LiveRunState | null;
   readonly capReached: boolean;
@@ -133,15 +149,6 @@ export default function RunShell({
   // declared BEFORE the fetches that key on it.
   const { window, setWindow } = useRunWindow(identity.durationMs ?? Number.MAX_SAFE_INTEGER);
 
-  /* ═══ WHAT THE READER MAY DO IN THIS RUN'S PROJECT, ASKED ONCE ═══
-     For the run's own project, and handed to every section through the
-     outlet context rather than asked again in each: one observer on the
-     session and the project list per page. The shell's own chrome reads it
-     too: the run's note below is editable only with `run:note`. A run with
-     no project in its identity yet asks about none, which is not known for
-     anyone — so a control gated on it stays hidden, and nobody is told they
-     were refused. */
-  const projectAccess = useProjectAccess(identity.project?.slug);
   // §22.6's one JS breakpoint, read here because the brush below is a drag
   // control and a class could only hide it — leaving a phone to build a
   // 394px ECharts instance in order not to show it.
@@ -252,10 +259,10 @@ export default function RunShell({
            the key forces a fresh instance instead, so a stale save's
            `onSuccess` writes into a component that is no longer mounted. */
         note={
-          /* `canEdit` from the access asked once above, for the run's own
-             project (ruling P13): `run:note` asks for Member, and a reader
-             below it — or anyone while it is not known, or on a run with no
-             project — reads the note and is offered no way to change it. */
+          /* `canEdit` from the access this shell was handed (ruling P13):
+             `run:note` asks for Member, and a reader below it — or anyone
+             while it is not known, on a run with no project, or behind a
+             public link — reads the note and is offered no way to change it. */
           <RunNote
             key={identity.id}
             runId={identity.id}
