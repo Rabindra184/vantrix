@@ -4,6 +4,7 @@ export * from './capabilities.js';
 export * from './errors.js';
 export * from './plugin.js';
 export * from './tokens.js';
+export * from './public-link-secret.js';
 export * from './engine-options.js';
 export * from './gatling-jar.js';
 export * from './ingest-queue.js';
