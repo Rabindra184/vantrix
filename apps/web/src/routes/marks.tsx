@@ -131,3 +131,14 @@ export const PUBLIC_LINK_STATE: Record<PublicLinkState, Mark> = {
   expired: { glyph: '○', label: 'Expired', colour: 'var(--color-status-not-applicable)' },
   revoked: { glyph: '✕', label: 'Revoked', colour: 'var(--color-status-not-applicable)' },
 };
+
+/**
+ * An ACTIVE link while the org's switch is off: it answers nobody now, and
+ * turning the switch back on restores it (spec: the switch "suspends" every
+ * link). Not a fourth `PublicLinkState` — the API's state is the link's own,
+ * and the switch is the list's `enabled` — so the dialog picks this over
+ * `PUBLIC_LINK_STATE.active` itself. MUTED, never the passed green (it is not
+ * working) and not the stopped states' colour either (it is not stopped for
+ * good); its glyph is a pause.
+ */
+export const PUBLIC_LINK_SUSPENDED: Mark = { glyph: '‖', label: 'Suspended', colour: 'var(--color-text-muted)' };

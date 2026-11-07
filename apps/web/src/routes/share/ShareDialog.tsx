@@ -11,7 +11,7 @@ import { CheckIcon, CloseIcon, CopyIcon, ShareIcon } from '../../components/icon
 import { ErrorState, LoadingState } from '../../components/States';
 import { INPUT } from '../../components/tableStyles';
 import { formatInstant, formatInstantSeconds } from '../format';
-import { PUBLIC_LINK_STATE } from '../marks';
+import { PUBLIC_LINK_STATE, PUBLIC_LINK_SUSPENDED } from '../marks';
 import { EXPIRY_PRESETS, customDateBounds, expiryFor, type ExpiryPreset } from './expiry';
 
 /**
@@ -47,7 +47,8 @@ function problemOf(error: Error): { readonly detail: string; readonly remediatio
  *   - Switched OFF: one sentence saying an admin turned links off and where
  *     they come back on, and NO FORM. The links are still listed, because
  *     deciding what to revoke matters most while sharing is off: turning it
- *     back on restores every link not expired or revoked.
+ *     back on restores every link not expired or revoked. A live one is
+ *     badged Suspended there, never Active.
  *   - Switched ON: the expiry, the date it lands on, the consent sentence and
  *     Create; then, once, the secret URL with Copy.
  *
@@ -102,7 +103,7 @@ function Body({
           Administration › Settings.
         </p>
       )}
-      <LinkList runId={runId} items={links.data.items} />
+      <LinkList runId={runId} items={links.data.items} suspended={!links.data.enabled} />
     </>
   );
 }
@@ -129,9 +130,22 @@ function CreateLink({ runId }: { readonly runId: string }) {
   const bounds = customDateBounds(now);
   /* A typed date past either bound is refused here as well as by the input's
      own `min`/`max` (which a keyboard can type past) and by the server. The
-     comparison is on `yyyy-mm-dd` strings, which order as the dates do. */
-  const dateOutOfRange =
-    preset === 'custom' && customDate !== '' && (customDate < bounds.min || customDate > bounds.max);
+     comparison is on `yyyy-mm-dd` strings, which order as the dates do.
+
+     THE SENTENCE NAMES WHICH SIDE, because the server's refusal has two
+     (`publicLinkExpiryProblem`: no more than a minute ahead, or more than 732
+     days) and the bounds here sit inside both. Before `min` — today, or a day
+     already gone — is too soon, and "within the next two years" would be
+     false of it; past `max` is too far. */
+  const dateProblem =
+    preset !== 'custom' || customDate === ''
+      ? null
+      : customDate < bounds.min
+        ? 'Choose a date after today.'
+        : customDate > bounds.max
+          ? 'Choose a date within the next two years.'
+          : null;
+  const dateOutOfRange = dateProblem !== null;
   const candidate = dateOutOfRange ? null : expiryFor(preset, now, customDate);
   const expiry = candidate === null || Number.isNaN(candidate.getTime()) ? null : candidate;
 
@@ -182,7 +196,7 @@ function CreateLink({ runId }: { readonly runId: string }) {
               <FormField
                 label="Expiry date"
                 id={dateId}
-                error={dateOutOfRange ? 'Choose a date within the next two years.' : undefined}
+                error={dateProblem ?? undefined}
               >
                 <input
                   id={dateId}
@@ -326,7 +340,16 @@ function CreatedLink({ url }: { readonly url: string }) {
  * "focus my Cancel" whenever it sat lower in the list. A request made by the
  * handler that changed the state cannot confuse whose action it was.
  */
-function LinkList({ runId, items }: { readonly runId: string; readonly items: readonly PublicLink[] }) {
+function LinkList({
+  runId,
+  items,
+  suspended,
+}: {
+  readonly runId: string;
+  readonly items: readonly PublicLink[];
+  /** The org's switch is off, so no link answers: see `LinkRow`'s badge. */
+  readonly suspended: boolean;
+}) {
   const queryClient = useQueryClient();
   const [confirming, setConfirming] = useState<string | null>(null);
   /* A fresh object for every request, so the effect runs once per request
@@ -360,6 +383,7 @@ function LinkList({ runId, items }: { readonly runId: string; readonly items: re
             <LinkRow
               key={link.id}
               link={link}
+              suspended={suspended}
               armed={confirming === link.id}
               revoking={revoke.isPending && revoke.variables === link.id}
               failure={revoke.isError && revoke.variables === link.id ? problemOf(revoke.error).detail : null}
@@ -389,6 +413,7 @@ type FocusTarget = 'cancel' | 'revoke' | 'row';
 
 function LinkRow({
   link,
+  suspended,
   armed,
   revoking,
   failure,
@@ -397,6 +422,7 @@ function LinkRow({
   onConfirm,
 }: {
   readonly link: PublicLink;
+  readonly suspended: boolean;
   readonly armed: boolean;
   readonly revoking: boolean;
   readonly failure: string | null;
@@ -405,6 +431,11 @@ function LinkRow({
   readonly onConfirm: () => void;
 }) {
   const createdAt = formatInstant(link.createdAt);
+  /* A live link reads SUSPENDED while the switch is off, never Active: the
+     sentence above the list says links are off, and a green "Active" beside it
+     would say the opposite to a reader deciding whether a link they sent still
+     works. Revoke stays — the switch coming back on restores this link. */
+  const mark = link.state === 'active' && suspended ? PUBLIC_LINK_SUSPENDED : PUBLIC_LINK_STATE[link.state];
   return (
     /* `tabIndex={-1}`: focusable by script only, so a confirmed revoke can keep
        the caret here (`LinkList`) without adding a tab stop per row. */
@@ -416,7 +447,7 @@ function LinkRow({
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span data-testid="public-link-state">
-          <Badge mark={PUBLIC_LINK_STATE[link.state]} />
+          <Badge mark={mark} />
         </span>
         {link.state === 'active' &&
           (armed ? (

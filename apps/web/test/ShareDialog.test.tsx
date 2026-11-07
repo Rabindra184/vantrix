@@ -227,6 +227,29 @@ describe('ShareDialog — the org’s switch', () => {
     // sharing is off, because turning it back on restores them.
     expect(within(dialog).getAllByTestId('public-link-row')).toHaveLength(1);
   });
+
+  /**
+   * OFF, A LIVE LINK DOES NOT ANSWER, SO IT IS NOT "ACTIVE". The API's `state`
+   * is the link's own (active, expired, revoked) and says nothing of the
+   * switch; the list's `enabled` does. A badge reading Active one line under
+   * "an admin has turned public links off" would tell a reader deciding
+   * whether a link they sent still works two opposite things. It reads
+   * Suspended — the spec's own word for what the switch does — and keeps its
+   * Revoke, because turning the switch back on restores it. Expired and
+   * revoked are facts about the link alone, and read as they always do.
+   */
+  it('badges a live link Suspended, never Active, while links are off — and keeps its Revoke', async () => {
+    stubLinks({ enabled: false, items: [ACTIVE, REVOKED, EXPIRED] });
+    mount();
+    const dialog = await open();
+
+    const [active, revoked, expired] = within(dialog).getAllByTestId('public-link-row');
+    expect(within(active!).getByTestId('public-link-state')).toHaveTextContent('Suspended');
+    expect(within(active!).getByRole('button', { name: /^Revoke/ })).toBeInTheDocument();
+    expect(within(revoked!).getByTestId('public-link-state')).toHaveTextContent('Revoked');
+    expect(within(expired!).getByTestId('public-link-state')).toHaveTextContent('Expired');
+    expect(dialog).not.toHaveTextContent('Active');
+  });
 });
 
 describe('ShareDialog — creating a link', () => {
@@ -281,6 +304,37 @@ describe('ShareDialog — creating a link', () => {
     fireEvent.change(date, { target: { value: '2026-12-25' } });
     expect(within(dialog).queryByText('Choose a date within the next two years.')).toBeNull();
     expect(date).not.toHaveAttribute('aria-invalid');
+  });
+
+  /**
+   * A REFUSAL NAMES ITS OWN REASON. The earliest date is tomorrow, so today —
+   * or any day before — is refused for being TOO SOON, and "within the next
+   * two years" would be false of it: today IS within the next two years. The
+   * server refuses on the same two sides (`publicLinkExpiryProblem`: no more
+   * than a minute ahead, or more than 732 days), so each side gets its own
+   * sentence.
+   */
+  it('says a custom date is too soon when the reader picks today, or a day already gone', async () => {
+    stubLinks();
+    mount();
+    const dialog = await open();
+    fireEvent.change(within(dialog).getByLabelText('Expires'), { target: { value: 'custom' } });
+    const date = within(dialog).getByLabelText('Expiry date');
+    const today = '2026-11-06';
+    // The fixture really is today in the frozen clock, and today really is
+    // before the earliest date offered: otherwise this proves nothing.
+    expect(customDateBounds(NOW).min > today).toBe(true);
+    expect(expiryFor('custom', NOW, today).getDate()).toBe(NOW.getDate());
+
+    for (const value of [today, '2026-11-01']) {
+      fireEvent.change(date, { target: { value } });
+      const reason = within(dialog).getByText('Choose a date after today.');
+      expect(reason, value).toBeVisible();
+      expect(date).toHaveAttribute('aria-invalid', 'true');
+      expect(date).toHaveAttribute('aria-describedby', reason.id);
+      expect(within(dialog).queryByText('Choose a date within the next two years.'), value).toBeNull();
+      expect(within(dialog).getByRole('button', { name: 'Create link' })).toBeDisabled();
+    }
   });
 
   it('sends the expiry the dialog said', async () => {
