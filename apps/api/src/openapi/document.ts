@@ -53,8 +53,12 @@ interface ResponseObject {
  * except the bearer-only overrides below: an array of single-scheme entries
  * (rather than one entry naming both) is OpenAPI's way of expressing OR, not
  * AND — "bearerAuth alone is sufficient; cookieAuth alone is sufficient."
+ *
+ * A third, `publicLinkAuth`, is never a default: it is listed only on the
+ * fifteen run reads a public link may make (`LINK_READABLE_SECURITY`) and,
+ * alone, on GET /v1/public-link.
  */
-type SecurityRequirement = { bearerAuth: [] } | { cookieAuth: [] };
+type SecurityRequirement = { bearerAuth: [] } | { cookieAuth: [] } | { publicLinkAuth: [] };
 
 interface OperationObject {
   operationId: string;
@@ -525,6 +529,16 @@ const parameters: Record<string, ParameterObject> = {
       'the same as one that exists nowhere.',
     schema: { type: 'string', format: 'uuid' },
   },
+  PublicLinkId: {
+    name: 'linkId',
+    in: 'path',
+    required: true,
+    description:
+      'The "id" a create or list response returned for one of this run\'s links. Must be a UUID — ' +
+      'anything else is a 400 (code INVALID_ID). A UUID that names no link OF THIS RUN — another ' +
+      'run\'s, another project\'s, or none at all — answers 404, and nothing changes.',
+    schema: { type: 'string', format: 'uuid' },
+  },
   RunnerProjectSlug: {
     name: 'slug',
     in: 'path',
@@ -659,6 +673,26 @@ const headers: Record<string, HeaderObject> = {
 // the document, the same way runs.controller.ts's respondWithRun() makes it
 // structural in the code the document describes.
 // ---------------------------------------------------------------------------
+
+/**
+ * The session-only refusal, said once: the `SessionRequired` response below,
+ * and the one operation whose 403 says more (creating a public link, which an
+ * org can also have switched off) carries these words whole and adds its own.
+ * `openapi.integration.test.ts` holds every SessionOnlyGuard route's 403 to
+ * them.
+ */
+const SESSION_REQUIRED_DESCRIPTION =
+  'The credential is a valid bearer API token, not a signed-in session (code FORBIDDEN). ' +
+  'An operation carrying this response is one a person performs, and a bearer token is ' +
+  'refused unconditionally, whatever scopes it carries. The check is SessionOnlyGuard ' +
+  'rather than @Scopes() because a scope check passes for ANY credential holding the ' +
+  'scope: on token minting, for example, it would let a read-only CI token mint itself a ' +
+  'broader one. Sign in at POST /auth/sign-in/email and retry with the session cookie. ' +
+  'A signed-in session can be refused here too, by role rather than by credential type: ' +
+  'code ROLE_REQUIRED when its role in the project is below the one the operation needs, or ' +
+  'ADMIN_REQUIRED when the operation is an admin\'s. And a session whose account must choose ' +
+  'a new password is refused code PASSWORD_CHANGE_REQUIRED on every operation but ' +
+  'PUT /v1/me/password, before its role is checked.';
 
 const responses: Record<string, ResponseObject> = {
   RunOk: {
@@ -869,18 +903,49 @@ const responses: Record<string, ResponseObject> = {
     content: problem(),
   },
   SessionRequired: {
+    description: SESSION_REQUIRED_DESCRIPTION,
+    content: problem(),
+  },
+  PublicLinkCreateForbidden: {
     description:
-      'The credential is a valid bearer API token, not a signed-in session (code FORBIDDEN). ' +
-      'An operation carrying this response is one a person performs, and a bearer token is ' +
-      'refused unconditionally, whatever scopes it carries. The check is SessionOnlyGuard ' +
-      'rather than @Scopes() because a scope check passes for ANY credential holding the ' +
-      'scope: on token minting, for example, it would let a read-only CI token mint itself a ' +
-      'broader one. Sign in at POST /auth/sign-in/email and retry with the session cookie. ' +
-      'A signed-in session can be refused here too, by role rather than by credential type: ' +
-      'code ROLE_REQUIRED when its role in the project is below the one the operation needs, or ' +
-      'ADMIN_REQUIRED when the operation is an admin\'s. And a session whose account must choose ' +
-      'a new password is refused code PASSWORD_CHANGE_REQUIRED on every operation but ' +
-      'PUT /v1/me/password, before its role is checked.',
+      SESSION_REQUIRED_DESCRIPTION + ' ' +
+      'On this operation also: code PUBLIC_LINKS_DISABLED when the organisation has public links ' +
+      'turned off — an admin turns them on in Administration › Settings, or with ' +
+      'PUT /v1/admin/settings {"publicLinksEnabled": true}. Checked after the run is found and ' +
+      'before anything about the run or the body, and nothing is stored.',
+    content: problem(),
+  },
+  InvalidPublicLink: {
+    description:
+      'Refused before anything was stored. Code INVALID_ID when "id" is not a UUID; code ' +
+      'INVALID_PUBLIC_LINK when the body failed CreatePublicLinkRequestSchema ("expiresAt" ' +
+      'missing or not an ISO 8601 instant, or the body named another field — the schema is ' +
+      '`.strict()`), or when "expiresAt" is not more than 60 seconds ahead of the server\'s ' +
+      'clock, or is more than 732 days ahead. Every link expires; there is no "never". ' +
+      'application/problem+json with a required "remediation".',
+    content: problem(),
+  },
+  PublicLinkRefused: {
+    description:
+      'The PublicLink credential does not work, with one code per cause, tested in this order: ' +
+      'LINK_NOT_FOUND — the value after "PublicLink " is not a link secret ("ppl_" and 43 ' +
+      'base64url characters), or no link has it; LINK_REVOKED — the link was revoked, and never ' +
+      'works again; PUBLIC_LINKS_DISABLED — the organisation has public links turned off, which an ' +
+      'admin may undo; LINK_EXPIRED — the link\'s expiry has passed (an expiry of exactly now has ' +
+      'passed), its detail naming the instant. The remediation is always to ask whoever sent the ' +
+      'link for a new one. Sent with Cache-Control: private, no-store. A request that sends no ' +
+      'PublicLink header is not judged as a link at all: it is answered as any other credential ' +
+      'is, code UNAUTHENTICATED when nothing it carries authenticates it. ' +
+      'application/problem+json with a required "remediation".',
+    content: problem(),
+  },
+  RunNotShareable: {
+    description:
+      'The run is not finished (code RUN_NOT_SHAREABLE): only a "complete" or "incomplete" run ' +
+      'can be shared. A "failed" run has no Summary — GET /v1/runs/{id} answers it with its ' +
+      'ingest problem — and a run still pending, parsing or running has a live page, which a ' +
+      'link does not reach. Nothing is stored. application/problem+json with a required ' +
+      '"remediation".',
     content: problem(),
   },
   InvalidTokenRequest: {
@@ -1026,6 +1091,20 @@ function runStateResponses(): Record<string, Ref> {
 
 const authFailureResponses = { '401': ref('Unauthorized'), '403': ref('Forbidden') };
 
+/**
+ * ═══ THE FIFTEEN RUN READS A PUBLIC LINK MAY MAKE ═══
+ * (docs/superpowers/specs/2026-11-06-public-links-and-custom-report-design.md,
+ * section 5.3)
+ *
+ * The document default's two credentials and a public link as a third
+ * alternative, on exactly the operations whose handlers carry `@LinkReadable`
+ * — access-routes.integration.test.ts derives that set from the routes and
+ * holds every operation's effective security to it. A link reads these for its
+ * OWN run only; any other run id is answered 404, as a run that does not
+ * exist.
+ */
+const LINK_READABLE_SECURITY: SecurityRequirement[] = [{ bearerAuth: [] }, { cookieAuth: [] }, { publicLinkAuth: [] }];
+
 // ---------------------------------------------------------------------------
 // Paths
 // ---------------------------------------------------------------------------
@@ -1126,6 +1205,7 @@ const paths: Record<string, PathItemObject> = {
   '/v1/runs/{id}': {
     get: {
       operationId: 'getRun',
+      security: LINK_READABLE_SECURITY,
       summary: "Get a run by id — the ingest response's status URL",
       tags: ['runs'],
       description:
@@ -1133,7 +1213,9 @@ const paths: Record<string, PathItemObject> = {
         'Requires the "read" scope. Returns the exact same status code that ' +
         'POST /v1/runs returned (or would have returned, had it not been waiting) for this ' +
         'run\'s current state — see that operation\'s description for the shared state machine. ' +
-        'This is the URL a 202 response\'s "statusUrl" points at.',
+        'This is the URL a 202 response\'s "statusUrl" points at. Read through a public link ' +
+        '(publicLinkAuth), the note\'s "updatedBy" is null: its text and time are part of the run ' +
+        'the sharer chose to share, a person\'s name is not.',
       parameters: [parameters['RunId']!],
       responses: { ...runStateResponses(), '404': ref('NotFound'), ...authFailureResponses },
     },
@@ -1284,6 +1366,7 @@ const paths: Record<string, PathItemObject> = {
   '/v1/runs/{id}/stats': {
     get: {
       operationId: 'getRunStats',
+      security: LINK_READABLE_SECURITY,
       summary: 'Per-scope statistics table for a run',
       tags: ['metrics'],
       description:
@@ -1343,6 +1426,7 @@ const paths: Record<string, PathItemObject> = {
   '/v1/runs/{id}/events': {
     get: {
       operationId: 'getRunEvents',
+      security: LINK_READABLE_SECURITY,
       summary: 'The lifecycle events of a run the on-prem runner executed',
       tags: ['runs'],
       description:
@@ -1370,6 +1454,7 @@ const paths: Record<string, PathItemObject> = {
   '/v1/runs/{id}/verification': {
     get: {
       operationId: 'getRunVerification',
+      security: LINK_READABLE_SECURITY,
       summary: 'Whether a run\'s stored figures were checked against its raw log',
       tags: ['runs'],
       description:
@@ -1483,9 +1568,149 @@ const paths: Record<string, PathItemObject> = {
     },
   },
 
+  // ═══ A RUN'S PUBLIC LINKS ═══
+  //
+  // Session-only, all three: a link shows a run to someone outside the
+  // organisation, a person's decision, and a CI token that could mint links
+  // would publish every run it can read. `run:share`, a Member and up.
+  '/v1/runs/{id}/public-links': {
+    post: {
+      operationId: 'createRunPublicLink',
+      summary: 'Share a run by a public link',
+      tags: ['runs'],
+      security: [{ cookieAuth: [] }],
+      description:
+        sessionAccessSentence('run:share') + ' ' +
+        'Requires a signed-in session — refused for ANY bearer token regardless of scopes (see ' +
+        'SessionOnlyGuard and the 403 below). Creates a link anyone may read this run\'s Summary, ' +
+        'Report and Logs through, its project and test names included, without signing in, until ' +
+        'it expires or is revoked. The response carries "secret" — "ppl_" and 43 base64url ' +
+        'characters — and it is the ONLY copy: the server stores its SHA-256 and nothing that ' +
+        'could recover it, so a reader who loses it creates a new link. Refused, in this order and ' +
+        'each before anything is stored: 403 PUBLIC_LINKS_DISABLED while the organisation has ' +
+        'public links turned off, 409 RUN_NOT_SHAREABLE for a run that is not finished, and 400 ' +
+        'INVALID_PUBLIC_LINK for an expiry not more than 60 seconds ahead of the server\'s clock ' +
+        'or more than 732 days ahead. A run outside the caller\'s organisation or project answers ' +
+        '404.',
+      parameters: [parameters['RunId']!],
+      requestBody: {
+        required: true,
+        description: 'When the link stops working. Required: every link expires.',
+        content: json(schemaRef('CreatePublicLinkRequest')),
+      },
+      responses: {
+        '201': {
+          description:
+            'Created. The link, in state "active", and its secret — shown this once and never again.',
+          headers: {
+            'Cache-Control': {
+              description: 'Always "no-store": this body is the only copy of a credential, and no cache may keep it.',
+              schema: { type: 'string' },
+            },
+          },
+          content: json(schemaRef('CreatePublicLinkResponse')),
+        },
+        '400': ref('InvalidPublicLink'),
+        '401': ref('Unauthorized'),
+        '403': ref('PublicLinkCreateForbidden'),
+        '404': ref('NotFound'),
+        '409': ref('RunNotShareable'),
+      },
+    },
+    get: {
+      operationId: 'listRunPublicLinks',
+      summary: 'A run\'s public links',
+      tags: ['runs'],
+      security: [{ cookieAuth: [] }],
+      description:
+        sessionAccessSentence('run:share') + ' ' +
+        'Requires a signed-in session — refused for ANY bearer token regardless of scopes. Every ' +
+        'link of this run, newest first: expired and revoked ones too, so a reader can see what ' +
+        'was shared and when it stopped. Never a secret and never its hash. "state" is read when ' +
+        'the list is: "revoked" beats "expired", because the two have different causes. ' +
+        '"enabled" is the organisation\'s switch — false means no link answers at all, though ' +
+        'the links are still listed and can still be revoked. A run outside the caller\'s ' +
+        'organisation or project answers 404.',
+      parameters: [parameters['RunId']!],
+      responses: {
+        '200': {
+          description: 'The organisation\'s switch, and this run\'s links, newest first.',
+          content: json(schemaRef('PublicLinkListResponse')),
+        },
+        '400': ref('BadRequest'),
+        '401': ref('Unauthorized'),
+        '403': ref('SessionRequired'),
+        '404': ref('NotFound'),
+      },
+    },
+  },
+
+  '/v1/runs/{id}/public-links/{linkId}': {
+    delete: {
+      operationId: 'revokeRunPublicLink',
+      summary: 'Revoke one of a run\'s public links',
+      tags: ['runs'],
+      security: [{ cookieAuth: [] }],
+      description:
+        sessionAccessSentence('run:share') + ' ' +
+        'Requires a signed-in session — refused for ANY bearer token regardless of scopes. Stops ' +
+        'the link at once and for good; a revoked link is never restored. IDEMPOTENT: revoking a ' +
+        'link already revoked answers 204 and keeps its first revocation, its time and who made ' +
+        'it. Any Member of the project may revoke any of its links, whoever created them, and ' +
+        'whatever the organisation\'s switch or the run\'s status. A "linkId" that is not one of ' +
+        'this run\'s links answers 404.',
+      parameters: [parameters['RunId']!, parameters['PublicLinkId']!],
+      responses: {
+        '204': { description: 'Revoked, now or before. No body.' },
+        '400': ref('BadRequest'),
+        '401': ref('Unauthorized'),
+        '403': ref('SessionRequired'),
+        '404': ref('NotFound'),
+      },
+    },
+  },
+
+  // ═══ WHAT A PUBLIC LINK READS FIRST ═══
+  //
+  // The public page's URL carries only the secret, so this is its first call.
+  // `@PublicLinkOnly`: every other credential is answered 404.
+  '/v1/public-link': {
+    get: {
+      operationId: 'resolvePublicLink',
+      // A link alone: a session and a token are answered 404 here.
+      security: [{ publicLinkAuth: [] }],
+      summary: 'Which run a public link reads, and until when',
+      tags: ['runs'],
+      description:
+        'Accepts ONLY a public link\'s credential, "Authorization: PublicLink <secret>" — the ' +
+        'secret is the last segment of the link\'s URL, "ppl_" and 43 base64url characters — ' +
+        'sent with no cookie. A signed-in session or an API token is answered 404 here, and reads ' +
+        'a run at GET /v1/runs/{id} instead. Answers the run the link was created for and the ' +
+        'instant it stops working. The credential is checked on every request with nothing ' +
+        'cached between them, so a revoke, an expiry and the organisation\'s switch all take ' +
+        'effect on the next one. Every response to a link carries Cache-Control: private, ' +
+        'no-store.',
+      responses: {
+        '200': {
+          description: 'The link\'s run and its expiry.',
+          content: json(schemaRef('PublicLinkResolveResponse')),
+        },
+        '401': ref('PublicLinkRefused'),
+        '404': {
+          description:
+            'The request carried a credential other than a public link — a session cookie or a ' +
+            'bearer token. One body for both. application/problem+json with a required ' +
+            '"remediation".',
+          content: problem(),
+        },
+      },
+    },
+  },
+
   '/v1/runs/{id}/series': {
     get: {
       operationId: 'getRunSeries',
+      security: LINK_READABLE_SECURITY,
       summary: 'Time-series buckets for one scope/name within a run',
       tags: ['metrics'],
       description:
@@ -1514,6 +1739,7 @@ const paths: Record<string, PathItemObject> = {
   '/v1/runs/{id}/errors': {
     get: {
       operationId: 'getRunErrors',
+      security: LINK_READABLE_SECURITY,
       summary: 'Aggregated error table for a run',
       tags: ['metrics'],
       description:
@@ -1547,6 +1773,7 @@ const paths: Record<string, PathItemObject> = {
   '/v1/runs/{id}/errors/series': {
     get: {
       operationId: 'getRunErrorSeries',
+      security: LINK_READABLE_SECURITY,
       summary: 'Failed-request counts over time for a run',
       tags: ['metrics'],
       description:
@@ -1575,6 +1802,7 @@ const paths: Record<string, PathItemObject> = {
   '/v1/runs/{id}/distribution': {
     get: {
       operationId: 'getRunDistribution',
+      security: LINK_READABLE_SECURITY,
       summary: 'Response-time histogram (Gatling-style bucketed distribution) for a run',
       tags: ['metrics'],
       description:
@@ -1605,6 +1833,7 @@ const paths: Record<string, PathItemObject> = {
   '/v1/runs/{id}/users': {
     get: {
       operationId: 'getRunUsers',
+      security: LINK_READABLE_SECURITY,
       summary: 'Active-users-over-time series, per scenario and summed across scenarios',
       tags: ['metrics'],
       description:
@@ -1652,6 +1881,7 @@ const paths: Record<string, PathItemObject> = {
   '/v1/runs/{id}/telemetry': {
     get: {
       operationId: 'getRunTelemetry',
+      security: LINK_READABLE_SECURITY,
       summary: "Host telemetry for this run, on the run's own elapsed axis",
       tags: ['metrics'],
       description:
@@ -1683,6 +1913,7 @@ const paths: Record<string, PathItemObject> = {
   '/v1/runs/{id}/agent': {
     get: {
       operationId: 'getRunAgent',
+      security: LINK_READABLE_SECURITY,
       summary: "The run's load-generator agent: whether it was collected, its header, remotes and hostnames",
       tags: ['metrics'],
       description:
@@ -1742,6 +1973,7 @@ const paths: Record<string, PathItemObject> = {
   '/v1/runs/{id}/agent/connections': {
     get: {
       operationId: 'getRunAgentConnections',
+      security: LINK_READABLE_SECURITY,
       summary: 'Connections, bandwidth, TCP states, and TCP-connect and TLS-handshake durations',
       tags: ['metrics'],
       description:
@@ -1772,6 +2004,7 @@ const paths: Record<string, PathItemObject> = {
   '/v1/runs/{id}/agent/dns': {
     get: {
       operationId: 'getRunAgentDns',
+      security: LINK_READABLE_SECURITY,
       summary: 'DNS lookups and resolution durations',
       tags: ['metrics'],
       description:
@@ -1797,6 +2030,7 @@ const paths: Record<string, PathItemObject> = {
   '/v1/runs/{id}/agent/injectors': {
     get: {
       operationId: 'getRunAgentInjectors',
+      security: LINK_READABLE_SECURITY,
       summary: "The load generator's JVM and machine: GC, heap, Netty, CPU, RAM and kernel TCP",
       tags: ['metrics'],
       description:
@@ -1819,6 +2053,7 @@ const paths: Record<string, PathItemObject> = {
   '/v1/runs/{id}/agent/status': {
     get: {
       operationId: 'getRunAgentStatus',
+      security: LINK_READABLE_SECURITY,
       summary: 'HTTP status codes over time, one per response',
       tags: ['metrics'],
       description:
@@ -3248,11 +3483,12 @@ const paths: Record<string, PathItemObject> = {
       security: [{ cookieAuth: [] }],
       description:
         sessionAccessSentence('users:manage') + ' ' +
-        '"aiEnabled" is this organisation\'s switch for AI run analysis, off until an admin turns ' +
-        'it on. "aiProviderConfigured", "aiProvider" and "aiModel" are the DEPLOYMENT\'s ' +
-        'configuration (AI_PROVIDER, AI_MODEL), read-only here; the provider\'s key is never ' +
-        'returned. Nothing is sent to a provider unless a provider is configured AND the switch is ' +
-        'on.',
+        '"aiEnabled" is this organisation\'s switch for AI run analysis and "publicLinksEnabled" ' +
+        'its switch for public links (a run read through a link without signing in); each is off ' +
+        'until an admin turns it on. "aiProviderConfigured", "aiProvider" and "aiModel" are the ' +
+        'DEPLOYMENT\'s configuration (AI_PROVIDER, AI_MODEL), read-only here; the provider\'s key ' +
+        'is never returned. Nothing is sent to a provider unless a provider is configured AND the ' +
+        'AI switch is on. An API older than public links sends no "publicLinksEnabled".',
       responses: {
         '200': {
           description: 'This organisation\'s settings.',
@@ -3264,16 +3500,21 @@ const paths: Record<string, PathItemObject> = {
     },
     put: {
       operationId: 'updateOrgSettings',
-      summary: 'Turn AI run analysis on or off for this organisation',
+      summary: 'Turn AI run analysis or public links on or off for this organisation',
       tags: ['admin'],
       security: [{ cookieAuth: [] }],
       description:
         sessionAccessSentence('users:manage') + ' ' +
-        'Sets the switch and nothing else. Turning it off stops new analyses and hides stored ' +
-        'ones; a job already queued is re-checked by the worker and sends nothing.',
+        'Sets the switches the body names and nothing else: a switch left out keeps its value. ' +
+        'Turning AI off stops new analyses and hides stored ones; a job already queued is ' +
+        're-checked by the worker and sends nothing. Turning public links off stops every link on ' +
+        'its next request without changing it; turning it back on restores the links that have ' +
+        'not expired or been revoked.',
       requestBody: {
         required: true,
-        description: '"aiEnabled": true or false. No other field is accepted.',
+        description:
+          '"aiEnabled", "publicLinksEnabled", or both, each true or false; at least one. No other ' +
+          'field is accepted.',
         content: json(schemaRef('UpdateOrgSettingsRequest')),
       },
       responses: {
@@ -3284,9 +3525,9 @@ const paths: Record<string, PathItemObject> = {
         '400': {
           description:
             'The body failed UpdateOrgSettingsRequestSchema (code INVALID_ORG_SETTINGS) — a ' +
-            'missing switch, or a field the schema does not know, such as the provider or model, ' +
-            'which belong to the environment. Nothing changed. application/problem+json with a ' +
-            'required "remediation".',
+            'body naming neither switch, or a field the schema does not know, such as the ' +
+            'provider or model, which belong to the environment. Nothing changed. ' +
+            'application/problem+json with a required "remediation".',
           content: problem(),
         },
         '401': ref('Unauthorized'),
@@ -3435,6 +3676,22 @@ export function buildOpenApiDocument(): OpenApiDocument {
             'the missing-project check above applies. Minted with the Secure attribute ' +
             'unconditionally, so it requires an HTTPS origin — see the root README\'s ' +
             'Authentication section.',
+        },
+        publicLinkAuth: {
+          type: 'http',
+          scheme: 'PublicLink',
+          description:
+            'A public link\'s credential: "Authorization: PublicLink <secret>", the secret being ' +
+            'the last segment of the link\'s URL ("ppl_" and 43 base64url characters), sent with no ' +
+            'cookie. It reads ONE run, the one the link was created for, and only through the ' +
+            'operations that list this scheme: GET /v1/public-link, which takes it alone, and ' +
+            'fifteen GET /v1/runs/{id} reads, where it is a third alternative beside bearerAuth ' +
+            'and cookieAuth. Any other run id, and every other operation, is answered 404 — the ' +
+            'body a run that does not exist gets, or on an operation that names no run one fixed ' +
+            'sentence — so a link cannot be used to map the API. A refused link is answered 401 ' +
+            'with its own code (see the PublicLinkRefused response). It holds no scope and no ' +
+            'role, every response to it carries Cache-Control: private, no-store, and a person\'s ' +
+            'name does not reach it (GET /v1/runs/{id} answers a note\'s "updatedBy" null).',
         },
       },
       parameters,

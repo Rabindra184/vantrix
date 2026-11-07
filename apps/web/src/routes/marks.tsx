@@ -1,4 +1,4 @@
-import type { AssertionOutcome, RunStatus, RunVerdict, VerificationStatus } from '@perfportal/contracts';
+import type { AssertionOutcome, PublicLinkState, RunStatus, RunVerdict, VerificationStatus } from '@perfportal/contracts';
 
 /**
  * The one vocabulary this app uses to render a status, a verdict or an
@@ -115,3 +115,30 @@ export const VERIFICATION: Record<VerificationStatus, Mark> = {
   mismatch: { glyph: '✕', label: 'Verification failed', colour: 'var(--color-status-failed)' },
   unverifiable: { glyph: '–', label: 'Not verified', colour: 'var(--color-status-not-applicable)' },
 };
+
+/**
+ * A public link's state (`publicLinkState`), in the share dialog's list.
+ *
+ * ACTIVE IS THE PASSED GREEN, because it is the state that matters most to the
+ * person reading the list: this link works, for anyone who has it, right now.
+ * Expired and revoked are both "stopped" and both muted, told apart by word
+ * and shape — revoked is the struck ✕ (somebody stopped it), expired the
+ * empty ○ (it ran out) — for the reason the API gives revoked precedence: the
+ * two have different causes.
+ */
+export const PUBLIC_LINK_STATE: Record<PublicLinkState, Mark> = {
+  active: { glyph: '●', label: 'Active', colour: 'var(--color-status-passed)' },
+  expired: { glyph: '○', label: 'Expired', colour: 'var(--color-status-not-applicable)' },
+  revoked: { glyph: '✕', label: 'Revoked', colour: 'var(--color-status-not-applicable)' },
+};
+
+/**
+ * An ACTIVE link while the org's switch is off: it answers nobody now, and
+ * turning the switch back on restores it (spec: the switch "suspends" every
+ * link). Not a fourth `PublicLinkState` — the API's state is the link's own,
+ * and the switch is the list's `enabled` — so the dialog picks this over
+ * `PUBLIC_LINK_STATE.active` itself. MUTED, never the passed green (it is not
+ * working) and not the stopped states' colour either (it is not stopped for
+ * good); its glyph is a pause.
+ */
+export const PUBLIC_LINK_SUSPENDED: Mark = { glyph: '‖', label: 'Suspended', colour: 'var(--color-text-muted)' };

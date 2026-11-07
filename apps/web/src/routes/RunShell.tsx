@@ -3,11 +3,12 @@ import { Outlet, useLocation } from 'react-router-dom';
 import RouteFallback from '../components/RouteFallback';
 import RouteErrorBoundary from '../components/RouteErrorBoundary';
 import { useQuery } from '@tanstack/react-query';
-import { useProjectAccess } from '../access/useAccess';
+import type { ProjectAccess } from '../access/useAccess';
 import TimeBrush from '../charts/TimeBrush';
 import { TimeAxisProvider } from '../charts/TimeAxisContext';
 import { useRunWindow, type RunWindowContext } from './useRunWindow';
-import { runPath, runReportPath } from './paths';
+import { useRunPaths, useRunPresentation } from './presentation';
+import ShareRunButton from './share/ShareRunButton';
 import type { Assertion, RunProcessing, RunResponse } from '@perfportal/contracts';
 import { usersQuery } from '../api/metrics';
 import RunHeader from './RunHeader';
@@ -60,6 +61,7 @@ export default function RunShell({
   assertions,
   toolAssertions,
   windowable,
+  projectAccess,
   live,
   capReached,
   onRetry,
@@ -107,6 +109,21 @@ export default function RunShell({
    * a live run is never offered a brush (see the `TimeBrush` block below).
    */
   readonly windowable: boolean | undefined;
+  /**
+   * WHAT THE READER MAY DO IN THIS RUN'S PROJECT, HANDED IN — never asked
+   * here. The shell reads it for its own chrome (the run's note is editable
+   * only with `run:note`) and hands it to every section through the outlet
+   * context, so a page asks once (ruling P13).
+   *
+   * `RunDetail` asks, with `useProjectAccess` for the run's own project; the
+   * public page has no session and no project list to ask, and hands one that
+   * allows nothing (`{ known: true, can: () => false }`) with no request to
+   * `/auth/*` or `/v1/projects`. REQUIRED, with no default, because a wrong
+   * answer here is silent: a default that asked would send the public page's
+   * requests to `/auth`, and one that allowed nothing would quietly take the
+   * note's editor away from every member in the app.
+   */
+  readonly projectAccess: ProjectAccess;
   /** The live socket's state, or `null` for a run that is not streaming. */
   readonly live: LiveRunState | null;
   readonly capReached: boolean;
@@ -133,15 +150,6 @@ export default function RunShell({
   // declared BEFORE the fetches that key on it.
   const { window, setWindow } = useRunWindow(identity.durationMs ?? Number.MAX_SAFE_INTEGER);
 
-  /* ═══ WHAT THE READER MAY DO IN THIS RUN'S PROJECT, ASKED ONCE ═══
-     For the run's own project, and handed to every section through the
-     outlet context rather than asked again in each: one observer on the
-     session and the project list per page. The shell's own chrome reads it
-     too: the run's note below is editable only with `run:note`. A run with
-     no project in its identity yet asks about none, which is not known for
-     anyone — so a control gated on it stays hidden, and nobody is told they
-     were refused. */
-  const projectAccess = useProjectAccess(identity.project?.slug);
   // §22.6's one JS breakpoint, read here because the brush below is a drag
   // control and a class could only hide it — leaving a phone to build a
   // 394px ECharts instance in order not to show it.
@@ -164,11 +172,34 @@ export default function RunShell({
    * strip, no band and no brush and look like a section with nothing on it.
    * The run's own id comes back from the API in lower case; the URL has no
    * such guarantee. The window parameters live in the SEARCH, which `pathname`
-   * does not carry, so a narrowed link still reads as the page it names. */
+   * does not carry, so a narrowed link still reads as the page it names.
+   *
+   * THE SECTIONS' OWN PATHS, FOR WHICHEVER PAGE THIS IS (`useRunPaths`): a
+   * run's Summary is `/runs/<id>` in the app and `/share/<secret>` behind a
+   * public link, and a comparison against the app's path alone would draw a
+   * public Summary with no band and no strip. */
   const { pathname } = useLocation();
   const here = pathname.replace(/\/$/, '').toLowerCase();
-  const onSummary = here === runPath(identity.id).toLowerCase();
-  const onReport = here === runReportPath(identity.id).toLowerCase();
+  const paths = useRunPaths(identity.id);
+  const onSummary = here === paths.section('summary')?.toLowerCase();
+  const onReport = here === paths.section('report')?.toLowerCase();
+
+  /* ═══ SHARE, FOR WHO MAY AND ON WHAT THE API WILL SHARE (spec 6.4) ═══
+   *
+   * Three conditions, every one of them a refusal the API would otherwise
+   * make after the reader had opened the dialog and chosen an expiry:
+   *   - the app, never a link's page: a link's reader creates nothing, and the
+   *     management routes are session-only, whatever access a page was handed;
+   *   - `run:share` (Member) in the run's project;
+   *   - a finished run, `complete` or `incomplete` — the two statuses the API
+   *     shares (409 RUN_NOT_SHAREABLE for the rest).
+   * Not the org's switch: a Member cannot read it until the dialog's own list
+   * says, and the dialog then says who can turn it back on. */
+  const presentation = useRunPresentation();
+  const shareable =
+    presentation.kind === 'app' &&
+    projectAccess.can('run:share') &&
+    (status === 'complete' || status === 'incomplete');
 
   /* ═══ THE BRUSH ONLY WHERE A WINDOW MEANS SOMETHING ═══
    *
@@ -241,6 +272,9 @@ export default function RunShell({
            disclosure on a phone, and a `<details>`'s open state is the one
            thing a media query cannot set. See `RunHeader`'s own note. */
         compact={compact}
+        /* Keyed by the run for `RunNote`'s reason below: an open dialog, and a
+           created link's URL inside it, must not survive a move to another run. */
+        actions={shareable ? <ShareRunButton key={identity.id} runId={identity.id} /> : null}
         /* `key={identity.id}`, NOT a reset-during-render inside RunNote:
            the `/runs/:runId` route is not keyed and this shell does not
            remount between runs, so without it a still-open editor's
@@ -252,10 +286,10 @@ export default function RunShell({
            the key forces a fresh instance instead, so a stale save's
            `onSuccess` writes into a component that is no longer mounted. */
         note={
-          /* `canEdit` from the access asked once above, for the run's own
-             project (ruling P13): `run:note` asks for Member, and a reader
-             below it — or anyone while it is not known, or on a run with no
-             project — reads the note and is offered no way to change it. */
+          /* `canEdit` from the access this shell was handed (ruling P13):
+             `run:note` asks for Member, and a reader below it — or anyone
+             while it is not known, on a run with no project, or behind a
+             public link — reads the note and is offered no way to change it. */
           <RunNote
             key={identity.id}
             runId={identity.id}
@@ -434,6 +468,7 @@ export default function RunShell({
       <Suspense fallback={<RouteFallback />}>
         <Outlet
           context={{
+            runId: identity.id,
             window,
             durationMs: identity.durationMs ?? null,
             warmupMs: identity.warmupMs ?? null,

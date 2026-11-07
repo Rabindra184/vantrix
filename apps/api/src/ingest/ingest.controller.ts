@@ -76,6 +76,6 @@ export class IngestController {
         .runs()
         .findById({ orgId: tenant.orgId, projectId }, accepted.id)) ?? accepted;
 
-    await respondWithRun(this.runs, current, res);
+    await respondWithRun(this.runs, current, res, tenant);
   }
 }

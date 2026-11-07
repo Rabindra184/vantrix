@@ -57,6 +57,25 @@ export function useRunWindow(runDurationMs: number): {
  * for a URL carrying just `?from=`.
  */
 export interface RunWindowContext {
+  /**
+   * WHICH RUN THE SHELL IS SHOWING — its id, the one every section reads.
+   *
+   * Not read from the URL, because the URL does not always name the run. In
+   * the app it does (`/runs/:runId`); behind a public link it names the LINK
+   * (`/share/<secret>`), and the run is whatever that link resolved to. The
+   * shell is the one place both pages hand the run to, so a section asks it
+   * here and works on either — the same reason `window` and `live` travel
+   * this way.
+   *
+   * The API's own id for the run (`identity.id`), so a section keys its reads
+   * on the id every response names — in lower case. `RunDetail` reads the
+   * URL's id in lower case for exactly that reason: read as typed, an app URL
+   * hand-typed in upper case keyed the page's poll, its live socket and the
+   * socket's cache writes under one spelling and every section's reads under
+   * the other, so a live run lost its live updates and its terminal flip
+   * reached no section — not merely one extra read.
+   */
+  readonly runId: string;
   readonly window: Window | null;
   /**
    * The run's own span, so a tab can pin every time chart to one domain.
@@ -92,11 +111,11 @@ export interface RunWindowContext {
    * The live socket's state, or `null` for a run that is not streaming.
    *
    * ON THE CONTEXT RATHER THAN AS A PROP because the tabs are `<Outlet/>`
-   * children: they read `runId` from `useParams` and have no prop channel from
-   * the shell at all. This is the same argument `window` and `durationMs`
-   * already make one field up — the shell is where the run's state lives, and
-   * a tab that opened its own socket would be a second consumer of one run's
-   * stream.
+   * children, with no prop channel from the shell at all (they read even
+   * their `runId` from here). This is the same argument `window` and
+   * `durationMs` already make one field up — the shell is where the run's
+   * state lives, and a tab that opened its own socket would be a second
+   * consumer of one run's stream.
    */
   readonly live: LiveRunState | null;
   /**
@@ -115,6 +134,11 @@ export interface RunWindowContext {
    */
   readonly projectAccess: ProjectAccess;
 }
+
+/** The run the shell is showing. Every section reads its run from here; none
+ *  reads the URL for it, which names a link rather than a run on a public
+ *  link's page. */
+export const useRunIdFromShell = (): string => useOutletContext<RunWindowContext>().runId;
 
 /** The window the shell parsed. Every tab reads it; none re-derives it. */
 export const useWindowFromShell = (): Window | null =>

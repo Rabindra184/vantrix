@@ -90,11 +90,11 @@ export function fetchDataIntegrity(): Promise<DataIntegrity> {
 }
 
 /**
- * `GET`/`PUT /v1/admin/settings`: Administration › Settings — the org's AI run
- * analysis switch, and, read-only, whether the deployment configures a
- * provider and which one and which model. The PUT answers the settings as they
- * stand afterwards; the page re-reads them anyway, so what it shows is what
- * the server holds.
+ * `GET`/`PUT /v1/admin/settings`: Administration › Settings — the org's two
+ * switches, AI run analysis and public links, and, read-only, whether the
+ * deployment configures an AI provider and which one and which model. The PUT
+ * answers the settings as they stand afterwards; the page re-reads them
+ * anyway, so what it shows is what the server holds.
  */
 export const orgSettingsQueryKey = ['admin-settings'] as const;
 
@@ -104,7 +104,9 @@ export function fetchOrgSettings(): Promise<OrgSettings> {
   return apiFetch(OrgSettingsSchema, settingsPath);
 }
 
-/** `body` is the whole strict request — the switch and nothing else. */
+/** `body` is the whole strict request: the switches it names and nothing
+ *  else. Each switch on the page sends only its own field, so a change to one
+ *  never writes the other from a value the page read earlier. */
 export function updateOrgSettings(body: UpdateOrgSettingsRequest): Promise<OrgSettings> {
   return apiFetch(OrgSettingsSchema, settingsPath, jsonInit('PUT', body));
 }

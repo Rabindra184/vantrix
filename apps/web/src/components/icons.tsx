@@ -39,6 +39,7 @@ import {
   Repeat,
   Search,
   Settings,
+  Share2,
   ShieldUser,
   Square,
   Sun,
@@ -48,6 +49,7 @@ import {
   TriangleAlert,
   type LucideIcon,
   Upload,
+  X,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
@@ -165,6 +167,11 @@ export const CopyIcon = icon(Clipboard);
 export const CheckIcon = icon(Check);
 export const DownloadIcon = icon(Download);
 export const FilterIcon = icon(Funnel);
+
+/* --- Sharing a run by public link (`routes/share/ShareRunButton.tsx`) --- */
+export const ShareIcon = icon(Share2);
+/** A dialog's own close control — always beside a visible or labelled name. */
+export const CloseIcon = icon(X);
 
 /* --- Compare's table (see `tables/CompareMatrix.tsx`) --- */
 

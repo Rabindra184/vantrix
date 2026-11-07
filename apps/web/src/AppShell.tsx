@@ -1,5 +1,5 @@
-import { Suspense, useEffect, useRef } from 'react';
-import { Link, Outlet, useLocation } from 'react-router-dom';
+import { Suspense } from 'react';
+import { Link, Outlet } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useIsAdmin } from './access/useAccess';
 import { getSession, sessionQueryKey } from './api/session';
@@ -9,142 +9,8 @@ import ProjectRail from './ProjectRail';
 import AccountMenu from './AccountMenu';
 import SearchTrigger from './palette/SearchTrigger';
 import { ActivityIcon } from './components/icons';
-import { isFragmentInPlace } from './fragmentInPlace';
 import { HOME_ROUTE } from './routes/paths';
-
-/**
- * ═══ A ONE-SHOT REVEAL IS RIGHT ONLY ON A PAGE ALREADY LAID OUT ═══
- *
- * `scrollIntoView` places the target where it is THE FRAME IT IS CALLED. On the
- * run Summary that frame is early: the errors table is ready within a few
- * hundred milliseconds, while the headline tiles wait on `/stats` and the two
- * charts on their own queries, and all of them sit ABOVE `#errors`. Measured
- * on the e2e reference run for an old `/errors` link, per animation frame:
- *
- *     1280x720   200ms  scrollY 1447 (the page's own maximum), target top 441,
- *                       document 2167px
- *                275ms  document 2544px, target top 784 of a 720px viewport
- *                       -> the table settles ENTIRELY BELOW THE FOLD
- *     1440x900   reveal at target top 621; settles at top 891 of 900
- *                       -> nine pixels visible, by luck
- *
- * ~377px arrives over ~75ms and pushes the target away from where the reveal
- * put it. `/load-generators` escaped only because the page bottom clamps the
- * scroll (target top 293). A reveal that is correct for an already-settled page
- * was the wrong tool for a page that settles under it.
- *
- * SO IT KEEPS THE TARGET WHERE THE REVEAL PUT IT while the page above settles:
- * a `ResizeObserver` on the document re-runs the same `scrollIntoView` (so
- * `scroll-margin-top` still applies) whenever the target has drifted. The
- * observed boxes are the root element and `<main>`; the target's own position,
- * not their size, decides whether to move, because most growth (a table below
- * the target) changes a height and moves nothing — with one exception, a
- * target the page bottom clamped short of its rest, which `correct` explains.
- *
- * ═══ AND THE READER ALWAYS WINS ═══
- *
- * Taking the page away from someone who has started scrolling is worse than the
- * defect, so the first `wheel`, `touchstart`, `keydown` or `pointerdown` ends
- * it for good. Programmatic scrolls raise none of those, so our own corrections
- * never cancel us. Otherwise it stops once the layout has been still for
- * `SETTLE_IDLE_MS`, and never runs past `SETTLE_CAP_MS` from the reveal, so a
- * page that keeps changing (a live run) is not held for ever.
- *
- * ═══ A SILENCE IS MEASURED, NEVER ASSUMED ═══
- *
- * "No callback for `SETTLE_IDLE_MS`" is not evidence the page is still when
- * the main thread was blocked for that long. A task that changes the layout and
- * outlasts the idle window leaves the idle timer OVERDUE, and WebKit ran that
- * overdue timer before the rendering step that would have delivered the
- * observer's callback — so a stop that trusted the silence disconnected the
- * observer with the change unreported. Measured on CI WebKit: every response
- * in by +50ms, then a two-second task, and `#errors` left at a viewport ratio
- * of 0.29 with nothing to move it. So both timers MEASURE before they decide
- * (`getBoundingClientRect` forces the layout the blocked task produced): the
- * idle timer corrects a drift and waits again instead of stopping, and the cap
- * makes its one last correction before it does. Neither can see a change made
- * AFTER it has stopped; that is the honest limit of any settle window.
- *
- * Scroll only: focus moved once at the reveal and is not taken back on every
- * correction. No `ResizeObserver` (jsdom) leaves the one-shot reveal exactly as
- * it was. Returns the teardown the effect's cleanup calls.
- */
-const SETTLE_IDLE_MS = 1000;
-const SETTLE_CAP_MS = 5000;
-const READER_INPUTS = ['wheel', 'touchstart', 'keydown', 'pointerdown'] as const;
-
-function keepInPlace(target: HTMLElement): () => void {
-  if (typeof ResizeObserver === 'undefined') return () => {};
-
-  /** How much further the page could still scroll down. */
-  const roomBelow = (): number => {
-    const page = document.scrollingElement ?? document.documentElement;
-    return page.scrollHeight - window.innerHeight - window.scrollY;
-  };
-  let top = target.getBoundingClientRect().top;
-  /* The reveal's scroll stopped at the page bottom, so the target sits short of
-     its rest: true of `#errors`, the last thing on the Summary. */
-  let clamped = roomBelow() < 1;
-  let idle = 0;
-  let cap = 0;
-  let observer: ResizeObserver | null = null;
-
-  const stop = (): void => {
-    window.clearTimeout(idle);
-    window.clearTimeout(cap);
-    observer?.disconnect();
-    observer = null;
-    // The same options the listeners were added with: `capture` is part of a
-    // listener's identity, and a mismatch removes nothing.
-    for (const type of READER_INPUTS) document.removeEventListener(type, stop, { capture: true });
-  };
-
-  /** Puts the target back where the reveal meant it to be; says whether it
-   *  had to. Two reasons to move, and only two: the target was pushed (sub-
-   *  pixel noise is not drift; a real shift is tens of pixels), or the scroll
-   *  was clamped at the page bottom and the page has grown since, so it can
-   *  now go further. The second is a section that grows DOWNWARD under a
-   *  clamped scroll — its rows arriving — whose top never moves while its
-   *  bottom slides past the fold: measured on Firefox at a ratio of 0.96. A
-   *  page that grows below an UNCLAMPED target (a table under it) is neither,
-   *  and is left alone. */
-  const correct = (): boolean => {
-    const pushed = Math.abs(target.getBoundingClientRect().top - top) >= 1;
-    if (!pushed && !(clamped && roomBelow() >= 1)) return false;
-    target.scrollIntoView({ block: 'start' });
-    // Re-read rather than assume: a clamped scroll lands short of the margin,
-    // and the NEXT drift is measured from where the target actually is.
-    top = target.getBoundingClientRect().top;
-    clamped = roomBelow() < 1;
-    return true;
-  };
-  // The idle window's end: a drift found now means the page was still moving
-  // (behind a blocked thread), so wait again rather than stop.
-  const settle = (): void => {
-    if (correct()) idle = window.setTimeout(settle, SETTLE_IDLE_MS);
-    else stop();
-  };
-
-  observer = new ResizeObserver(() => {
-    window.clearTimeout(idle);
-    idle = window.setTimeout(settle, SETTLE_IDLE_MS);
-    correct();
-  });
-  observer.observe(document.documentElement);
-  const main = document.getElementById('main');
-  if (main !== null) observer.observe(main);
-
-  // `capture` so a handler that stops propagation cannot hide the reader's
-  // input from us; `passive` because we never cancel it.
-  for (const type of READER_INPUTS) document.addEventListener(type, stop, { capture: true, passive: true });
-  idle = window.setTimeout(settle, SETTLE_IDLE_MS);
-  // The cap is final, but it too decides on a fresh measurement.
-  cap = window.setTimeout(() => {
-    correct();
-    stop();
-  }, SETTLE_CAP_MS);
-  return stop;
-}
+import { useScrollAndFragment } from './scrollBehaviour';
 
 /**
  * The chrome around every authenticated page: rendered only inside
@@ -194,35 +60,6 @@ function keepInPlace(target: HTMLElement): () => void {
  * refocusing leaves a screen-reader user's focus behind at the link.
  */
 export default function AppShell() {
-  /* ═══ A NEW PAGE STARTS AT ITS OWN TOP ═══
-   *
-   * The router preserves scroll position across navigations, which is right
-   * for a BACK to a list and wrong for a forward move into a different thing.
-   * Observed: opening a request from the long chart page landed the reader
-   * part-way down the request's own charts, below its heading — so the first
-   * thing on screen belonged to a page they had not read the title of.
-   *
-   * KEYED ON `pathname` ALONE, deliberately. The search string carries the
-   * analysis window and the compare selection, and those change as a reader
-   * refines ONE view — scrolling them back to the top on every brush drag or
-   * checkbox would be its own defect. A different path is a different thing;
-   * a different query is the same thing, asked again.
-   *
-   * The FIRST render is skipped: a deep link should land where the browser
-   * puts it, including on a fragment like the decision band's
-   * `#simulation-assertions`, which this would otherwise undo.
-   *
-   * AND A FRAGMENT GOING AWAY IS NOT A NEW PAGE. `useSearchParams`' setter
-   * navigates to `"?" + params`, which DROPS the hash — so a reader who landed
-   * on `/runs/:id#errors` (the old `/errors` redirect, or the band's
-   * `#simulation-assertions` link) and then changed the Investigate select, or
-   * sorted a table, produced a same-path navigation with an empty hash. The
-   * effect used to read that as "no fragment, so scroll to the top" and threw
-   * them ~1,500px away from the table they were filtering. The decision is
-   * the path's alone: the previous one is held in a ref, and only a DIFFERENT
-   * pathname scrolls. The effect still depends on `hash` because it reads it
-   * for the new-path-with-a-fragment case below.
-   */
   /* The SAME query `AuthGate` already made, under the same key — this shell
      only renders inside a resolved session, so it is a cache read rather than
      a request. `name` before `email`: a person recognises their own name
@@ -244,112 +81,8 @@ export default function AppShell() {
      `/auth/get-session` every time. */
   const isAdmin = useIsAdmin();
 
-  const { pathname, hash, state, key } = useLocation();
-
-  /* ═══ WHERE THE READER WAS, FOR THE IN-PLACE MARK ═══
-   *
-   * `FRAGMENT_IN_PLACE` rides in the navigation's `state`, and BrowserRouter
-   * keeps that in `history.state` — so a RELOAD of a filtered Report, or Back
-   * and Forward onto that entry from another page, arrives carrying the mark
-   * with nobody standing on the control it was written for. The mark therefore
-   * counts only when the location before this one, in this mount, had the same
-   * path: the reader really was on that page, changing a filter. A first render
-   * (a reload) or an arrival from another path reveals as any fragment does.
-   *
-   * Keyed on the location's `key`, so StrictMode's second run of a mount's
-   * effects is the same location and not a same-path navigation from itself —
-   * a plain "last pathname" ref would read the reload as in place. Declared
-   * before the reveal effect so it has run by the time that one reads it. */
-  const visited = useRef<{ readonly key: string; readonly pathname: string; readonly previous: string | null } | null>(
-    null,
-  );
-  useEffect(() => {
-    if (visited.current?.key === key) return;
-    visited.current = { key, pathname, previous: visited.current?.pathname ?? null };
-  }, [key, pathname]);
-  /* `null` until the first render has run, which is also how the first render
-     is told apart: nothing has been navigated FROM yet. (A strict-mode second
-     run of the effect sees the same path and falls out at the next check, where
-     the old `first` flag would have scrolled.) */
-  const lastPathname = useRef<string | null>(null);
-  useEffect(() => {
-    const previous = lastPathname.current;
-    lastPathname.current = pathname;
-    if (previous === null) return;
-    // Same path: the SAME page asked again — a query refined, or a fragment
-    // dropped by a setter. Never a reason to move the reader.
-    if (previous === pathname) return;
-    // A fragment on a NEW path is a move within it, and the effect below takes
-    // it. Scrolling to the top first would undo it.
-    if (hash !== '') return;
-    window.scrollTo({ top: 0 });
-  }, [pathname, hash]);
-
-  /* ═══ A FRAGMENT LINK HAS TO BE HONOURED BY US (review 09-13 C04) ═══
-   *
-   * The decision band's "See the failed simulation assertion" is a `<Link>`
-   * to `/runs/:id#simulation-assertions` (keeping the reader's query) — the
-   * SAME path the reader is already
-   * on. React Router answers that with `pushState`, and **a browser does not
-   * scroll to a fragment on `pushState`**; native fragment scrolling happens
-   * on a real hash navigation or a document load. So the URL gained the
-   * fragment and nothing moved: measured at scrollY 82 with the target 1482px
-   * below the viewport. The primary investigation shortcut on the run page
-   * changed the address bar and nothing else.
-   *
-   * ═══ WHY IT RETRIES ═══
-   *
-   * The same URL typed fresh is worse, not better: the target belongs to a
-   * lazy route child behind a query, so at first paint there is no element to
-   * scroll to and the browser's own attempt finds nothing either. A bounded
-   * retry across animation frames covers the chunk and the fetch without
-   * spinning forever — it gives up rather than waiting on an id that will
-   * never exist, which is what a typo'd fragment is.
-   *
-   * ═══ AND IT MOVES FOCUS, NOT ONLY THE VIEWPORT ═══
-   *
-   * The same argument the skip link below makes: scrolling without refocusing
-   * leaves a keyboard or screen-reader user exactly where they were, reading
-   * the link they just followed. The target is a `<section>` and not natively
-   * focusable, so it is made focusable for the move; `preventScroll` keeps
-   * `scrollIntoView`'s own placement, which is the one that honours the
-   * section's `scroll-margin-top` under the sticky header.
-   */
-  useEffect(() => {
-    if (hash === '') return;
-    // A fragment written so the URL shares well, by a control the reader is
-    // using inside that very section (`fragmentInPlace.ts`): not a move — but
-    // only when they were on this path a moment ago (see `visited` above).
-    if (isFragmentInPlace(state) && visited.current?.previous === pathname) return;
-    const id = decodeURIComponent(hash.slice(1));
-    let cancelled = false;
-    let frame = 0;
-    let stopKeeping = (): void => {};
-
-    const reveal = (attemptsLeft: number): void => {
-      if (cancelled) return;
-      const target = document.getElementById(id);
-      if (target === null) {
-        if (attemptsLeft > 0) frame = requestAnimationFrame(() => reveal(attemptsLeft - 1));
-        return;
-      }
-      target.scrollIntoView({ block: 'start' });
-      if (!target.hasAttribute('tabindex')) target.setAttribute('tabindex', '-1');
-      target.focus({ preventScroll: true });
-      // After the focus, and only once: a correction is a scroll, never a
-      // second focus move.
-      stopKeeping = keepInPlace(target);
-    };
-
-    // ~60 frames is about a second at 60Hz: long enough for a lazy chunk and
-    // its query, short enough that a fragment naming nothing stops quietly.
-    reveal(60);
-    return () => {
-      cancelled = true;
-      cancelAnimationFrame(frame);
-      stopKeeping();
-    };
-  }, [pathname, hash, state]);
+  // Scroll to the top on a new path, and reveal a fragment: see `scrollBehaviour.ts`.
+  useScrollAndFragment();
 
   return (
     <div className="min-h-screen">

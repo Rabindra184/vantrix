@@ -1,16 +1,17 @@
 /**
  * ═══ A FRAGMENT WRITTEN FOR THE LINK, NOT FOR A MOVE ═══
  *
- * `AppShell` reveals and FOCUSES the element a URL's fragment names, because a
- * same-path `<Link>` to `#section` changes the address bar and nothing else
- * (review 09-13 C04). But some navigations write a fragment only so the URL
+ * `useScrollAndFragment` (`scrollBehaviour.ts`, which `AppShell` and the
+ * public run page call) reveals and FOCUSES the element a URL's fragment
+ * names, because a same-path `<Link>` to `#section` changes the address bar
+ * and nothing else (review 09-13 C04). But some navigations write a fragment only so the URL
  * SHARES well: the Report's filters put their section's hash back
  * (`useReportFilter`), so a link to "?remote=X" reopens that section rather
  * than collapsing it. The reader is already there, inside the section, on the
  * control they just changed — and a reveal would scroll them and pull focus
  * off that control.
  *
- * Such a navigation carries this as its `state`; `AppShell` leaves it alone
+ * Such a navigation carries this as its `state`; the reveal leaves it alone
  * when the location before it had the same path. `history.state` outlives the
  * moment — a reload or a Back onto the entry still carries the mark — and
  * there the reader is NOT on the control, so the fragment is revealed.

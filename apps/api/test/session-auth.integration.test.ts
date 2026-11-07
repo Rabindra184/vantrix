@@ -716,6 +716,10 @@ describe('cross-org isolation on every session-reachable endpoint', () => {
     `/v1/runs/${id}/agent/dns`,
     `/v1/runs/${id}/agent/injectors`,
     `/v1/runs/${id}/agent/status`,
+    // A run's public links. Session-only, which this case's admin cookie is;
+    // the org's switch is off here, so the positive half answers 200
+    // `{ enabled: false, items: [] }` — the read resolving the run.
+    `/v1/runs/${id}/public-links`,
   ];
 
   /**

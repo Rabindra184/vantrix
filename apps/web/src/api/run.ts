@@ -6,7 +6,7 @@ import {
   type RunProcessing,
   type RunResponse,
 } from '@perfportal/contracts';
-import { apiFetch, problemFrom } from './fetch';
+import { apiFetch, problemFrom, withCredential } from './fetch';
 
 /**
  * One run, in whichever of its two READABLE shapes the API answered with.
@@ -114,7 +114,8 @@ export function pollIntervalFor(detail: RunDetail | undefined, capReached: boole
 
 /**
  * `GET /v1/runs/:id` — org-scoped by the session cookie, like every other
- * read in this app.
+ * read in this app, or pinned to one run by a public link's own header on a
+ * `/share/…` page (`withCredential`).
  *
  * NOT routed through `apiFetch`, and this is the exception that proves that
  * function's rule. `apiFetch` rejects every non-2xx as a `ProblemError`,
@@ -134,7 +135,9 @@ export function pollIntervalFor(detail: RunDetail | undefined, capReached: boole
  * a problem document.
  */
 export async function fetchRun(id: string): Promise<RunDetail> {
-  const res = await fetch(`/v1/runs/${encodeURIComponent(id)}`, { credentials: 'same-origin' });
+  // The credential is `withCredential`'s, read off the URL per request like
+  // `apiFetch`'s: the public page reads its run through this function too.
+  const res = await fetch(`/v1/runs/${encodeURIComponent(id)}`, withCredential());
 
   // 422 is a VERDICT, not a transport failure. The run parsed perfectly, was
   // measured against its SLA rules, and failed one — and the body is a

@@ -34,6 +34,11 @@ import {
   ErrorsResponseSchema,
   IndicatorBandsSchema,
   CreateProjectRequestSchema,
+  CreatePublicLinkRequestSchema,
+  CreatePublicLinkResponseSchema,
+  PublicLinkListResponseSchema,
+  PublicLinkResolveResponseSchema,
+  PublicLinkSchema,
   IngestMetadataSchema,
   MintedTokenSchema,
   MintTokenRequestSchema,
@@ -206,6 +211,14 @@ const SOURCE: Record<string, z.ZodType> = {
   AiAnalysisResponse: AiAnalysisResponseSchema,
   OrgSettings: OrgSettingsSchema,
   UpdateOrgSettingsRequest: UpdateOrgSettingsRequestSchema,
+  // PUBLIC LINKS: one link, the create's body and answer (the answer carries
+  // the secret, once), a run's list with the org's switch, and what a link
+  // itself reads first — which run, and until when.
+  PublicLink: PublicLinkSchema,
+  CreatePublicLinkRequest: CreatePublicLinkRequestSchema,
+  CreatePublicLinkResponse: CreatePublicLinkResponseSchema,
+  PublicLinkListResponse: PublicLinkListResponseSchema,
+  PublicLinkResolveResponse: PublicLinkResolveResponseSchema,
 };
 
 /**
@@ -243,6 +256,7 @@ export const REQUEST_BODIES: ReadonlySet<string> = new Set([
   'CreatePackageRequest',
   'RenamePackageRequest',
   'CreateSlaRuleRequest',
+  'CreatePublicLinkRequest',
   'UpdateSlaRuleRequest',
   'ChangePasswordRequest',
   'CreateUserRequest',

@@ -151,6 +151,45 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+/**
+ * ═══ AN APP URL IS READ UNDER THE API'S SPELLING OF THE RUN ═══
+ *
+ * The sections read their run from the shell, as the API spells its id — in
+ * lower case — while the router matches `/runs/<ID>` whatever its case. So a
+ * hand-typed upper-case id used to be read twice, under two keys: `RunDetail`
+ * polled and opened the socket under one, and every section read the other.
+ * The live socket's writes and the poll that flips a run terminal then reached
+ * no section at all. `RunDetail` reads the id in lower case now, so one key
+ * serves the whole page.
+ */
+describe('RunDetail — an upper-case run id in the URL', () => {
+  const LETTERED = 'abcdef00-0000-4000-8000-00000000000a';
+
+  it('polls, streams and keys the page under the lower-case id', async () => {
+    fetchRunMock.mockResolvedValue({ state: 'processing', run: { id: LETTERED, status: 'running', statusUrl: '/x' } } as never);
+    useLiveRunMock.mockReturnValue(liveState());
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={[`/runs/${LETTERED.toUpperCase()}`]}>
+          <Routes>
+            <Route path="/runs/:runId" element={<RunDetail />}>
+              <Route index element={<RunSummary />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    await screen.findByRole('navigation', { name: 'Run sections' });
+
+    expect(new Set(fetchRunMock.mock.calls.map((call) => call[0]))).toEqual(new Set([LETTERED]));
+    expect(useLiveRunMock).toHaveBeenLastCalledWith(LETTERED, true);
+    // One entry for the run: the page and its sections read the same key.
+    expect(client.getQueryCache().findAll({ queryKey: runQueryKey(LETTERED.toUpperCase()) })).toHaveLength(0);
+    expect(client.getQueryData(runQueryKey(LETTERED))).toBeDefined();
+  });
+});
+
 describe('RunDetail — one shell, for every state', () => {
   it('renders the tab strip for a run that is only pending', () => {
     // Before Task 7 this rendered the standalone Processing screen and the

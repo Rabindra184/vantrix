@@ -1,5 +1,5 @@
 import type { ZodSchema } from 'zod';
-import { ProblemDetailsSchema, type ProblemDetails } from '@perfportal/contracts';
+import { PUBLIC_LINK_SECRET_PATTERN, ProblemDetailsSchema, type ProblemDetails } from '@perfportal/contracts';
 
 /**
  * Every non-2xx `/v1` response is RFC 9457 `application/problem+json` with a
@@ -99,6 +99,60 @@ function synthesizeUnreadable(status: number, rawBody: string): ProblemError {
 }
 
 /**
+ * The secret a public link's page carries in its own URL, or `null` on any
+ * other page: `/share/<secret>`, `/share/<secret>/` and `/share/<secret>/<section>`.
+ *
+ * The first segment is `share` compared WITHOUT regard to case, because the
+ * router matches `/share/:token/*` that way (React Router's default, which
+ * `RunShell` also allows for), and the page a reader is shown and the
+ * credential its reads carry must agree about `/Share/…`. The secret itself is
+ * never folded — it is case-sensitive base64url — and must match
+ * `PUBLIC_LINK_SECRET_PATTERN` exactly, the one grammar the API checks it
+ * against too. A segment that merely looks like one (a character short, the
+ * wrong prefix, a stray character) is no secret, and the page then sends the
+ * cookie as any other page does.
+ */
+export function publicLinkSecretFromPath(pathname: string): string | null {
+  const segment = /^\/share\/([^/]+)(?:\/|$)/i.exec(pathname)?.[1];
+  return segment !== undefined && PUBLIC_LINK_SECRET_PATTERN.test(segment) ? segment : null;
+}
+
+/**
+ * ═══ WHICH CREDENTIAL A REQUEST CARRIES, DECIDED PER REQUEST FROM THE URL ═══
+ *
+ * On a public link's page: `Authorization: PublicLink <secret>`, merged into
+ * the caller's own headers (whichever of `HeadersInit`'s three forms they came
+ * in), and `credentials: 'omit'` — so a signed-in sharer opening their own link
+ * in the same browser sends no cookie and reads exactly what a stranger reads.
+ * The link REPLACES any `Authorization` the caller set: two credentials on one
+ * request is one the API refuses.
+ *
+ * Everywhere else, the request is what it always was: the caller's `init`
+ * untouched, and `credentials: 'same-origin'`.
+ *
+ * READ FROM `window.location.pathname` ON EVERY CALL, never remembered. A
+ * module-level setter would still be holding the secret after a history
+ * navigation from `/share/…` back into the app in the same tab, and would send
+ * the link where the cookie belongs; a setter written by the public page's own
+ * effect would run after its children's queries had already gone out without
+ * it. The URL is the one answer that is right at the moment the request is
+ * made (spec 6.2). `credentials` is set AFTER `init` on both paths, so a caller
+ * cannot override it.
+ *
+ * Exported for `fetchRun` (`./run.ts`), which cannot go through `apiFetch` and
+ * is the read the public page starts from. No `window` (the node test project)
+ * is no share path.
+ */
+export function withCredential(init?: RequestInit): RequestInit {
+  const secret = typeof window === 'undefined' ? null : publicLinkSecretFromPath(window.location.pathname);
+  if (secret === null) return { ...init, credentials: 'same-origin' };
+
+  const headers = new Headers(init?.headers);
+  headers.set('Authorization', `PublicLink ${secret}`);
+  return { ...init, headers, credentials: 'omit' };
+}
+
+/**
  * The one path everything under `/v1` goes through. Validates the response
  * against `schema` — the same Zod schema `@perfportal/contracts` exports and
  * the API validates its own output against — so client and server share one
@@ -114,7 +168,9 @@ function synthesizeUnreadable(status: number, rawBody: string): ProblemError {
  *
  * `credentials: 'same-origin'` is forced on every call (after `init`, so a
  * caller cannot accidentally override it): the session cookie is
- * `sameSite: 'strict'`, and same-origin is how this app is served.
+ * `sameSite: 'strict'`, and same-origin is how this app is served. On a public
+ * link's page it is `'omit'` instead, with the link's own header — see
+ * `withCredential`, which both this and `apiFetchNoContent` call per request.
  *
  * Does not redirect on 401, or touch the DOM/router at all — keeping it out
  * is what lets this module be unit-tested without a browser. The decision is
@@ -123,7 +179,7 @@ function synthesizeUnreadable(status: number, rawBody: string): ProblemError {
  * to sign-in.
  */
 export async function apiFetch<T>(schema: ZodSchema<T>, path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, { ...init, credentials: 'same-origin' });
+  const res = await fetch(path, withCredential(init));
 
   if (!res.ok) {
     throw await problemFrom(res);
@@ -138,8 +194,8 @@ export async function apiFetch<T>(schema: ZodSchema<T>, path: string, init?: Req
  *
  * `apiFetch` cannot serve one: it ends in `res.json()`, which throws on an
  * empty body, so a change that succeeded would reject as a `SyntaxError`. This
- * keeps `apiFetch`'s other two guarantees and drops that one: `credentials:
- * 'same-origin'` is forced after `init`, every non-2xx rejects as a
+ * keeps `apiFetch`'s other two guarantees and drops that one: the credential is
+ * `withCredential`'s, forced after `init`, every non-2xx rejects as a
  * `ProblemError` through `problemFrom`, and a success's body is never read.
  * It resolves to nothing, because there is nothing to resolve to.
  *
@@ -147,7 +203,7 @@ export async function apiFetch<T>(schema: ZodSchema<T>, path: string, init?: Req
  * lines by hand.
  */
 export async function apiFetchNoContent(path: string, init?: RequestInit): Promise<void> {
-  const res = await fetch(path, { ...init, credentials: 'same-origin' });
+  const res = await fetch(path, withCredential(init));
 
   if (!res.ok) {
     throw await problemFrom(res);

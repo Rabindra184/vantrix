@@ -15,10 +15,10 @@ import {
 import { ProjectRepository, TestRepository, type RunListItem, type RunRecord, type RunVerdictFilter } from '@perfportal/persistence';
 import { Scopes } from '../auth/scopes.decorator.js';
 import { checkTally } from './check-tally.js';
-import { noteOf, RunsService, warmupMsOf } from './runs.service.js';
+import { noteOf, RunsService, warmupMsOf, type RunReader } from './runs.service.js';
 import { notFound, projectNotFound, runNotFound } from '../common/validation.js';
 import { SessionOnlyGuard } from '../auth/session-only.guard.js';
-import { BearerOnly, NotProjectScoped, Requires } from '../auth/access.decorator.js';
+import { BearerOnly, LinkReadable, NotProjectScoped, Requires } from '../auth/access.decorator.js';
 import { canSeeProject, listScope } from '../auth/access.js';
 
 // AuthGuard is registered globally via APP_GUARD (see auth.module.ts), so
@@ -186,6 +186,7 @@ export class RunsController {
 
   @Get(':id')
   @Requires('project:read')
+  @LinkReadable()
   @Scopes('read')
   async get(
     @Param('id', uuidParam('id')) id: string,
@@ -198,7 +199,7 @@ export class RunsController {
       .findById({ orgId: tenant.orgId, projectId: tenant.projectId }, id);
     if (!run) throw runNotFound(id);
 
-    await respondWithRun(this.runs, run, res);
+    await respondWithRun(this.runs, run, res, tenant);
   }
 
   /**
@@ -248,7 +249,7 @@ export class RunsController {
     // non-member with: an admin, or a member whose run was deleted between
     // the guard's lookup and this write, gets exactly that body too.
     if (run === null) throw runNotFound(id);
-    return { note: noteOf(run) };
+    return { note: noteOf(run, tenant) };
   }
 }
 
@@ -288,12 +289,14 @@ function toListItem(r: RunListItem): RunListResponse['items'][number] {
 
 /**
  * Shared by GET and POST so the two cannot drift. This function IS the
- * "same code for the same state" guarantee.
+ * "same code for the same state" guarantee. `reader` is the request's tenant,
+ * handed to both identity builders below (`noteOf`'s docstring says why).
  */
 export async function respondWithRun(
   runs: RunsService,
   run: RunRecord,
   res: Response,
+  reader: RunReader,
   retryAfterSeconds = 5,
 ): Promise<void> {
   const status = runs.statusFor(run);
@@ -365,7 +368,7 @@ export async function respondWithRun(
         // THE LIVE HALF of the run note, for the reason the lifecycle stamps
         // above give: a note written while a run streams is read through THIS
         // body, and one sent only by toResponse would vanish until it ended.
-        note: noteOf(run),
+        note: noteOf(run, reader),
       });
     return;
   }
@@ -392,7 +395,7 @@ export async function respondWithRun(
     return;
   }
 
-  res.status(status).json(await runs.toResponse(run));
+  res.status(status).json(await runs.toResponse(run, reader));
 }
 
 // AuthGuard is registered globally via APP_GUARD (see auth.module.ts), so

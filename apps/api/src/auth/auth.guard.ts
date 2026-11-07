@@ -61,6 +61,19 @@ export interface Tenant {
    * absent for a bearer token, which names nobody and so has no password.
    */
   mustChangePassword?: boolean;
+  /**
+   * A PUBLIC LINK's, and only a public link's: set by `authenticatePublicLink`
+   * (public-link.ts), never by the bearer or the session path. Its presence is
+   * what `AuthGuard` and `AccessGuard` decide a link tenant by.
+   *
+   * `runIds` are the runs this link may read — exactly one today, the run it
+   * was created for. `AccessGuard` lets the tenant through only to a
+   * `@LinkReadable` route whose `:id` is in this list, or to a
+   * `@PublicLinkOnly` route, and answers everything else 404. `expiresAt` is
+   * the instant the link stops, read from the same row in the same request,
+   * for the one route that reports it.
+   */
+  publicLink?: { readonly linkId: string; readonly runIds: readonly string[]; readonly expiresAt: Date };
   tokenId: string;
   scopes: string[];
 }
@@ -163,6 +176,15 @@ export class AuthGuard implements CanActivate {
     // request (true for everything under /v1) to avoid a second database
     // round-trip; only routes outside that prefix hit the database here.
     const tenant = req.tenant ?? (await authenticateRequest(req, this.tokens));
+
+    // A PUBLIC LINK SKIPS THE SCOPE CHECK. Scopes say what a token minted for a
+    // project may do; they are not this credential's model, and a link holds
+    // none. What a link may reach is `AccessGuard`'s decision, and it is
+    // default-deny: before the route's own markers are even read.
+    if (tenant.publicLink !== undefined) {
+      req.tenant = tenant;
+      return true;
+    }
 
     const required = this.reflector.getAllAndOverride<TokenScope[]>(SCOPES_KEY, [
       ctx.getHandler(),

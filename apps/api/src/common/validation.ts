@@ -143,6 +143,28 @@ export function runNotFound(id: string): NotFoundException {
 }
 
 /**
+ * A public link refused on a route that names no run (no `:id`). A link
+ * refused on a run route gets `runNotFound` instead — the very body a run
+ * that does not exist gets — so every refusal of one route shape is one body,
+ * and a link cannot be used to tell one route from another.
+ */
+export function notReadableByLink(): NotFoundException {
+  return notFound('Nothing here can be read with a public link.', 'Open the link you were sent; it reads one run.');
+}
+
+/**
+ * Any credential but a public link, on a `@PublicLinkOnly` route
+ * (`GET /v1/public-link`). One body for a session and a bearer token alike.
+ */
+export function onlyAPublicLink(): NotFoundException {
+  return notFound(
+    "Only a public link's credential can read this.",
+    "Send Authorization: PublicLink <secret>, with the secret from the link's URL. A signed-in " +
+      'session or an API token reads the run itself at GET /v1/runs/{id}.',
+  );
+}
+
+/**
  * An account the caller's org does not hold — one in another org, one in no
  * org at all, or one that does not exist — on `/v1/admin/users/:userId` and
  * the members routes. One answer for all three, so an admin of one install
@@ -157,9 +179,15 @@ export function userNotFound(userId: string): NotFoundException {
  * them, and their standing is not enough. Unlike `forbidden`, it carries its
  * own `code`, because a client tells "ask for a role" from "ask an admin"
  * by it.
+ *
+ * `PUBLIC_LINKS_DISABLED` is the one refusal here that is about the ORG
+ * rather than the caller: an admin has not turned public links on, so a
+ * Member who may share a run still cannot create a link. Its own code, for
+ * the same reason — the share dialog says "ask an admin" by it, not "ask for
+ * a role".
  */
 export function accessDenied(
-  code: 'ROLE_REQUIRED' | 'ADMIN_REQUIRED',
+  code: 'ROLE_REQUIRED' | 'ADMIN_REQUIRED' | 'PUBLIC_LINKS_DISABLED',
   message: string,
   remediation: string,
 ): ForbiddenException {

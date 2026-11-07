@@ -18,6 +18,7 @@ export * from './repositories/recompute.js';
 export * from './repositories/verification.js';
 export * from './repositories/ai-analysis.js';
 export * from './repositories/org-settings.js';
+export * from './repositories/public-link.js';
 export * from './runner-events.js';
 export * from './metrics/write.js';
 export * from './metrics/read.js';

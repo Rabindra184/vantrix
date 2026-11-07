@@ -3,6 +3,7 @@ import { cleanup, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it } from 'vitest';
 import RunTabs from '../src/routes/RunTabs';
+import { RunPresentationProvider, type RunPresentation } from '../src/routes/presentation';
 
 // No global setup runs `afterEach(cleanup)` for us (see StatisticsTable.test.tsx)
 // — without it, each `renderAt` call below leaves its `<nav>` mounted
@@ -170,5 +171,54 @@ describe('RunTabs — the Logs tab', () => {
     expect(href.startsWith(`/runs/${RUN}/logs?`)).toBe(true);
     expect(href).toMatch(/[?&]from=10000(&|$)/);
     expect(href).toMatch(/[?&]to=30000(&|$)/);
+  });
+});
+
+/**
+ * ═══ BEHIND A PUBLIC LINK: THE THREE SECTIONS A LINK REACHES (spec 6.3) ═══
+ *
+ * The same strip, built through `useRunPaths`: Summary, Report and Logs at
+ * share paths, and nothing that leaves the run — Trends and Compare read the
+ * cohort, which a link may not. Logs still appears only on a run the on-prem
+ * runner executed.
+ */
+describe('RunTabs — behind a public link', () => {
+  const SECRET = 'ppl_Q7x_Kd-9mVb2LpN4rTzW8yHc6uJf3sEa1oGiX5nBkY0';
+  const SHARE = `/share/${SECRET}`;
+  const PUBLIC: RunPresentation = { kind: 'public', secret: SECRET, expiresAt: '2026-11-13T09:30:00.000Z' };
+
+  function renderPublicAt(path: string, hasLogs: boolean) {
+    return render(
+      <MemoryRouter initialEntries={[path]}>
+        <RunPresentationProvider value={PUBLIC}>
+          <RunTabs runId={RUN} hasLogs={hasLogs} />
+        </RunPresentationProvider>
+      </MemoryRouter>,
+    );
+  }
+
+  it('draws exactly the three sections, every one at a share path', () => {
+    renderPublicAt(SHARE, true);
+    const links = screen.getAllByRole('link');
+    expect(links.map((link) => [link.textContent, link.getAttribute('href')])).toEqual([
+      ['Summary', SHARE],
+      ['Report', `${SHARE}/report`],
+      ['Logs', `${SHARE}/logs`],
+    ]);
+  });
+
+  it('still withholds Logs from a run the runner did not execute', () => {
+    renderPublicAt(SHARE, false);
+    expect(screen.getAllByRole('link').map((link) => link.textContent)).toEqual(['Summary', 'Report']);
+  });
+
+  it('marks the current section at its share path, and carries the window', () => {
+    renderPublicAt(`${SHARE}/report?from=10000&to=30000`, true);
+    expect(screen.getByRole('link', { name: 'Report' })).toHaveAttribute('aria-current', 'page');
+    // `end` on the Summary still keeps it from matching the Report under it.
+    expect(screen.getByRole('link', { name: 'Summary' })).not.toHaveAttribute('aria-current');
+    for (const link of screen.getAllByRole('link')) {
+      expect(link.getAttribute('href')).toMatch(new RegExp(`^${SHARE}(/report|/logs)?\\?from=10000&to=30000$`));
+    }
   });
 });

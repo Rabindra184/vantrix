@@ -6,9 +6,11 @@ import {
   AdminUserSchema,
   CreateUserRequestSchema,
   DataIntegritySchema,
+  OrgSettingsSchema,
   PROJECT_ROLES,
   RecomputeProgressSchema,
   SetPasswordRequestSchema,
+  UpdateOrgSettingsRequestSchema,
   UpdateUserRequestSchema,
   type CreateUserRequestInput,
 } from '../src/index.js';
@@ -283,5 +285,57 @@ describe('DataIntegritySchema', () => {
   it('refuses a negative count and a fractional retention', () => {
     expect(DataIntegritySchema.safeParse({ ...integrity, verification: { ...integrity.verification, pending: -1 } }).success).toBe(false);
     expect(DataIntegritySchema.safeParse({ ...integrity, rawLogRetentionDays: 1.5 }).success).toBe(false);
+  });
+});
+
+describe('UpdateOrgSettingsRequestSchema', () => {
+  /** The body a browser built before the public-links switch keeps sending
+   *  through a rolling deploy: the AI switch alone. It has to go on working. */
+  it('accepts the AI switch alone, as an older browser sends it', () => {
+    expect(UpdateOrgSettingsRequestSchema.parse({ aiEnabled: true })).toEqual({ aiEnabled: true });
+  });
+
+  it('accepts the public-links switch alone, and both together', () => {
+    expect(UpdateOrgSettingsRequestSchema.parse({ publicLinksEnabled: true })).toEqual({ publicLinksEnabled: true });
+    expect(UpdateOrgSettingsRequestSchema.parse({ aiEnabled: false, publicLinksEnabled: true })).toEqual({
+      aiEnabled: false,
+      publicLinksEnabled: true,
+    });
+  });
+
+  /** An empty body would be a write that changes nothing and reports
+   *  success — the reason `UpdateUserRequestSchema` refuses one too. */
+  it('refuses a body that sets neither switch', () => {
+    expect(UpdateOrgSettingsRequestSchema.safeParse({}).success).toBe(false);
+  });
+
+  /** Still `.strict()`: a field it does not know — the provider or model,
+   *  which are the environment's — is refused rather than ignored. */
+  it('refuses a field it does not know, beside a switch', () => {
+    expect(UpdateOrgSettingsRequestSchema.safeParse({ aiEnabled: true, other: 1 }).success).toBe(false);
+    expect(UpdateOrgSettingsRequestSchema.safeParse({ publicLinksEnabled: true, aiModel: 'x' }).success).toBe(false);
+  });
+
+  it('refuses a switch that is not a boolean', () => {
+    expect(UpdateOrgSettingsRequestSchema.safeParse({ publicLinksEnabled: 'true' }).success).toBe(false);
+  });
+});
+
+describe('OrgSettingsSchema, the public-links switch', () => {
+  const SETTINGS = { aiEnabled: false, aiProviderConfigured: false, aiProvider: null, aiModel: null };
+
+  it('reads the public-links switch beside the AI one', () => {
+    expect(OrgSettingsSchema.parse({ ...SETTINGS, publicLinksEnabled: true }).publicLinksEnabled).toBe(true);
+    expect(OrgSettingsSchema.safeParse({ ...SETTINGS, publicLinksEnabled: 'yes' }).success).toBe(false);
+  });
+
+  /** An API pod that predates the switch sends no key at all, and the browser
+   *  drops a body that fails this schema — so a required field would blank
+   *  Administration › Settings for a whole rolling deploy. Absent reads as
+   *  absent, never as off. */
+  it('parses a body from an API that predates the switch, without inventing a value', () => {
+    const older = OrgSettingsSchema.parse(SETTINGS);
+    expect(older.aiEnabled).toBe(false);
+    expect(older.publicLinksEnabled).toBeUndefined();
   });
 });

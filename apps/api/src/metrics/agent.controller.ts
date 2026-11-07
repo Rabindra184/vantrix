@@ -12,7 +12,7 @@ import {
 import { AgentReader, MetricReader, RunRepository, type AgentSummaryRow, type RunRecord } from '@perfportal/persistence';
 import { AGENT_ALL, AGENT_METRICS, durationSection, type AgentMetricBucket } from '@perfportal/statistics';
 import type { Request } from 'express';
-import { Requires } from '../auth/access.decorator.js';
+import { LinkReadable, Requires } from '../auth/access.decorator.js';
 import { Scopes } from '../auth/scopes.decorator.js';
 import { badRequest, runNotFound, singleValue, uuidParam } from '../common/validation.js';
 import { inRange, resolveRange, snapWindow } from '../common/window.js';
@@ -81,6 +81,7 @@ export class AgentController {
    */
   @Get('agent')
   @Requires('project:read')
+  @LinkReadable()
   @Scopes('read')
   async summary(
     @Param('id', uuidParam('id')) id: string,
@@ -125,6 +126,7 @@ export class AgentController {
   /** Connections opened and closed, bandwidth, TCP states, and the connect and TLS durations, per remote. */
   @Get('agent/connections')
   @Requires('project:read')
+  @LinkReadable()
   @Scopes('read')
   async connections(
     @Param('id', uuidParam('id')) id: string,
@@ -194,6 +196,7 @@ export class AgentController {
   /** DNS lookups (requests, OK, KO) and resolution durations, per hostname. */
   @Get('agent/dns')
   @Requires('project:read')
+  @LinkReadable()
   @Scopes('read')
   async dns(
     @Param('id', uuidParam('id')) id: string,
@@ -251,6 +254,7 @@ export class AgentController {
    */
   @Get('agent/injectors')
   @Requires('project:read')
+  @LinkReadable()
   @Scopes('read')
   async injectors(
     @Param('id', uuidParam('id')) id: string,
@@ -332,6 +336,7 @@ export class AgentController {
   /** HTTP status codes over time — one per response the agent saw. */
   @Get('agent/status')
   @Requires('project:read')
+  @LinkReadable()
   @Scopes('read')
   async status(
     @Param('id', uuidParam('id')) id: string,

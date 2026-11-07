@@ -122,7 +122,7 @@ describe('OpenAPI document', () => {
   // `/rules/{ruleId}` — the PATCH and DELETE beside it work on the id in
   // that very response. Nothing about the rule is deferred; what is deferred
   // is only the next RUN it will judge, which is not this resource.
-  it('never declares a 201 response on any operation except token minting, opening a live run, creating a project, creating an SLA rule, queueing or retrying a runner job, creating a package, and creating an account, which really do create synchronously', async () => {
+  it('never declares a 201 response on any operation except token minting, opening a live run, creating a project, creating an SLA rule, queueing or retrying a runner job, creating a package, creating an account, and creating a public link, which really do create synchronously', async () => {
     const doc = await fetchDoc();
     const CREATES_SYNCHRONOUSLY = [
       { path: '/v1/projects/{slug}/tokens', method: 'post' },
@@ -164,6 +164,12 @@ describe('OpenAPI document', () => {
       // it at once, and PATCH and DELETE work on the person in that very
       // response — members.integration.test.ts drives all three.
       { path: '/v1/projects/{slug}/members', method: 'post' },
+      // The link is the resource created, and it is complete and addressable
+      // the moment the response is sent: the handler awaits ONE insert, which
+      // reads the row it wrote back through its RETURNING, and answers that
+      // row. GET .../public-links lists it at once, and DELETE works on the id
+      // in that very response — public-links.integration.test.ts drives both.
+      { path: '/v1/runs/{id}/public-links', method: 'post' },
     ];
     for (const { path, method, op } of operations(doc)) {
       if (CREATES_SYNCHRONOUSLY.some((c) => c.path === path && c.method === method)) {
@@ -233,6 +239,25 @@ describe('OpenAPI document', () => {
     // lifetime policy imposed on every caller, which M18 deliberately refuses.
     expect(schema?.required ?? []).not.toContain('expiresAt');
     expect(schema?.required ?? []).toEqual(expect.arrayContaining(['name', 'scopes']));
+  });
+
+  /**
+   * The same trap on the settings body: `UpdateOrgSettingsRequestSchema` is
+   * two optional switches under a refinement requiring at least one. A
+   * conversion that lost a property would leave a generated client unable to
+   * set it, and one that marked either required would refuse the body a
+   * browser built before the public-links switch still sends —
+   * `{ "aiEnabled": … }` alone. The response must name the new switch too.
+   */
+  it('keeps both switches on the settings body, refinement and all, and neither required', async () => {
+    const doc = await fetchDoc();
+    const schemas = (doc.components as { schemas?: Record<string, { properties?: Record<string, unknown>; required?: string[] }> })
+      ?.schemas;
+    const body = schemas?.['UpdateOrgSettingsRequest'];
+
+    expect(Object.keys(body?.properties ?? {}).sort()).toEqual(['aiEnabled', 'publicLinksEnabled']);
+    expect(body?.required ?? []).toEqual([]);
+    expect(Object.keys(schemas?.['OrgSettings']?.properties ?? {})).toContain('publicLinksEnabled');
   });
 
   it('lists "remediation" as required on the problem-details schema', async () => {
@@ -594,7 +619,8 @@ describe('OpenAPI document', () => {
    */
   /**
    * Exact statistics, PR 3: a run's verification takes either credential like
-   * every run-scoped read; the data-integrity summary is an admin's, and
+   * every run-scoped read — and, being one of the fifteen a public link may
+   * make, the link as a third; the data-integrity summary is an admin's, and
    * session-only like every /v1/admin operation. Each answers its own named
    * schema, so a generated client gets a type rather than an inline blob.
    */
@@ -602,7 +628,7 @@ describe('OpenAPI document', () => {
     const doc = await fetchDoc();
     const verification = doc.paths?.['/v1/runs/{id}/verification']?.get;
     expect((verification as { operationId?: string } | undefined)?.operationId).toBe('getRunVerification');
-    expect(verification?.security).toBeUndefined();
+    expect(verification?.security).toEqual([{ bearerAuth: [] }, { cookieAuth: [] }, { publicLinkAuth: [] }]);
     expect(JSON.stringify(verification?.responses?.['200'])).toContain('#/components/schemas/Verification"');
     expect(Object.keys(verification?.responses ?? {})).toEqual(expect.arrayContaining(['200', '400', '404']));
 
@@ -957,8 +983,16 @@ describe('the document covers exactly the routes Nest registers', () => {
    * writes: a guarded route that documents another 403 fails naming it, and an
    * operation documenting `SessionRequired` that nothing guards fails too — the
    * second is a document promising a refusal the server never sends.
+   *
+   * ONE OPERATION'S 403 SAYS MORE, AND IT MUST STILL SAY ALL OF THIS. Creating
+   * a public link is also refused 403 PUBLIC_LINKS_DISABLED when the org has
+   * the switch off, and a status has one response — so its 403 is its own
+   * component. It counts as the session refusal only because its description
+   * carries `SessionRequired`'s WHOLE, read out of the document rather than
+   * restated here; a variant that paraphrased it, or dropped a sentence, fails
+   * as though it documented another 403.
    */
-  it('gives every SessionOnlyGuard route the SessionRequired 403, and no other route', async () => {
+  it('gives every SessionOnlyGuard route a 403 carrying SessionRequired whole, and no other route', async () => {
     const doc = await fetchDoc();
     const guarded = new Set(registeredRoutes().filter((r) => r.sessionOnly).map(shape));
 
@@ -967,14 +1001,24 @@ describe('the document covers exactly the routes Nest registers', () => {
     // identity, finds none — and "none undeclared" would then read as clean.
     expect(guarded.size, 'found no SessionOnlyGuard routes — the guards walk has rotted').toBeGreaterThan(5);
 
+    const components =
+      (doc.components as { responses?: Record<string, { description?: string }> } | undefined)?.responses ?? {};
+    const sessionRefusal = components['SessionRequired']?.description ?? '';
+    // A description that shrank to nothing would be "carried" by every 403.
+    expect(sessionRefusal.length, 'SessionRequired describes nothing').toBeGreaterThan(200);
+    const carriesSessionRefusal = (response: unknown): boolean => {
+      const name = (response as { $ref?: string } | undefined)?.$ref?.replace('#/components/responses/', '');
+      return name !== undefined && (components[name]?.description ?? '').includes(sessionRefusal);
+    };
+
     const declaring = new Set(
       operations(doc)
-        .filter(({ op }) => (op.responses?.['403'] as { $ref?: string } | undefined)?.$ref === '#/components/responses/SessionRequired')
+        .filter(({ op }) => carriesSessionRefusal(op.responses?.['403']))
         .map(({ path, method }) => shape({ method, path })),
     );
     const undeclared = [...guarded].filter((r) => !declaring.has(r)).sort();
     const unguarded = [...declaring].filter((r) => !guarded.has(r)).sort();
-    expect(undeclared, 'SessionOnlyGuard routes whose documented 403 is not SessionRequired').toEqual([]);
+    expect(undeclared, 'SessionOnlyGuard routes whose documented 403 does not carry SessionRequired').toEqual([]);
     expect(unguarded, 'operations documenting SessionRequired that no SessionOnlyGuard protects').toEqual([]);
   });
 

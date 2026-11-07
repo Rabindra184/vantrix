@@ -20,6 +20,7 @@ export type AccessAction =
   | 'members:read'
   | 'run:note'
   | 'run:analyze'
+  | 'run:share'
   | 'run:upload'
   | 'runner:run'
   | 'packages:manage'
@@ -56,6 +57,7 @@ export const ACCESS_ACTIONS: Readonly<
   'members:read': { role: 'viewer', scope: null, label: 'Viewing members' },
   'run:note': { role: 'member', scope: null, label: 'Editing run notes' },
   'run:analyze': { role: 'member', scope: null, label: 'Generating AI run analyses' },
+  'run:share': { role: 'member', scope: null, label: 'Sharing runs by public link' },
   'run:upload': { role: 'member', scope: null, label: 'Uploading runs' },
   'runner:run': { role: 'member', scope: 'runner', label: 'Starting, cancelling and retrying runs' },
   'packages:manage': { role: 'member', scope: 'runner', label: 'Managing packages' },

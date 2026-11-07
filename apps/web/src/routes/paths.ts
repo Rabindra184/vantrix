@@ -88,6 +88,37 @@ export function runComparePath(runId: string, runs?: readonly string[]): string 
     : `${base}?runs=${encodeURIComponent(runs.join(','))}`;
 }
 
+/**
+ * One request's, or one group's, own page under a run — the drill-downs
+ * `App.tsx` declares at `/runs/:runId/requests/:name` and `/runs/:runId/groups/:name`.
+ *
+ * The NAME is the row's full path (`Cart/Add To Cart`, `Catalog/Recommendations`)
+ * encoded as ONE segment, so a group's separators arrive at the route as data
+ * rather than as extra segments no route matches — `StatisticsTable`'s
+ * `detailPathFor` has always spelled it this way. Any query string (a window)
+ * is the caller's to append.
+ */
+export function runRequestPath(runId: string, name: string): string {
+  return `${runPath(runId)}/requests/${encodeURIComponent(name)}`;
+}
+export function runGroupPath(runId: string, name: string): string {
+  return `${runPath(runId)}/groups/${encodeURIComponent(name)}`;
+}
+
+/**
+ * A run's section behind a public link: the Summary at the link itself, the
+ * Report and Logs one segment under it — the three sections a link reaches.
+ *
+ * The SECRET, not the run id, is the run's address here: the link names its
+ * run, and the page resolves which one (`GET /v1/public-link`). Encoded as data
+ * like every value this file did not write, though a secret is base64url and
+ * encodes to itself.
+ */
+export function shareSectionPath(secret: string, section: 'summary' | 'report' | 'logs'): string {
+  const base = `/share/${encodeURIComponent(secret)}`;
+  return section === 'summary' ? base : `${base}/${section}`;
+}
+
 /** The no-organisation explanation. Its own URL on purpose (see NoOrg.tsx). */
 export const NO_ORG_ROUTE = '/no-organisation';
 

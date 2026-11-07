@@ -290,7 +290,7 @@ export class LiveController {
       return;
     }
 
-    await respondWithRun(this.runs, outcome.run, res);
+    await respondWithRun(this.runs, outcome.run, res, tenant);
   }
 
   /**

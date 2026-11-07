@@ -9,6 +9,7 @@ export * from './metrics.js';
 export * from './groups.js';
 export * from './settings.js';
 export * from './tokens.js';
+export * from './public-links.js';
 export * from './access.js';
 export * from './me.js';
 export * from './admin.js';

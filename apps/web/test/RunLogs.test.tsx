@@ -1,12 +1,14 @@
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, render, screen } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Outlet, Route, Routes } from 'react-router-dom';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RunEventsResponse, RunResponse } from '@perfportal/contracts';
 import { fetchRun, runQueryKey, type RunDetail } from '../src/api/run';
 import { fetchRunEvents, RUN_EVENTS_POLL_MS, runEventsQueryKey } from '../src/api/runEvents';
 import RunLogs from '../src/routes/RunLogs';
+import type { RunWindowContext } from '../src/routes/useRunWindow';
+import { UNKNOWN_ACCESS } from './support/access';
 
 vi.mock('../src/api/run.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../src/api/run.js')>()),
@@ -64,7 +66,23 @@ function renderLogs(detail: RunDetail, cachedEvents?: RunEventsResponse): QueryC
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[`/runs/${RUN}/logs`]}>
         <Routes>
-          <Route path="/runs/:runId/logs" element={<RunLogs />} />
+          {/* A stand-in for `RunShell`'s outlet: the tab reads which run it is
+              about from the shell, not from the URL. */}
+          <Route
+            path="/runs/:runId"
+            element={
+              <Outlet
+                context={
+                  {
+                    runId: RUN, window: null, durationMs: null, liveDurationMs: null, warmupMs: null, live: null,
+                    projectAccess: UNKNOWN_ACCESS,
+                  } satisfies RunWindowContext
+                }
+              />
+            }
+          >
+            <Route path="logs" element={<RunLogs />} />
+          </Route>
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,

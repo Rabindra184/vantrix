@@ -103,7 +103,7 @@ function renderTrends(
             element={
               <Outlet
                 context={
-                  { window: null, durationMs: null, liveDurationMs: null, warmupMs: null, live: null, projectAccess: UNKNOWN_ACCESS } satisfies RunWindowContext
+                  { runId: RUN_ID, window: null, durationMs: null, liveDurationMs: null, warmupMs: null, live: null, projectAccess: UNKNOWN_ACCESS } satisfies RunWindowContext
                 }
               />
             }
@@ -163,7 +163,7 @@ describe('RunTrends — live', () => {
               element={
                 <Outlet
                   context={
-                    { window: null, durationMs: null, liveDurationMs: null, warmupMs: null, live: null, projectAccess: UNKNOWN_ACCESS } satisfies RunWindowContext
+                    { runId: RUN_ID, window: null, durationMs: null, liveDurationMs: null, warmupMs: null, live: null, projectAccess: UNKNOWN_ACCESS } satisfies RunWindowContext
                   }
                 />
               }

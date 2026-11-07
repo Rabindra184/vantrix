@@ -1465,6 +1465,35 @@ export async function enableOrgAi(orgId: string): Promise<void> {
 }
 
 /**
+ * Turns `orgId`'s public-links switch (`org.public_links_enabled`) on or off,
+ * written directly as `markEstimated` writes its column — the admin's PUT is
+ * Administration's own journey, not what a link's cases are about. Off is the
+ * column's default, so only a spec that calls this can create a link at all.
+ *
+ * The credential check reads the switch on every request and caches nothing
+ * (`authenticatePublicLink`), so the next read through a link sees it.
+ */
+export async function setPublicLinks(orgId: string, enabled: boolean): Promise<void> {
+  await prisma.org.update({ where: { id: orgId }, data: { publicLinksEnabled: enabled } });
+}
+
+/**
+ * Moves a public link's expiry a minute into the past, so the next read
+ * through it is refused `LINK_EXPIRED`. Written directly because nothing in
+ * the product shortens a link's life — the share dialog will not create one
+ * that expires within a minute — and waiting out the shortest real one is a
+ * day. Returns the instant written, which the expired page names.
+ *
+ * `update`, not `updateMany`: an id that matches no row throws here rather
+ * than leaving the link working and the case asserting against nothing.
+ */
+export async function expireLink(linkId: string): Promise<Date> {
+  const at = new Date(Date.now() - 60_000);
+  await prisma.runPublicLink.update({ where: { id: linkId }, data: { expiresAt: at } });
+  return at;
+}
+
+/**
  * The worker's half of one analysis, run IN-PROCESS, exactly as
  * `parseUploadedRun` runs the pipeline: no worker process exists in this
  * stack, so a job the API queued would otherwise sit in Redis for ever and

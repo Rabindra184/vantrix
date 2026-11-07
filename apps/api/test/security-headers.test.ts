@@ -212,6 +212,55 @@ describe('static asset delivery', () => {
 });
 
 /**
+ * ═══ A PUBLIC LINK'S PAGE IS NOT FOR SEARCH ENGINES ═══
+ *
+ * A link pasted somewhere public would otherwise be crawled, and its page
+ * indexed with the run's project and test names in it (spec 6.2). The header
+ * rides on the SPA document for `/share/*` alone — the app's own pages sit
+ * behind sign-in, and saying `noindex` there is a claim about nothing — and
+ * the `share` segment is matched as the router matches it, without regard to
+ * case, so `/Share/…` is the same page with the same header.
+ */
+describe('a public link’s page', () => {
+  it.each(['/share/x', '/share/x/report', '/Share/x'])('serves index.html for %s with X-Robots-Tag: noindex', async (path) => {
+    const res = await request(server).get(path).expect(200);
+    expect(res.text).toBe(INDEX_HTML);
+    expect(res.headers['x-robots-tag']).toBe('noindex');
+  });
+
+  it.each(['/runs/x', '/', '/shared/x'])('says nothing to robots on %s', async (path) => {
+    const res = await request(server).get(path).expect(200);
+    expect(res.text).toBe(INDEX_HTML);
+    expect(res.headers['x-robots-tag']).toBeUndefined();
+  });
+
+  /**
+   * THE URL IS THE CREDENTIAL, SO NO CACHE MAY STORE IT. `no-cache` lets a
+   * browser's disk cache or an intermediary keep an entry KEYED BY
+   * `/share/<secret>` — no run data in it (the body is the generic
+   * index.html), but the secret sits in the cache's index, outliving a cleared
+   * history in some browsers. `no-store` forbids keeping the entry at all.
+   */
+  it.each(['/share/x', '/share/x/report', '/Share/x'])('serves %s with Cache-Control: no-store', async (path) => {
+    const res = await request(server).get(path).expect(200);
+    expect(res.text).toBe(INDEX_HTML);
+    expect(res.headers['cache-control']).toBe('no-store');
+  });
+
+  /** Only there: every other page keeps `no-cache`, whose 304 is what makes a
+   *  reload cheap, and an asset stays immutable. */
+  it.each(['/runs/x', '/', '/shared/x'])('keeps Cache-Control: no-cache on %s', async (path) => {
+    const res = await request(server).get(path).expect(200);
+    expect(res.headers['cache-control']).toBe('no-cache');
+  });
+
+  it('leaves an asset immutable', async () => {
+    const res = await request(server).get('/assets/plain.js').expect(200);
+    expect(res.headers['cache-control']).toBe('public, max-age=31536000, immutable');
+  });
+});
+
+/**
  * ═══ A DIST UNDER A DOTTED DIRECTORY STILL SERVES ITS PAGES ═══
  *
  * `send` — under both `express.static` and `res.sendFile` — refuses a path

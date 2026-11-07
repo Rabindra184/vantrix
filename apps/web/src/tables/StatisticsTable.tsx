@@ -2,6 +2,7 @@ import { useId, useMemo, useState, type CSSProperties } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Link } from 'react-router-dom';
 import { useWindowSuffix } from '../routes/useRunWindow';
+import { useRunPaths, type RunPaths } from '../routes/presentation';
 import type { RunResponse, StatRow, StatsResponse } from '@perfportal/contracts';
 import {
   buildTree,
@@ -1406,14 +1407,13 @@ function visibleRows(
  * a group's separators arrive at the route as data (`Catalog%2FRecommendations`)
  * rather than as extra segments no route matches.
  *
- * Piece 3 fills `/requests/:name` and piece 4 `/groups/:name`; today they are
- * an honest "not built yet" placeholder (design §1), which is why request
- * identity can still change under D-10 without breaking a compatibility
- * surface that does not exist yet.
+ * The page is the run's request or group drill-down (`runRequestPath`,
+ * `runGroupPath`), through `useRunPaths` — so behind a public link, which
+ * reaches no drill-down, there is none: `null`, and the row's name is text
+ * (spec 6.3). The Report's pickers narrow the page there instead.
  */
-export function detailPathFor(runId: string, row: TableRow): string {
-  const section = row.scope === 'group' ? 'groups' : 'requests';
-  return `/runs/${encodeURIComponent(runId)}/${section}/${encodeURIComponent(row.path)}`;
+export function detailPathFor(paths: RunPaths, row: TableRow): string | null {
+  return row.scope === 'group' ? paths.group(row.path) : paths.request(row.path);
 }
 
 function Row({
@@ -1439,6 +1439,7 @@ function Row({
      request from a windowed table does not silently return them to the whole
      run. `useWindowSuffix` owns which parameters travel. */
   const windowSuffix = useWindowSuffix();
+  const detailPath = detailPathFor(useRunPaths(runId), row);
 
   return (
     <tr
@@ -1498,9 +1499,15 @@ function Row({
             // nothing is announced as a control.
             <span aria-hidden="true" className="inline-block w-4" />
           )}
-          <Link id={nameId} to={`${detailPathFor(runId, row)}${windowSuffix}`} className="underline">
-            {row.name}
-          </Link>
+          {/* The same `nameId` either way, so the row header's name is the row's
+              name whether or not it links anywhere. */}
+          {detailPath === null ? (
+            <span id={nameId}>{row.name}</span>
+          ) : (
+            <Link id={nameId} to={`${detailPath}${windowSuffix}`} className="underline">
+              {row.name}
+            </Link>
+          )}
           {/* ═══ A GROUP SAYS SO, IN WORDS (review M11) ═══
            *
            * The only thing that distinguished a group from a request was the

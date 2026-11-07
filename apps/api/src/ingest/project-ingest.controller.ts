@@ -112,6 +112,6 @@ export class ProjectIngestController {
         .runs()
         .findById({ orgId: tenant.orgId, projectId: project.id }, accepted.id)) ?? accepted;
 
-    await respondWithRun(this.runs, current, res);
+    await respondWithRun(this.runs, current, res, tenant);
   }
 }

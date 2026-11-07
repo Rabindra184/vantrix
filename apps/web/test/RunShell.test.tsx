@@ -1,18 +1,20 @@
 import '@testing-library/jest-dom/vitest';
 import type { ComponentProps } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes, useOutletContext } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { LiveDelta, ProjectRole, RunNote as RunNoteValue, RunResponse } from '@perfportal/contracts';
+import type { AccessAction, LiveDelta, RunNote as RunNoteValue, RunResponse } from '@perfportal/contracts';
+import type { ProjectAccess } from '../src/access/useAccess';
 import type { LiveRunState } from '../src/api/live';
 import RunShell from '../src/routes/RunShell';
 import { formatDuration } from '../src/routes/format';
 import useIsCompact from '../src/useIsCompact';
 import type { RunWindowContext } from '../src/routes/useRunWindow';
 import { useTimeAxis } from '../src/charts/TimeAxisContext';
-import { seedAccess } from './support/access';
+import { UNKNOWN_ACCESS } from './support/access';
+import { RunPresentationProvider, type RunPresentation } from '../src/routes/presentation';
 
 /* NOT compact by default, which is what every case above this file's last
    describe assumes and what `useIsCompact` itself falls back to where
@@ -76,6 +78,16 @@ function liveWithSla(sla: LiveDelta['sla'], connected = true): LiveRunState {
 }
 
 /**
+ * An access that is KNOWN and allows exactly `actions`. The shell is handed its
+ * access now (`RunDetail` asks once and passes it down; the public page passes
+ * one that allows nothing), so a case states what the reader may do rather than
+ * seeding a session and a project list for the shell to look up.
+ */
+function allowing(...actions: AccessAction[]): ProjectAccess {
+  return { known: true, can: (action) => actions.includes(action) };
+}
+
+/**
  * Renders `RunShell` with `RUN`'s own identity/status/verdict/windowable and
  * no live state — the terminal-run shape every pre-existing test here was
  * written against, before `RunShell` took `identity`/`status`/... instead of
@@ -107,6 +119,7 @@ function renderShellWith(
   const props = {
     identity: RUN, status, verdict: RUN.verdict, windowable: RUN.windowable,
     terminal: TERMINAL_STATUSES.has(status),
+    projectAccess: UNKNOWN_ACCESS,
     live: null, capReached: false, onRetry: () => {}, ...overrides,
   };
   return render(
@@ -142,6 +155,7 @@ function renderProbeWith(
   const props = {
     identity: RUN, status, verdict: RUN.verdict, windowable: RUN.windowable,
     terminal: TERMINAL_STATUSES.has(status),
+    projectAccess: UNKNOWN_ACCESS,
     live: null, capReached: false, onRetry: () => {}, ...overrides,
   };
   return render(
@@ -832,6 +846,7 @@ describe('RunShell — the run’s time axis reaches every tab', () => {
                   terminal
                   verdict={RUN.verdict}
                   windowable={RUN.windowable}
+                  projectAccess={UNKNOWN_ACCESS}
                   live={null}
                   capReached={false}
                   onRetry={() => {}}
@@ -885,6 +900,7 @@ describe('RunShell — an open note editor does not survive a change of run', ()
     const props = {
       identity, status, verdict: identity.verdict, windowable: identity.windowable,
       terminal: TERMINAL_STATUSES.has(status),
+      projectAccess: allowing('run:note'),
       live: null, capReached: false, onRetry: () => {},
     };
     return (
@@ -902,10 +918,8 @@ describe('RunShell — an open note editor does not survive a change of run', ()
 
   it('shows the new run’s own note, with no leftover editor or draft from the old one', async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    // An admin, so Edit note is offered at all: the shell draws it only for a
-    // reader whose access is known and allows `run:note`. `roles: {}` writes
-    // the project list too, so the shell's lookup asks the network nothing.
-    seedAccess(client, { isAdmin: true, roles: {} });
+    // Access that allows `run:note`, so Edit note is offered at all: the shell
+    // draws it only for a reader whose access is known and allows it.
     const { rerender } = render(shellTree(RUN_A, client));
 
     await userEvent.click(await screen.findByRole('button', { name: 'Edit note' }));
@@ -945,16 +959,20 @@ describe('RunShell — the Logs tab follows the run’s runner job', () => {
 });
 
 /**
- * ═══ THE RUN'S PROJECT ACCESS, ASKED ONCE AND HANDED DOWN (ruling P13) ═══
+ * ═══ THE RUN'S PROJECT ACCESS IS HANDED IN, AND HANDED ON (ruling P13) ═══
  *
  * The sections are `<Outlet/>` children with no prop channel from the shell,
  * so a control in one that a role gates — the telemetry page's link to API
  * tokens — reads the shell's answer off the outlet context rather than
- * mounting its own observer on the session and the project list. The answer
- * is for the RUN'S project: a reader is a Manager in one project and a Viewer
- * in another, and the context must say which this run belongs to.
+ * mounting its own observer on the session and the project list.
+ *
+ * The shell no longer ASKS. `RunDetail` asks once, for the run's own project
+ * (`RunDetail.access.test.tsx` pins which project that is), and the public
+ * page passes an access that allows nothing, with no request to `/auth/*` or
+ * `/v1/projects` at all. So what is pinned here is that the shell carries the
+ * answer it was given, unchanged, to its sections and to its own note.
  */
-describe('RunShell — the run’s project access', () => {
+describe('RunShell — the access it is handed', () => {
   /** Reads back the shell's `projectAccess`: known, and whether it allows `tokens:manage`. */
   function AccessProbe() {
     const { projectAccess } = useOutletContext<RunWindowContext>();
@@ -967,12 +985,8 @@ describe('RunShell — the run’s project access', () => {
     );
   }
 
-  function renderAccessProbe(
-    identity: ComponentProps<typeof RunShell>['identity'],
-    who: { isAdmin: boolean; roles?: Readonly<Record<string, ProjectRole>> },
-  ) {
+  function renderAccessProbe(access: ProjectAccess) {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    seedAccess(client, who);
     return render(
       <QueryClientProvider client={client}>
         <MemoryRouter initialEntries={[`/runs/${RUN.id}`]}>
@@ -981,11 +995,12 @@ describe('RunShell — the run’s project access', () => {
               path="/runs/:runId"
               element={
                 <RunShell
-                  identity={identity}
+                  identity={RUN}
                   status={RUN.status}
                   verdict={RUN.verdict}
                   windowable={RUN.windowable}
                   terminal
+                  projectAccess={access}
                   live={null}
                   capReached={false}
                   onRetry={() => {}}
@@ -1000,45 +1015,40 @@ describe('RunShell — the run’s project access', () => {
     );
   }
 
-  it('hands its sections the reader’s access in the run’s own project', () => {
-    renderAccessProbe(RUN, { isAdmin: false, roles: { checkout: 'manager', search: 'viewer' } });
+  it('hands its sections the access it was given', () => {
+    renderAccessProbe(allowing('tokens:manage'));
     const probe = screen.getByTestId('access-probe');
     expect(probe).toHaveAttribute('data-known', 'true');
     expect(probe).toHaveAttribute('data-tokens', 'true');
   });
 
-  it('answers for the run’s project, not for another one the reader manages', () => {
-    renderAccessProbe(RUN, { isAdmin: false, roles: { checkout: 'viewer', search: 'manager' } });
-    const probe = screen.getByTestId('access-probe');
-    expect(probe).toHaveAttribute('data-known', 'true');
-    expect(probe).toHaveAttribute('data-tokens', 'false');
-  });
-
-  /** A run whose identity names no project yet asks about none — which is not known for anyone, an admin included. */
-  it('knows nothing for a run with no project yet, even for an admin', () => {
-    renderAccessProbe({ ...RUN, project: undefined }, { isAdmin: true, roles: {} });
-    const probe = screen.getByTestId('access-probe');
-    expect(probe).toHaveAttribute('data-known', 'false');
-    expect(probe).toHaveAttribute('data-tokens', 'false');
+  /** The paired negative: a known refusal reaches the sections as one, so the
+   *  case above is not a probe that reads `true` whatever it is handed. */
+  it('hands on a refusal as a refusal, and an unknown answer as unknown', () => {
+    renderAccessProbe(allowing());
+    expect(screen.getByTestId('access-probe')).toHaveAttribute('data-known', 'true');
+    expect(screen.getByTestId('access-probe')).toHaveAttribute('data-tokens', 'false');
+    cleanup();
+    renderAccessProbe(UNKNOWN_ACCESS);
+    expect(screen.getByTestId('access-probe')).toHaveAttribute('data-known', 'false');
+    expect(screen.getByTestId('access-probe')).toHaveAttribute('data-tokens', 'false');
   });
 });
 
 /**
- * ═══ THE RUN'S NOTE IS EDITABLE ONLY BY A ROLE THAT MAY (project access, PR 3) ═══
+ * ═══ THE RUN'S NOTE IS EDITABLE ONLY BY A READER WHO MAY (project access, PR 3) ═══
  *
- * The shell hands `RunNote` `canEdit` from the access it already asked for the
- * run's own project (ruling P13) — `run:note`, which asks for Member. The note
- * itself is the run's, so a reader who may not edit it still reads it.
+ * The shell hands `RunNote` `canEdit` from the access it was handed —
+ * `run:note`, which asks for Member. The note itself is the run's, so a reader
+ * who may not edit it still reads it. Which role allows `run:note` is
+ * `canPerform`'s question (`access.test.ts`); which project the role is read
+ * in is `RunDetail`'s (`RunDetail.access.test.tsx`).
  */
-describe('RunShell — the run’s note follows the reader’s role in its project', () => {
+describe('RunShell — the run’s note follows the access it is handed', () => {
   const NOTE: RunNoteValue = { text: 'flaky environment, ignore', updatedAt: null, updatedBy: null };
 
-  function renderNoteShell(
-    identity: ComponentProps<typeof RunShell>['identity'],
-    who: { isAdmin: boolean; roles?: Readonly<Record<string, ProjectRole>> } | null,
-  ) {
+  function renderNoteShell(identity: ComponentProps<typeof RunShell>['identity'], access: ProjectAccess) {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    if (who !== null) seedAccess(client, who);
     return render(
       <QueryClientProvider client={client}>
         <MemoryRouter initialEntries={[`/runs/${RUN.id}`]}>
@@ -1052,6 +1062,7 @@ describe('RunShell — the run’s note follows the reader’s role in its proje
                   verdict={RUN.verdict}
                   windowable={RUN.windowable}
                   terminal
+                  projectAccess={access}
                   live={null}
                   capReached={false}
                   onRetry={() => {}}
@@ -1066,53 +1077,145 @@ describe('RunShell — the run’s note follows the reader’s role in its proje
     );
   }
 
-  it('shows a viewer the note read-only, with no Edit note', () => {
-    renderNoteShell({ ...RUN, note: NOTE }, { isAdmin: false, roles: { checkout: 'viewer' } });
+  /**
+   * THE SHELL READS THE PROP, AND ASKS NOTHING. With no session and no project
+   * list in the cache, a shell that still looked its access up would know
+   * nothing — no Edit note — and would ask `/auth/get-session` and
+   * `/v1/projects` to find out. The public page has neither to ask, which is
+   * why the answer is handed in.
+   */
+  it('offers Edit note from the access it is handed, with no request to /v1/projects or /auth', async () => {
+    const fetchSpy = vi.fn(() => new Promise<Response>(() => {}));
+    vi.stubGlobal('fetch', fetchSpy);
+    renderNoteShell({ ...RUN, note: NOTE }, allowing('run:note'));
+    expect(await screen.findByRole('button', { name: 'Edit note' })).toBeInTheDocument();
+    const urls = fetchSpy.mock.calls.map((c: unknown[]) => String(c[0]));
+    expect(urls.some((u) => u.includes('/v1/projects'))).toBe(false);
+    expect(urls.some((u) => u.includes('/auth/'))).toBe(false);
+  });
+
+  it('shows the note read-only, with no Edit note, to access that refuses run:note', () => {
+    renderNoteShell({ ...RUN, note: NOTE }, allowing('rules:read'));
     expect(screen.getByTestId('run-note-text')).toHaveTextContent(NOTE.text);
     expect(screen.queryByRole('button', { name: 'Edit note' })).toBeNull();
   });
 
-  it('offers a viewer no Add a note on a run with none', () => {
-    renderNoteShell({ ...RUN, note: null }, { isAdmin: false, roles: { checkout: 'viewer' } });
+  it('offers no Add a note on a run with none to access that refuses run:note', () => {
+    renderNoteShell({ ...RUN, note: null }, allowing());
     expect(screen.queryByRole('button', { name: 'Add a note' })).toBeNull();
   });
 
-  it('offers a member Edit note, and Add a note on a run with none', () => {
-    renderNoteShell({ ...RUN, note: NOTE }, { isAdmin: false, roles: { checkout: 'member' } });
-    expect(screen.getByRole('button', { name: 'Edit note' })).toBeInTheDocument();
-    cleanup();
-    renderNoteShell({ ...RUN, note: null }, { isAdmin: false, roles: { checkout: 'member' } });
+  it('offers Add a note on a run with none to access that allows run:note', () => {
+    renderNoteShell({ ...RUN, note: null }, allowing('run:note'));
     expect(screen.getByRole('button', { name: 'Add a note' })).toBeInTheDocument();
   });
 
-  /** The answer is the RUN'S project's: a member elsewhere is still a viewer here. */
-  it('asks about the run’s own project, not another one the reader may edit in', () => {
-    renderNoteShell({ ...RUN, note: NOTE }, { isAdmin: false, roles: { checkout: 'viewer', search: 'member' } });
-    expect(screen.getByTestId('run-note-text')).toHaveTextContent(NOTE.text);
-    expect(screen.queryByRole('button', { name: 'Edit note' })).toBeNull();
-  });
-
-  /** Review Focus 1: an admin holding only a Viewer row may do everything. */
-  it('offers an admin holding only a Viewer row Edit note', () => {
-    renderNoteShell({ ...RUN, note: NOTE }, { isAdmin: true, roles: { checkout: 'viewer' } });
-    expect(screen.getByRole('button', { name: 'Edit note' })).toBeInTheDocument();
-  });
-
-  /** A run whose identity names no project asks about none, which is known for nobody — an admin included. */
-  it('shows the note of a run with no project read-only, even to an admin', () => {
-    renderNoteShell({ ...RUN, project: undefined, note: NOTE }, { isAdmin: true, roles: {} });
-    expect(screen.getByTestId('run-note-text')).toHaveTextContent(NOTE.text);
-    expect(screen.queryByRole('button', { name: 'Edit note' })).toBeNull();
-  });
-
-  /** Review Focus 2: while the session is held nothing is known, so nothing is offered. */
-  it('offers neither Add a note nor Edit note while access is pending', () => {
-    vi.stubGlobal('fetch', () => new Promise<Response>(() => {}));
-    renderNoteShell({ ...RUN, note: NOTE }, null);
+  /** Nothing is known while access is pending, so nothing is offered. */
+  it('offers neither Add a note nor Edit note while access is unknown', () => {
+    renderNoteShell({ ...RUN, note: NOTE }, UNKNOWN_ACCESS);
     expect(screen.getByTestId('run-note-text')).toHaveTextContent(NOTE.text);
     expect(screen.queryByRole('button', { name: 'Edit note' })).toBeNull();
     cleanup();
-    renderNoteShell({ ...RUN, note: null }, null);
+    renderNoteShell({ ...RUN, note: null }, UNKNOWN_ACCESS);
     expect(screen.queryByRole('button', { name: 'Add a note' })).toBeNull();
+  });
+});
+
+/**
+ * ═══ THE SHARE BUTTON: WHO MAY, AND ON WHICH RUNS (spec 6.4) ═══
+ *
+ * Beside the run's heading, for a reader with `run:share` (Member) on a run
+ * that has finished — complete or incomplete, the two statuses the API will
+ * share — and never behind a public link, whatever the access says: a link's
+ * reader creates nothing. Rendering the button asks nothing; the dialog reads
+ * the run's links only once it opens.
+ */
+describe('RunShell — the Share button', () => {
+  it.each(['complete', 'incomplete'] as const)('offers Share on a %s run to a reader who may share', (status) => {
+    const fetchSpy = vi.fn(() => new Promise<Response>(() => {}));
+    vi.stubGlobal('fetch', fetchSpy);
+    renderShellWith({ status, projectAccess: allowing('run:share') });
+    expect(screen.getByRole('button', { name: 'Share' })).toBeInTheDocument();
+    expect(fetchSpy.mock.calls.map((c: unknown[]) => String(c[0])).filter((u) => u.includes('public-links'))).toEqual([]);
+  });
+
+  it.each(['pending', 'parsing', 'running', 'failed'] as const)('offers no Share on a %s run', (status) => {
+    renderShellWith({ status, projectAccess: allowing('run:share') });
+    expect(screen.getByRole('navigation', { name: 'Run sections' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Share' })).toBeNull();
+  });
+
+  it('offers no Share to a reader who may not', () => {
+    renderShellWith({ projectAccess: allowing('run:note') });
+    expect(screen.getByRole('navigation', { name: 'Run sections' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Share' })).toBeNull();
+  });
+
+  it('offers no Share behind a public link, even to an access that allows it', () => {
+    const secret = 'ppl_Q7x_Kd-9mVb2LpN4rTzW8yHc6uJf3sEa1oGiX5nBkY0';
+    const presentation: RunPresentation = { kind: 'public', secret, expiresAt: '2026-11-13T09:30:00.000Z' };
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={[`/share/${secret}`]}>
+          <RunPresentationProvider value={presentation}>
+            <Routes>
+              <Route
+                path="/share/:token"
+                element={
+                  <RunShell
+                    identity={RUN}
+                    status="complete"
+                    verdict={RUN.verdict}
+                    windowable={RUN.windowable}
+                    terminal
+                    projectAccess={allowing('run:share', 'run:note')}
+                    live={null}
+                    capReached={false}
+                    onRetry={() => {}}
+                  />
+                }
+              >
+                <Route index element={<div />} />
+              </Route>
+            </Routes>
+          </RunPresentationProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    // The paired positive: the shell drew, and knew this page as the Summary.
+    expect(screen.getByRole('region', { name: 'Release decision' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Share' })).toBeNull();
+  });
+
+  /**
+   * CLOSING THE DIALOG HANDS THE CARET BACK TO SHARE, wherever the header put
+   * it: beside the badges on a desktop, inside Run details on a phone. The
+   * second is the one with the longer way back if focus is lost — the reader
+   * would have to find the disclosure again from the top of the page.
+   */
+  it.each([
+    ['a desktop', false],
+    ['a phone, inside Run details', true],
+  ])('returns focus to Share when the dialog closes, on %s', async (_where, compact) => {
+    useIsCompactMock.mockReturnValue(compact);
+    // The dialog's read of the run's links never answers: what is asserted is
+    // the way out, not what the dialog shows.
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})));
+    renderShellWith({ projectAccess: allowing('run:share') });
+    const user = userEvent.setup();
+    if (compact) {
+      const details = screen.getByTestId('run-metadata');
+      await user.click(within(details).getByTestId('run-metadata-toggle'));
+      expect(details).toHaveAttribute('open');
+      expect(details).toContainElement(screen.getByRole('button', { name: 'Share' }));
+    }
+    const share = screen.getByRole('button', { name: 'Share' });
+
+    await user.click(share);
+    await screen.findByRole('dialog', { name: 'Share this run' });
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await waitFor(() => expect(share).toHaveFocus());
   });
 });

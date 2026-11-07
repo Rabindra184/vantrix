@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { Assertion, RunIdentity, RunResponse } from '@perfportal/contracts';
 import RunDecisionBand from '../src/routes/RunDecisionBand';
 import { runSummaryJson } from '../src/routes/runExport';
+import { RunPresentationProvider, type RunPresentation } from '../src/routes/presentation';
 
 afterEach(cleanup);
 
@@ -49,6 +50,8 @@ function renderBand(
     toolAssertions: RunResponse['toolAssertions'];
     /** Where the router is when the band renders; its search is the reader's. */
     url: string;
+    /** Who the band is shown to: the app's reader, or a public link's. */
+    presentation: RunPresentation;
   }> = {},
 ) {
   const props = {
@@ -58,17 +61,20 @@ function renderBand(
     assertions: ASSERTIONS as readonly Assertion[] | undefined,
     toolAssertions: undefined as RunResponse['toolAssertions'],
     url: '/',
+    presentation: { kind: 'app' } as RunPresentation,
     ...over,
   };
   return render(
     <MemoryRouter initialEntries={[props.url]}>
-      <RunDecisionBand
-        identity={props.identity}
-        status={props.status}
-        verdict={props.verdict}
-        assertions={props.assertions}
-        toolAssertions={props.toolAssertions}
-      />
+      <RunPresentationProvider value={props.presentation}>
+        <RunDecisionBand
+          identity={props.identity}
+          status={props.status}
+          verdict={props.verdict}
+          assertions={props.assertions}
+          toolAssertions={props.toolAssertions}
+        />
+      </RunPresentationProvider>
     </MemoryRouter>,
   );
 }
@@ -627,5 +633,38 @@ describe('RunDecisionBand — a verdict changed by exact statistics', () => {
       expect(screen.queryByRole('button', { name: 'About the verdict change' })).toBeNull();
       cleanup();
     }
+  });
+});
+
+/**
+ * ═══ BEHIND A PUBLIC LINK, THE BAND STAYS ON THE RUN (spec 6.3) ═══
+ *
+ * Its fragment link is a move within the Summary, and the Summary there is the
+ * link itself. Compare reads the run's cohort, which a link may not, so the
+ * action is not offered at all — never a link to a page that would refuse.
+ * The export stays: it writes what the page already shows.
+ */
+describe('RunDecisionBand — behind a public link', () => {
+  const SECRET = 'ppl_Q7x_Kd-9mVb2LpN4rTzW8yHc6uJf3sEa1oGiX5nBkY0';
+  const PUBLIC: RunPresentation = { kind: 'public', secret: SECRET, expiresAt: '2026-11-13T09:30:00.000Z' };
+
+  it('points its fragment link at the link’s own Summary, keeping the search', () => {
+    renderBand({
+      verdict: 'not_evaluated',
+      assertions: [],
+      toolAssertions: TOOL,
+      url: `/share/${SECRET}?from=1000&to=5000`,
+      presentation: PUBLIC,
+    });
+    const link = screen.getByRole('link', { name: /simulation assertion/i });
+    expect(link.getAttribute('href') ?? '').toMatch(/^\/share\//);
+    expect(link).toHaveAttribute('href', `/share/${SECRET}?from=1000&to=5000#simulation-assertions`);
+  });
+
+  it('offers no Compare action, and keeps the export', () => {
+    renderBand({ presentation: PUBLIC });
+    expect(screen.queryByRole('link', { name: 'Compare runs' })).toBeNull();
+    expect(screen.queryAllByRole('link')).toHaveLength(0);
+    expect(screen.getByRole('button', { name: 'Export SLA summary (JSON)' })).toBeInTheDocument();
   });
 });

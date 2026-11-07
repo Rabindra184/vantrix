@@ -153,7 +153,7 @@ function renderSummary(window: RunWindowContext['window']) {
             element={
               <Outlet
                 context={
-                  {
+                  { runId: RUN_ID,
                     window,
                     durationMs: READY_RUN.durationMs ?? null,
                     liveDurationMs: null, warmupMs: null,

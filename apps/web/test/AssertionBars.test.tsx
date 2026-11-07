@@ -11,6 +11,7 @@ import {
   SimulationAssertionsBar,
   outcomeSummary,
 } from '../src/routes/AssertionBars';
+import { RunPresentationProvider, type RunPresentation } from '../src/routes/presentation';
 
 /**
  * THE TWO ASSERTION BARS (summary/report, task 4).
@@ -648,5 +649,37 @@ describe('the two bars name two systems with two nouns', () => {
     // The exclusivity, in both directions.
     expect(h2s.filter((h) => /assertion/i.test(h))).toEqual(['Simulation assertions']);
     expect(h2s.filter((h) => /gate/i.test(h))).toEqual(['Platform gates']);
+  });
+});
+
+/**
+ * ═══ BEHIND A PUBLIC LINK, A CHECK'S TARGET IS TEXT (spec 6.3) ═══
+ *
+ * A target links into the request's or group's own page, which a link does not
+ * reach. The name the tool wrote is still said — it is what the check is about.
+ */
+describe('SimulationAssertionsBar — behind a public link', () => {
+  const PUBLIC: RunPresentation = {
+    kind: 'public',
+    secret: 'ppl_Q7x_Kd-9mVb2LpN4rTzW8yHc6uJf3sEa1oGiX5nBkY0',
+    expiresAt: '2026-11-13T09:30:00.000Z',
+  };
+
+  it('names a request or group target without linking it', () => {
+    at(
+      '/r',
+      <RunPresentationProvider value={PUBLIC}>
+        <SimulationAssertionsBar
+          runId={RUN_ID}
+          assertions={[details(['Search'], 'failed'), details(['Catalog'], 'failed')]}
+          stats={STATS.stats}
+        />
+      </RunPresentationProvider>,
+    );
+    const cards = screen.getAllByTestId('simulation-card');
+    expect(cards).toHaveLength(2);
+    expect(screen.queryAllByRole('link')).toHaveLength(0);
+    expect(cards[0]).toHaveTextContent('Target: Search');
+    expect(cards[1]).toHaveTextContent('Target: Catalog');
   });
 });

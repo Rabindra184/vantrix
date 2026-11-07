@@ -126,7 +126,7 @@ function renderCharts({
             element={
               <Outlet
                 context={
-                  { window: null, durationMs: null, liveDurationMs: null, warmupMs: null, live, projectAccess: UNKNOWN_ACCESS } satisfies RunWindowContext
+                  { runId: RUN_ID, window: null, durationMs: null, liveDurationMs: null, warmupMs: null, live, projectAccess: UNKNOWN_ACCESS } satisfies RunWindowContext
                 }
               />
             }
@@ -285,7 +285,7 @@ describe('RunReport — live', () => {
               element={
                 <Outlet
                   context={
-                    {
+                    { runId: RUN_ID,
                       window: null, durationMs: null, liveDurationMs: null, warmupMs: null,
                       live: liveWith({ count: 1200 }),
                       projectAccess: UNKNOWN_ACCESS,
@@ -374,7 +374,7 @@ describe('RunReport — live', () => {
                 element={
                   <Outlet
                     context={
-                      {
+                      { runId: RUN_ID,
                         window: null, durationMs: null, liveDurationMs: null, warmupMs: null,
                         live: liveWith({ count: 1200 }),
                         projectAccess: UNKNOWN_ACCESS,

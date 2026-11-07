@@ -282,7 +282,7 @@ function renderReport({
         <Routes>
           <Route
             path="/runs/:runId"
-            element={<Outlet context={{ window, durationMs: 63161, liveDurationMs: null, warmupMs: null, live: null, projectAccess: UNKNOWN_ACCESS } satisfies RunWindowContext} />}
+            element={<Outlet context={{ runId: RUN_ID, window, durationMs: 63161, liveDurationMs: null, warmupMs: null, live: null, projectAccess: UNKNOWN_ACCESS } satisfies RunWindowContext} />}
           >
             <Route
               path="report"

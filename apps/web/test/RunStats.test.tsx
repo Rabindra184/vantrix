@@ -9,6 +9,7 @@ import type { Assertion, StatsResponse, TrendRun } from '@perfportal/contracts';
 import { isResolvableSlaMetric } from '@perfportal/contracts';
 import reference from './fixtures/reference-run.json';
 import RunStats from '../src/routes/RunStats';
+import { RunPresentationProvider } from '../src/routes/presentation';
 import { STATUS_COLORS, SURFACE_TOKENS, type StatusRole, type SurfaceRole } from '../src/charts/theme';
 
 /** WCAG 2 contrast between two `#rrggbb` colours. */
@@ -819,5 +820,36 @@ describe('RunStats — clean tiles', () => {
         baseline={trendRun({ ...shared, id: BASE_ID, runNumber: 10 })} />,
     );
     expect(screen.queryByTestId('comparison-note')).toBeNull();
+  });
+});
+
+/**
+ * ═══ BEHIND A PUBLIC LINK, THE TILES SHOW THEIR VALUES ALONE (spec 6.3) ═══
+ *
+ * A baseline is another run of the cohort, and every delta links to it. The
+ * Summary never asks for one there; handed one anyway, the tiles still say
+ * nothing about it — no delta, no link to a run the link was not made for, no
+ * comparison row.
+ */
+describe('RunStats — behind a public link', () => {
+  it('draws no delta, no link and no comparison row, whatever baseline it is handed', () => {
+    renderStats(
+      <RunPresentationProvider
+        value={{ kind: 'public', secret: 'ppl_Q7x_Kd-9mVb2LpN4rTzW8yHc6uJf3sEa1oGiX5nBkY0', expiresAt: '2026-11-13T09:30:00.000Z' }}
+      >
+        <RunStats
+          exact={false}
+          stats={stats}
+          peakUsers={12}
+          runStatus="complete"
+          current={trendRun({ runNumber: 11 })}
+          baseline={trendRun({ id: '22222222-2222-4222-8222-222222222222', runNumber: 10, environment: 'production' })}
+        />
+      </RunPresentationProvider>,
+    );
+    // The paired positive: the tiles drew.
+    expect(screen.getByTestId('stat-error-rate')).toBeInTheDocument();
+    expect(screen.queryAllByRole('link')).toHaveLength(0);
+    expect(screen.getByRole('region', { name: 'Run totals' })).not.toHaveTextContent(/vs /);
   });
 });

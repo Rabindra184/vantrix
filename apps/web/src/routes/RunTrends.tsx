@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link, useParams } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { trendsQuery } from '../api/metrics';
 import TrendsCharts from '../charts/TrendsCharts';
 import { linkButtonClasses } from '../components/Button';
@@ -8,7 +8,7 @@ import { CompareTabIcon } from '../components/icons';
 import LiveNotice from './LiveNotice';
 import { Payload, type Slot } from './payload';
 import { runComparePath } from './paths';
-import { useRunTerminal } from './useRunWindow';
+import { useRunIdFromShell, useRunTerminal } from './useRunWindow';
 import DesktopOnly from './DesktopOnly';
 import useIsCompact from '../useIsCompact';
 
@@ -35,7 +35,7 @@ const PERCENTILES: Slot = {
 const THROUGHPUT: Slot = { id: 'trend-throughput', title: 'Throughput across runs' };
 
 export default function RunTrends() {
-  const { runId } = useParams<{ runId: string }>();
+  const runId = useRunIdFromShell();
   const { terminal } = useRunTerminal(runId);
   // §22.6: deep analysis is a desktop task. Gated on the QUERY as well as the
   // render, so a phone does not fetch a payload it has been told not to draw.
@@ -56,8 +56,8 @@ export default function RunTrends() {
   // may vary; the hook itself may not become conditional.
   const wanted = !compact || shown;
   const trends = useQuery({
-    ...trendsQuery(runId ?? ''),
-    enabled: runId !== undefined && terminal && wanted,
+    ...trendsQuery(runId),
+    enabled: terminal && wanted,
   });
 
   // AHEAD OF THE COMPACT GATE BELOW, deliberately. This notice is cheap
