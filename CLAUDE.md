@@ -128,10 +128,10 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **302 files / 5138 tests**, it
+`nvm use` first, and if a run reports fewer than **311 files / 5320 tests**, it
 did not run everything — nor did an integration run reporting fewer than
-**281 files / 4504 tests**, an e2e run fewer than **232**, or a
-`pnpm test:e2e:cross` run fewer than **696** (232 on each of three engines).
+**288 files / 4679 tests**, an e2e run fewer than **238**, or a
+`pnpm test:e2e:cross` run fewer than **714** (238 on each of three engines).
 (Update those numbers when a sub-project adds suites, or the next reader
 calibrates against a stale floor and a silently-skipped run looks like a
 pass.)
@@ -150,6 +150,226 @@ still Chromium and still 102; `pnpm test:e2e:cross` was 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The public-links branch (`feat/public-links`, gap #6 of
+`docs/superpowers/research/2026-11-03-ge-page-parity/README.md`, spec
+`docs/superpowers/specs/2026-11-06-public-links-and-custom-report-design.md`,
+plan `docs/superpowers/plans/2026-11-06-public-links.md`) added NINE unit
+files: `packages/contracts/test/public-links.test.ts` (22),
+`packages/core/test/public-link-secret.test.ts` (4), and in `apps/web/test`
+`expiry` (16), `fetch.publicLink` (23), `presentation` (8), `RunDetail.access`
+(7), `PublicLinkApp` (21), `LinkUnavailable` (8) and `ShareDialog` (19). It
+also added cases across about twenty-five existing files. Unit went from
+**302 / 5138 to 311 / 5320**.
+
+Integration gains:
+
+  - the four new `.ts` files;
+  - THREE integration files: `apps/api/test/public-links.integration.test.ts`
+    (28), `public-link-credential.integration.test.ts` (28) and
+    `packages/persistence/test/public-link.integration.test.ts` (10);
+  - cases in `access-routes`, `openapi`, `security-headers`, `session-auth`,
+    `admin` and `ai-analysis`.
+
+Integration went from **281 / 4504 to 288 / 4679**, collected by `vitest
+list`. **e2e went from 232 to 238** (`apps/web/e2e/public-links.spec.ts`, 6).
+`test:e2e:cross` is **714** by arithmetic. The same spec also designs gap #3
+(custom report and PDF export, §9); that part is not built.
+
+**A RUN CAN BE SHARED WITH SOMEONE WHO HAS NO ACCOUNT. THE LINK IS
+READ-ONLY, EXPIRES ON A DATE, AND ONE SWITCH TURNS EVERY LINK OFF.**
+
+  - **Who creates links.** A Member clicks Share on a finished run (the
+    `run:share` action, session-only). The routes are
+    `POST / GET / DELETE /v1/runs/:id/public-links`.
+  - **Expiry.** The choices are 1 week to 2 years, or a custom date. Expiry
+    is capped at 732 days, and there is no "never".
+  - **Which runs.** Only a `complete` or `incomplete` run can be shared;
+    anything else is 409 `RUN_NOT_SHAREABLE`. The live socket is
+    session-only, so a run still streaming cannot be shared.
+  - **The secret.** It is `ppl_` plus 43 base64url characters, shown once in
+    a selectable field (R1) and stored as its SHA-256. It is not Argon2: 256
+    bits of entropy gain nothing from a slow hash, and a Report page makes
+    about twenty requests.
+  - **The switch.** `org.public_links_enabled` defaults to false and lives in
+    Administration › Settings. Turning it off suspends every link, and the
+    Share list badges each one "Suspended". Turning it back on restores every
+    link that has not expired or been revoked.
+
+**THE CREDENTIAL IS A THIRD AUTHORIZATION SCHEME. THE GUARD DECIDES IT FIRST
+AND DENIES BY DEFAULT.**
+
+  - **The scheme.** Requests carry `Authorization: PublicLink <secret>`. One
+    query checks the link, its org's switch and its run.
+  - **Refusals.** They are 401, checked in this order: `LINK_NOT_FOUND`, then
+    `LINK_REVOKED`, `PUBLIC_LINKS_DISABLED`, `LINK_EXPIRED`. Revoked comes
+    first because a revoked link never comes back; a disabled one may.
+  - **What a link may read.** `AccessGuard` lets a link through on
+    `@PublicLinkOnly` (`GET /v1/public-link`) and on fifteen `@LinkReadable`
+    GETs, for its own run only.
+  - **Everything else.** Any other route answers the same 404 `runNotFound`
+    an invisible run gets. A route with no `:id` answers 404 "Nothing here
+    can be read with a public link." (R3). No route is "forbidden" for one
+    reason and "not found" for another, so a link cannot map the API.
+  - **Deliberately not readable.** `/trends` returns the whole cohort, other
+    runs' ids included. `/ai-analysis` and `/scatter` are excluded as well.
+  - **Caching.** Every link response carries `Cache-Control: private,
+    no-store`. The share page's HTML carries `no-store`, `noindex` and
+    `no-referrer`.
+  - **Redaction.** A link reader gets `note.updatedBy: null`. The note's
+    text stays; the author's name does not leave the install.
+  - **Rate of change.** Nothing is cached between requests, so a revoke, an
+    expiry or the switch takes effect on the next request.
+
+**THE ORDER INSIDE THE GUARD IS WHERE THE LEAK WAS.** One mutation moved the
+link branch below `AccessGuard`'s `action === undefined` early return. Then
+`GET /v1/runs` answered a link holder 200 with the project's whole run list.
+A deny-by-default branch has to run before any early allow, and the
+credential test file's "a route that names no run" case is what pins it.
+
+**THE PUBLIC PAGE IS THE RUN SHELL, AND THE SECTIONS READ THE RUN ID FROM THE
+SHELL, NOT THE URL.**
+
+  - **The plan's wrong assumption.** The plan assumed the tabs would work
+    unchanged under `/share/:token/*`. That URL carries no run id, and the
+    sections read `useParams().runId`. They take it from `RunShell`'s outlet
+    context now (R8).
+  - **Where links go.** `RunPresentation` (app or public) and `useRunPaths`
+    decide every link. The public page draws Summary, Report and Logs (Logs
+    for runner runs only). It draws no Trends, Compare, AI card, Share or
+    editing, and no link on it leaves `/share/<secret>`.
+  - **No cookie, ever.** The credential is computed from the path and sent
+    with `credentials: 'omit'`, so a signed-in sharer who opens their own
+    link sees exactly what a stranger sees.
+  - **Refusals mid-page.** The page has its own QueryClient. A refusal from
+    any read swaps the whole page for `LinkUnavailable`.
+  - **Case.** The `share` segment is matched case-insensitively (R7), because
+    React Router matches routes that way. Otherwise `/Share/<secret>` would
+    render the public page with reads carrying a cookie and no link.
+
+**A RESPONSE CARRYING A ONE-TIME SECRET IS `no-store`, AND THE FIRST RULING
+GOT THIS WRONG.** Ruling R6 first let the 201 that carries the secret go out
+uncached, on the grounds that a cookie-authenticated POST is not cached
+anyway. That is true and beside the point. That response is the only copy of
+a credential, and it carries `no-store` now. Token minting's own 201 has the
+same gap; that is recorded as a follow-up and not widened into this branch.
+
+**RED-VERIFIED** from committed checkpoints, anchor counts asserted (the task
+reports held about eighty more):
+
+```
+  T4  the run lookup made unscoped              admin-cross-org: 201, a link written under the
+                                                other org's tenant
+  T5  link branch after the early return        GET /v1/runs 200 with the run list to a link holder
+      disabled checked before revoked           the revoked+disabled case alone
+      expiry at exactly now treated as active   the boundary case alone
+      the AuthGuard @Scopes skip removed        four cases (a link told a 403 from a 404)
+  T6  an extra @LinkReadable on /trends         the allowlist equality + the matrix's other-route row
+      the 202 builder skips the redaction       the running-run redaction case alone
+      the guard ignores the id                  the other-run rows, all 15 answering 200
+  T9  public RunSummary asks /trends            the public RunSummary case
+      Revoke without confirmation               the revoke case
+  T10 a public request link falls back to app   the e2e anchors-leading-out-of-the-link case
+      /trends enabled in public mode            the e2e reads-a-link-may-not-make case
+  fin @LinkReadable removed from /events        the stranger-reads-Logs case alone (11 vs 0)
+```
+
+**WHAT WAS RUN.** The setup: Node v22.19.0, database `perfportal_links`,
+Redis db 13 flushed through `infra-redis-1`, bucket `perfportal-links`, e2e
+port 3880 (AI stub on 3881), on `fa0d7e0d`. The results:
+
+  - `pnpm build`, `typecheck` and `lint` exit 0, each by its own exit code.
+  - `test:unit` **311 / 5320**, exit 0, zero `Errors` lines.
+  - `test:integration` COLLECTED **288 / 4679** and passed **288 / 4679**,
+    exit 0, zero failures. **THE LOAD GATE NEVER OPENED.** After 45 minutes
+    the suite started anyway, at a load of 54.1 / 44.7 with 7.5 of 9.2 GB of
+    swap in use, and took 31 minutes.
+  - `PERFPORTAL_E2E_PORT=3880 pnpm test:e2e --workers=2` read back
+    `Running 238 tests using 2 workers`: **238 passed**, exit 0, no retry,
+    starting at a load of 70.5.
+  - `public-links.spec.ts` ran **15 / 15** on three engines when it had five
+    cases. Its sixth case (Logs) has run on Chromium only, and
+    `test:e2e:cross` was not run whole.
+
+**THE REAL CHECK** ran on a stack of its own: database
+`perfportal_links_real`, Redis db 13, bucket `perfportal-links-real`, the API
+on :3890 and the worker from `dist`, and plugin `0.3.0-SNAPSHOT` from Maven
+local.
+
+  - **The run.** `ParitySimulation` ran once through the Gradle plugin: run
+    `65276f18`, `complete`, `exact-v1`, **895 / 874 / 21**, `verified`.
+    Gatling exited 1 on its deliberate Search p95 (1853 by Gatling, 1835
+    exact).
+  - **Setup.** Creating a link needs a session, so the link and the switch
+    were written through the repositories' own SQL shape.
+  - **Reads through the link.** All fifteen allowlisted reads came back
+    byte-identical to the bearer token's, each `private, no-store`. `/trends`,
+    `/ai-analysis`, `/scatter`, the Share list, a note PUT, a link POST,
+    another uuid and a non-uuid all answered 404 `runNotFound`. `/v1/runs`,
+    `/v1/projects` and `/v1/admin/settings` answered the fixed sentence. A
+    note written by the admin read `updatedBy: null` through the link and the
+    admin's name through the bearer token.
+  - **The page in a browser.** I read `/share/<secret>` in the built-in pane,
+    through a local 302 redirect so the secret stayed in a 0600 file (R13).
+    - The tiles read 2.35% / 895 / 8 / 645 ms, equal to the API.
+    - The Report's Search row read 160 / 0 / 0.00 / 2.58 / 556 / 1835 / 2280
+      / 2283, equal to the API.
+    - The tabs were Summary and Report only. A plugin run has no runner job,
+      so it has no Logs.
+    - The header read "Read-only link · expires 14 Nov 2026".
+    - All three links on the page stayed under `/share/<secret>`.
+  - **Lifecycle.** With the switch off, the page read "Public links are
+    turned off for this organisation."; switched back on, the run returned.
+    Expired, it read "This link expired on 7 Nov 2026, 10:27 GMT+5:30."
+    Revoked, it read "This link has been revoked.", and still did with the
+    switch off.
+  - **Not driven.** The signed-in half, the Share dialog and the Settings
+    switch, is the user's to try.
+
+**RULINGS**:
+
+  - (1) The created URL stays on screen and selectable; the clipboard only
+    changes Copy's feedback.
+  - (2) Task 5 documented `GET /v1/public-link` in the OpenAPI document.
+  - (3) A refused route with no `:id` answers one fixed 404 sentence.
+  - (4) The starting floors are CI's, measured on #300's tree.
+  - (5) `publicLinksEnabled` is `.optional()` on the settings response, so an
+    older pod blanks nothing.
+  - (6, revised) The 201 carrying the secret is `no-store`.
+  - (7) The `share` segment is matched case-insensitively.
+  - (8) The sections read the run id from the shell.
+  - (9) On a phone, Share sits inside Run details, to keep
+    `mobile.spec.ts`'s 812 fold.
+  - (10) A dialog closed while Create is pending is left alone.
+  - (11) The floors are this entry's.
+  - (12) The percent-encoded share path is left alone.
+  - (13) I read the real check's public half; the signed-in half is the
+    user's.
+
+**KNOWN AND LEFT:**
+
+  - **Web.**
+    - A dialog closed mid-Create, or a phone/desktop breakpoint crossed with
+      the dialog open, leaves an active link whose URL was never shown. It is
+      listed and revocable (R10).
+    - `/%73hare/<secret>` renders the public page, but `spa.ts` and
+      `fetch.ts` test the raw path. That URL is served `no-cache` without
+      `noindex`, and its reads carry the cookie; it fails closed (R12).
+    - The disabled page's second line, "Ask whoever sent it for a new
+      link.", does not help while the switch is off, because a new link would
+      be suspended too. Found by the real check.
+    - The public header shows the expiry's time and zone where the spec's
+      example shows a date.
+  - **API.**
+    - Token minting's 201 carries a one-time secret with no `no-store`.
+    - The `PublicLink` scheme word is case-sensitive, although RFC 7235 says
+      case-insensitive; it fails closed.
+    - The fifteen operations' documented 401 does not name the link codes.
+    - `/telemetry` is project- and time-scoped, so a link shows any generator
+      that reported in the run's window, as the run page does.
+    - A PUT naming both settings fields is two UPDATEs.
+  - **Gap #3.** The custom report and PDF export are designed in the spec's
+    §9 and not built.
 
 The Report pickers branch (`feat/report-pickers`, gap #1 of
 `docs/superpowers/research/2026-11-03-ge-page-parity/README.md`, spec
