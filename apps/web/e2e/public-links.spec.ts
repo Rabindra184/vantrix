@@ -2,8 +2,11 @@ import { expect, test, type BrowserContext, type Locator, type Page, type Reques
 import {
   enableOrgAi,
   expireLink,
+  QUEUED_EVENT_COUNT,
+  RUNNER_RUN_EVENTS,
   seedAdmin,
   seedProjectMember,
+  seedRunnerRunWithEvents,
   seedRunWithData,
   setPublicLinks,
 } from './fixtures.js';
@@ -32,6 +35,10 @@ import { runPath } from '../src/routes/paths.js';
  * absent on both pages; it has groups (`Cart` among them) for the Report's
  * picker, and a failing simulation assertion on `Search`, whose bar opens itself
  * on the Summary and names a request — the anchor case 2's guard watches.
+ *
+ * THE LOGS TAB IS THE LAST CASE'S, on a run of its own: the runner-run fixture
+ * `run-logs.spec.ts` reads (`seedRunnerRunWithEvents`), outside the journey,
+ * so the third tab a link reaches is read signed out through the link too.
  */
 
 /* ======================================================================== *
@@ -497,4 +504,61 @@ test.describe.serial('a public run link', () => {
     await expectLinkState(strangerPage, /^This link expired on .+\.$/);
     await expect(strangerPage.getByRole('heading', { level: 1 })).toContainText(String(expiredAt.getFullYear()));
   });
+});
+
+/**
+ * ═══ THE THIRD TAB: A RUNNER RUN'S LOGS, SIGNED OUT ═══
+ *
+ * The journey's run has no runner job, so its link reaches two tabs; spec 7
+ * asks for all three. This run is the runner-run fixture (`seedRunnerRunWithEvents`):
+ * its job owns the run and carries the API's three queue events and the
+ * runner's eight, so the public page offers Logs and `RunLogs` reads
+ * `/v1/runs/:id/events` under the public client — through the link alone, as
+ * every other read. The tab is shown on the admin's own run page first, so its
+ * presence behind the link is the link's, not a run that happens to have one.
+ *
+ * WHAT THE FIXTURE SUPPLIES IS READ FROM THE FIXTURE (`run-logs.spec.ts`'
+ * rule): the line count and the closing line come from `RUNNER_RUN_EVENTS`.
+ */
+test('a stranger reads a runner run’s Logs tab through its link, and only through it', async ({ browser, page }, testInfo) => {
+  test.setTimeout(120_000);
+  const admin = await seedAdmin();
+  const runId = await seedRunnerRunWithEvents(admin.orgId);
+  await setPublicLinks(admin.orgId, true);
+  await signIn(page, admin);
+  await page.goto(runPath(runId));
+  await expect(sections(page).getByRole('link', { name: 'Logs', exact: true })).toBeVisible();
+  const url = await createLink(page);
+  const secret = new URL(url).pathname.slice('/share/'.length);
+
+  const stranger = await browser.newContext({ baseURL: testInfo.project.use.baseURL });
+  try {
+    expect(await stranger.cookies(), 'the stranger carries no cookie at all').toEqual([]);
+    const strangerPage = await stranger.newPage();
+    const recorder = recordApiReads(strangerPage);
+    try {
+      await strangerPage.goto(url);
+      await expect(sections(strangerPage).getByRole('link')).toHaveText(['Summary', 'Report', 'Logs']);
+      await sections(strangerPage).getByRole('link', { name: 'Logs', exact: true }).click();
+      await expect(strangerPage).toHaveURL(new RegExp(`/share/${secret}/logs$`));
+
+      const log = strangerPage.getByRole('log', { name: 'Run events' });
+      const lines = log.getByTestId('run-log-line');
+      await expect(lines).toHaveCount(QUEUED_EVENT_COUNT + RUNNER_RUN_EVENTS.length);
+      await expect(lines.first()).toContainText('[perfportal] Start requested.');
+      const closing = RUNNER_RUN_EVENTS.at(-1);
+      if (closing === undefined || !('message' in closing)) throw new Error('the fixture must end on a message event');
+      await expect(lines.last()).toContainText(`[runner] ${closing.message}`);
+    } finally {
+      recorder.stop();
+    }
+    expect(
+      recorder.reads.map((request) => routeOf(request, runId)),
+      'the Logs tab read the run’s events',
+    ).toContain('GET /v1/runs/:id/events');
+    expectOnlyLinkReads(recorder.reads, runId);
+    await expectReadThroughTheLink(recorder.reads, secret);
+  } finally {
+    await stranger.close();
+  }
 });
