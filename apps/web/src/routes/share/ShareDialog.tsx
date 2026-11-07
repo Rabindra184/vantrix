@@ -5,12 +5,12 @@ import type { PublicLink, PublicLinkListResponse } from '@perfportal/contracts';
 import { ProblemError } from '../../api/fetch';
 import { createPublicLink, fetchPublicLinks, publicLinksQueryKey, revokePublicLink } from '../../api/publicLinks';
 import Badge from '../../components/Badge';
-import Button from '../../components/Button';
+import Button, { buttonVariants } from '../../components/Button';
 import FormField, { errorId } from '../../components/FormField';
 import { CheckIcon, CloseIcon, CopyIcon, ShareIcon } from '../../components/icons';
 import { ErrorState, LoadingState } from '../../components/States';
 import { INPUT } from '../../components/tableStyles';
-import { formatInstant } from '../format';
+import { formatInstant, formatInstantSeconds } from '../format';
 import { PUBLIC_LINK_STATE } from '../marks';
 import { EXPIRY_PRESETS, customDateBounds, expiryFor, type ExpiryPreset } from './expiry';
 
@@ -60,10 +60,15 @@ export default function ShareDialog({ runId }: { readonly runId: string }) {
     <div className="flex flex-col gap-5">
       <div className="flex items-start justify-between gap-3">
         <Dialog.Title className="text-base font-semibold tracking-tight text-primary">Share this run</Dialog.Title>
+        {/* A raw `<button>` under `asChild`, as `ShareRunButton`'s trigger is.
+            Close itself puts no ref on its child (measured: `<Button>` here
+            drew no warning and closed correctly), so this is the house
+            pattern rather than a fix — kept so a ref added here later is not
+            the one `Button` silently drops. */}
         <Dialog.Close asChild>
-          <Button size="sm" variant="ghost" aria-label="Close">
+          <button type="button" aria-label="Close" className={buttonVariants({ variant: 'ghost', size: 'sm' })}>
             <CloseIcon className="h-4 w-4" />
-          </Button>
+          </button>
         </Dialog.Close>
       </div>
       <Body runId={runId} links={links} />
@@ -131,6 +136,12 @@ function CreateLink({ runId }: { readonly runId: string }) {
   const expiry = candidate === null || Number.isNaN(candidate.getTime()) ? null : candidate;
 
   const create = useMutation({
+    /* `gcTime: 0` KEEPS THE SECRET OUT OF THE CLIENT'S CACHE. A mutation's
+       answer — here `{ link, secret }` — stays in the app-wide mutation cache
+       after its observer goes, five minutes by default, where anything holding
+       the client can read it. Collected the moment this form unmounts, the
+       secret lives exactly as long as the dialog that shows it. */
+    gcTime: 0,
     mutationFn: () => createPublicLink(runId, expiryFor(preset, new Date(), customDate).toISOString()),
     onSuccess: (response) => {
       setUrl(`${window.location.origin}/share/${response.secret}`);
@@ -296,10 +307,32 @@ function CreatedLink({ url }: { readonly url: string }) {
  * stops the link for everyone who has it, at once. ONE ARMED AT A TIME, so
  * there is never more than one primed destructive control on screen, and
  * neither button is `primary` — Create is this dialog's one primary.
+ *
+ * FOCUS FOLLOWS THE READER'S OWN ACTION, and the list decides it, not each
+ * row. Arming swaps Revoke for its confirmation, and a focused element that is
+ * removed drops focus to the body — inside a modal, a reader who no longer
+ * knows where they are. So:
+ *
+ *   - arming focuses that row's Cancel (never the destructive button: a second
+ *     Enter must not revoke);
+ *   - Cancel hands focus back to that row's Revoke;
+ *   - Confirm focuses the row itself, which survives both the button the
+ *     reader pressed and, once the list reads again, the Revoke beside it.
+ *
+ * A PER-ROW EFFECT KEYED ON "AM I ARMED" WAS WRONG IN EXACTLY ONE CASE, and it
+ * is the ordinary one: arming a link while another is armed disarms the other
+ * in the same render, siblings run their effects in list order, and the
+ * disarmed row's "give focus back to my Revoke" ran after the armed row's
+ * "focus my Cancel" whenever it sat lower in the list. A request made by the
+ * handler that changed the state cannot confuse whose action it was.
  */
 function LinkList({ runId, items }: { readonly runId: string; readonly items: readonly PublicLink[] }) {
   const queryClient = useQueryClient();
   const [confirming, setConfirming] = useState<string | null>(null);
+  /* A fresh object for every request, so the effect runs once per request
+     even when two in a row name the same row and target. */
+  const [focusRequest, setFocusRequest] = useState<{ readonly id: string; readonly target: FocusTarget } | null>(null);
+  const list = useRef<HTMLUListElement>(null);
   const revoke = useMutation({
     mutationFn: (linkId: string) => revokePublicLink(runId, linkId),
     onSuccess: () => {
@@ -307,13 +340,22 @@ function LinkList({ runId, items }: { readonly runId: string; readonly items: re
     },
   });
 
+  useEffect(() => {
+    if (focusRequest === null) return;
+    // Link ids are uuids, so quoting them in an attribute selector is safe.
+    const row = list.current?.querySelector<HTMLElement>(`[data-link-id="${focusRequest.id}"]`);
+    const target =
+      focusRequest.target === 'row' ? row : row?.querySelector<HTMLElement>(`[data-focus="${focusRequest.target}"]`);
+    target?.focus();
+  }, [focusRequest]);
+
   return (
     <div className="flex flex-col gap-2">
       <h3 className="text-[0.8125rem] font-semibold text-primary">Links</h3>
       {items.length === 0 ? (
         <p className="text-[0.8125rem] text-muted">No links yet.</p>
       ) : (
-        <ul className="flex flex-col gap-2">
+        <ul ref={list} className="flex flex-col gap-2">
           {items.map((link) => (
             <LinkRow
               key={link.id}
@@ -321,10 +363,17 @@ function LinkList({ runId, items }: { readonly runId: string; readonly items: re
               armed={confirming === link.id}
               revoking={revoke.isPending && revoke.variables === link.id}
               failure={revoke.isError && revoke.variables === link.id ? problemOf(revoke.error).detail : null}
-              onArm={() => setConfirming(link.id)}
-              onCancel={() => setConfirming(null)}
+              onArm={() => {
+                setConfirming(link.id);
+                setFocusRequest({ id: link.id, target: 'cancel' });
+              }}
+              onCancel={() => {
+                setConfirming(null);
+                setFocusRequest({ id: link.id, target: 'revoke' });
+              }}
               onConfirm={() => {
                 setConfirming(null);
+                setFocusRequest({ id: link.id, target: 'row' });
                 revoke.mutate(link.id);
               }}
             />
@@ -334,6 +383,9 @@ function LinkList({ runId, items }: { readonly runId: string; readonly items: re
     </div>
   );
 }
+
+/** Where focus goes after a row's action: its Cancel, its Revoke, or the row. */
+type FocusTarget = 'cancel' | 'revoke' | 'row';
 
 function LinkRow({
   link,
@@ -352,24 +404,17 @@ function LinkRow({
   readonly onCancel: () => void;
   readonly onConfirm: () => void;
 }) {
-  /* FOCUS FOLLOWS THE SWAP. Arming replaces Revoke with its confirmation, and
-     a focused element that is removed drops focus to the body — inside a modal
-     that is a reader who no longer knows where they are. So arming focuses
-     Cancel (never the destructive button: a second Enter must not revoke), and
-     disarming hands focus back to Revoke. */
-  const actions = useRef<HTMLDivElement>(null);
-  const wasArmed = useRef(armed);
-  useEffect(() => {
-    if (armed || wasArmed.current) {
-      actions.current?.querySelector<HTMLButtonElement>(armed ? '[data-focus="cancel"]' : '[data-focus="revoke"]')?.focus();
-    }
-    wasArmed.current = armed;
-  }, [armed]);
-
   const createdAt = formatInstant(link.createdAt);
   return (
-    <li data-testid="public-link-row" className="flex flex-col gap-2 rounded-lg border border-default px-3 py-2">
-      <div ref={actions} className="flex flex-wrap items-center justify-between gap-2">
+    /* `tabIndex={-1}`: focusable by script only, so a confirmed revoke can keep
+       the caret here (`LinkList`) without adding a tab stop per row. */
+    <li
+      data-testid="public-link-row"
+      data-link-id={link.id}
+      tabIndex={-1}
+      className="flex flex-col gap-2 rounded-lg border border-default px-3 py-2"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <span data-testid="public-link-state">
           <Badge mark={PUBLIC_LINK_STATE[link.state]} />
         </span>
@@ -391,13 +436,17 @@ function LinkRow({
           ) : (
             /* NAMED AFTER ITS LINK: a list of links is a list of Revoke
                buttons, and a name that starts with the visible word keeps
-               voice control's "click Revoke" working. */
+               voice control's "click Revoke" working. TO THE SECOND, though
+               the row says the minute: two links made one after the other —
+               one per recipient — share every minute-precision instant on
+               their rows, and two Revoke buttons sharing a name is the
+               duplicate-name defect this repo has paid for before. */
             <Button
               data-focus="revoke"
               size="sm"
               variant="secondary"
               loading={revoking}
-              aria-label={`Revoke the link created ${createdAt}`}
+              aria-label={`Revoke the link created ${formatInstantSeconds(Date.parse(link.createdAt))}`}
               onClick={onArm}
             >
               Revoke

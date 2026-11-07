@@ -1,7 +1,7 @@
 import '@testing-library/jest-dom/vitest';
 import type { ComponentProps } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes, useOutletContext } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -1186,5 +1186,36 @@ describe('RunShell — the Share button', () => {
     // The paired positive: the shell drew, and knew this page as the Summary.
     expect(screen.getByRole('region', { name: 'Release decision' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Share' })).toBeNull();
+  });
+
+  /**
+   * CLOSING THE DIALOG HANDS THE CARET BACK TO SHARE, wherever the header put
+   * it: beside the badges on a desktop, inside Run details on a phone. The
+   * second is the one with the longer way back if focus is lost — the reader
+   * would have to find the disclosure again from the top of the page.
+   */
+  it.each([
+    ['a desktop', false],
+    ['a phone, inside Run details', true],
+  ])('returns focus to Share when the dialog closes, on %s', async (_where, compact) => {
+    useIsCompactMock.mockReturnValue(compact);
+    // The dialog's read of the run's links never answers: what is asserted is
+    // the way out, not what the dialog shows.
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})));
+    renderShellWith({ projectAccess: allowing('run:share') });
+    const user = userEvent.setup();
+    if (compact) {
+      const details = screen.getByTestId('run-metadata');
+      await user.click(within(details).getByTestId('run-metadata-toggle'));
+      expect(details).toHaveAttribute('open');
+      expect(details).toContainElement(screen.getByRole('button', { name: 'Share' }));
+    }
+    const share = screen.getByRole('button', { name: 'Share' });
+
+    await user.click(share);
+    await screen.findByRole('dialog', { name: 'Share this run' });
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await waitFor(() => expect(share).toHaveFocus());
   });
 });

@@ -1,7 +1,7 @@
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import type { PublicLink } from '@perfportal/contracts';
 import { formatInstant } from '../src/routes/format';
 import { EXPIRY_PRESETS, customDateBounds, expiryFor } from '../src/routes/share/expiry';
@@ -50,6 +50,28 @@ const EXPIRED: PublicLink = {
   revokedAt: null,
   revokedBy: null,
   lastUsedAt: null,
+};
+
+/**
+ * Two active links made thirty seconds apart, each for a week — one per
+ * recipient, the ordinary way to share a run with two people. Their creation
+ * minute, and so every minute-precision instant on their rows, is the same.
+ */
+const FIRST: PublicLink = {
+  id: '55555555-5555-4555-8555-555555555555',
+  state: 'active',
+  createdAt: '2026-11-06T10:00:10.000Z',
+  createdBy: { name: 'Asha Rao' },
+  expiresAt: '2026-11-13T10:00:10.000Z',
+  revokedAt: null,
+  revokedBy: null,
+  lastUsedAt: null,
+};
+const SECOND: PublicLink = {
+  ...FIRST,
+  id: '66666666-6666-4666-8666-666666666666',
+  createdAt: '2026-11-06T10:00:40.000Z',
+  expiresAt: '2026-11-13T10:00:40.000Z',
 };
 const REVOKED: PublicLink = {
   id: '33333333-3333-4333-8333-333333333333',
@@ -131,13 +153,22 @@ function stubLinks({
   return sent;
 }
 
-function mount() {
+function mount(): QueryClient {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
       <ShareRunButton runId={RUN_ID} />
     </QueryClientProvider>,
   );
+  return client;
+}
+
+/** Everything the client's caches hold, as one string to search for a secret. */
+function cached(client: QueryClient): string {
+  return JSON.stringify([
+    client.getMutationCache().getAll().map((mutation) => mutation.state),
+    client.getQueryCache().getAll().map((query) => query.state),
+  ]);
 }
 
 /** Opens the dialog and waits for its list to answer. */
@@ -154,16 +185,29 @@ function close() {
 
 const willExpire = (at: Date) => `This link will expire on ${formatInstant(at.toISOString())}.`;
 
+/**
+ * A ref Radix puts on an `asChild` child that cannot hold one is how focus
+ * stopped coming back to Share (see the last describe). React says so once PER
+ * COMPONENT, not per render — so a check inside one case is answered by
+ * whichever earlier case first rendered the trigger. Watched for every case,
+ * and passed through, so any other error still prints.
+ */
+let consoleErrors: MockInstance<typeof console.error>;
+
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(NOW);
   Object.assign(navigator, { clipboard: { writeText: vi.fn(async () => undefined) } });
+  consoleErrors = vi.spyOn(console, 'error');
 });
 
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   vi.useRealTimers();
+  const refWarnings = consoleErrors.mock.calls.flat().map(String).filter((text) => text.includes('cannot be given refs'));
+  consoleErrors.mockRestore();
+  expect(refWarnings).toEqual([]);
 });
 
 describe('ShareDialog — the org’s switch', () => {
@@ -224,6 +268,19 @@ describe('ShareDialog — creating a link', () => {
     fireEvent.change(date, { target: { value: '2030-01-01' } });
     expect(dialog).not.toHaveTextContent(/will expire on/);
     expect(within(dialog).getByRole('button', { name: 'Create link' })).toBeDisabled();
+    // ...and says why, on the field: a disabled Create with no reason is a
+    // form that stopped working. The field is marked invalid and names the
+    // sentence that explains it.
+    const reason = within(dialog).getByText('Choose a date within the next two years.');
+    expect(reason).toBeVisible();
+    expect(date).toHaveAttribute('aria-invalid', 'true');
+    expect(reason.id).not.toBe('');
+    expect(date).toHaveAttribute('aria-describedby', reason.id);
+
+    // Back inside the bounds, the reason goes and the field is valid again.
+    fireEvent.change(date, { target: { value: '2026-12-25' } });
+    expect(within(dialog).queryByText('Choose a date within the next two years.')).toBeNull();
+    expect(date).not.toHaveAttribute('aria-invalid');
   });
 
   it('sends the expiry the dialog said', async () => {
@@ -271,6 +328,27 @@ describe('ShareDialog — creating a link', () => {
     expect(within(reopened).queryByTestId('public-link-url')).toBeNull();
     expect(within(reopened).queryByText(SHOWN_ONCE)).toBeNull();
     expect(reopened).not.toHaveTextContent(SECRET);
+  });
+
+  /**
+   * THE SECRET LEAVES WITH THE DIALOG, from the app's caches as well as the
+   * screen. The create's answer is the only place the client ever holds it, and
+   * a mutation's answer is kept in the client's mutation cache after its
+   * observer goes — five minutes by default — where anything with the client
+   * can read it. The paired positive says the read is looking in the right
+   * place: while the dialog is open, the cache does hold it.
+   */
+  it('keeps no copy of the secret in the client’s caches once the dialog closes', async () => {
+    stubLinks();
+    const client = mount();
+    const dialog = await open();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create link' }));
+    await within(dialog).findByTestId('public-link-url');
+    expect(cached(client)).toContain(SECRET);
+
+    close();
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await waitFor(() => expect(cached(client)).not.toContain(SECRET));
   });
 
   /** Plain http on anything but localhost has no Clipboard API at all. The URL
@@ -385,11 +463,98 @@ describe('ShareDialog — the run’s links', () => {
     expect(primaries()).toEqual(['Create link']);
   });
 
+  /**
+   * NAMED APART, though they look alike. Every instant on a row is to the
+   * minute, so two links made in one minute read the same — and a list of
+   * Revoke buttons sharing one name is the duplicate-name defect this repo has
+   * paid for before. The name carries the creation instant to the second.
+   */
+  it('gives each Revoke its own name when two links were created in the same minute', async () => {
+    // The fixture really does collide at the minute: otherwise this proves nothing.
+    expect(formatInstant(FIRST.createdAt)).toBe(formatInstant(SECOND.createdAt));
+    expect(formatInstant(FIRST.expiresAt)).toBe(formatInstant(SECOND.expiresAt));
+    stubLinks({ items: [SECOND, FIRST] });
+    mount();
+    const dialog = await open();
+
+    const names = within(dialog)
+      .getAllByRole('button', { name: /^Revoke/ })
+      .map((button) => button.getAttribute('aria-label'));
+    expect(names).toHaveLength(2);
+    expect(new Set(names).size).toBe(2);
+  });
+
+  /**
+   * FOCUS GOES WHERE THE READER JUST ACTED. Arming a second link disarms the
+   * first, and the first's way back is not where the reader is: they asked to
+   * revoke the second, so its Cancel takes the caret — whichever row is above.
+   */
+  it('focuses the Cancel of the row just armed, even when another row was armed before it', async () => {
+    stubLinks({ items: [SECOND, FIRST] });
+    mount();
+    const dialog = await open();
+    const [upper, lower] = within(dialog).getAllByTestId('public-link-row');
+
+    fireEvent.click(within(lower!).getByRole('button', { name: /^Revoke/ }));
+    expect(within(lower!).getByRole('button', { name: 'Cancel' })).toHaveFocus();
+
+    fireEvent.click(within(upper!).getByRole('button', { name: /^Revoke/ }));
+    expect(within(upper!).getByRole('button', { name: 'Cancel' })).toHaveFocus();
+    // One armed at a time: the lower row is back to its Revoke.
+    expect(within(lower!).queryByRole('button', { name: 'Cancel' })).toBeNull();
+  });
+
+  /** A confirmed revoke removes the button the reader pressed and, once the
+   *  list reads again, the Revoke beside it — so the caret is kept on the row
+   *  itself, which survives both, rather than falling out of the dialog. */
+  it('keeps focus on the row after a revoke is confirmed, through the list’s re-read', async () => {
+    stubLinks({ items: [ACTIVE] });
+    mount();
+    const dialog = await open();
+    const row = within(dialog).getByTestId('public-link-row');
+
+    fireEvent.click(within(row).getByRole('button', { name: /^Revoke/ }));
+    fireEvent.click(within(row).getByRole('button', { name: 'Confirm revoke' }));
+    expect(row).toHaveFocus();
+
+    await waitFor(() => expect(within(row).getByTestId('public-link-state')).toHaveTextContent('Revoked'));
+    expect(within(row).queryByRole('button', { name: /^Revoke/ })).toBeNull();
+    expect(row).toHaveFocus();
+  });
+
   it('says so when the run has no links yet', async () => {
     stubLinks();
     mount();
     const dialog = await open();
     expect(within(dialog).queryAllByTestId('public-link-row')).toHaveLength(0);
     expect(dialog).toHaveTextContent('No links yet.');
+  });
+});
+
+/**
+ * ═══ CLOSING HANDS THE CARET BACK TO SHARE ═══
+ *
+ * A modal that closes and leaves focus on `<body>` drops a keyboard or
+ * screen-reader reader at the top of the document (WCAG 2.4.3). Radix returns
+ * focus to the dialog's trigger — through a ref on it, which a component that
+ * does not forward refs silently drops (React warns, once per component:
+ * "Function components cannot be given refs" — the file-level hook above
+ * watches for it). Both ways out are asserted.
+ */
+describe('ShareDialog — focus returns to Share when the dialog closes', () => {
+  it.each([
+    ['Escape', () => fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' })],
+    ['the Close button', close],
+  ])('returns focus to Share when %s closes the dialog', async (_how, dismiss) => {
+    stubLinks();
+    mount();
+    const share = screen.getByRole('button', { name: 'Share' });
+    share.focus();
+    const dialog = await open();
+    expect(dialog).toContainElement(document.activeElement as HTMLElement);
+
+    dismiss();
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await waitFor(() => expect(share).toHaveFocus());
   });
 });

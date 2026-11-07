@@ -1,5 +1,5 @@
 import * as Dialog from '@radix-ui/react-dialog';
-import Button from '../../components/Button';
+import { buttonVariants } from '../../components/Button';
 import { ShareIcon } from '../../components/icons';
 import ShareDialog from './ShareDialog';
 
@@ -12,14 +12,24 @@ import ShareDialog from './ShareDialog';
  * link's page — so this decides nothing and asks nothing until it is opened:
  * the dialog's read of the run's links mounts with the dialog.
  *
- * A RADIX DIALOG WITH ITS OWN TRIGGER, which is what makes it correct for
- * free: focus moves into it and is held there, Escape and the overlay close
- * it, and focus returns to this button when it closes — the return the
- * palette has to arrange by hand because it has no trigger of its own.
+ * A RADIX DIALOG WITH ITS OWN TRIGGER: focus moves into it and is held
+ * there, Escape and the overlay close it, and focus returns to this button
+ * when it closes — the return the palette has to arrange by hand because it
+ * has no trigger of its own.
+ *
+ * THE TRIGGER IS A RAW `<button>` WEARING `buttonVariants`, NOT `<Button>`,
+ * and that is what makes the return work at all. Radix hands focus back
+ * through a ref it puts on its `asChild` child, and `Button` is a plain
+ * function component — under React 18 a ref on one is dropped (React says so
+ * once, "Function components cannot be given refs"), so the trigger ref stayed
+ * null and every close left focus on `<body>`. Every other Radix trigger in
+ * the app is a raw `<button>` for this reason, and `Button`'s own docstring
+ * says it has no `asChild` escape hatch.
  *
  * THE DIALOG'S CONTENT UNMOUNTS WHEN IT CLOSES, and that is load-bearing, not
- * tidiness: a created link's secret lives in the dialog's own state and
- * nowhere else (the server keeps only its hash), so closing the dialog is what
+ * tidiness: a created link's secret lives in the dialog's own state (and in
+ * the create's mutation entry, which the dialog drops as it unmounts — see
+ * `ShareDialog`); the server keeps only its hash. So closing the dialog is what
  * makes "the only time the full link is shown" true. `forceMount` here would
  * keep it on screen for the next opening.
  */
@@ -27,10 +37,10 @@ export default function ShareRunButton({ runId }: { readonly runId: string }) {
   return (
     <Dialog.Root>
       <Dialog.Trigger asChild>
-        <Button size="sm" variant="secondary">
+        <button type="button" className={buttonVariants({ variant: 'secondary', size: 'sm' })}>
           <ShareIcon className="h-3.5 w-3.5" />
           Share
-        </Button>
+        </button>
       </Dialog.Trigger>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/50" />
