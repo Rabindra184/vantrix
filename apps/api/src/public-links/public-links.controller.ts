@@ -99,10 +99,12 @@ export class PublicLinksController {
    * complete and addressable the moment the response is sent — the list
    * carries it, and the DELETE works on its id.
    *
-   * `Cache-Control: no-store` on this answer alone: it is the only copy of a
-   * credential, so no cache — a proxy's or the browser's own — may keep it.
-   * Nest sets it on the success path only; a refusal carries no secret. The
-   * list and the revoke carry none either and are left alone.
+   * `Cache-Control: no-store` on this operation alone: its answer is the only
+   * copy of a credential, so no cache — a proxy's or the browser's own — may
+   * keep it. Nest sets the header once the guards pass, before the pipes and
+   * this handler run, so the handler's own refusals (and a malformed id's 400)
+   * carry it too; a guard's refusal does not. Neither matters — a refusal
+   * carries no secret. The list and the revoke carry none and are left alone.
    */
   @Post('public-links')
   @Requires('run:share')

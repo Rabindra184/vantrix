@@ -170,9 +170,11 @@ export function Switch({
   readonly label: string;
   readonly testId: string;
   readonly onClick: () => void;
-  /** The id of the switch's description — an ⓘ's hidden copy, as a form
-   *  field's hint is (`FormField`). Administration › Settings' AI switch is
-   *  the one caller with a description to point at; absent, the switch has
+  /** The id of the switch's description: a sentence drawn VISIBLY beside it,
+   *  read before the switch is pressed. Administration › Settings' two
+   *  switches point at theirs — AI features at its consent sentence (or, with
+   *  no provider, the operator line), Public links at its always-visible
+   *  sentence. Absent, as on the percentile chart's scale, the switch has
    *  none. */
   readonly describedBy?: string;
 }) {
