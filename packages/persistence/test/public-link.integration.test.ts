@@ -272,8 +272,13 @@ describe('PublicLinkRepository', () => {
     const moved = await lastUsed();
     expect(moved?.getTime()).toBeGreaterThan(backdated?.getTime() ?? Infinity);
 
-    // At 59 s back it is still inside the minute, and stays put.
-    await pool.query(`UPDATE run_public_link SET last_used_at = now() - interval '59 seconds' WHERE id = $1`, [link.id]);
+    // At 45 s back it is still inside the minute, and stays put. 45, not 59:
+    // the backdate and the touch are separate statements, each with its own
+    // `now()`, so a 59 s backdate left ONE second for the round trips between
+    // them — and a stall that long, on a loaded machine, moves the stamp and
+    // fails the case with nothing wrong. 45 leaves fifteen seconds; the 61 s
+    // half above is what pins the minute's other side.
+    await pool.query(`UPDATE run_public_link SET last_used_at = now() - interval '45 seconds' WHERE id = $1`, [link.id]);
     const recent = await lastUsed();
     await repo.touch(link.id);
     expect(await lastUsed()).toEqual(recent);
