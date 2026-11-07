@@ -51,6 +51,8 @@ const SHARE_PAGE = /^\/share(?:\/|$)/i;
  */
 const IMMUTABLE = 'public, max-age=31536000, immutable';
 const REVALIDATE = 'no-cache';
+/** A public link's page alone: its URL is the secret (see the fallback below). */
+const SHARE_NO_STORE = 'no-store';
 
 /**
  * Judged on the path RELATIVE to dist, not the absolute one: a checkout that
@@ -190,11 +192,20 @@ export function mountSpa(instance: express.Express, distDir: string): void {
       res.removeHeader('Content-Type');
       // Never `immutable`: this URL is stable and its content names the
       // current asset fingerprints. See cacheControlFor above.
-      res.setHeader('Cache-Control', REVALIDATE);
+      //
+      // A public link's page is `no-store` instead: its URL IS the
+      // credential, and `no-cache` still lets a browser's disk cache or a
+      // proxy keep an entry keyed by `/share/<secret>`. The body is the
+      // generic index.html, so nothing of the run would be in it — but the
+      // secret would sit in the cache's index, which can outlive a cleared
+      // history. `no-store` keeps no entry at all; the cost is a full
+      // index.html on every load of a shared page, never a 304.
+      const sharePage = SHARE_PAGE.test(req.path);
+      res.setHeader('Cache-Control', sharePage ? SHARE_NO_STORE : REVALIDATE);
       // A public link pasted somewhere public must not be indexed: its page
       // names the run's project and test (spec 6.2). Only there — the app's
       // own pages sit behind sign-in, where a crawler reads a login form.
-      if (SHARE_PAGE.test(req.path)) res.setHeader('X-Robots-Tag', 'noindex');
+      if (sharePage) res.setHeader('X-Robots-Tag', 'noindex');
       // `root`, never `join(distDir, 'index.html')`: `send` refuses any path
       // with a segment starting with `.`, and applies that to whatever it is
       // handed. Given an absolute path it checked the WHOLE install location,

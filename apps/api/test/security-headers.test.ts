@@ -233,6 +233,31 @@ describe('a public link’s page', () => {
     expect(res.text).toBe(INDEX_HTML);
     expect(res.headers['x-robots-tag']).toBeUndefined();
   });
+
+  /**
+   * THE URL IS THE CREDENTIAL, SO NO CACHE MAY STORE IT. `no-cache` lets a
+   * browser's disk cache or an intermediary keep an entry KEYED BY
+   * `/share/<secret>` — no run data in it (the body is the generic
+   * index.html), but the secret sits in the cache's index, outliving a cleared
+   * history in some browsers. `no-store` forbids keeping the entry at all.
+   */
+  it.each(['/share/x', '/share/x/report', '/Share/x'])('serves %s with Cache-Control: no-store', async (path) => {
+    const res = await request(server).get(path).expect(200);
+    expect(res.text).toBe(INDEX_HTML);
+    expect(res.headers['cache-control']).toBe('no-store');
+  });
+
+  /** Only there: every other page keeps `no-cache`, whose 304 is what makes a
+   *  reload cheap, and an asset stays immutable. */
+  it.each(['/runs/x', '/', '/shared/x'])('keeps Cache-Control: no-cache on %s', async (path) => {
+    const res = await request(server).get(path).expect(200);
+    expect(res.headers['cache-control']).toBe('no-cache');
+  });
+
+  it('leaves an asset immutable', async () => {
+    const res = await request(server).get('/assets/plain.js').expect(200);
+    expect(res.headers['cache-control']).toBe('public, max-age=31536000, immutable');
+  });
 });
 
 /**
