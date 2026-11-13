@@ -7,6 +7,7 @@ import {
   ProjectRepository,
   RunRepository,
   RuleRepository,
+  isTerminalRunStatus,
   type RunRecord,
 } from '@perfportal/persistence';
 import { evaluateRules, toEvaluableStats, type EvaluableRule } from '@perfportal/sla';
@@ -202,7 +203,10 @@ export class PipelineService {
     const runs = new RunRepository(this.prisma);
     const run = await runs.findByIdUnscoped(runId);
     if (!run) return;                                                   // swept away or deleted
-    if (run.status === 'complete' || run.status === 'failed') return;   // already terminal -- case 1, resolved
+    // 'incomplete' included: a live run that finished incomplete has nothing
+    // left to parse, and throwing RUN_LOCKED for it would spend the queue's
+    // retries on a run that is already done.
+    if (isTerminalRunStatus(run.status)) return;                        // already terminal -- case 1, resolved
 
     if (isRawLogKey(run.bundleKey)) {
       throw new RunLockedError(runId);                                  // case 2 -- ask BullMQ to retry
@@ -214,9 +218,22 @@ export class PipelineService {
     const runs = new RunRepository(this.prisma);
     const run = await runs.findByIdUnscoped(runId);
     if (!run) return;                                   // swept away or deleted
-    if (run.status === 'complete' || run.status === 'failed') return;   // already terminal
-
-    await runs.markParsing(runId);
+    // ═══ THE CLAIM IS THE WRITE, AND 'incomplete' IS TERMINAL TO IT ═══
+    //
+    // This used to read the status, return for 'complete' and 'failed', and
+    // then write 'parsing' unconditionally. Two things were wrong. It did not
+    // name 'incomplete': a second delivery of the job for a run that had
+    // finished incomplete WITH statistics (a stalled job redelivered, the
+    // sweeper retrying a completed job) parsed it again, died on run_stat's
+    // unique index, and `fail()` recorded the run as failed; one that had
+    // finished incomplete with NOTHING was parsed and promoted to 'complete'.
+    // And the read and the write were two statements, with `markIncomplete`
+    // taking no advisory lock in between.
+    //
+    // ONE guard now, in the UPDATE itself. A status check here as well would
+    // agree with it on every reachable state, and two guards that agree mask
+    // each other: neither could be removed with a test noticing.
+    if (!(await runs.markParsing(runId))) return;       // already terminal
 
     try {
       await this.#ingest(run, attempt);

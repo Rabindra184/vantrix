@@ -232,6 +232,20 @@ interface RunRow {
  * that, a run read through the forgotten path would carry a note with a null
  * author beside a real one, and nothing would say which.
  */
+/**
+ * The statuses a run never leaves. ONE list, because the pipeline's guards
+ * named 'complete' and 'failed' and forgot 'incomplete' while `markIncomplete`
+ * named all three: a job redelivered for an incomplete run moved it back to
+ * 'parsing', re-ingested it into `run_stat`'s unique index, and recorded a
+ * half-measured run as failed. `run.status` is plain text with no CHECK, so
+ * this constant is the only place the rule is written down.
+ */
+export const TERMINAL_RUN_STATUSES = ['complete', 'failed', 'incomplete'] as const satisfies readonly RunStatus[];
+
+export function isTerminalRunStatus(status: string): boolean {
+  return (TERMINAL_RUN_STATUSES as readonly string[]).includes(status);
+}
+
 const RUN_INCLUDE = {
   project: true,
   test: true,
@@ -813,7 +827,7 @@ export class RunRepository {
    */
   async markIncomplete(runId: string): Promise<void> {
     await this.prisma.run.updateMany({
-      where: { id: runId, status: { notIn: ['complete', 'failed', 'incomplete'] } },
+      where: { id: runId, status: { notIn: [...TERMINAL_RUN_STATUSES] } },
       data: { status: 'incomplete', verdict: 'not_evaluated', ingestedAt: new Date() },
     });
   }
@@ -1069,12 +1083,24 @@ export class RunRepository {
    * Sets parsingStartedAt alongside status, same as claimForClose does for
    * the live-close path -- the sweeper's staleness check reads that column
    * for every route into 'parsing', not just this one.
+   *
+   * COMPARE-AND-SET ON "NOT TERMINAL", and it says whether it wrote. The
+   * pipeline reads the status and then calls this, and the run's advisory lock
+   * does not keep the other terminal writers out between the two:
+   * `markIncomplete` (the API's close, the sweeper's finalize) takes no lock.
+   * An unconditional write here moved a run that had just finished back to
+   * 'parsing', to be parsed a second time.
+   *
+   * Deliberately NOT narrowed to exclude 'parsing': the sweeper's whole job is
+   * re-queuing runs stranded there, and `PipelineService.process` says why a
+   * lock, not this guard, is what keeps two live processors apart.
    */
-  async markParsing(id: string): Promise<void> {
-    await this.prisma.run.update({
-      where: { id },
+  async markParsing(id: string): Promise<boolean> {
+    const { count } = await this.prisma.run.updateMany({
+      where: { id, status: { notIn: [...TERMINAL_RUN_STATUSES] } },
       data: { status: 'parsing', parsingStartedAt: new Date() },
     });
+    return count > 0;
   }
 
   /**
@@ -1087,13 +1113,17 @@ export class RunRepository {
    * complete/verdict with failed/null. Returns whether it actually wrote,
    * so the caller can tell it lost the race and skip publishing a terminal
    * notification the winner already sent.
+   *
+   * 'incomplete' is terminal here too: a run finalized incomplete while a
+   * parse of it was failing keeps that outcome rather than becoming a failed
+   * run with an ingest error nobody caused.
    */
   async fail(
     id: string,
     error: { code: string; message: string; remediation: string },
   ): Promise<boolean> {
     const { count } = await this.prisma.run.updateMany({
-      where: { id, status: { notIn: ['complete', 'failed'] } },
+      where: { id, status: { notIn: [...TERMINAL_RUN_STATUSES] } },
       data: { status: 'failed', error, ingestedAt: new Date() },
     });
     return count > 0;

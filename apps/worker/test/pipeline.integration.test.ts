@@ -830,6 +830,92 @@ describe('Sweeper', () => {
     expect(Number(stats.rows[0]?.n)).toBeGreaterThan(0);
   });
 
+  /**
+   * `incomplete` IS TERMINAL TO THE PIPELINE TOO. Its guards named `complete`
+   * and `failed` alone, so a second delivery of the job for a run that had
+   * just finished `incomplete` WITH statistics -- a stalled-job redelivery,
+   * the sweeper retrying a completed job -- moved it back to `parsing`,
+   * re-ingested it, hit `run_stat`'s unique index and recorded the run
+   * `failed`: a half-measured run, reported as unreadable. The whole row is
+   * compared, because "still incomplete" alone passes against a pipeline
+   * that re-parsed it and happened to land on the same status.
+   */
+  it('leaves an incomplete run alone when its job is delivered again', async () => {
+    const ctx = await seedRun(bundle);
+    await pool.query(`UPDATE run SET stream_abandoned_at = now() WHERE id = $1`, [ctx.runId]);
+    await pipeline().process(ctx.runId, { queueWillRetry: false });
+
+    const snapshot = async () => ({
+      run: (await pool.query(
+        `SELECT status, verdict, error, ingested_at, parsing_started_at FROM run WHERE id = $1`,
+        [ctx.runId],
+      )).rows[0],
+      stats: Number((await pool.query(
+        `SELECT count(*) AS n FROM run_stat WHERE run_id = $1`, [ctx.runId],
+      )).rows[0]?.n),
+    });
+    const before = await snapshot();
+    expect(before.run?.status).toBe('incomplete');
+    expect(before.stats).toBeGreaterThan(0);
+
+    await pipeline().process(ctx.runId, { queueWillRetry: false });
+
+    expect(await snapshot()).toEqual(before);
+  });
+
+  /**
+   * The other incomplete: finalized in place with nothing parsed
+   * (`markIncomplete`, the sweeper's zero-byte arm). A job arriving for it
+   * afterwards must not parse the bundle and promote it to `complete`.
+   */
+  it('does not parse a run that was already finalized incomplete with nothing', async () => {
+    const ctx = await seedRun(bundle);
+    await pool.query(
+      `UPDATE run SET status = 'incomplete', verdict = 'not_evaluated', ingested_at = now() WHERE id = $1`,
+      [ctx.runId],
+    );
+
+    await pipeline().process(ctx.runId, { queueWillRetry: false });
+
+    const { rows } = await pool.query<{ status: string; verdict: string | null }>(
+      'SELECT status, verdict FROM run WHERE id = $1',
+      [ctx.runId],
+    );
+    expect(rows[0]).toEqual({ status: 'incomplete', verdict: 'not_evaluated' });
+    const stats = await pool.query<{ n: string }>(
+      `SELECT count(*) AS n FROM run_stat WHERE run_id = $1`,
+      [ctx.runId],
+    );
+    expect(Number(stats.rows[0]?.n)).toBe(0);
+  });
+
+  /**
+   * And the lock-lost path. A LIVE run that loses the lock while non-terminal
+   * asks the queue to retry (RUN_LOCKED); an incomplete one is finished, so
+   * there is nothing to retry for.
+   */
+  it('does not ask for a retry when an incomplete live run\'s lock is held', async () => {
+    const ctx = await seedLiveRun(readFileSync(FIXTURE_LOG));
+    await pool.query(`UPDATE run SET status = 'incomplete' WHERE id = $1`, [ctx.runId]);
+
+    const owner = await pool.connect();
+    try {
+      const { rows: lockRows } = await owner.query<{ got: boolean }>(
+        'SELECT pg_try_advisory_lock($1, hashtext($2)) AS got',
+        [RUN_INGEST_LOCK_NAMESPACE, ctx.runId],
+      );
+      expect(lockRows[0]?.got).toBe(true);
+
+      await expect(pipeline().process(ctx.runId, { queueWillRetry: false })).resolves.toBeUndefined();
+    } finally {
+      await owner.query('SELECT pg_advisory_unlock($1, hashtext($2))', [
+        RUN_INGEST_LOCK_NAMESPACE,
+        ctx.runId,
+      ]);
+      owner.release();
+    }
+  });
+
   it('finalizes a "running" run whose producer vanished as incomplete — the state has no other exit', async () => {
     // `running` is entered by POST /v1/runs/live and left by
     // POST /v1/runs/:id/close, and an agent that is SIGKILLed, evicted, or
