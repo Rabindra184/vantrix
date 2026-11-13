@@ -645,6 +645,77 @@ describe('markRunOpened', () => {
 });
 
 /**
+ * ═══ A JOB THAT HAS ENDED STAYS ENDED ═══
+ *
+ * The three writes refused a cancelled job only, so a job the stale sweep had
+ * failed went back to closing and then complete under the executor still
+ * working on it. Every (write, ended status) pair, because the old guard got
+ * one of the three right and a case for that one alone would have passed.
+ */
+describe('a job that has ended', () => {
+  const ENDED = ['complete', 'failed', 'cancelled'] as const;
+  const ERROR = { code: 'X', message: 'm', remediation: 'r' };
+  const WRITES = {
+    markClosing: (repo: RunnerRepository, id: string) => repo.markClosing(id),
+    markComplete: (repo: RunnerRepository, id: string) => repo.markComplete(id),
+    markFailed: (repo: RunnerRepository, id: string) => repo.markFailed(id, ERROR),
+  } as const;
+  const pairs = (Object.keys(WRITES) as (keyof typeof WRITES)[]).flatMap((write) =>
+    ENDED.map((status) => [write, status] as const));
+
+  it.each(pairs)('%s leaves a %s job as it is, and says so', async (write, status) => {
+    const { orgA, projectA1 } = await seed();
+    const repo = new RunnerRepository(prisma);
+    const { artifactId } = await packageWithVersion(orgA, projectA1);
+    const jobId = await queueOn(repo, orgA, projectA1, artifactId);
+    await pool.query(
+      `UPDATE runner_job SET status = $2, error = '{"code":"RUNNER_JOB_STALE"}'::jsonb WHERE id = $1`,
+      [jobId, status],
+    );
+
+    expect(await WRITES[write](repo, jobId)).toBe(false);
+
+    const row = await prisma.runnerJob.findUniqueOrThrow({ where: { id: jobId } });
+    expect(row.status).toBe(status);
+    expect(row.error).toEqual({ code: 'RUNNER_JOB_STALE' });
+  });
+
+  it.each(Object.keys(WRITES) as (keyof typeof WRITES)[])('%s still moves a running job', async (write) => {
+    const { orgA, projectA1 } = await seed();
+    const repo = new RunnerRepository(prisma);
+    const { artifactId } = await packageWithVersion(orgA, projectA1);
+    const jobId = await queueOn(repo, orgA, projectA1, artifactId);
+    await pool.query(`UPDATE runner_job SET status = 'running' WHERE id = $1`, [jobId]);
+
+    expect(await WRITES[write](repo, jobId)).toBe(true);
+
+    const expected = { markClosing: 'closing', markComplete: 'complete', markFailed: 'failed' }[write];
+    expect((await prisma.runnerJob.findUniqueOrThrow({ where: { id: jobId } })).status).toBe(expected);
+  });
+
+  // The journey the guard is for: the stale sweep fails a job, and the
+  // executor that was still working on it then tries to finish it.
+  it('stays failed as stale when the executor finishes after the stale sweep', async () => {
+    const { orgA, projectA1 } = await seed();
+    const repo = new RunnerRepository(prisma);
+    const { artifactId } = await packageWithVersion(orgA, projectA1);
+    const jobId = await queueOn(repo, orgA, projectA1, artifactId);
+    await pool.query(
+      `UPDATE runner_job SET status = 'running', updated_at = now() - interval '1 hour' WHERE id = $1`,
+      [jobId],
+    );
+    expect(await repo.failStale({ orgId: orgA, projectId: projectA1 }, new Date(Date.now() - 60_000))).toBe(1);
+
+    await repo.markClosing(jobId);
+    await repo.markComplete(jobId);
+
+    const row = await prisma.runnerJob.findUniqueOrThrow({ where: { id: jobId } });
+    expect(row.status).toBe('failed');
+    expect((row.error as { code: string }).code).toBe('RUNNER_JOB_STALE');
+  });
+});
+
+/**
  * ═══ RETENTION, IN TWO PASSES ═══
  *
  * Pass 1 removes terminal jobs past the window, handing back their logs. Pass 2

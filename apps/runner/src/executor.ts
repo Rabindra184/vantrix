@@ -98,6 +98,29 @@ export class RunnerExecutor {
       else console.error(`[runner] [error] ${message}`);
     };
 
+    // ═══ THE HEARTBEAT COVERS THE WHOLE JOB, NOT ONLY GATLING ═══
+    //
+    // It used to ride on Gatling's stop poll, so nothing beat while a bundle
+    // was extracted and validated, while the tailer drained its backlog, while
+    // the agent file was uploaded or while the run was closed. A second
+    // runner's `failStale` could then fail a job this one was still working
+    // on. A timer from claim to the `finally` below; `heartbeat` only touches
+    // a job that is still active, so a beat landing after the job ended writes
+    // nothing. One at a time: a database that is slow to answer must not queue
+    // a beat per interval behind itself.
+    let beating = false;
+    const heartbeat = setInterval(() => {
+      if (beating) return;
+      beating = true;
+      void this.#runner
+        .heartbeat(jobId)
+        .catch((err: unknown) => console.error(`failed to heartbeat runner job ${jobId}`, err))
+        .finally(() => {
+          beating = false;
+        });
+    }, this.#config.heartbeatIntervalMs);
+    heartbeat.unref();
+
     // ═══ THE RUN'S EVENTS — BEST-EFFORT, BY DESIGN ═══
     // (docs/superpowers/specs/2026-09-29-run-logs-design.md)
     //
@@ -130,8 +153,15 @@ export class RunnerExecutor {
       const opened = await this.#runner.markRunOpened(jobId, runId);
       if (!opened) {
         await sink.abortIncomplete();
-        logger.info(`job ${jobId} was cancelled before live run ${runId} could attach`);
-        await this.#recordCancelledEnding(record, 'claimed');
+        // "No longer starting" is not always a cancel: the stale sweep fails a
+        // job too. The log said "Cancelled" for both.
+        if (await this.#isCancelled(jobId)) {
+          logger.info(`job ${jobId} was cancelled before live run ${runId} could attach`);
+          await this.#recordCancelledEnding(record, 'claimed');
+        } else {
+          logger.warn(`job ${jobId} had already ended before live run ${runId} could attach; the run was closed with nothing`);
+          await record({ message: 'Run ended without results' });
+        }
         return;
       }
       stage = 'opened';
@@ -177,7 +207,7 @@ export class RunnerExecutor {
         stderrPrefix: `[gatling ${jobId}] `,
         logOutput: logger.stream,
         stopPollMs: this.#config.pollIntervalMs,
-        shouldStop: () => this.#heartbeatAndCheckCancelled(jobId),
+        shouldStop: () => this.#isCancelled(jobId),
         onSpawn: () => {
           stage = 'spawned';
           started = (async () => {
@@ -259,8 +289,14 @@ export class RunnerExecutor {
         logger.warn('Gatling exited with code 2: a Gatling assertion failed, and the simulation ran to its end.');
       }
       await sink.close();
-      await this.#runner.markComplete(jobId);
-      logger.info(`completed job ${jobId} as run ${sink.runId}`);
+      // The run is closed with its results either way. Whether the JOB is
+      // complete is the database's answer: one that was cancelled, or failed
+      // as stale, while this was closing stays as it ended.
+      if (await this.#runner.markComplete(jobId)) {
+        logger.info(`completed job ${jobId} as run ${sink.runId}`);
+      } else {
+        logger.warn(`job ${jobId} had already ended when run ${sink.runId} closed with its results; the job keeps the status it ended with`);
+      }
       await record({ message: 'Run ended' });
     } catch (err) {
       if (tailer) {
@@ -298,6 +334,7 @@ export class RunnerExecutor {
         await record({ message: failureEventMessage(jobError, job.artifact.storagePath) });
       }
     } finally {
+      clearInterval(heartbeat);
       if (workDir) {
         await removeWorkDir(workDir, { uid: this.#config.childUid ?? undefined, gid: this.#config.childGid ?? undefined })
           .catch((err) => logError(`failed to clean work dir: ${String(err)}`));
@@ -401,12 +438,5 @@ export class RunnerExecutor {
           'single-tenant host.',
       );
     }
-  }
-
-  async #heartbeatAndCheckCancelled(jobId: string): Promise<boolean> {
-    await this.#runner.heartbeat(jobId).catch((err) => {
-      console.error(`failed to heartbeat runner job ${jobId}`, err);
-    });
-    return this.#isCancelled(jobId);
   }
 }

@@ -85,6 +85,10 @@ interface HarnessOptions {
   /** What `closeAbandoned` reports it did; `kept` unless a case says otherwise. */
   readonly abandoned?: AbandonedOutcome;
   readonly opened?: boolean;
+  /** What `markComplete` answers: false for a job that had already ended. */
+  readonly completed?: boolean;
+  /** Stands in for a close that takes a while. */
+  readonly close?: () => Promise<void>;
   readonly recordFails?: boolean;
   readonly prepare?: typeof prepareGatlingRun;
   /** What `storeAgentLog` reports; `stored` unless a case says otherwise. */
@@ -99,9 +103,9 @@ function harness(opts: HarnessOptions = {}) {
   const runner = {
     setLogPath: vi.fn().mockResolvedValue(undefined),
     markRunOpened: vi.fn().mockResolvedValue(opts.opened ?? true),
-    markClosing: vi.fn().mockResolvedValue(undefined),
-    markComplete: vi.fn().mockResolvedValue(undefined),
-    markFailed: vi.fn().mockResolvedValue(undefined),
+    markClosing: vi.fn().mockResolvedValue(true),
+    markComplete: vi.fn().mockResolvedValue(opts.completed ?? true),
+    markFailed: vi.fn().mockResolvedValue(true),
     heartbeat: vi.fn().mockResolvedValue(undefined),
     status: vi.fn(async () => statuses.shift() ?? 'running'),
     recordRunnerEvent: opts.recordFails
@@ -117,6 +121,7 @@ function harness(opts: HarnessOptions = {}) {
     }),
     close: vi.fn(async () => {
       order.push('close');
+      await opts.close?.();
     }),
     closeAbandoned: vi.fn(async (): Promise<AbandonedOutcome> => {
       order.push('closeAbandoned');
@@ -153,7 +158,7 @@ function harness(opts: HarnessOptions = {}) {
   });
   const config = {
     logDir, allowSameUidExecution: true, childUid: null, childGid: null,
-    logPollIntervalMs: 50, pollIntervalMs: 50, agentJar: null, maxAgentLogBytes: 268_435_456,
+    logPollIntervalMs: 50, pollIntervalMs: 50, heartbeatIntervalMs: 60_000, agentJar: null, maxAgentLogBytes: 268_435_456,
     ...opts.config,
   } as RunnerConfig;
   const executor = new RunnerExecutor({
@@ -353,9 +358,17 @@ describe('the runner’s events, path by path', () => {
   });
 
   it('ends at the claim when the job was cancelled before its run opened', async () => {
-    const { executor, runner } = harness({ opened: false });
+    const { executor, runner } = harness({ opened: false, statuses: ['cancelled'] });
     await executor.run(job());
     expect(recorded(runner)).toEqual([CLAIMED, '--- Deploying', 'Cancelled before the run opened']);
+  });
+
+  // "No longer starting" also means failed as stale, and nobody cancelled that.
+  it('does not call a job cancelled when it ended some other way before its run opened', async () => {
+    const { executor, runner, sink } = harness({ opened: false, statuses: ['failed'] });
+    await executor.run(job());
+    expect(recorded(runner)).toEqual([CLAIMED, '--- Deploying', 'Run ended without results']);
+    expect(sink.abortIncomplete).toHaveBeenCalledTimes(1);
   });
 
   it('ends without results when cancelled before the package was prepared', async () => {
@@ -623,5 +636,84 @@ describe('the Gatling agent', () => {
     const { executor, runner } = harness({ config: { agentJar: '/nope.jar' }, agentStore: 'failed' });
     await executor.run(job());
     expect(recorded(runner).join('\n')).not.toMatch(/agent/i);
+  });
+
+  /**
+   * ═══ THE HEARTBEAT COVERS THE WHOLE JOB ═══
+   *
+   * It rode on Gatling's stop poll, which these cases never run (the process
+   * is replaced), so every beat counted here comes from the job's own timer.
+   * Preparation and the close are the two long waits outside Gatling.
+   */
+  const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+  it('heartbeats while the package is being prepared', async () => {
+    let beatsDuringPrepare = -1;
+    const h = harness({
+      config: { heartbeatIntervalMs: 10 },
+      prepare: async () => {
+        await pause(80);
+        beatsDuringPrepare = h.runner.heartbeat.mock.calls.length;
+        return { command: { command: 'java', args: [], cwd: workDir }, resultsDir: workDir, workDir, agentLogPath: null };
+      },
+    });
+    await h.executor.run(job());
+    expect(beatsDuringPrepare).toBeGreaterThanOrEqual(2);
+    expect(h.runner.heartbeat.mock.calls.every((call: unknown[]) => call[0] === JOB_ID)).toBe(true);
+  });
+
+  it('heartbeats while the run is being closed', async () => {
+    let before = -1;
+    let after = -1;
+    const h = harness({
+      config: { heartbeatIntervalMs: 10 },
+      close: async () => {
+        before = h.runner.heartbeat.mock.calls.length;
+        await pause(80);
+        after = h.runner.heartbeat.mock.calls.length;
+      },
+    });
+    await h.executor.run(job());
+    expect(after - before).toBeGreaterThanOrEqual(2);
+  });
+
+  it('stops heartbeating once the job is over', async () => {
+    const h = harness({ config: { heartbeatIntervalMs: 10 } });
+    await h.executor.run(job());
+    const atEnd = h.runner.heartbeat.mock.calls.length;
+    await pause(60);
+    expect(h.runner.heartbeat.mock.calls.length).toBe(atEnd);
+  });
+
+  it('never has two heartbeats in flight', async () => {
+    let inFlight = 0;
+    let most = 0;
+    const h = harness({
+      config: { heartbeatIntervalMs: 5 },
+      prepare: async () => {
+        await pause(80);
+        return { command: { command: 'java', args: [], cwd: workDir }, resultsDir: workDir, workDir, agentLogPath: null };
+      },
+    });
+    h.runner.heartbeat.mockImplementation(async () => {
+      inFlight += 1;
+      most = Math.max(most, inFlight);
+      await pause(30);
+      inFlight -= 1;
+    });
+    await h.executor.run(job());
+    expect(most).toBe(1);
+  });
+
+  // The run closed with its results; the job had already ended (cancelled, or
+  // failed as stale). The log must not say the job completed.
+  it('does not claim a completed job when the job had already ended', async () => {
+    const h = harness({ completed: false });
+    await h.executor.run(job());
+    expect(h.sink.close).toHaveBeenCalledTimes(1);
+    expect(recorded(h.runner).at(-1)).toBe('Run ended');
+    const log = await readFile(path.join(logDir, `${JOB_ID}.log`), 'utf8');
+    expect(log).not.toContain('completed job');
+    expect(log).toContain('had already ended');
   });
 });

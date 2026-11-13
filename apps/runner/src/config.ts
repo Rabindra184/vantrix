@@ -8,6 +8,12 @@ export interface RunnerConfig {
   logPollIntervalMs: number;
   maxLogBytes: number;
   staleJobMs: number;
+  /**
+   * How often a running job tells the database it is alive. Derived, never
+   * configured: a quarter of `staleJobMs` and at most 15 s, so the shortest
+   * stale window an operator can set (60 s) still sees four beats.
+   */
+  heartbeatIntervalMs: number;
   artifactRetentionDays: number;
   retentionSweepIntervalMs: number;
   javaBin: string;
@@ -113,6 +119,7 @@ function optionalNumber(value: string | undefined): number | null {
 }
 
 export function loadRunnerConfig(env: NodeJS.ProcessEnv = process.env): RunnerConfig {
+  const staleJobMs = Math.max(60_000, numberOr(env.RUNNER_STALE_JOB_MS, 30 * 60_000));
   return {
     databaseUrl: required(env, 'DATABASE_URL'),
     redisUrl: env.REDIS_URL ?? 'redis://localhost:6380',
@@ -122,7 +129,8 @@ export function loadRunnerConfig(env: NodeJS.ProcessEnv = process.env): RunnerCo
     pollIntervalMs: Math.max(1000, numberOr(env.RUNNER_POLL_INTERVAL_MS, 3000)),
     logPollIntervalMs: Math.max(250, numberOr(env.RUNNER_LOG_POLL_INTERVAL_MS, 1000)),
     maxLogBytes: Math.max(1024 * 1024, numberOr(env.MAX_BUNDLE_BYTES, 512 * 1024 * 1024)),
-    staleJobMs: Math.max(60_000, numberOr(env.RUNNER_STALE_JOB_MS, 30 * 60_000)),
+    staleJobMs,
+    heartbeatIntervalMs: Math.min(15_000, Math.floor(staleJobMs / 4)),
     artifactRetentionDays: Math.max(0, numberOr(env.RUNNER_ARTIFACT_RETENTION_DAYS, 30)),
     retentionSweepIntervalMs: Math.max(60_000, numberOr(env.RUNNER_RETENTION_SWEEP_INTERVAL_MS, 5 * 60_000)),
     javaBin: env.JAVA_BIN ?? 'java',

@@ -39,6 +39,7 @@ function makeExecutor(configOver: Partial<RunnerConfig>) {
     allowSameUidExecution: false,
     childUid: null,
     childGid: null,
+    heartbeatIntervalMs: 60_000,
     ...configOver,
   } as RunnerConfig;
 
