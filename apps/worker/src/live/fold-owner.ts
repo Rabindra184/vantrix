@@ -1481,7 +1481,26 @@ export class LiveFoldOwner {
     // here only widens a window that already exists (the connect and the lock
     // query above are both awaits), and the check still runs immediately
     // before the insert.
-    const { cursor, breachingSince } = await this.#resumeState(runId);
+    const resume = await this.#resumeState(runId);
+    if (resume === null) {
+      // Not ours this tick -- see `#resumeState`. Unwound exactly as the
+      // `#closing` branch below unwinds a claim it will not keep: unlock on
+      // this same client, and hand a client whose unlock failed back WITH the
+      // error, so the pool destroys the session rather than idling one that
+      // still holds the run's lock.
+      try {
+        await client.query('SELECT pg_advisory_unlock($1, hashtext($2))', [
+          RUN_INGEST_LOCK_NAMESPACE,
+          runId,
+        ]);
+      } catch (err) {
+        held.release(err instanceof Error ? err : new Error(String(err)));
+        throw err;
+      }
+      held.release();
+      return;
+    }
+    const { cursor, breachingSince } = resume;
     // Same reasoning as `#resumeState` above -- this run's row and its SLA
     // rules, read ONCE, right here, and never again for as long as this
     // owner holds the run (`FoldState.rules`' own doc comment).
@@ -1743,21 +1762,37 @@ export class LiveFoldOwner {
    * at all, a half-written entry) yields an empty map -- today's behaviour,
    * which is a re-stamp rather than a wrong number.
    *
-   * A failure to READ the tip degrades to `blankResume()` rather than
-   * propagating: this is inside `#claimReserved`, which holds a pooled client
-   * and an advisory lock, and a Redis outage that makes this read fail is one
-   * that will fail the publish two lines later anyway. It is logged, because
-   * silently restarting a run's sequence is the defect this method exists to
-   * close.
+   * ═══ A TIP THAT COULD NOT BE READ IS NOT AN EMPTY STREAM ═══
+   *
+   * `null`, and the claim is given up for this tick. This used to degrade to
+   * `blankResume()` on the argument that a Redis outage failing this read
+   * would fail the publish two lines later anyway. That holds for an outage
+   * and not for a single failed command: the read fails, Redis answers again,
+   * and the owner publishes `seq 0` into a stream whose tip is at 199 -- the
+   * very restart this method exists to prevent, reached through its own error
+   * path, and logged as though that made it safe. Nothing is lost by waiting:
+   * the run is still `running`, so the next tick finds it and claims it with
+   * a tip it could read.
+   *
+   * Only the READ. A tip that was read and is not a usable delta (no body, a
+   * body that will not parse, no integer `seq`) still resumes blank, as it
+   * always did: asking again returns the same entry, so refusing the claim
+   * over it would leave the run with no owner for as long as it streams.
    */
-  async #resumeState(runId: string): Promise<ResumeState> {
+  async #resumeState(runId: string): Promise<ResumeState | null> {
+    let rows: [id: string, fields: string[]][];
     try {
       // The tip only: `XREVRANGE ... COUNT 1`. Stream ids are Redis
       // timestamps and carry no relation to a delta's own `seq`
       // (`live.gateway.ts`'s `readStream` makes the same point), so the seq
       // has to be read out of the body -- but the LAST entry is the highest
       // seq by construction, since `#publish` only ever appends.
-      const rows = await this.#redis.xrevrange(`live:${runId}:deltas`, '+', '-', 'COUNT', 1);
+      rows = await this.#redis.xrevrange(`live:${runId}:deltas`, '+', '-', 'COUNT', 1);
+    } catch (err) {
+      console.error(`LiveFoldOwner: could not read the replay tip for ${runId}; not claiming it this tick:`, err);
+      return null;
+    }
+    try {
       const body = rows[0]?.[1]?.[1];
       if (typeof body !== 'string') return blankResume();
       const tip = JSON.parse(body) as { seq?: unknown; sla?: unknown };
@@ -1774,7 +1809,7 @@ export class LiveFoldOwner {
       }
       return { cursor: { ...INITIAL_CURSOR, seq: tip.seq + 1 }, breachingSince };
     } catch (err) {
-      console.error(`LiveFoldOwner: could not read the replay tip for ${runId}, restarting seq at 0:`, err);
+      console.error(`LiveFoldOwner: the replay tip for ${runId} is not a readable delta, restarting seq at 0:`, err);
       return blankResume();
     }
   }

@@ -1986,6 +1986,54 @@ describe('LiveFoldOwner', () => {
   });
 
   /**
+   * The same restart, reached through the claim's own error path. A tip that
+   * could not be READ used to resume blank, on the argument that a Redis
+   * outage would fail the publish too. One failed command is not an outage:
+   * the read fails, the next command succeeds, and `seq 0` lands in a stream
+   * whose tip is at 199. The claim is given up instead and made again on the
+   * next tick, with a tip it could read.
+   */
+  it('does not claim a run whose replay tip it could not read, and continues the seq once it can', async () => {
+    await truncateAll();
+    const { orgId, projectId } = await seedOrgProject();
+    const runId = await seedRunningRun(orgId, projectId, log.length);
+    await chunks.put(runId, 0, log);
+
+    const redis = new Redis(config.redisUrl);
+    const ownerRedis = new Redis(config.redisUrl);
+    const owner = new LiveFoldOwner(config, pool, chunks, ownerRedis, rules);
+    const lockProbe = await pool.connect();
+    try {
+      const tipSeq = 199;
+      await redis.xadd(`live:${runId}:deltas`, '*', 'delta', JSON.stringify({ runId, seq: tipSeq }));
+      const read = vi.spyOn(ownerRedis, 'xrevrange').mockRejectedValueOnce(new Error('read ECONNRESET'));
+
+      await owner.tick();
+
+      // Not owned, nothing published, and the run's lock is FREE: a claim
+      // given up while still holding it would keep the pipeline out for good.
+      expect(read).toHaveBeenCalledTimes(1);
+      expect(owner.snapshotOf(runId)).toBeNull();
+      expect(await redis.xlen(`live:${runId}:deltas`)).toBe(1);
+      const { rows } = await lockProbe.query<{ got: boolean }>(
+        'SELECT pg_try_advisory_lock($1, hashtext($2)) AS got',
+        [RUN_INGEST_LOCK_NAMESPACE, runId],
+      );
+      expect(rows[0]?.got).toBe(true);
+      await lockProbe.query('SELECT pg_advisory_unlock($1, hashtext($2))', [RUN_INGEST_LOCK_NAMESPACE, runId]);
+
+      // The next tick reads the tip and carries on from it.
+      const first = await nextPublishedDelta(owner, runId);
+      expect(first.seq).toBe(tipSeq + 1);
+      expect(first.responseTime.replaces).toBe(true);
+    } finally {
+      lockProbe.release();
+      await redis.quit();
+      await owner.close();
+    }
+  });
+
+  /**
    * Task 3 (live-sla-signals): `#publish` now runs the SAME pure evaluator
    * `PipelineService` runs against a finished run, through the SAME
    * `toEvaluableStats` mapping, gated by `liveEvidenceFloor` -- so a running
