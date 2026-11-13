@@ -122,10 +122,32 @@ export default function RunList({
   // mean something different the moment that row moved or was deleted. The
   // URL stays honest about what it can address — the list itself — and the
   // walk forward lives where the walk happens.
-  const [cursor, setCursor] = useState<string | null>(null);
+  //
+  // ═══ AND IT BELONGS TO THE FILTERS IT WAS WALKED UNDER ═══
+  //
+  // A cursor is the id of a row on the previous page OF ONE FILTER SET, so it
+  // is kept beside the filters it was taken under and dropped, during render,
+  // the moment the URL's filters are not those. It used to be reset by this
+  // component's own two handlers and by nothing else, so a filter change that
+  // came from outside (Back, Forward, the rail's All runs link, a pasted URL
+  // on the mounted page) asked the API to continue the old walk through the
+  // new list. During render, not in an effect: an effect would send the new
+  // filters with the old cursor for one request first. `HomeTests` keeps its
+  // cursor stack the same way, for the same reason.
   const [searchParams, setSearchParams] = useSearchParams();
   const { filters, ignored } = useMemo(() => filtersFromParams(searchParams), [searchParams]);
   const filtersActive = hasActiveFilters(filters);
+  const walkedUnder = new URLSearchParams(paramsFromFilters(filters)).toString();
+  const [paging, setPaging] = useState<{ readonly under: string; readonly cursor: string | null }>({
+    under: walkedUnder,
+    cursor: null,
+  });
+  let cursor = paging.cursor;
+  if (paging.under !== walkedUnder) {
+    cursor = null;
+    setPaging({ under: walkedUnder, cursor: null });
+  }
+  const setCursor = (next: string | null) => setPaging({ under: walkedUnder, cursor: next });
 
   // ONE PAIR OF HANDLERS, not one pair per return branch. The controls
   // render above the loading, error and loaded states alike — they must, or
@@ -133,16 +155,14 @@ export default function RunList({
   // flight — and three inline copies of "reset the cursor, then write the
   // URL" is three places for them to drift apart.
   //
-  // `setCursor(null)` FIRST, in both: a cursor is the id of a row on the
-  // previous page of the PREVIOUS filter (see the cursor's own comment
-  // above), so carrying it across a filter change asks the API to continue a
-  // walk through a list that no longer exists.
+  // Neither resets the cursor itself. The cursor follows the URL's filters
+  // (above), which is the one rule that also covers a change these handlers
+  // never see; a second reset here would agree with it on every case and
+  // hide the day it stopped working.
   const applyFilters = (next: RunListFilters) => {
-    setCursor(null);
     setSearchParams(paramsFromFilters(next), { replace: true });
   };
   const clearFilters = () => {
-    setCursor(null);
     setSearchParams({}, { replace: true });
   };
   /* §22.6's one JS breakpoint. Below 768px this list is a stack of cards and

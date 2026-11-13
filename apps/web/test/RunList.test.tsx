@@ -1,7 +1,7 @@
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { Link, MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { RunListResponse } from '@perfportal/contracts';
 import RunList from '../src/routes/RunList';
@@ -731,5 +731,93 @@ describe('RunList — New project follows the admin flag', () => {
     renderAs('admin', { projectSlug: 'checkout' });
     await screen.findAllByTestId('run-row');
     expect(newProject()).toBeNull();
+  });
+});
+
+/* ======================================================================== *
+ * THE CURSOR BELONGS TO THE FILTERS IT WAS WALKED UNDER
+ * ======================================================================== */
+
+/**
+ * A cursor is the id of a row on the previous page of ONE filter set. It was
+ * reset by the list's own Apply and Clear and by nothing else, so a filter
+ * change arriving from outside the component (the rail's All runs link, Back)
+ * sent the old cursor with the new filters. Each case reads the REQUESTS, in
+ * order: the rows on screen are the same fixture either way.
+ */
+describe('RunList — the cursor follows the URL’s filters', () => {
+  /** Every /v1/runs request's query string, in order. Page one always offers a next page. */
+  function renderPaged(initialEntry: string) {
+    const asked: string[] = [];
+    vi.stubGlobal('fetch', (input: RequestInfo | URL) => {
+      const url = new URL(String(input), 'http://localhost');
+      if (url.pathname !== '/v1/runs') return Promise.reject(new Error(`unexpected fetch ${url.pathname}`));
+      asked.push(url.search);
+      const nextCursor = url.searchParams.has('cursor') ? null : ROWS[0]!.id;
+      return Promise.resolve(
+        new Response(JSON.stringify({ items: ROWS, nextCursor }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={[initialEntry]}>
+          {/* Stands in for the rail and for Back: a filter change this list did not make. */}
+          <Link to="/runs">outside: every run</Link>
+          <Link to="/runs?status=failed&x=1">outside: same filters</Link>
+          <RunList />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    return asked;
+  }
+  const last = (asked: readonly string[]) => new URLSearchParams(asked.at(-1));
+
+  async function toPageTwo(asked: readonly string[]) {
+    await screen.findAllByTestId('run-row');
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    await waitFor(() => expect(last(asked).get('cursor')).toBe(ROWS[0]!.id));
+    await screen.findByRole('button', { name: 'First page' });
+  }
+
+  it('starts the new list from its first page when the filters change from outside', async () => {
+    const asked = renderPaged('/runs?status=failed');
+    await toPageTwo(asked);
+    expect(last(asked).get('status')).toBe('failed');
+
+    fireEvent.click(screen.getByRole('link', { name: 'outside: every run' }));
+
+    await waitFor(() => expect(last(asked).has('status')).toBe(false));
+    // No request, at any point, paired the old cursor with the new filters.
+    expect(asked.filter((q) => !new URLSearchParams(q).has('status') && new URLSearchParams(q).has('cursor'))).toEqual([]);
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'First page' })).toBeNull());
+  });
+
+  // The other side: a navigation that leaves the filters as they were is not
+  // a new list, and must not throw the reader back to page one.
+  it('keeps its place when a navigation leaves the filters as they were', async () => {
+    const asked = renderPaged('/runs?status=failed');
+    await toPageTwo(asked);
+    const before = asked.length;
+
+    fireEvent.click(screen.getByRole('link', { name: 'outside: same filters' }));
+
+    expect(await screen.findByRole('button', { name: 'First page' })).toBeInTheDocument();
+    expect(asked.slice(before).every((q) => new URLSearchParams(q).has('cursor'))).toBe(true);
+  });
+
+  // The list's own Clear used to reset the cursor by hand; it relies on the
+  // one rule now, so the rule has to cover it.
+  it('starts from the first page when the list’s own Clear changes the filters', async () => {
+    const asked = renderPaged('/runs?status=failed');
+    await toPageTwo(asked);
+
+    fireEvent.click(screen.getByRole('button', { name: /clear/i }));
+
+    await waitFor(() => expect(last(asked).has('status')).toBe(false));
+    expect(last(asked).has('cursor')).toBe(false);
   });
 });
