@@ -328,6 +328,7 @@ export default function RunShell({
           partial={live?.partial ?? false}
           capReached={capReached}
           streamed={live?.lastDelta != null}
+          unauthorized={live?.unauthorized ?? false}
           onRetry={onRetry}
         />
       )}

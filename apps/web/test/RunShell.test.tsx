@@ -283,6 +283,15 @@ describe('RunShell', () => {
     expect(screen.getByTestId('context-probe').textContent).toContain('"connected":true');
   });
 
+  // The seam `LiveStatusStrip.test.tsx` cannot see: that file hands the strip
+  // `unauthorized` itself. Here the shell has to carry it from the live state.
+  it('tells the status strip when the live socket was refused', () => {
+    const live = { connected: false, lastDelta: null, unauthorized: true, partial: false };
+    renderProbeWith({ status: 'running', live });
+    expect(screen.getByTestId('live-unauthorized')).toBeInTheDocument();
+    expect(screen.queryByText(/reconnect/i)).toBeNull();
+  });
+
   it('reports the growing domain from the live delta, not from a null duration', () => {
     // `LiveDelta` carries `responseTime`/`users`/`errors`/`seq` beyond
     // `summary`, none of which this assertion reads — a specific assertion

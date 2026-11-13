@@ -98,6 +98,19 @@ export default function RunDetail() {
      nobody is told they were refused. */
   const projectAccess = useProjectAccess(run.data?.run.project?.slug);
 
+  /* ═══ A REFUSED SOCKET ASKS THE API WHO IS ASKING ═══
+     The gateway's 4401 does not say why: an ended session, a disabled account
+     and a project the reader no longer belongs to all close the same way, so
+     this page cannot act on it alone. `GET /v1/runs/{id}` can tell them apart
+     (401, which ends the session app-wide; 403; 404), so the refusal triggers
+     that read NOW rather than at the next poll, and the answer replaces a live
+     page that would otherwise go on showing its last numbers. */
+  const refused = live.unauthorized;
+  const refetchRun = run.refetch;
+  useEffect(() => {
+    if (refused) void refetchRun();
+  }, [refused, refetchRun]);
+
   // The polling cap, held as state rather than computed at render time. A
   // derived `Date.now() - start > CAP` would be correct only at the moments
   // something else happens to re-render — and the whole point of the cap is
