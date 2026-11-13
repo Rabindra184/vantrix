@@ -1,7 +1,7 @@
 import { useRef, useState, type ChangeEvent } from 'react';
 import { Link } from 'react-router-dom';
 import Button from '../components/Button';
-import { ProblemError } from '../api/fetch';
+import { ProblemError, UNREADABLE_ERROR_CODE } from '../api/fetch';
 import { POLL_INTERVAL_MS } from '../api/run';
 import { BUNDLE_EXTENSIONS, bundleProblem, formatBytes, uploadBundle } from '../api/uploadBundle';
 import { runPath } from './paths';
@@ -48,9 +48,19 @@ export default function BundleUpload({ slug }: { readonly slug: string }) {
      open on a finished run is the "ten charts must not contribute ten live
      regions" mistake wearing a different hat. */
   const { detail, terminal } = useRunTerminal(runId ?? undefined, {
-    refetchInterval: (query) => (query.state.data?.state === 'ready' ? false : POLL_INTERVAL_MS),
+    refetchInterval: (query) =>
+      query.state.data?.state === 'ready' || rejectionOf(query.state.error) !== null
+        ? false
+        : POLL_INTERVAL_MS,
   });
   const status = detail.data?.run.status;
+  /* ═══ A REJECTED BUNDLE IS AN ANSWER, NOT A RUN STILL BEING PARSED ═══
+     `GET /v1/runs/{id}` answers a run whose ingest FAILED with that failure's
+     own problem document (400, 413 or 500), which `fetchRun` throws. This card
+     read `data` alone, so `terminal` never turned true: it said "parsing the
+     bundle" for ever and asked again every five seconds, about a run the
+     server had already finished refusing. */
+  const rejected = runId === null ? null : rejectionOf(detail.error);
 
   const choose = (event: ChangeEvent<HTMLInputElement>) => {
     const picked = event.target.files?.[0] ?? null;
@@ -160,7 +170,7 @@ export default function BundleUpload({ slug }: { readonly slug: string }) {
       {/* ═══ THE STATE AN UPLOAD CONTROL USUALLY OMITS ═══
           202 means stored, not parsed. Saying "Uploaded" here and stopping
           would report success for a run that does not exist yet. */}
-      {runId !== null && !terminal && (
+      {runId !== null && !terminal && rejected === null && (
         <p role="status" data-testid="bundle-processing" className="text-[0.8125rem] text-muted">
           Uploaded. PerfPortal is parsing the bundle — this usually takes a few seconds.
         </p>
@@ -182,6 +192,28 @@ export default function BundleUpload({ slug }: { readonly slug: string }) {
           {failure.remediation !== '' && <p className="mt-1 text-muted">{failure.remediation}</p>}
         </div>
       )}
+
+      {rejected !== null && (
+        // Its own block, not `failure`'s: that one is an upload that did not
+        // arrive, this is one that arrived and was refused. Choosing another
+        // file clears it, as it clears everything about the last attempt.
+        <div role="alert" data-testid="bundle-rejected" className="rounded-lg border border-default bg-sunken p-3 text-[0.8125rem] text-primary">
+          {rejected.detail}
+          {rejected.remediation !== '' && <p className="mt-1 text-muted">{rejected.remediation}</p>}
+        </div>
+      )}
     </div>
   );
+}
+
+/**
+ * The API's own refusal of this run, or null.
+ *
+ * Only a problem document the API wrote counts. A response `problemFrom` could
+ * not read (a proxy's 502 page) or a request that never arrived says nothing
+ * about the run, so the card goes on waiting and asking: calling that a
+ * rejected bundle would be a false claim about a run that may be fine.
+ */
+function rejectionOf(error: unknown): ProblemError | null {
+  return error instanceof ProblemError && error.code !== UNREADABLE_ERROR_CODE ? error : null;
 }
