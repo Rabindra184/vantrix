@@ -14,6 +14,13 @@ export interface LiveSink {
   send(body: string): void;
 }
 
+/** A run's viewers on this pod, and the one SUBSCRIBE they all depend on. */
+interface Room {
+  readonly sinks: Set<LiveSink>;
+  /** Settles when Redis has answered the room's SUBSCRIBE. See `LiveHub.join`. */
+  readonly subscribed: Promise<void>;
+}
+
 /**
  * ONE ioredis subscriber for the whole pod, and a set of sockets per run.
  *
@@ -31,13 +38,13 @@ export interface LiveSink {
 @Injectable()
 export class LiveHub implements OnModuleDestroy {
   readonly #sub: Redis;
-  readonly #rooms = new Map<string, Set<LiveSink>>();
+  readonly #rooms = new Map<string, Room>();
 
   constructor(redisUrl: string) {
     this.#sub = new Redis(redisUrl);
     this.#sub.on('message', (channel, body) => {
       const runId = channel.slice('live:'.length);
-      for (const socket of this.#rooms.get(runId) ?? []) {
+      for (const socket of this.#rooms.get(runId)?.sinks ?? []) {
         // PER-SINK, INSIDE THE LOOP. `ws.send()` throws outright on a
         // CONNECTING socket, and a sink is free to fail for its own reasons;
         // an unguarded call therefore lets ONE dead socket abandon every
@@ -58,30 +65,60 @@ export class LiveHub implements OnModuleDestroy {
     });
   }
 
+  /**
+   * ═══ EVERY JOINER WAITS ON THE ROOM'S ONE SUBSCRIBE ═══
+   *
+   * A second join used to return the moment it found the room, whether or not
+   * the first join's SUBSCRIBE had been answered. Two things followed. The
+   * gateway seeds a viewer as soon as its join resolves, so the second viewer
+   * was seeded over a subscription that did not exist yet. And if that
+   * SUBSCRIBE was REFUSED, only the first joiner heard: the others sat in a
+   * room nothing was subscribed to, and because the room was not empty when
+   * the first one left, nothing ever subscribed it again. A run's viewers on
+   * this pod received no delta for as long as any of them stayed.
+   *
+   * The room holds the subscribe's promise, and every join awaits it. A
+   * refusal reaches all of them (the gateway closes each with 1011 and the
+   * client reconnects), and takes the room with it, so the next join starts a
+   * fresh one.
+   */
   async join(runId: string, socket: LiveSink): Promise<void> {
-    const room = this.#rooms.get(runId);
-    if (room) {
-      room.add(socket);
+    const existing = this.#rooms.get(runId);
+    if (existing) {
+      existing.sinks.add(socket);
+      await existing.subscribed;
       return;
     }
-    // Insert BEFORE awaiting the subscribe: a second join arriving while this
-    // one is in flight must find the room and add to it, not start a second
-    // SUBSCRIBE for the same channel.
-    this.#rooms.set(runId, new Set([socket]));
-    await this.#sub.subscribe(`live:${runId}`);
+    // The room is in the map BEFORE the subscribe is awaited: a second join
+    // arriving while this one is in flight must find it and share its
+    // SUBSCRIBE, not start another for the same channel.
+    const room: Room = {
+      sinks: new Set([socket]),
+      subscribed: this.#sub.subscribe(`live:${runId}`).then(
+        () => undefined,
+        (err: unknown) => {
+          // Only if it is still THIS room: one emptied and re-created while
+          // the SUBSCRIBE was in flight belongs to a later join.
+          if (this.#rooms.get(runId) === room) this.#rooms.delete(runId);
+          throw err;
+        },
+      ),
+    };
+    this.#rooms.set(runId, room);
+    await room.subscribed;
   }
 
   async leave(runId: string, socket: LiveSink): Promise<void> {
     const room = this.#rooms.get(runId);
     if (!room) return;
-    room.delete(socket);
-    if (room.size > 0) return;
+    room.sinks.delete(socket);
+    if (room.sinks.size > 0) return;
     this.#rooms.delete(runId);
     await this.#sub.unsubscribe(`live:${runId}`);
   }
 
   size(runId: string): number {
-    return this.#rooms.get(runId)?.size ?? 0;
+    return this.#rooms.get(runId)?.sinks.size ?? 0;
   }
 
   async onModuleDestroy(): Promise<void> {

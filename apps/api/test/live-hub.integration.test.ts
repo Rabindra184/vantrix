@@ -136,4 +136,74 @@ describe('LiveHub', () => {
     await vi.waitFor(() => expect(healthy.sent).toHaveLength(1));
     expect(JSON.parse(healthy.sent[0]!).seq).toBe(4);
   });
+
+  /**
+   * The room's SUBSCRIBE is held open, a second viewer joins behind it, and
+   * then it is refused. Before, the second join had already returned: it sat
+   * in a room nothing was subscribed to, and no later join subscribed it,
+   * because the room existed. The third join below is the half that proves
+   * recovery: it must reach Redis and receive a real publish.
+   */
+  it('tells every waiting joiner when the room’s subscribe is refused, and subscribes afresh afterwards', async () => {
+    const runId = randomUUID();
+    const hub = newHub();
+    publisher = new Redis(REDIS_URL);
+    let refuse!: (err: Error) => void;
+    const held = new Promise<never>((_, reject) => {
+      refuse = reject;
+    });
+    const subscribe = vi.spyOn(Redis.prototype, 'subscribe').mockImplementationOnce(() => held as never);
+
+    try {
+      const first = hub.join(runId, fakeSocket()).then(() => 'joined', () => 'refused');
+      const second = hub.join(runId, fakeSocket()).then(() => 'joined', () => 'refused');
+      // The second join must still be WAITING while the subscribe is unanswered.
+      expect(await Promise.race([second, delay(50).then(() => 'waiting')])).toBe('waiting');
+
+      refuse(new Error('READONLY cannot subscribe'));
+
+      expect(await first).toBe('refused');
+      expect(await second).toBe('refused');
+      expect(hub.size(runId)).toBe(0);
+      expect(subscribe).toHaveBeenCalledTimes(1);
+
+      const third = fakeSocket();
+      await hub.join(runId, third);
+      expect(subscribe).toHaveBeenCalledTimes(2);
+      await publisher.publish(`live:${runId}`, JSON.stringify({ seq: 7 }));
+      await vi.waitFor(() => expect(third.sent.length).toBe(1));
+    } finally {
+      subscribe.mockRestore();
+    }
+  });
+
+  // The ordinary case of the same rule: a viewer who joins behind an
+  // unanswered subscribe is not told it has joined until the room can deliver.
+  it('does not report a join until the room’s subscribe has been answered', async () => {
+    const runId = randomUUID();
+    const hub = newHub();
+    let answer!: () => void;
+    const held = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+    const real = Redis.prototype.subscribe;
+    const subscribe = vi.spyOn(Redis.prototype, 'subscribe').mockImplementationOnce(function (this: Redis, ...args: unknown[]) {
+      return held.then(() => (real as (...a: unknown[]) => Promise<unknown>).apply(this, args)) as never;
+    });
+
+    try {
+      const first = hub.join(runId, fakeSocket());
+      const second = hub.join(runId, fakeSocket()).then(() => 'joined');
+      expect(await Promise.race([second, delay(50).then(() => 'waiting')])).toBe('waiting');
+
+      answer();
+      await first;
+      expect(await second).toBe('joined');
+      expect(hub.size(runId)).toBe(2);
+      expect(subscribe).toHaveBeenCalledTimes(1);
+    } finally {
+      subscribe.mockRestore();
+    }
+  });
 });
+
