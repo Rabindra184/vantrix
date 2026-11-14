@@ -151,13 +151,42 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The report-first-chart-webkit-fold branch (PR #313) added no test and moves no
+floor: unit stays **313 / 5343**, integration **289 / 4715**, e2e **238**,
+`test:e2e:cross` **714**. It changes two `<select>` class strings and one
+assertion's message.
+
+**`e2e-cross-browser` WAS RED ON `main` FROM #300 UNTIL THIS, ON ONE CASE.**
+`[webkit] run-summary-report.spec.ts`' "the Report's first Requests chart
+begins on the first 1440x900 screen" read `Received: 901.984375` against
+`< 900`, both attempts, on every run. That job runs only on `main` and on
+dispatch, so no PR's own checks showed it.
+
+**A NATIVE `<select>` HAS NO HEIGHT OF ITS OWN, AND LINUX WEBKIT'S IS THE
+TALLEST.** With `px-2 py-1 text-sm` and a border: Chromium 29px, Firefox 28px,
+WebKit on macOS 22px, WebKit on the Linux runner about 38px (read off a CI
+trace screenshot, not measured). Two such rows sit above that chart, the time
+window's axis-mode select and, since #300, the Requests pickers. Both selects
+carry `h-[1.8125rem]` (29px, in rem so it follows the reader's text size) now.
+Before the fix, locally, the chart's top was 886.5 Chromium / 885.5 Firefox /
+885.48 WebKit, so macOS WebKit could not reproduce it.
+
+**WHAT WAS RUN.** Locally, Node v22.19.0: `run-summary-report`, `time-window`,
+`report-pickers` and `run-charts` on three engines, **141 passed**; `typecheck`
+and `lint` exit 0. On CI, dispatched on `6365e65a`: `build` green and
+`e2e-cross-browser` **704 passed, 9 skipped, 1 flaky** of 714, the case above
+passing on all three engines at the first attempt. The flaky one is
+`[firefox] public-links.spec.ts`' stranger-reads-Logs case, which this diff
+does not touch. The assertion's message now prints the heights of the time
+window and the Requests bar, so a future failure names the row that grew.
+
 The seven state-machine fixes that followed (PRs #304 to #310, each its own
 branch from `main`, found by the same mapping as the entry below) and the test
 fix they needed (#311) moved the floors from unit **311 / 5320** to
 **313 / 5343** and integration **288 / 4689** to **289 / 4715**. **e2e stays
 238**, `test:e2e:cross` **714**. Each branch's totals were read off its own CI
-`build` log; the combined totals are their sum, and no one run has measured
-them together yet — the `build` job on `main` is what does.
+`build` log; the combined totals are their sum, and CI's `build` job on #312's
+head then measured exactly those totals together.
 
 ```
   PR    branch                              unit          integration
