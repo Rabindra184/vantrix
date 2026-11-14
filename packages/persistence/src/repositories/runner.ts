@@ -168,6 +168,9 @@ export interface RunnerJobEvents {
   events: RunnerJobEventRecord[];
 }
 
+/** A job in one of these never changes status again. See `markClosing`. */
+const NOT_ENDED = Prisma.sql`status NOT IN ('complete', 'failed', 'cancelled')`;
+
 export class RunnerRepository {
   constructor(private readonly prisma: PrismaClient) {}
 
@@ -381,28 +384,45 @@ export class RunnerRepository {
     `;
   }
 
-  async markClosing(jobId: string): Promise<void> {
-    await this.prisma.$executeRaw`
+  /**
+   * ═══ A JOB THAT HAS ENDED STAYS ENDED ═══
+   *
+   * These three refused a cancelled job and nothing else, so 'failed' was not
+   * terminal: a job another runner's `failStale` had failed was moved back to
+   * 'closing' and then 'complete' by the executor still working on it, keeping
+   * the RUNNER_JOB_STALE error on a job that read complete. And a failure
+   * landing after a job completed rewrote it as failed.
+   *
+   * `NOT_ENDED` is the one spelling of the rule for all three, and each says
+   * whether it wrote, so the executor can tell a job it finished from one that
+   * had already ended underneath it. `runner_job.status` is plain text with no
+   * CHECK, so this is the only place the rule is enforced.
+   */
+  async markClosing(jobId: string): Promise<boolean> {
+    const written = await this.prisma.$executeRaw`
       UPDATE runner_job
       SET status = 'closing', updated_at = now()
-      WHERE id = ${jobId}::uuid AND status <> 'cancelled'
+      WHERE id = ${jobId}::uuid AND ${NOT_ENDED}
     `;
+    return written > 0;
   }
 
-  async markComplete(jobId: string): Promise<void> {
-    await this.prisma.$executeRaw`
+  async markComplete(jobId: string): Promise<boolean> {
+    const written = await this.prisma.$executeRaw`
       UPDATE runner_job
       SET status = 'complete', updated_at = now()
-      WHERE id = ${jobId}::uuid AND status <> 'cancelled'
+      WHERE id = ${jobId}::uuid AND ${NOT_ENDED}
     `;
+    return written > 0;
   }
 
-  async markFailed(jobId: string, error: RunnerJobError): Promise<void> {
-    await this.prisma.$executeRaw`
+  async markFailed(jobId: string, error: RunnerJobError): Promise<boolean> {
+    const written = await this.prisma.$executeRaw`
       UPDATE runner_job
       SET status = 'failed', error = ${JSON.stringify(error)}::jsonb, updated_at = now()
-      WHERE id = ${jobId}::uuid AND status <> 'cancelled'
+      WHERE id = ${jobId}::uuid AND ${NOT_ENDED}
     `;
+    return written > 0;
   }
 
   async heartbeat(jobId: string): Promise<void> {
