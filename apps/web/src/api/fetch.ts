@@ -17,6 +17,9 @@ const ProblemFieldsSchema = ProblemDetailsSchema.pick({ code: true, detail: true
  * caller and the wire ever disagreed. A 401 is just a `ProblemError` with
  * `status: 401` — this module never redirects (see apiFetch's docstring).
  */
+/** The code `problemFrom` gives a response that is not the API's own problem document. */
+export const UNREADABLE_ERROR_CODE = 'CLIENT_UNREADABLE_ERROR';
+
 export class ProblemError extends Error {
   readonly code: string;
   readonly status: number;
@@ -91,7 +94,7 @@ export async function problemFrom(res: Response): Promise<ProblemError> {
 
 function synthesizeUnreadable(status: number, rawBody: string): ProblemError {
   return new ProblemError(status, {
-    code: 'CLIENT_UNREADABLE_ERROR',
+    code: UNREADABLE_ERROR_CODE,
     detail: `Response body could not be parsed as a problem+json error. First 200 characters of the raw body: ${rawBody.slice(0, 200)}`,
     remediation:
       'This response did not come from the API in the expected form. A proxy or gateway between the browser and the API is the likely source — check infrastructure logs rather than the API itself.',
