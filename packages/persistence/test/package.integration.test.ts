@@ -11,7 +11,14 @@ import { requireDatabaseUrl, resetDatabase } from './support/db.js';
 
 const url = requireDatabaseUrl();
 const pool = createPool(url);
-const prisma = createPrisma(url);
+// THE POOL IS SIZED HERE, NOT LEFT TO THE MACHINE. Prisma's default is
+// (physical cores x 2) + 1, so on a one-core CI runner it is 3 -- and the
+// concurrent-upload case below needs four transactions open at once. The
+// fourth then waits for a connection the other three never give back, and the
+// case fails on "Timed out fetching a new connection from the connection
+// pool" rather than on anything it asserts. A DATABASE_URL that already
+// carries connection_limit still wins (withConnectionLimit's own rule).
+const prisma = createPrisma(url, { connectionLimit: 8 });
 const packages = new PackageRepository(prisma);
 
 afterAll(async () => {
