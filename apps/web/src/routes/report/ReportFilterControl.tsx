@@ -210,7 +210,12 @@ function FilterField({
         onChange={(event) => onChange(event.target.value)}
         disabled={disabled}
         aria-describedby={disabled ? reasonId : undefined}
-        className="min-w-0 rounded border border-default bg-surface px-2 py-1 text-sm text-primary disabled:cursor-not-allowed disabled:opacity-50"
+        /* THE HEIGHT IS STATED, NOT LEFT TO THE ENGINE. A native select's
+         * height is its theme's: measured with these classes it is 29px in
+         * Chromium, 28 in Firefox, 22 in WebKit on macOS and about 38 in
+         * WebKit on Linux, where this row then pushed the Report's first
+         * chart past the first 1440x900 screen. 29px is Chromium's own. */
+        className="h-[1.8125rem] min-w-0 rounded border border-default bg-surface px-2 py-1 text-sm text-primary disabled:cursor-not-allowed disabled:opacity-50"
       >
         <option value="*">{allLabel}</option>
         {values.map((v) => (

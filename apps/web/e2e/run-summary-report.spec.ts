@@ -526,8 +526,24 @@ test('the Report’s first Requests chart begins on the first 1440x900 screen', 
     const r = el.getBoundingClientRect();
     return { top: r.top, bottom: r.bottom };
   });
+  /* WHAT STANDS ABOVE THE CHART, IN THE FAILURE ITSELF. This bound failed on
+   * one engine on CI alone (WebKit on Linux, 901.98) and passed on that
+   * engine everywhere else, so the chart's own top could not say what had
+   * grown: a native select is about 38px tall there against 22 to 29, and
+   * the page has one in each of these two rows. Both selects carry a stated
+   * height now; the two row heights ride in the message so the next engine
+   * that disagrees names its row. */
+  const above = await page.evaluate(() => {
+    const height = (testId: string) =>
+      document.querySelector(`[data-testid="${testId}"]`)?.getBoundingClientRect().height ?? null;
+    return { timeWindow: height('time-brush'), requestsBar: height('requests-bar') };
+  });
   // top 886.5, bottom 1256.5 — see the comment above the case.
-  expect(box.top, `the first chart starts at ${box.top}px (bottom ${box.bottom}px)`).toBeLessThan(900);
+  expect(
+    box.top,
+    `the first chart starts at ${box.top}px (bottom ${box.bottom}px); above it the time window is ` +
+      `${above.timeWindow}px tall and the Requests bar ${above.requestsBar}px`,
+  ).toBeLessThan(900);
 });
 
 /**
