@@ -232,6 +232,57 @@ describe('RunRepository live runs', () => {
     expect(row.verdict).toBe('passed');
   });
 
+  /**
+   * The worker's two writes treat `incomplete` as terminal, as they do
+   * `complete` and `failed`. Both report whether they wrote, so the pipeline
+   * can tell a run that finished underneath it from one it now owns.
+   */
+  it.each(['complete', 'failed', 'incomplete'] as const)(
+    'markParsing leaves a %s run where it is, and says so',
+    async (status) => {
+      const { orgId, projectId } = await seedProject();
+      const repo = new RunRepository(prisma);
+      const run = await repo.createLive(liveInput(orgId, projectId));
+      await prisma.run.update({ where: { id: run.id }, data: { status } });
+
+      expect(await repo.markParsing(run.id)).toBe(false);
+
+      const row = await prisma.run.findUniqueOrThrow({ where: { id: run.id } });
+      expect(row.status).toBe(status);
+      expect(row.parsingStartedAt).toBeNull();
+    },
+  );
+
+  it.each(['pending', 'parsing', 'running'] as const)(
+    'markParsing takes a %s run',
+    async (status) => {
+      const { orgId, projectId } = await seedProject();
+      const repo = new RunRepository(prisma);
+      const run = await repo.createLive(liveInput(orgId, projectId));
+      await prisma.run.update({ where: { id: run.id }, data: { status } });
+
+      expect(await repo.markParsing(run.id)).toBe(true);
+
+      const row = await prisma.run.findUniqueOrThrow({ where: { id: run.id } });
+      expect(row.status).toBe('parsing');
+      expect(row.parsingStartedAt).not.toBeNull();
+    },
+  );
+
+  it('fail does not turn an incomplete run into a failed one', async () => {
+    const { orgId, projectId } = await seedProject();
+    const repo = new RunRepository(prisma);
+    const run = await repo.createLive(liveInput(orgId, projectId));
+    await repo.markIncomplete(run.id);
+
+    const wrote = await repo.fail(run.id, { code: 'INTERNAL', message: 'm', remediation: 'r' });
+
+    expect(wrote).toBe(false);
+    const row = await prisma.run.findUniqueOrThrow({ where: { id: run.id } });
+    expect(row.status).toBe('incomplete');
+    expect(row.error).toBeNull();
+  });
+
   it('claimForClose moves running to parsing and stamps parsingStartedAt, once', async () => {
     const { orgId, projectId } = await seedProject();
     const repo = new RunRepository(prisma);

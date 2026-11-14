@@ -130,7 +130,7 @@ read exactly as they always did.
 
 `nvm use` first, and if a run reports fewer than **311 files / 5320 tests**, it
 did not run everything — nor did an integration run reporting fewer than
-**288 files / 4679 tests**, an e2e run fewer than **238**, or a
+**288 files / 4689 tests**, an e2e run fewer than **238**, or a
 `pnpm test:e2e:cross` run fewer than **714** (238 on each of three engines).
 (Update those numbers when a sub-project adds suites, or the next reader
 calibrates against a stale floor and a silently-skipped run looks like a
@@ -150,6 +150,72 @@ still Chromium and still 102; `pnpm test:e2e:cross` was 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The pipeline-incomplete-is-terminal branch
+(`fix/pipeline-incomplete-is-terminal`) added no unit FILE and no unit case —
+unit stays **311 / 5320** — and 10 integration cases: 3 in
+`apps/worker/test/pipeline.integration.test.ts` and 7 in
+`packages/persistence/test/run-live.integration.test.ts` (two `it.each` of
+three, and one): integration **288 / 4679 to 288 / 4689**. **e2e stays 238.**
+Found by mapping the run lifecycle as a state machine.
+
+**`incomplete` WAS TERMINAL TO EVERY WRITER BUT THE PIPELINE.**
+`markIncomplete` refused `complete`, `failed` and `incomplete`; the pipeline's
+status check and `RunRepository.fail` named the first two, and `markParsing`
+was an unconditional write. So a second delivery of the job for a run that had
+finished `incomplete` WITH statistics (a stalled job redelivered, the sweeper
+retrying a completed job) moved it back to `parsing`, re-ingested it, died on
+`run_stat_run_id_scope_name_family_key`, and `fail()` recorded a half-measured
+run as `failed`. One finalized incomplete with NOTHING was parsed and promoted
+to `complete`. Both reproduced by the new cases before the fix, the first with
+the database's own duplicate-key error.
+
+**ONE LIST, ONE GUARD.** `TERMINAL_RUN_STATUSES` (`run.ts`) is the only place
+the rule is written — `run.status` is plain text with no CHECK — and
+`markIncomplete`, `fail` and `markParsing` all read it. `markParsing` is a
+compare-and-set that says whether it wrote, and the pipeline's claim IS that
+write: the status check before it is gone, because the two agreed on every
+reachable state and a second guard would have masked the first.
+`#handleLockLost` uses `isTerminalRunStatus`, so an incomplete live run whose
+lock is held no longer throws RUN_LOCKED. `markParsing` still takes a
+`parsing` run, deliberately: the sweeper re-queues runs stranded there.
+
+**RED-VERIFIED**, from a committed checkpoint, replacement counts asserted,
+persistence rebuilt around each:
+
+```
+  markParsing unguarded                 redelivery, empty-incomplete, and its 3 terminal rows
+  markParsing notIn [complete, failed]  the two incomplete pipeline cases + its incomplete row
+  fail notIn [complete, failed]         the fail case alone
+  #handleLockLost names two statuses    the lock-held case alone
+```
+
+**WHAT WAS RUN**, Node v22.19.0, `perfportal_incterm`, Redis db 13, bucket
+`perfportal-incterm`, e2e port 3840: `pnpm build`, `typecheck` and `lint` exit
+0 by their own exit codes; `test:unit` **311 / 5320** with ONE failure on Node
+22.23.4 and none on 22.19.0 — see below; `test:integration` COLLECTED
+**288 / 4689**, the prediction exactly, and exited 1 on TWO cases, each a
+P1001 "Can't reach database server" in a file this diff cannot reach
+(`org-tests.integration`, `window.integration`), started after a load gate that
+expired at 27 — the two files then passed **36 / 36** alone; `pnpm test:e2e
+--workers=2` read back `Running 238 tests using 2 workers` and failed ONE,
+`acceptance.spec.ts`' keyboard-and-chart-table `toBeFocused`, the intermittent
+this file records — that file then passed **21 / 21** at `--repeat-each=3`.
+
+**NODE 22.23.4 FAILS ONE UNIT CASE THAT 22.19.0 PASSES.**
+`apps/web/test/format.test.ts`' `formatZoneOffset` case expects `GMT+0`; ICU
+78.3 (Node 22.23.4) prints `GMT` where ICU 77.1 (22.19.0) prints `GMT+0`.
+`.nvmrc` says `22`, so `nvm use` picks whichever 22 is newest on the machine.
+Not fixed here.
+
+**KNOWN AND LEFT**, from the same mapping: an abandoned run that ends
+`incomplete` carries the EVALUATED verdict (`passed`/`failed`), where three
+comments say `not_evaluated` and `statusFor` answers 200 either way; the
+pipeline's terminal UPDATE and `numberRunForTest` still guard on
+`complete`/`failed` only, so a `markIncomplete` landing mid-parse is
+overwritten by the parse's result; a `parsing` run whose close died before its
+log was assembled exits only through `failed`; and a failed run with code
+`INTERNAL` answers 400.
 
 The public-links branch (`feat/public-links`, gap #6 of
 `docs/superpowers/research/2026-11-03-ge-page-parity/README.md`, spec
