@@ -128,9 +128,9 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **311 files / 5320 tests**, it
+`nvm use` first, and if a run reports fewer than **313 files / 5343 tests**, it
 did not run everything — nor did an integration run reporting fewer than
-**288 files / 4689 tests**, an e2e run fewer than **238**, or a
+**289 files / 4715 tests**, an e2e run fewer than **238**, or a
 `pnpm test:e2e:cross` run fewer than **714** (238 on each of three engines).
 (Update those numbers when a sub-project adds suites, or the next reader
 calibrates against a stale floor and a silently-skipped run looks like a
@@ -150,6 +150,82 @@ still Chromium and still 102; `pnpm test:e2e:cross` was 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The seven state-machine fixes that followed (PRs #304 to #310, each its own
+branch from `main`, found by the same mapping as the entry below) and the test
+fix they needed (#311) moved the floors from unit **311 / 5320** to
+**313 / 5343** and integration **288 / 4689** to **289 / 4715**. **e2e stays
+238**, `test:e2e:cross` **714**. Each branch's totals were read off its own CI
+`build` log; the combined totals are their sum, and no one run has measured
+them together yet — the `build` job on `main` is what does.
+
+```
+  PR    branch                              unit          integration
+  #304  fix/runner-job-guards               +6            +19
+  #305  fix/log-tailer-race                 +1 file, +4   +1 file, +4
+  #306  fix/upload-card-shows-rejection     +1 file, +4   0  (a .tsx)
+  #307  fix/run-list-cursor-follows-filters +3            0
+  #308  fix/live-socket-unauthorized        +6            0
+  #309  fix/fold-owner-seq-never-restarts   0             +1
+  #310  fix/live-hub-subscribe-is-shared    0             +2
+  #311  fix/package-test-pool-size          0             0
+```
+
+  - **#304, a runner job that has ended stays ended.** `markClosing`,
+    `markComplete` and `markFailed` refused only a cancelled job, so a job the
+    stale sweep had failed was moved back to closing and complete by the
+    executor still working on it. They refuse any ended job and report whether
+    they wrote. The heartbeat ran only on Gatling's stop poll; a timer beats
+    from claim to the end of the job, so preparation, the tailer drain, the
+    agent upload and the close no longer look stale.
+  - **#305, the `simulation.log` tailer reads one chunk at a time.** `flush()`
+    held one in-flight slot, so two callers waiting on the same read both
+    started their own when it finished, from one shared cursor: the sink was
+    handed a chunk twice and the cursor ran ahead of the bytes sent. Reads are
+    queued, and a failed read stops the reads queued behind it.
+  - **#306, the upload card shows a refused bundle.** `GET /v1/runs/{id}`
+    answers a failed ingest with its problem document, which `fetchRun`
+    throws. The card read `data` alone, so it said it was parsing and polled
+    every five seconds for good. A response that is not the API's own (a proxy
+    page) is not treated as a refusal.
+  - **#307, the run list's cursor belongs to its filters.** Only the list's
+    own Apply and Clear reset it, so a filter change from outside (Back, the
+    rail's link) sent the old cursor with the new filters. It is dropped
+    during render when the URL's filters differ, as `HomeTests` does.
+  - **#308, a refused live socket asks the API.** `useLiveRun` has reported a
+    4401 close since it was written and nothing read it. The run page re-reads
+    the run at once, so the API's 401, 403 or 404 replaces the page, and the
+    strip says live updates have stopped rather than "Reconnecting".
+  - **#309, the fold owner does not claim a run whose replay tip it could not
+    read.** A failed read resumed blank, so one failed Redis command published
+    seq 0 into a stream whose tip was far ahead. The claim is given up for
+    that tick and made again on the next. A tip that was read but is not a
+    usable delta still resumes blank.
+  - **#310, every live viewer waits on its room's one subscribe.** A second
+    join returned as soon as the room existed, so if the first SUBSCRIBE was
+    refused, later viewers sat in a room nothing was subscribed to. The room
+    holds the subscribe's promise; a refusal reaches every waiting join and
+    removes the room.
+
+**PRISMA'S DEFAULT POOL IS (PHYSICAL CORES x 2) + 1, AND CI'S RUNNERS BEGAN
+GIVING 3 (#311).** `package.integration.test.ts`' concurrent-upload case needs
+four transactions open at once, and failed on all eight branches with "Timed
+out fetching a new connection from the connection pool (connection limit: 3)".
+Reproduced locally with `?connection_limit=3`; the file sizes its own pool now
+(`createPrisma(url, { connectionLimit: 8 })`). It depends on which runner a
+job lands on: one re-run passed without the fix. Why the runners report fewer
+cores was not established.
+
+**THE `agent` JOB FAILED ON ALL EIGHT FOR A REASON NO COMMIT CAUSED.** Its last
+step uploads the `perfportal-agent` artifact, and the account's artifact
+storage quota was full ("Usage is recalculated every 6-12 hours"). Each log
+held one error and no Go test failure; the next day's runs passed. That upload
+sets no `retention-days`.
+
+**WHAT WAS RUN.** Each of the eight PRs passed every CI job on its final head
+with `main` (`ef85c4d5`) merged in. No two touch the same file, so they were
+merged one after another without a rebuild between. No local full-suite run
+was made on the combined tree.
 
 The pipeline-incomplete-is-terminal branch
 (`fix/pipeline-incomplete-is-terminal`) added no unit FILE and no unit case —
