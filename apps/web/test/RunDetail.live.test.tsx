@@ -1,9 +1,10 @@
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, cleanup, render, screen, within } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { LiveDelta, RunProcessing, RunResponse } from '@perfportal/contracts';
+import { ProblemError } from '../src/api/fetch';
 import { fetchRun, runQueryKey } from '../src/api/run';
 import { useLiveRun } from '../src/api/live';
 import useIsCompact from '../src/useIsCompact';
@@ -113,7 +114,9 @@ function mountRun(body: { state: 'processing' | 'ready'; run: unknown }) {
   useLiveRunMock.mockReturnValue(liveState());
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   client.setQueryData(runQueryKey(RUN_ID), body);
-  const utils = render(
+  // A function, so `rerender` below hands React a NEW element: the same
+  // element reference would be skipped without rendering anything.
+  const tree = () => (
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[`/runs/${RUN_ID}`]}>
         <Routes>
@@ -122,8 +125,9 @@ function mountRun(body: { state: 'processing' | 'ready'; run: unknown }) {
           </Route>
         </Routes>
       </MemoryRouter>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  const utils = render(tree());
 
   return {
     ...utils,
@@ -133,6 +137,16 @@ function mountRun(body: { state: 'processing' | 'ready'; run: unknown }) {
      * so this is exactly what a poll or a live-status transition does in the
      * running app, just driven directly instead of through a fake timer.
      */
+    /**
+     * Renders again with nothing changed but what the mocked hooks answer,
+     * leaving `fetchRunMock` as the case set it. Not a cache write: an equal
+     * body is structurally shared and re-renders nobody.
+     */
+    async rerenderSame() {
+      await act(async () => {
+        utils.rerender(tree());
+      });
+    },
     async rerenderAs(nextBody: { state: 'processing' | 'ready'; run: unknown }) {
       fetchRunMock.mockResolvedValue(nextBody as never);
       await act(async () => {
@@ -504,3 +518,43 @@ describe('RunDetail — one shell, for every state', () => {
  * the new architecture renders a whole page conditionally on `lastDelta`, so
  * there is no successor branch for any task to guard either.
  */
+
+/**
+ * ═══ A REFUSED SOCKET IS ANSWERED BY ASKING THE API ═══
+ *
+ * `useLiveRun` has reported `unauthorized` since it was written and nothing
+ * read it. The gateway's 4401 does not say why, so the page re-reads the run
+ * at once and lets that answer stand: here a 404, a reader removed from the
+ * project mid-run. Bounded well under the five-second poll, which would get
+ * there on its own eventually and is not what this is about.
+ */
+describe('RunDetail — the live socket was refused', () => {
+  it('re-reads the run at once, and shows the API’s answer instead of the stale live page', async () => {
+    const utils = mountRun(processingBody('running'));
+    await waitFor(() => expect(fetchRunMock).toHaveBeenCalled());
+    const before = fetchRunMock.mock.calls.length;
+
+    fetchRunMock.mockRejectedValue(
+      new ProblemError(404, { code: 'NOT_FOUND', detail: 'No run here for you.', remediation: 'Check the id.' }),
+    );
+    useLiveRunMock.mockReturnValue(liveState({ connected: false, unauthorized: true }));
+    await utils.rerenderSame();
+
+    await waitFor(() => expect(fetchRunMock.mock.calls.length).toBeGreaterThan(before), { timeout: 2000 });
+    expect(await screen.findByText('No run here for you.', {}, { timeout: 2000 })).toBeInTheDocument();
+  });
+
+  it('does not re-read the run for a socket that merely dropped', async () => {
+    const utils = mountRun(processingBody('running'));
+    await waitFor(() => expect(fetchRunMock).toHaveBeenCalled());
+    const before = fetchRunMock.mock.calls.length;
+
+    useLiveRunMock.mockReturnValue(liveState({ connected: false }));
+    await utils.rerenderSame();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    });
+
+    expect(fetchRunMock.mock.calls.length).toBe(before);
+  });
+});

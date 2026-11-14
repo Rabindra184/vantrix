@@ -51,8 +51,9 @@ import { sessionQueryKey } from './api/session';
  *     failing as a credentials problem.
  *   - Requests that never pass through a query or a mutation.
  *     `BundleUpload` sends its XHR (`uploadBundle`) from a plain event handler,
- *     so its 401 is shown inline as the server's own sentence, and the live
- *     socket reports its own 4401 close through `useLiveRun`. The package
+ *     so its 401 is shown inline as the server's own sentence. The live
+ *     socket's 4401 close is not a 401 either: `RunDetail` answers it by
+ *     re-reading the run, and THAT read's 401 ends the session here. The package
  *     upload is the other XHR, and it is NOT outside:
  *     `ProjectPackages` runs `uploadPackageContent` inside a `useMutation`,
  *     and it rejects with a `ProblemError` from `problemFrom`, so its 401 ends

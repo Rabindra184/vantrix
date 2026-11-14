@@ -70,6 +70,7 @@ export default function LiveStatusStrip({
   partial,
   capReached,
   streamed,
+  unauthorized,
   onRetry,
 }: {
   readonly status: RunProcessing['status'];
@@ -90,6 +91,14 @@ export default function LiveStatusStrip({
    * this prop existed.
    */
   readonly streamed: boolean;
+  /**
+   * The gateway refused this session the live feed (close 4401) and the socket
+   * has stopped trying. REQUIRED, no default: left out, the strip says
+   * "Reconnecting" about a connection nothing will ever retry, which is the
+   * claim this prop exists to stop. `useLiveRun` has reported it since it was
+   * written and nothing read it.
+   */
+  readonly unauthorized: boolean;
   readonly onRetry: () => void;
 }) {
   const streaming = status === 'running';
@@ -116,9 +125,24 @@ export default function LiveStatusStrip({
           false, streamed: false`, and the honest thing to say about a
           connection this page never opened, or has not yet opened, is
           nothing at all. */}
-      {streaming && !connected && streamed && (
+      {streaming && !connected && streamed && !unauthorized && (
         <p role="status" className="text-[0.8125rem] text-muted">
           Reconnecting — showing the last update received.
+        </p>
+      )}
+
+      {/* REFUSED, NOT DROPPED. A 4401 is the gateway saying who is asking may
+          not have this feed, and it says the same thing for a session that
+          ended, an account that was disabled and a project the reader was
+          removed from, on purpose. So this names only what the page knows:
+          the feed has stopped. `RunDetail` asks the API about the run the
+          moment this turns true, and that answer (sign in again, or the run
+          is not here) replaces this page. Said whether or not a delta ever
+          arrived: a reader refused from the start otherwise watches tiles
+          that never fill, with nothing saying why. */}
+      {streaming && unauthorized && (
+        <p role="status" data-testid="live-unauthorized" className="text-[0.8125rem] text-muted">
+          Live updates have stopped for this session.{streamed ? ' Showing the last update received.' : ''}
         </p>
       )}
 

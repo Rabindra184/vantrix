@@ -13,7 +13,7 @@ afterEach(cleanup);
  * which is the fact CRITICAL 2 (fix round 1) added a whole prop to carry.
  */
 const BASE = {
-  connected: true, partial: false, capReached: false, streamed: true, onRetry: () => {},
+  connected: true, partial: false, capReached: false, streamed: true, unauthorized: false, onRetry: () => {},
 };
 
 describe('LiveStatusStrip', () => {
@@ -182,4 +182,31 @@ describe('LiveStatusStrip', () => {
   // entry, so it is left undone rather than added as a false or vacuous test.
   // Unaffected by fix round 1's `streamed` prop: `streaming` alone still
   // gates the connection sentence, independent of `frozen`.
+
+  /**
+   * A 4401 close: the gateway refused this session and `useLiveRun` has
+   * stopped trying. "Reconnecting" is false of it. Asserted as a pair with the
+   * dropped-socket case above, which the same props minus `unauthorized` give.
+   */
+  it('does not claim a reconnect when the session was refused the feed', () => {
+    render(<LiveStatusStrip {...BASE} status="running" connected={false} unauthorized />);
+    const said = screen.getByTestId('live-unauthorized');
+    expect(said).toHaveAttribute('role', 'status');
+    expect(said).toHaveTextContent(/stopped/i);
+    expect(said).toHaveTextContent(/last update/i);
+    expect(screen.queryByText(/reconnect/i)).toBeNull();
+  });
+
+  it('says the feed stopped even when no update ever arrived, without claiming one did', () => {
+    render(<LiveStatusStrip {...BASE} status="running" connected={false} streamed={false} unauthorized />);
+    const said = screen.getByTestId('live-unauthorized');
+    expect(said).toHaveTextContent(/stopped/i);
+    expect(said).not.toHaveTextContent(/last update/i);
+  });
+
+  it('says nothing about a refused feed once the run is no longer streaming', () => {
+    render(<LiveStatusStrip {...BASE} status="parsing" connected={false} unauthorized />);
+    expect(screen.queryByTestId('live-unauthorized')).toBeNull();
+  });
 });
+
