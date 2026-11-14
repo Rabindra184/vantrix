@@ -263,7 +263,10 @@ export default function TimeBrush({
           // control says so rather than showing a choice it cannot honour.
           value={anchorMs === null ? 'offset' : mode}
           onChange={(event) => setMode(event.target.value === 'datetime' ? 'datetime' : 'offset')}
-          className="rounded border border-default bg-surface px-2 py-1 text-sm text-primary"
+          // The height is stated: a native select's own differs by engine
+          // (22 to 38px measured), which moves everything below this row.
+          // `ReportFilterControl`'s select carries the same class and why.
+          className="h-[1.8125rem] rounded border border-default bg-surface px-2 py-1 text-sm text-primary"
         >
           <option value="offset">Offset</option>
           <option value="datetime" disabled={anchorMs === null}>
